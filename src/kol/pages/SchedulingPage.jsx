@@ -11,8 +11,11 @@ import {
   TASK_COLORS,
   SCHEDULE_CONFIG_DEFAULTS,
   solveOpening,
-  generateOpeningGrid,
+  generateFullDayGrid,
   buildDaySummary,
+  validateGrid,
+  serializeSchedule,
+  applyOverride,
 } from "../../shared/schedulingEngine";
 
 // ─── Utility Components ───────────────────────────────────────────────────
@@ -116,11 +119,20 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const locationId = profile?.location_id;
   const today = todayStr();
 
-  const { weekData, config, loading, error, refresh, upsertStaffPlan } = useSchedulingData(locationId, today);
+  const { weekData, config, loading, error, refresh, upsertStaffPlan, saveSchedule, publishSchedule, applyScheduleOverride, fetchScheduleVersions } = useSchedulingData(locationId, today);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [viewDensity, setViewDensity] = useState("standard");
   const [showAssumptions, setShowAssumptions] = useState(false);
+
+  // Version & override state
+  const [savedVersions, setSavedVersions] = useState([]);
+  const [activeScheduleId, setActiveScheduleId] = useState(null);
+  const [overrideMode, setOverrideMode] = useState(false);
+  const [selectedCell, setSelectedCell] = useState(null); // { lane, slot }
+  const [overrideTask, setOverrideTask] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [localGrid, setLocalGrid] = useState(null); // For live override preview
 
   const selectedDay = weekData[selectedDayIdx] || weekData[0];
 
@@ -129,6 +141,19 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     if (!selectedDay?.matrix) return null;
     return buildDaySummary(selectedDay.matrix, selectedDay.staffPlan, config);
   }, [selectedDay, config]);
+
+  // Reset override state when day changes
+  const prevDayRef = React.useRef(selectedDayIdx);
+  React.useEffect(() => {
+    if (prevDayRef.current !== selectedDayIdx) {
+      setOverrideMode(false);
+      setSelectedCell(null);
+      setLocalGrid(null);
+      setActiveScheduleId(null);
+      setSavedVersions([]);
+      prevDayRef.current = selectedDayIdx;
+    }
+  }, [selectedDayIdx]);
 
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
@@ -139,20 +164,91 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [upsertStaffPlan, addGlobalToast]);
 
-  const handleGenerate = useCallback(() => {
+  // Generate & save schedule
+  const handleGenerate = useCallback(async () => {
     if (!daySummary?.openingResult) {
       addGlobalToast?.("Enter a staff plan first to generate a schedule.", "info");
       return;
     }
-    addGlobalToast?.(`Schedule generated: ${daySummary.openingResult.selectedReason}`, "success");
-  }, [daySummary, addGlobalToast]);
+    try {
+      const payload = serializeSchedule(selectedDay.matrix, selectedDay.staffPlan, daySummary, config);
+      const result = await saveSchedule(payload);
+      setActiveScheduleId(result.id);
+      setLocalGrid(null);
+      addGlobalToast?.(`Schedule saved as draft v${result.version}: ${daySummary.openingResult.selectedReason}`, "success");
+
+      // Refresh versions
+      const versions = await fetchScheduleVersions(selectedDay.date);
+      setSavedVersions(versions);
+    } catch (err) {
+      // If table doesn't exist yet, still show the local schedule
+      if (err?.code === "42P01") {
+        addGlobalToast?.(`Schedule generated locally (table not deployed yet): ${daySummary.openingResult.selectedReason}`, "success");
+      } else {
+        addGlobalToast?.("Failed to save schedule: " + (err.message || "unknown error"), "error");
+      }
+    }
+  }, [daySummary, selectedDay, config, saveSchedule, fetchScheduleVersions, addGlobalToast]);
+
+  // Publish schedule
+  const handlePublish = useCallback(async (scheduleId) => {
+    try {
+      const result = await publishSchedule(scheduleId || activeScheduleId);
+      addGlobalToast?.(`Schedule v${result.version} published`, "success");
+      const versions = await fetchScheduleVersions(selectedDay.date);
+      setSavedVersions(versions);
+    } catch (err) {
+      if (err?.code === "42P01") {
+        addGlobalToast?.("Publish skipped — rotation_schedules table not deployed yet", "info");
+      } else {
+        addGlobalToast?.("Failed to publish: " + (err.message || "unknown error"), "error");
+      }
+    }
+  }, [publishSchedule, activeScheduleId, fetchScheduleVersions, selectedDay, addGlobalToast]);
+
+  // Apply override
+  const handleApplyOverride = useCallback(async () => {
+    if (!selectedCell || !overrideTask) return;
+    const { lane, slot } = selectedCell;
+
+    if (activeScheduleId) {
+      // Persist to DB
+      try {
+        await applyScheduleOverride(activeScheduleId, lane, slot, overrideTask, overrideReason);
+        addGlobalToast?.(`Override applied: ${lane} at ${slot} → ${TASK_COLORS[overrideTask]?.label || overrideTask}`, "success");
+      } catch (err) {
+        if (err?.code !== "42P01") {
+          addGlobalToast?.("Failed to save override: " + (err.message || "unknown error"), "error");
+        }
+      }
+    }
+
+    // Apply locally for immediate visual feedback
+    const currentGrid = localGrid || daySummary?.grid?.grid || {};
+    const result = applyOverride(currentGrid, lane, slot, overrideTask, overrideReason);
+    setLocalGrid(result.grid);
+    setSelectedCell(null);
+    setOverrideTask("");
+    setOverrideReason("");
+  }, [selectedCell, overrideTask, overrideReason, activeScheduleId, localGrid, daySummary, applyScheduleOverride, addGlobalToast]);
+
+  // Load versions for selected day
+  const handleLoadVersions = useCallback(async () => {
+    if (!selectedDay?.date) return;
+    try {
+      const versions = await fetchScheduleVersions(selectedDay.date);
+      setSavedVersions(versions);
+    } catch {
+      // Silently handle if table not deployed
+    }
+  }, [selectedDay, fetchScheduleVersions]);
 
   const m = selectedDay?.matrix || {};
   const req = daySummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
   const assignedPct = selectedDay?.assignedFunctioningPct || 0;
 
-  const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {} };
-  const { lanes, slots, grid } = gridData;
+  const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {}, phases: null };
+  const { lanes, slots, grid, phases } = gridData;
 
   const fmt12 = (t) => {
     const [h, mn] = t.split(":").map(Number);
@@ -293,19 +389,77 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
         </SectionCard>
       )}
 
-      {/* ── Section 3: 15-Minute Rotation Grid ────────────────────────── */}
+      {/* ── Section 3: Full-Day Rotation Grid ─────────────────────────── */}
       {lanes.length > 0 && slots.length > 0 && (
         <SectionCard
-          title={`AM Rotation — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="15-minute slot assignments for opening block. Scroll horizontally on smaller screens."
+          title={`Rotation Schedule — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Full-day 15-minute slot assignments. Click cells to override."
           icon={<I.Clipboard />}
           style={{ marginTop: 16 }}
         >
-          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {/* Toolbar: density + override toggle + publish */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             {["compact", "standard", "expanded"].map(d => (
               <button key={d} onClick={() => setViewDensity(d)} style={{ padding: "4px 12px", border: `1px solid ${d === viewDensity ? C.pri : C.border}`, borderRadius: 8, background: d === viewDensity ? C.priLt : C.surface, color: d === viewDensity ? C.pri : C.textMut, fontSize: 11, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", textTransform: "capitalize" }}>{d}</button>
             ))}
+            <div style={{ flex: 1 }} />
+            <button onClick={() => setOverrideMode(!overrideMode)} style={{ padding: "4px 12px", border: `1px solid ${overrideMode ? C.warn : C.border}`, borderRadius: 8, background: overrideMode ? C.warnLt : C.surface, color: overrideMode ? C.warn : C.textMut, fontSize: 11, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+              {overrideMode ? "Exit Override Mode" : "Override Mode"}
+            </button>
+            {activeScheduleId && (
+              <Btn variant="primary" size="sm" onClick={() => handlePublish()}>Publish</Btn>
+            )}
+            <button onClick={handleLoadVersions} style={{ padding: "4px 12px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.textMut, fontSize: 11, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+              Versions
+            </button>
           </div>
+
+          {/* Version selector */}
+          {savedVersions.length > 0 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+              {savedVersions.map(v => (
+                <span key={v.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: v.status === "published" ? C.sucLt : v.id === activeScheduleId ? C.priLt : "#F1F5F9", color: v.status === "published" ? C.suc : v.id === activeScheduleId ? C.pri : C.textMut, border: `1px solid ${v.status === "published" ? C.suc : v.id === activeScheduleId ? C.pri : C.border}22` }}>
+                  v{v.version} — {v.status}
+                  {(v.overrides || []).length > 0 && <span style={{ fontSize: 9, color: C.warn }}>({v.overrides.length} overrides)</span>}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Violations banner */}
+          {(daySummary?.violations || []).length > 0 && (
+            <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 8, background: C.danLt, border: `1px solid ${C.dan}22` }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Constraint Violations ({daySummary.violations.length})</span>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: 11, color: C.dan }}>
+                {daySummary.violations.slice(0, 5).map((v, i) => <li key={i}>{v.message}</li>)}
+                {daySummary.violations.length > 5 && <li>...and {daySummary.violations.length - 5} more</li>}
+              </ul>
+            </div>
+          )}
+
+          {/* Override panel */}
+          {overrideMode && selectedCell && (
+            <div style={{ marginBottom: 12, padding: "12px 16px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}33` }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+                Override: {selectedCell.lane} at {fmt12(selectedCell.slot)}
+                <span style={{ fontWeight: 400, color: C.textMut, marginLeft: 8 }}>
+                  Current: {TASK_COLORS[(localGrid || grid)[selectedCell.lane]?.[selectedCell.slot]]?.label || "—"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={overrideTask} onChange={e => setOverrideTask(e.target.value)} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit" }}>
+                  <option value="">Select task…</option>
+                  {Object.entries(TASK_COLORS).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <input placeholder="Reason (optional)" value={overrideReason} onChange={e => setOverrideReason(e.target.value)} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", minWidth: 160 }} />
+                <Btn variant="primary" size="sm" onClick={handleApplyOverride} disabled={!overrideTask}>Apply Override</Btn>
+                <button onClick={() => { setSelectedCell(null); setOverrideTask(""); setOverrideReason(""); }} style={{ padding: "4px 12px", border: `1px solid ${C.border}`, borderRadius: 6, background: C.surface, color: C.textMut, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>
+          )}
+
           <div style={{ overflowX: "auto", borderRadius: 10, border: `1px solid ${C.border}` }}>
             <table style={{ borderCollapse: "collapse", fontSize: viewDensity === "compact" ? 10 : 11, minWidth: 600, width: "100%" }}>
               <thead>
@@ -321,10 +475,28 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   <tr key={t}>
                     <td style={{ position: "sticky", left: 0, zIndex: 1, background: ti % 4 === 0 ? "#F1F5F9" : "#F8FAFC", padding: `${rowH / 2 - 5}px 10px`, borderBottom: `1px solid ${ti % 4 === 3 ? C.border : C.borderLight}`, borderRight: `1px solid ${C.border}`, fontWeight: ti % 4 === 0 ? 700 : 400, color: ti % 4 === 0 ? C.text : C.textMut, whiteSpace: "nowrap", fontSize: 10 }}>{fmt12(t)}</td>
                     {lanes.map(l => {
-                      const taskKey = grid[l]?.[t] || "float";
+                      const displayGrid = localGrid || grid;
+                      const taskKey = displayGrid[l]?.[t] || "float";
                       const tc = TASK_COLORS[taskKey] || TASK_COLORS.float;
+                      const isSelected = overrideMode && selectedCell?.lane === l && selectedCell?.slot === t;
                       return (
-                        <td key={l} style={{ padding: `${rowH / 2 - 5}px 6px`, textAlign: "center", borderBottom: `1px solid ${ti % 4 === 3 ? C.border : C.borderLight}`, background: tc.bg, color: tc.text, fontWeight: 600, fontSize: viewDensity === "compact" ? 9 : 10, whiteSpace: "nowrap", letterSpacing: "0.02em" }}>
+                        <td
+                          key={l}
+                          onClick={overrideMode ? () => setSelectedCell({ lane: l, slot: t }) : undefined}
+                          style={{
+                            padding: `${rowH / 2 - 5}px 6px`,
+                            textAlign: "center",
+                            borderBottom: `1px solid ${ti % 4 === 3 ? C.border : C.borderLight}`,
+                            background: isSelected ? "#FBBF24" : tc.bg,
+                            color: isSelected ? "#000" : tc.text,
+                            fontWeight: 600,
+                            fontSize: viewDensity === "compact" ? 9 : 10,
+                            whiteSpace: "nowrap",
+                            letterSpacing: "0.02em",
+                            cursor: overrideMode ? "pointer" : "default",
+                            outline: isSelected ? "2px solid #F59E0B" : "none",
+                          }}
+                        >
                           {viewDensity !== "compact" ? tc.label : taskKey.toUpperCase()}
                         </td>
                       );
