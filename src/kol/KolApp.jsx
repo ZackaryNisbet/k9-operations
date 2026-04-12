@@ -383,12 +383,21 @@ function LeanAppInner() {
     location_id: currentLocation,
   };
 
-  // Fetch user's location_roles for role-based location filtering
+  // Fetch user's location roles for role-based filtering.
+  // Production schema: profile_locations links users → locations (no role_id),
+  // and location_roles defines role codes per location (no user_id).
+  // We query profile_locations to discover the user's locations, then load
+  // the location_roles definitions for those locations.
   const [userLocationRoles, setUserLocationRoles] = useState([]);
   useEffect(() => {
     if (!user?.id) return;
-    supabase.from("location_roles").select("*").eq("user_id", user.id)
-      .then(({ data: rows }) => { if (rows) setUserLocationRoles(rows); });
+    supabase.from("profile_locations").select("profile_id, location_id").eq("profile_id", user.id)
+      .then(({ data: plRows }) => {
+        if (!plRows || plRows.length === 0) return;
+        const locIds = [...new Set(plRows.map(r => r.location_id))];
+        supabase.from("location_roles").select("*").in("location_id", locIds)
+          .then(({ data: roles }) => { if (roles) setUserLocationRoles(roles); });
+      });
   }, [user?.id]);
 
   // ── Role-based default landing ───────────────────────────────────────────
@@ -1015,11 +1024,12 @@ function LeanAppInner() {
         {/* Navigation */}
         <nav style={{ flex: 1, padding: "4px 10px 0", overflowY: "auto" }}>
           {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : (() => {
-            // Role-aware nav: staff get minimal nav, managers get oversight, admins get full
-            const currentRole = userLocationRoles.find(r => r.location_id === currentLocation);
-            const code = currentRole?.role_code || currentRole?.role;
-            const isStaff = code === "pct" || code === "csr";
-            const isManager = code === "supervisor" || code === "manager" || code === "mod";
+            // Role-aware nav: staff get minimal nav, managers get oversight, admins get full.
+            // profile.role is the source of truth; userLocationRoles are role *definitions*.
+            const code = profile?.role || "pct";
+            const isOwnerOrAdmin = code === "owner" || code === "admin" || code === "developer" || code === "enterprise_admin";
+            const isStaff = !isOwnerOrAdmin && (code === "pct" || code === "csr");
+            const isManager = !isOwnerOrAdmin && (code === "supervisor" || code === "manager" || code === "mod");
             if (IS_ANALYTICS_MODE) return ANALYTICS_NAV_ITEMS;
             if (isStaff) return STAFF_NAV_ITEMS;
             if (isManager) return MANAGER_NAV_ITEMS;

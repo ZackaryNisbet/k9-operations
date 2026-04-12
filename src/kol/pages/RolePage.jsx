@@ -63,17 +63,46 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   // Use currentLocation directly; gate queries on it being resolved so we
   // never query with the stale "cherry-hill" fallback string.
   const locationId = currentLocation || profile?.location_id || "cherry-hill";
-  // Derive the user's actual role at the current location from location_roles.
-  // The table may store the role under either `role_code` or `role` depending
-  // on how the row was created, so read both defensively.
-  // The profile prop is a mock with role="owner" — skip "owner" in the
-  // fallback chain because it never has role_page_config rows.
-  const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const locationRoleCode = locationRole?.role_code || locationRole?.role;
-  const profileRole = profile?.role !== "owner" ? profile?.role : undefined;
-  const rawRole = roleProp || locationRoleCode || profileRole || "pct";
+  // Derive the user's role for role_page_config queries.
+  //
+  // Production schema facts:
+  //   - location_roles is a role-definitions table (no user_id column)
+  //   - profile_locations links users → locations (no role_id column)
+  //   - profiles.role stores the user's role code ("owner", "pct", "supervisor", etc.)
+  //
+  // userLocationRoles contains role *definitions* for the user's locations,
+  // not per-user assignments.  We check whether profiles.role matches a
+  // known role_code at the current location; if so, use it.  For "owner"
+  // (the facility admin), fall back through admin → supervisor so they see
+  // the highest operational config that has rows.
+  const locationRoleDefs = (userLocationRoles || []).filter(r => r.location_id === currentLocation);
+  const knownCodes = new Set(locationRoleDefs.map(r => r.role_code || r.role));
+
+  // Map profile.role to a role_code recognised by role_page_config.
+  const OWNER_FALLBACK_CHAIN = ["admin", "supervisor", "manager"];
+  const mapProfileRole = (pr) => {
+    if (!pr) return undefined;
+    if (pr === "mod") return "supervisor";
+    if (pr === "owner") {
+      // Owner has full access — resolve to the highest operational role that
+      // actually has role_page_config rows.  We return the first candidate
+      // from the chain that exists in this location's role definitions.
+      // The config-loading effect below handles the final "rows exist?" check.
+      if (knownCodes.size > 0) {
+        for (const code of OWNER_FALLBACK_CHAIN) {
+          if (knownCodes.has(code)) return code;
+        }
+      }
+      // If location_roles are not loaded yet, default to supervisor (the
+      // primary operational management role in the K9 7-role system).
+      return "supervisor";
+    }
+    return pr;
+  };
+
+  const profileRole = mapProfileRole(profile?.role);
+  const rawRole = roleProp || profileRole || "pct";
   // Normalise role codes so DB queries match RoleLayoutPage's persisted keys.
-  // RoleLayoutPage stores MOD data under role='supervisor', so resolve "mod" here.
   const role = rawRole === "mod" ? "supervisor" : rawRole;
 
   // ─── Date Navigation ────────────────────────────────────────────────────
@@ -133,6 +162,19 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   const [configTasks, setConfigTasks] = useState([]);
   const [configLoading, setConfigLoading] = useState(true);
 
+  // For owner/admin profiles, build a fallback chain of roles to try when
+  // the primary resolved role has no role_page_config rows.  This lets the
+  // owner see supervisor tasks even though role_page_config stores them
+  // under role='supervisor', not role='admin'.
+  const configRoleFallbacks = useMemo(() => {
+    const pr = profile?.role;
+    if (pr === "owner" || role === "admin") {
+      // Try the resolved role first, then cascade through operational roles.
+      return [...new Set([role, ...OWNER_FALLBACK_CHAIN, "pct"])];
+    }
+    return [role];
+  }, [role, profile?.role]);
+
   useEffect(() => {
     // Skip the query while currentLocation is still resolving — querying
     // with the "cherry-hill" fallback would return 0 rows and briefly
@@ -140,20 +182,38 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
     if (!currentLocation) return;
     let cancelled = false;
     setConfigLoading(true);
-    supabase
-      .from("role_page_config")
-      .select("*")
-      .eq("location_id", locationId)
-      .eq("role", role)
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true })
-      .then(({ data: rows, error }) => {
-        if (cancelled) return;
-        if (!error && rows) setConfigTasks(rows);
+
+    // Try each role in the fallback chain until one returns rows.
+    const tryRole = async (idx) => {
+      if (cancelled || idx >= configRoleFallbacks.length) {
+        if (!cancelled) { setConfigTasks([]); setConfigLoading(false); }
+        return;
+      }
+      const tryRoleCode = configRoleFallbacks[idx];
+      const { data: rows, error } = await supabase
+        .from("role_page_config")
+        .select("*")
+        .eq("location_id", locationId)
+        .eq("role", tryRoleCode)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      if (cancelled) return;
+      if (!error && rows && rows.length > 0) {
+        setConfigTasks(rows);
         setConfigLoading(false);
-      });
+      } else {
+        tryRole(idx + 1);
+      }
+    };
+    tryRole(0);
+
     return () => { cancelled = true; };
-  }, [currentLocation, locationId, role]);
+  }, [currentLocation, locationId, configRoleFallbacks]);
+
+  // The effective role is the role value stored in the config rows that were
+  // actually loaded (may differ from `role` when the owner fallback kicked in).
+  // Use it for task_state queries and upserts so they match the config rows.
+  const effectiveRole = configTasks.length > 0 ? configTasks[0].role : role;
 
   // Filter tasks by day of week
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
@@ -185,7 +245,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
       .from("role_page_task_state")
       .select("*")
       .eq("location_id", locationId)
-      .eq("role", role)
+      .eq("role", effectiveRole)
       .eq("task_date", viewDate)
       .then(({ data: rows, error }) => {
         if (cancelled) return;
@@ -195,7 +255,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
         setStatesLoading(false);
       });
     return () => { cancelled = true; };
-  }, [locationId, role, viewDate]);
+  }, [locationId, effectiveRole, viewDate]);
 
   // Toggle task completion
   const toggleTask = useCallback(async (taskId) => {
@@ -205,7 +265,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
 
     const row = {
       location_id: locationId,
-      role,
+      role: effectiveRole,
       task_date: viewDate,
       task_id: taskId,
       completed: nowCompleted,
@@ -231,7 +291,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
         [taskId]: current || { completed: false },
       }));
     }
-  }, [taskStates, locationId, role, viewDate, profile]);
+  }, [taskStates, locationId, effectiveRole, viewDate, profile]);
 
   // ─── Workflow summaries for live cards ──────────────────────────────────
   const workflowSummaries = useMemo(() => {
