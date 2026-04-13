@@ -319,18 +319,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const boardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
   const boardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
 
-  // PP checklist: dogs with Private Play Gingr icon OR PP add-on OR day boarding
-  // Uses gingr_animal_icons_live (via v_dog_playgroups) as the source of truth
+  // PP checklist: dogs with canonical Private Play assignment OR PP add-on OR day boarding
   const ppLocationId = profile?.location_id || "cherry-hill";
   const [ppIconDogIds, setPpIconDogIds] = React.useState(new Set());
   React.useEffect(() => {
     if (!ppLocationId) return;
     let cancelled = false;
     supabase
-      .from("v_dog_playgroups")
+      .from("v_dog_playgroup_assignments_current")
       .select("animal_gingr_id")
       .eq("location_id", ppLocationId)
-      .eq("playgroup", "private_play")
+      .eq("has_private_play", true)
       .then(({ data: rows }) => {
         if (!cancelled && rows) {
           setPpIconDogIds(new Set(rows.map(r => String(r.animal_gingr_id))));
@@ -1739,6 +1738,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       { key: "green", label: "Green — Large Boarding", bg: "#E8F5E9", text: "#2E7D32", border: "#A5D6A7" },
       { key: "blue", label: "Blue — Small Boarding", bg: "#E3F2FD", text: "#1565C0", border: "#90CAF9" },
       { key: "yellow", label: "Yellow — Evaluation", bg: "#FFFDE7", text: "#F9A825", border: "#FFF176" },
+      { key: "unclassified", label: "Unclassified — Fix Gingr Icon", bg: "#F3F4F6", text: "#4B5563", border: "#D1D5DB" },
       { key: "halfAndHalf", label: "Half & Half", bg: "#F3E5F5", text: "#7B1FA2", border: "#CE93D8" },
     ];
 
@@ -1771,7 +1771,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       saveCollarsCompleted(nc);
     };
 
-    const isBoarding = (dog) => dog.collarColor === "green" || dog.collarColor === "blue" || dog.collarColor === "red";
+    const isBoarding = (dog) => dog.collarColor === "green" || dog.collarColor === "blue" || dog.collarColor === "red" || dog.collarColor === "unclassified";
 
     return (
       <div>
@@ -1875,6 +1875,40 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                             {/* Expanded boarding details */}
                             {isExp && showDetails && (
                               <div style={{ padding: "10px 18px 14px 50px", borderTop: `1px solid ${cc.border}20`, background: "rgba(255,255,255,0.5)" }}>
+                                {dog.unresolvedReason && (
+                                  <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 10, background: "#F9FAFB", border: `1px solid ${C.borderLight}` }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Playgroup Status</div>
+                                    <div style={{ fontSize: 12, color: C.text }}>
+                                      {dog.unresolvedReason === "conflicting_size_icons"
+                                        ? "Conflicting large and small playgroup icons in Gingr."
+                                        : dog.unresolvedReason === "evaluation_only"
+                                          ? "Only an evaluation icon is present. A size or private-play icon is still required for staffing."
+                                          : "A verified playgroup icon is missing in Gingr."}
+                                    </div>
+                                  </div>
+                                )}
+                                {Array.isArray(dog.sourceIconTitles) && dog.sourceIconTitles.length > 0 && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Gingr Play Icons</div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                      {dog.sourceIconTitles.map((title) => (
+                                        <span key={title} style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: C.surfaceAlt || "#F3F4F6", color: C.text }}>
+                                          {title}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {Array.isArray(dog.sourceIconComments) && dog.sourceIconComments.length > 0 && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Icon Notes</div>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                      {dog.sourceIconComments.map((comment) => (
+                                        <div key={comment} style={{ fontSize: 12, color: C.textSec, fontStyle: "italic" }}>"{comment}"</div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                                   {dog.roomLabel && (
                                     <div>

@@ -492,6 +492,115 @@ describe('Workbook display helpers', () => {
     expect(display.daycare.total_daycare).toBe(33);
     expect(display.support.total_dog_volume).toBe(57);
   });
+
+  it('keeps half and half rows separate in display totals', () => {
+    const matrix = makeMatrix({
+      detail_json: {
+        trust: {
+          state: 'trusted',
+          source: 'gingr_reservations + v_dog_playgroup_assignments_current',
+          can_generate: true,
+          blockers: [],
+          notes: [],
+        },
+        display: {
+          opening: {
+            large_boarding: 10,
+            small_boarding: 6,
+            private_play_boarding: 2,
+            half_and_half_boarding: 3,
+            unclassified_boarding: 0,
+            total_boarding: 21,
+          },
+          closing: {
+            large_boarding: 11,
+            small_boarding: 7,
+            private_play_boarding: 1,
+            half_and_half_boarding: 4,
+            unclassified_boarding: 0,
+            total_boarding: 23,
+          },
+          daycare: {
+            evaluations: 1,
+            private_play_dayboarding: 2,
+            half_and_half_daytime: 3,
+            large_daycare: 18,
+            small_daycare: 9,
+            unclassified_daycare: 0,
+            total_daycare: 33,
+          },
+          support: {
+            departure_baths: 4,
+            morning_feeding_dogs: 21,
+            evening_feeding_dogs: 23,
+            medication_dogs: 3,
+            tours: 0,
+            total_dog_volume: 56,
+          },
+        },
+      },
+    });
+
+    const display = getMatrixDisplay(matrix);
+    expect(display.opening.half_and_half_boarding).toBe(3);
+    expect(display.closing.half_and_half_boarding).toBe(4);
+    expect(display.daycare.half_and_half_daytime).toBe(3);
+    expect(display.opening.total_boarding).toBe(21);
+    expect(display.daycare.total_daycare).toBe(33);
+  });
+
+  it('counts half and half dogs inside private-play solver workload only', () => {
+    const matrix = makeMatrix({
+      detail_json: {
+        trust: {
+          state: 'trusted',
+          source: 'gingr_reservations + v_dog_playgroup_assignments_current',
+          can_generate: true,
+          blockers: [],
+          notes: [],
+        },
+        display: {
+          opening: {
+            large_boarding: 12,
+            small_boarding: 8,
+            private_play_boarding: 1,
+            half_and_half_boarding: 2,
+            unclassified_boarding: 0,
+            total_boarding: 23,
+          },
+          closing: {
+            large_boarding: 12,
+            small_boarding: 8,
+            private_play_boarding: 1,
+            half_and_half_boarding: 2,
+            unclassified_boarding: 0,
+            total_boarding: 23,
+          },
+          daycare: {
+            evaluations: 0,
+            private_play_dayboarding: 2,
+            half_and_half_daytime: 1,
+            large_daycare: 16,
+            small_daycare: 10,
+            unclassified_daycare: 0,
+            total_daycare: 29,
+          },
+          support: {
+            departure_baths: 2,
+            morning_feeding_dogs: 23,
+            evening_feeding_dogs: 23,
+            medication_dogs: 2,
+            tours: 0,
+            total_dog_volume: 52,
+          },
+        },
+      },
+    });
+
+    const summary = buildDaySummary(matrix, makeStaffPlan({ pct_count: 5 }), cfg);
+    expect(summary.solverInputs.total_private_play_dogs).toBe(6);
+    expect(summary.openingResult).not.toBeNull();
+  });
 });
 
 // ─── Full-Day Grid Tests ─────────────────────────────────────────────────────

@@ -1,3 +1,10 @@
+import {
+  buildPlaygroupAssignmentMap,
+  fetchPlaygroupAssignments,
+  getCanonicalPlaygroupTags,
+  humanizePlaygroupTag,
+} from "./playgroup-assignments.ts";
+
 export type RollCallSession = "opening" | "closing";
 
 export interface RollCallDog {
@@ -39,15 +46,6 @@ export interface RollCallComputedItems {
   areas: RollCallArea[];
   rooms: RollCallRoom[];
 }
-
-const NOISE_ICON_TITLES = new Set([
-  "Animal Photo",
-  "Altered/Unaltered",
-  "Immunizations",
-  "Check-in Questions",
-  "PreCheck",
-  "First ever booking",
-]);
 
 function todayET(): string {
   return new Date().toLocaleDateString("en-CA", {
@@ -104,33 +102,6 @@ function parseAnimalNames(
         ownerName: "",
       };
     });
-}
-
-function normalizePlaygroup(iconTitles: string[]): string | null {
-  const lowerTitles = iconTitles.map((title) => title.toLowerCase());
-  if (lowerTitles.some((title) => title.includes("private play"))) {
-    return "Private Play";
-  }
-  if (lowerTitles.some((title) => title.includes("evaluation"))) {
-    return "Evaluation";
-  }
-  if (lowerTitles.some((title) => title.includes("small dog playgroup"))) {
-    return "Small Playgroup";
-  }
-  if (lowerTitles.some((title) => title.includes("large dog playgroup"))) {
-    return "Large Playgroup";
-  }
-  return null;
-}
-
-function buildTags(iconRows: Array<{ icon_title?: string | null }>): string[] {
-  const tags = new Set<string>();
-  for (const row of iconRows) {
-    const title = normalizeWhitespace(safeText(row.icon_title));
-    if (!title || NOISE_ICON_TITLES.has(title)) continue;
-    tags.add(title);
-  }
-  return [...tags].sort((a, b) => a.localeCompare(b));
 }
 
 function chooseCandidateRoom(
@@ -285,7 +256,7 @@ export async function buildRollCallSnapshot(
       .filter(Boolean),
   )];
 
-  const [{ data: animalRows }, { data: iconRows }] = await Promise.all([
+  const [{ data: animalRows }, assignmentRows] = await Promise.all([
     animalIds.length > 0
       ? supabase
         .from("gingr_animals")
@@ -293,12 +264,8 @@ export async function buildRollCallSnapshot(
         .in("gingr_id", animalIds)
       : Promise.resolve({ data: [] }),
     animalIds.length > 0
-      ? supabase
-        .from("gingr_animal_icons_live")
-        .select("animal_gingr_id, icon_title, icon_group")
-        .eq("location_id", locationId)
-        .in("animal_gingr_id", animalIds)
-      : Promise.resolve({ data: [] }),
+      ? fetchPlaygroupAssignments({ supabase, locationId, animalIds })
+      : Promise.resolve([]),
   ]);
 
   const photoByAnimalId: Record<string, string> = {};
@@ -308,13 +275,7 @@ export async function buildRollCallSnapshot(
     photoByAnimalId[animalId] = safeText(animal.local_photo_url) || safeText(animal.image_url);
   }
 
-  const iconsByAnimalId: Record<string, Array<{ icon_title?: string | null; icon_group?: string | null }>> = {};
-  for (const icon of iconRows || []) {
-    const animalId = safeText(icon.animal_gingr_id);
-    if (!animalId) continue;
-    if (!iconsByAnimalId[animalId]) iconsByAnimalId[animalId] = [];
-    iconsByAnimalId[animalId].push(icon);
-  }
+  const assignmentsByAnimalId = buildPlaygroupAssignmentMap(assignmentRows || []);
 
   const bestDogByKey = new Map<string, any>();
 
@@ -340,10 +301,15 @@ export async function buildRollCallSnapshot(
     const dedupeKey = animalGingrId || `${normalizeName(animalName)}::${normalizeName(ownerName)}`;
     if (!dedupeKey) continue;
 
-    const iconRowsForDog = animalGingrId ? (iconsByAnimalId[animalGingrId] || []) : [];
-    const iconTitles = iconRowsForDog
-      .map((icon) => normalizeWhitespace(safeText(icon.icon_title)))
-      .filter(Boolean);
+    const assignment = animalGingrId ? (assignmentsByAnimalId.get(animalGingrId) || null) : null;
+    const playgroup = humanizePlaygroupTag(assignment?.primaryDisplayPlaygroup)
+      || humanizePlaygroupTag(assignment?.schedulingPlaygroup)
+      || null;
+    const tags = assignment?.sourceIconTitles?.length
+      ? assignment.sourceIconTitles
+      : getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true })
+          .map((tag) => humanizePlaygroupTag(tag))
+          .filter(Boolean) as string[];
 
     const candidate = {
       animalGingrId,
@@ -361,8 +327,8 @@ export async function buildRollCallSnapshot(
       areaName,
       roomScore: candidateRoom.score,
       photoUrl: animalGingrId ? (photoByAnimalId[animalGingrId] || null) : null,
-      playgroup: normalizePlaygroup(iconTitles),
-      tags: buildTags(iconRowsForDog),
+      playgroup,
+      tags,
     };
 
     const existing = bestDogByKey.get(dedupeKey);
