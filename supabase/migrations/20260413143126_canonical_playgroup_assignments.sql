@@ -42,10 +42,10 @@ SELECT DISTINCT
   location_id,
   animal_gingr_id,
   CASE
-    WHEN icon_template_id::text = '6' OR lower(icon_title) = 'private play' THEN 'private_play'
-    WHEN icon_template_id::text = '3' OR lower(icon_title) = 'large dog playgroup' THEN 'large'
-    WHEN icon_template_id::text = '2' OR lower(icon_title) = 'small dog playgroup' THEN 'small'
-    WHEN icon_template_id::text = '7' OR lower(icon_title) = 'evaluation' THEN 'evaluation'
+    WHEN lower(icon_title) = 'private play' THEN 'private_play'
+    WHEN lower(icon_title) = 'large dog playgroup' THEN 'large'
+    WHEN lower(icon_title) = 'small dog playgroup' THEN 'small'
+    WHEN lower(icon_title) = 'evaluation' THEN 'evaluation'
     ELSE NULL
   END AS playgroup,
   icon_title,
@@ -54,10 +54,7 @@ SELECT DISTINCT
   icon_comment
 FROM gingr_animal_icons_live
 WHERE icon_group = 'Play'
-  AND (
-    icon_template_id::text IN ('2', '3', '6', '7')
-    OR lower(icon_title) IN ('private play', 'large dog playgroup', 'small dog playgroup', 'evaluation')
-  );
+  AND lower(icon_title) IN ('private play', 'large dog playgroup', 'small dog playgroup', 'evaluation');
 
 CREATE VIEW v_dog_playgroup_assignments_current
 WITH (security_invoker = true) AS
