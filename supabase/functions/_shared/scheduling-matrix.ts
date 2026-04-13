@@ -249,7 +249,7 @@ export async function computeSchedulingMatrixRows({
       .lte("snapshot_date", dateTo),
     supabase
       .from("gingr_runs")
-      .select("gingr_id")
+      .select("gingr_run_id, id")
       .eq("location_id", locationId),
     supabase
       .from("gingr_reservations")
@@ -276,7 +276,11 @@ export async function computeSchedulingMatrixRows({
     playgroupMap.set(String(row.animal_gingr_id || ""), String(row.playgroup || ""));
   }
 
-  const totalRooms = new Set((runsRes.data || []).map((row: any) => String(row.gingr_id || ""))).size;
+  const totalRooms = new Set(
+    (runsRes.data || [])
+      .map((row: any) => String(row.gingr_run_id || row.id || ""))
+      .filter(Boolean),
+  ).size;
   const roomByDate = summarizeRoomOccupancy(roomOccRes.data || []);
 
   const reservations = (reservationsRes.data || []).map((row: ReservationRow) =>
