@@ -173,38 +173,48 @@ function classifyReservationCategory(typeName: string): string {
 
 // ─── Average checkout time helpers ───────────────────────────────────────
 
-const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-const GINGR_SUBDOMAIN = "k9cherryhill";
-
-async function fetchAvgCheckoutFromGingr(
+async function fetchAvgCheckoutFromSupabase(
+  locationId: string,
   animalId: string,
   animalName: string,
   reservationType: string,
   supabase: any,
 ): Promise<{ avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }> {
   try {
-    const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal`;
-    const body = new URLSearchParams({
-      key: GINGR_API_KEY,
-      id: animalId,
-      limit: "50",
+    const { data: reservations, error } = await supabase
+      .from("gingr_reservations")
+      .select("check_out_date, reservation_type_name")
+      .eq("location_id", locationId)
+      .eq("animal_gingr_id", animalId)
+      .not("check_out_date", "is", null)
+      .is("cancelled_date", null)
+      .order("check_out_date", { ascending: false })
+      .limit(50);
+    if (error) {
+      console.error(`Checkout history query failed for animal ${animalId}:`, error.message);
+      return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
+    }
+    if (!Array.isArray(reservations) || reservations.length === 0) {
+      return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
+    }
+
+    const targetCategory = reservationType ? classifyReservationCategory(reservationType) : "other";
+    const filteredReservations = reservations.filter((row: any) => {
+      const rowType = row?.reservation_type_name || "";
+      if (!reservationType) return true;
+      if (rowType === reservationType) return true;
+      return targetCategory !== "other" && classifyReservationCategory(rowType) === targetCategory;
     });
-    const resp = await fetch(url, { method: "POST", body });
-    if (!resp.ok) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
-    const json = await resp.json();
-    const reservations = json?.data || [];
-    if (!Array.isArray(reservations)) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
+    const sourceReservations = filteredReservations.length > 0 ? filteredReservations : reservations;
 
     const allCheckoutTimes: number[] = []; // minutes since midnight
     const checkoutHistory: any[] = [];
 
-    for (const res of reservations) {
-      const r = res?.reservation || res;
-      const coStamp = r?.check_out_stamp || r?.check_out_date;
+    for (const row of sourceReservations) {
+      const coStamp = row?.check_out_date;
       if (!coStamp) continue;
 
-      // Filter to same reservation type if available
-      const resType = r?.reservation_type?.type || r?.type || "";
+      const resType = row?.reservation_type_name || "";
 
       let coDate: Date;
       const stampNum = typeof coStamp === "number" ? coStamp : Number(coStamp);
@@ -268,6 +278,7 @@ async function fetchAvgCheckoutFromGingr(
 }
 
 async function getAvgCheckoutTimes(
+  locationId: string,
   animalIds: string[],
   animalNames: Record<string, string>,
   resTypes: Record<string, string>,
@@ -315,7 +326,7 @@ async function getAvgCheckoutTimes(
     while (queue.length > 0) {
       const id = queue.shift();
       if (!id) break;
-      const data = await fetchAvgCheckoutFromGingr(id, animalNames[id] || "", resTypes[id] || "", supabase);
+      const data = await fetchAvgCheckoutFromSupabase(locationId, id, animalNames[id] || "", resTypes[id] || "", supabase);
       result[id] = data;
     }
   }
@@ -570,7 +581,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     }
   }
 
-  const checkoutAvgs = await getAvgCheckoutTimes(uniqueAnimalIds, animalNameMap, animalResTypeMap, supabase);
+  const checkoutAvgs = await getAvgCheckoutTimes(locationId, uniqueAnimalIds, animalNameMap, animalResTypeMap, supabase);
 
   // ─── Build final dog objects ───────────────────────────────────────────
   function buildDogOutput(d: any): any {
@@ -819,49 +830,42 @@ async function computeEnrichmentReport(
     });
   }
 
-  // 3) If we still have very few results, try Gingr reservations API to find ALL reservations for this date
+  // 3) If we still have very few results, fall back to the synced reservations table
   if (scheduled.length + suggested.length < 3) {
     try {
-      const gingrUrl = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations`;
-      const params = new URLSearchParams({
-        key: GINGR_API_KEY,
-        "params[startDate]": targetDate,
-        "params[endDate]": targetDate,
-      });
-      const resp = await fetch(gingrUrl, { method: "POST", body: params });
-      if (resp.ok) {
-        const json = await resp.json();
-        const resData = json?.data || {};
-        const entries = typeof resData === "object" && !Array.isArray(resData)
-          ? Object.values(resData)
-          : (Array.isArray(resData) ? resData : []);
+      const { data: reservations } = await supabase
+        .from("gingr_reservations")
+        .select("animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, raw_data, services")
+        .eq("location_id", locationId)
+        .lte("start_date", `${targetDate}T23:59:59`)
+        .gte("end_date", `${targetDate}T00:00:00`)
+        .is("cancelled_date", null);
 
-        for (const entry of entries) {
-          const r = (entry as any)?.reservation || entry;
-          const animalId = String(r?.animal?.id || "");
-          if (!animalId || seen.has(animalId)) continue;
+      for (const row of (reservations || [])) {
+        const animalId = String(row?.animal_gingr_id || "");
+        if (!animalId || seen.has(animalId)) continue;
 
-          const services = r?.services || [];
-          const enrichmentSvcs = services.filter((s: any) =>
-            (s?.name || "").toLowerCase().includes("enrichment"),
-          );
-          if (enrichmentSvcs.length === 0) continue;
-          seen.add(animalId);
+        const rawServices = Array.isArray((row.raw_data as any)?.services) ? (row.raw_data as any).services : [];
+        const topServices = Array.isArray(row.services) ? row.services : [];
+        const services = [...rawServices, ...topServices];
+        const enrichmentSvcs = services.filter((s: any) =>
+          (s?.name || s?.service_name || "").toLowerCase().includes("enrichment"),
+        );
+        if (enrichmentSvcs.length === 0) continue;
+        seen.add(animalId);
 
-          const resType = r?.reservation_type?.type || "";
-          scheduled.push({
-            animalId,
-            animalName: r?.animal?.name || "",
-            ownerName: `${r?.owner?.first_name || ""} ${r?.owner?.last_name || ""}`.trim(),
-            services: enrichmentSvcs.map((s: any) => s.name || "enrichment"),
-            status: "scheduled",
-            reservationType: resType,
-            summary: enrichmentSvcs.map((s: any) => s.name || "enrichment").join(", "),
-          });
-        }
+        scheduled.push({
+          animalId,
+          animalName: row?.animal_name || "",
+          ownerName: `${row?.owner_first_name || ""} ${row?.owner_last_name || ""}`.trim(),
+          services: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment"),
+          status: "scheduled",
+          reservationType: row?.reservation_type_name || "",
+          summary: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
+        });
       }
     } catch (err) {
-      console.error("Gingr enrichment API fallback error:", err);
+      console.error("Enrichment reservations-table fallback error:", err);
     }
   }
 
