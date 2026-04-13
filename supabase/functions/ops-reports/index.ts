@@ -50,6 +50,70 @@ function todayET(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
+async function fetchOwnersFromCacheOrGingr(
+  supabase: any,
+  ownerIds: string[],
+  gingrSubdomain: string,
+  gingrApiKey: string,
+  cacheTtlHours: number = 24,
+) {
+  const uniqueOwnerIds = [...new Set(ownerIds.map(String).filter(Boolean))];
+  if (uniqueOwnerIds.length === 0) return {};
+
+  const cutoff = new Date(Date.now() - cacheTtlHours * 60 * 60 * 1000).toISOString();
+  const { data: cachedOwners } = await supabase
+    .from("gingr_owner_cache")
+    .select("*")
+    .in("owner_id", uniqueOwnerIds);
+
+  const cachedMap: Record<string, any> = {};
+  const staleIds: string[] = [];
+  for (const row of cachedOwners || []) {
+    if (row.fetched_at && row.fetched_at > cutoff) {
+      cachedMap[row.owner_id] = row;
+    } else {
+      staleIds.push(row.owner_id);
+    }
+  }
+
+  const missingIds = uniqueOwnerIds.filter((id) => !cachedMap[id] && !staleIds.includes(id));
+  const toFetch = [...staleIds, ...missingIds];
+
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+    const batch = toFetch.slice(i, i + BATCH_SIZE);
+    const fetches = batch.map(async (ownerId) => {
+      try {
+        const result = await gingrFetch(gingrSubdomain, gingrApiKey, "owner", "GET", { id: ownerId });
+        const owner = result?.data || result;
+        if (!owner) return;
+        const emergencyContacts = Array.isArray(owner.emergency_contacts) ? owner.emergency_contacts : [];
+        const primaryEmergency = emergencyContacts[0] || null;
+        const row = {
+          owner_id: ownerId,
+          owner_name: [owner.first_name, owner.last_name].filter(Boolean).join(" "),
+          phone: owner.cell_phone || owner.home_phone || "",
+          email: owner.email || "",
+          emergency_contact_name: primaryEmergency
+            ? [primaryEmergency.first_name, primaryEmergency.last_name].filter(Boolean).join(" ")
+            : (owner.emergency_contact_name || ""),
+          emergency_contact_phone: primaryEmergency
+            ? (primaryEmergency.cell_phone || primaryEmergency.home_phone || "")
+            : (owner.emergency_contact_phone || ""),
+          fetched_at: new Date().toISOString(),
+        };
+        await supabase.from("gingr_owner_cache").upsert(row, { onConflict: "owner_id" });
+        cachedMap[ownerId] = row;
+      } catch (err) {
+        console.error(`Failed to fetch owner ${ownerId}:`, err);
+      }
+    });
+    await Promise.all(fetches);
+  }
+
+  return cachedMap;
+}
+
 // ─── Parse animal_names from room occupancy ────────────────────────────────
 function parseAnimalNames(animalNames: string): Array<{ dogName: string; ownerName: string }> {
   if (!animalNames) return [];
@@ -372,56 +436,7 @@ async function csrEmergencyContact(
   }
 
   const ownerIds = Object.keys(ownerMap);
-
-  // Check cache first — only fetch stale/missing from Gingr
-  const CACHE_TTL_HOURS = 24;
-  const cutoff = new Date(Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString();
-
-  const { data: cachedOwners } = await supabase
-    .from("gingr_owner_cache")
-    .select("*")
-    .in("owner_id", ownerIds);
-
-  const cachedMap: Record<string, any> = {};
-  const staleIds: string[] = [];
-  for (const co of cachedOwners || []) {
-    if (co.fetched_at > cutoff) {
-      cachedMap[co.owner_id] = co;
-    } else {
-      staleIds.push(co.owner_id);
-    }
-  }
-  const missingIds = ownerIds.filter(id => !cachedMap[id] && !staleIds.includes(id));
-  const toFetch = [...staleIds, ...missingIds];
-
-  // Fetch missing/stale owners from Gingr (batched to avoid rate limits)
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
-    const batch = toFetch.slice(i, i + BATCH_SIZE);
-    const fetches = batch.map(async (ownerId) => {
-      try {
-        const result = await gingrFetch(gingrSubdomain, gingrApiKey, "owner", "GET", { id: ownerId });
-        const owner = result?.data || result;
-        if (owner) {
-          const row = {
-            owner_id: ownerId,
-            owner_name: [owner.first_name, owner.last_name].filter(Boolean).join(" "),
-            phone: owner.cell_phone || owner.home_phone || "",
-            email: owner.email || "",
-            emergency_contact_name: owner.emergency_contact_name || "",
-            emergency_contact_phone: owner.emergency_contact_phone || "",
-            fetched_at: new Date().toISOString(),
-          };
-          // Upsert into cache
-          await supabase.from("gingr_owner_cache").upsert(row, { onConflict: "owner_id" });
-          cachedMap[ownerId] = row;
-        }
-      } catch (err) {
-        console.error(`Failed to fetch owner ${ownerId}:`, err);
-      }
-    });
-    await Promise.all(fetches);
-  }
+  const cachedMap = await fetchOwnersFromCacheOrGingr(supabase, ownerIds, gingrSubdomain, gingrApiKey);
 
   // Fetch profile photos for all animals
   const allAnimalIds = allInHouse.map((d: any) => String(d.animal_id || d.id || "")).filter(Boolean);
@@ -488,6 +503,24 @@ async function csrEmergencyContact(
   };
 }
 
+async function ownerLookup(
+  supabase: any,
+  ownerIds: string[],
+  gingrSubdomain: string,
+  gingrApiKey: string,
+) {
+  const ownerMap = await fetchOwnersFromCacheOrGingr(supabase, ownerIds, gingrSubdomain, gingrApiKey);
+  const owners = ownerIds
+    .map((ownerId) => ownerMap[String(ownerId)])
+    .filter(Boolean);
+
+  return {
+    type: "owner_lookup",
+    ownerCount: owners.length,
+    owners,
+  };
+}
+
 // ============================================================================
 // Main Handler
 // ============================================================================
@@ -498,7 +531,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { type, location_id: locationId, date: dateOverride } = body;
+    const { type, location_id: locationId, date: dateOverride, owner_ids: ownerIdsRaw } = body;
 
     if (!locationId) {
       return new Response(
@@ -506,14 +539,15 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (!type || !["mod_roll_call", "mod_departing", "csr_emergency"].includes(type)) {
+    if (!type || !["mod_roll_call", "mod_departing", "csr_emergency", "owner_lookup"].includes(type)) {
       return new Response(
-        JSON.stringify({ error: "type must be mod_roll_call, mod_departing, or csr_emergency" }),
+        JSON.stringify({ error: "type must be mod_roll_call, mod_departing, csr_emergency, or owner_lookup" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const date = dateOverride || todayET();
+    const ownerIds = Array.isArray(ownerIdsRaw) ? ownerIdsRaw.map(String).filter(Boolean) : [];
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -563,6 +597,15 @@ Deno.serve(async (req: Request) => {
         break;
       case "csr_emergency":
         result = await csrEmergencyContact(supabase, locationId, date, gingrSubdomain, gingrApiKey, gingrLocationId);
+        break;
+      case "owner_lookup":
+        if (ownerIds.length === 0) {
+          return new Response(
+            JSON.stringify({ error: "owner_ids is required for owner_lookup" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        result = await ownerLookup(supabase, ownerIds, gingrSubdomain, gingrApiKey);
         break;
     }
 
