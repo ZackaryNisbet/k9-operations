@@ -35,6 +35,14 @@ export interface PlaygroupAssignment {
   unresolvedReason: string | null;
 }
 
+interface RawPlaygroupIconRow {
+  animal_gingr_id?: string | null;
+  icon_template_id?: string | number | null;
+  icon_title?: string | null;
+  icon_comment?: string | null;
+  icon_group?: string | null;
+}
+
 export const DEFAULT_PLAYGROUP_ASSIGNMENT_COLUMNS = [
   "animal_gingr_id",
   "size_group",
@@ -89,6 +97,111 @@ function normalizeSizeGroup(value: unknown): PlaygroupSizeGroup {
     return normalized as PlaygroupSizeGroup;
   }
   return null;
+}
+
+function normalizePlaygroupTagFromIcon(row: RawPlaygroupIconRow): string | null {
+  const title = String(row?.icon_title || "").trim().toLowerCase();
+  const group = String(row?.icon_group || "").trim().toLowerCase();
+
+  // Gingr template ids are not stable enough to classify playgroups.
+  // Only trust icons that are explicitly in the Play group.
+  if (group !== "play") return null;
+  if (title === "private play") return "private_play";
+  if (title === "large dog playgroup") return "large";
+  if (title === "small dog playgroup") return "small";
+  if (title === "evaluation") return "evaluation";
+  return null;
+}
+
+export function derivePlaygroupAssignmentsFromIcons(iconRows: RawPlaygroupIconRow[] = []): PlaygroupAssignment[] {
+  const grouped = new Map<string, {
+    hasPrivatePlay: boolean;
+    hasEvaluation: boolean;
+    hasLarge: boolean;
+    hasSmall: boolean;
+    playgroupTags: Set<string>;
+    sourceIconTitles: Set<string>;
+    sourceIconComments: Set<string>;
+    privatePlayComment: string | null;
+  }>();
+
+  for (const row of iconRows) {
+    const animalGingrId = String(row?.animal_gingr_id || "").trim();
+    const playgroupTag = normalizePlaygroupTagFromIcon(row);
+    if (!animalGingrId || !playgroupTag) continue;
+
+    const title = String(row?.icon_title || "").trim();
+    const comment = String(row?.icon_comment || "").trim();
+    const entry = grouped.get(animalGingrId) || {
+      hasPrivatePlay: false,
+      hasEvaluation: false,
+      hasLarge: false,
+      hasSmall: false,
+      playgroupTags: new Set<string>(),
+      sourceIconTitles: new Set<string>(),
+      sourceIconComments: new Set<string>(),
+      privatePlayComment: null,
+    };
+
+    entry.playgroupTags.add(playgroupTag);
+    if (title) entry.sourceIconTitles.add(title);
+    if (comment) entry.sourceIconComments.add(comment);
+
+    if (playgroupTag === "private_play") {
+      entry.hasPrivatePlay = true;
+      if (comment) entry.privatePlayComment = comment;
+    }
+    if (playgroupTag === "evaluation") entry.hasEvaluation = true;
+    if (playgroupTag === "large") entry.hasLarge = true;
+    if (playgroupTag === "small") entry.hasSmall = true;
+
+    grouped.set(animalGingrId, entry);
+  }
+
+  return Array.from(grouped.entries()).map(([animalGingrId, entry]) => {
+    const hasResolvedSize = (entry.hasLarge && !entry.hasSmall) || (entry.hasSmall && !entry.hasLarge);
+    const sizeGroup: PlaygroupSizeGroup = entry.hasLarge && !entry.hasSmall
+      ? "large"
+      : entry.hasSmall && !entry.hasLarge
+        ? "small"
+        : null;
+    const isHalfAndHalf = entry.hasPrivatePlay && hasResolvedSize;
+
+    let primaryDisplayPlaygroup: PlaygroupDisplayGroup = null;
+    if (isHalfAndHalf) primaryDisplayPlaygroup = "half_and_half";
+    else if (entry.hasPrivatePlay) primaryDisplayPlaygroup = "private_play";
+    else if (sizeGroup === "large") primaryDisplayPlaygroup = "large";
+    else if (sizeGroup === "small") primaryDisplayPlaygroup = "small";
+    else if (entry.hasEvaluation) primaryDisplayPlaygroup = "evaluation";
+
+    let schedulingPlaygroup: SchedulingPlaygroup = null;
+    if (entry.hasPrivatePlay) schedulingPlaygroup = "private_play";
+    else if (sizeGroup === "large") schedulingPlaygroup = "large";
+    else if (sizeGroup === "small") schedulingPlaygroup = "small";
+
+    let unresolvedReason: string | null = null;
+    if (entry.hasLarge && entry.hasSmall) unresolvedReason = "conflicting_size_icons";
+    else if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall && entry.hasEvaluation) unresolvedReason = "evaluation_only";
+    else if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall) unresolvedReason = "no_actionable_icon";
+
+    return {
+      animalGingrId,
+      sizeGroup,
+      hasPrivatePlay: entry.hasPrivatePlay,
+      hasEvaluation: entry.hasEvaluation,
+      isHalfAndHalf,
+      primaryDisplayPlaygroup,
+      schedulingPlaygroup,
+      playgroupTags: ["half_and_half", "private_play", "large", "small", "evaluation"].filter((tag) => {
+        if (tag === "half_and_half") return isHalfAndHalf;
+        return entry.playgroupTags.has(tag);
+      }),
+      sourceIconTitles: Array.from(entry.sourceIconTitles).sort(),
+      sourceIconComments: Array.from(entry.sourceIconComments).sort(),
+      halfAndHalfNote: isHalfAndHalf ? entry.privatePlayComment : null,
+      unresolvedReason,
+    };
+  });
 }
 
 export function normalizePlaygroupAssignmentRow(row: any): PlaygroupAssignment | null {

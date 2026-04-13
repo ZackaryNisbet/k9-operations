@@ -5,6 +5,10 @@ import {
   dateStrET,
   upsertSchedulingMatrixRows,
 } from "../_shared/scheduling-matrix.ts";
+import {
+  getGingrConfigForLocation,
+  upsertAnimalIconsFromGingr,
+} from "../_shared/gingr-icons.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,10 +16,231 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const COMPUTE_CHUNK_DAYS = 7;
+const RESERVATION_RETRY_DELAYS_MS = [250, 750, 1500];
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function enumerateDates(dateFrom: string, dateTo: string) {
+  const dates: string[] = [];
+  let current = dateFrom;
+  while (current <= dateTo) {
+    dates.push(current);
+    current = addDaysStr(current, 1);
+  }
+  return dates;
+}
+
+function chunkDateRange(dateFrom: string, dateTo: string, chunkDays = COMPUTE_CHUNK_DAYS) {
+  const chunks: Array<{ from: string; to: string }> = [];
+  let current = dateFrom;
+  while (current <= dateTo) {
+    const chunkEnd = addDaysStr(current, chunkDays - 1);
+    chunks.push({
+      from: current,
+      to: chunkEnd < dateTo ? chunkEnd : dateTo,
+    });
+    current = addDaysStr(chunkEnd, 1);
+  }
+  return chunks;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function gingrFetch(
+  subdomain: string,
+  endpoint: string,
+  apiKey: string,
+  method: "GET" | "POST" = "GET",
+  body?: Record<string, string>,
+) {
+  const url = `https://${subdomain}.gingrapp.com/api/v1/${endpoint}`;
+
+  let resp: Response;
+  if (method === "POST") {
+    const params = new URLSearchParams();
+    params.append("key", apiKey);
+    if (body) {
+      for (const [key, value] of Object.entries(body)) {
+        params.append(key, value);
+      }
+    }
+    resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: params.toString(),
+    });
+  } else {
+    const params = new URLSearchParams({ key: apiKey });
+    if (body) {
+      for (const [key, value] of Object.entries(body)) {
+        params.append(key, value);
+      }
+    }
+    resp = await fetch(`${url}?${params.toString()}`);
+  }
+
+  if (!resp.ok) {
+    throw new Error(`Gingr API error ${resp.status}: ${await resp.text()}`);
+  }
+  return resp.json();
+}
+
+async function fetchReservationsForDateWithRetry(
+  subdomain: string,
+  apiKey: string,
+  targetDate: string,
+) {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= RESERVATION_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+        start_date: targetDate,
+        end_date: targetDate,
+      });
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error || "Unknown reservations hydrate error"));
+      if (attempt >= RESERVATION_RETRY_DELAYS_MS.length) break;
+      await sleep(RESERVATION_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError || new Error(`Failed to hydrate reservations for ${targetDate}`);
+}
+
+function normalizeReservationCollection(result: any): any[] {
+  if (Array.isArray(result?.data)) return result.data;
+  if (result?.data && typeof result.data === "object") return Object.values(result.data);
+  if (Array.isArray(result)) return result;
+  return [];
+}
+
+function mapGingrReservationRow(row: any, locationId: string) {
+  return {
+    gingr_id: String(row?.reservation_id || ""),
+    location_id: locationId,
+    owner_gingr_id: row?.owner?.id ? String(row.owner.id) : null,
+    animal_gingr_id: row?.animal?.id ? String(row.animal.id) : null,
+    reservation_type_id: row?.reservation_type?.id ? String(row.reservation_type.id) : null,
+    reservation_type_name: row?.reservation_type?.type || null,
+    start_date: row?.start_date || null,
+    end_date: row?.end_date || null,
+    check_in_date: row?.check_in_date || null,
+    check_out_date: row?.check_out_date || null,
+    cancelled_date: row?.cancelled_date || null,
+    confirmed_date: row?.confirmed_date || null,
+    created_date: row?.created_date || null,
+    standing_reservation: row?.standing_reservation || false,
+    owner_first_name: row?.owner?.first_name?.trim() || null,
+    owner_last_name: row?.owner?.last_name?.trim() || null,
+    owner_email: row?.owner?.email || null,
+    animal_name: row?.animal?.name || null,
+    animal_breed: row?.animal?.breed || null,
+    notes_reservation: row?.notes?.reservation_notes || null,
+    notes_animal: row?.notes?.animal_notes || null,
+    notes_owner: row?.notes?.owner_notes || null,
+    services: row?.services || null,
+    deposit: row?.deposit || null,
+    transaction: row?.transaction || null,
+    raw_data: row,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+async function hydrateSchedulingReservationsFromGingr(
+  serviceClient: any,
+  locationId: string,
+  gingrConfig: { subdomain: string; apiKey: string } | null,
+  dateFrom: string,
+  dateTo: string,
+) {
+  const today = dateStrET();
+  const targetDates = enumerateDates(dateFrom, dateTo).filter((date) => date >= today);
+  if (!gingrConfig || !targetDates.length) {
+    return { hydrated: 0, skipped: true };
+  }
+
+  const results = [];
+  for (const targetDate of targetDates) {
+    try {
+      const result = await fetchReservationsForDateWithRetry(
+        gingrConfig.subdomain,
+        gingrConfig.apiKey,
+        targetDate,
+      );
+      results.push(result);
+    } catch (error) {
+      console.error(`compute-scheduling-matrix reservation hydrate failed for ${targetDate}:`, error);
+      results.push({ data: {} });
+    }
+  }
+
+  const reservationsById = new Map<string, any>();
+  for (const result of results) {
+    for (const reservation of normalizeReservationCollection(result)) {
+      if (!reservation || typeof reservation !== "object") continue;
+      const reservationId = String(reservation.reservation_id || "").trim();
+      if (!reservationId) continue;
+      reservationsById.set(reservationId, reservation);
+    }
+  }
+
+  const rows = Array.from(reservationsById.values()).map((reservation) =>
+    mapGingrReservationRow(reservation, locationId),
+  );
+
+  if (!rows.length) {
+    return { hydrated: 0, skipped: false };
+  }
+
+  const { error } = await serviceClient
+    .from("gingr_reservations")
+    .upsert(rows, { onConflict: "location_id,gingr_id" });
+
+  if (error) throw error;
+  return { hydrated: rows.length, skipped: false };
+}
+
+async function syncSchedulingIconsForRange(
+  serviceClient: any,
+  locationId: string,
+  gingrConfig: { subdomain: string; apiKey: string } | null,
+  dateFrom: string,
+  dateTo: string,
+) {
+  if (!gingrConfig) {
+    return { synced: 0, animals: 0, skipped: true };
+  }
+
+  const { data: reservations, error } = await serviceClient
+    .from("gingr_reservations")
+    .select("animal_gingr_id")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
+    .gte("end_date", `${dateFrom}T00:00:00`);
+
+  if (error) throw error;
+
+  const animalIds = [...new Set(
+    (reservations || [])
+      .map((row: any) => String(row.animal_gingr_id || "").trim())
+      .filter(Boolean),
+  )];
+
+  return upsertAnimalIconsFromGingr({
+    supabase: serviceClient,
+    locationId,
+    gingrConfig,
+    animalIds,
   });
 }
 
@@ -114,20 +339,46 @@ Deno.serve(async (req: Request) => {
     const dateTo = String(body.date_to || addDaysStr(dateFrom, 6));
 
     const serviceClient = await assertLocationAccess(req, locationId);
-    const rows = await computeSchedulingMatrixRows({
-      supabase: serviceClient,
+    const gingrConfig = await getGingrConfigForLocation(serviceClient, locationId);
+
+    const reservationHydration = await hydrateSchedulingReservationsFromGingr(
+      serviceClient,
       locationId,
+      gingrConfig,
       dateFrom,
       dateTo,
-    });
+    );
 
-    const upsertResult = await upsertSchedulingMatrixRows(serviceClient, rows);
+    const iconSync = await syncSchedulingIconsForRange(
+      serviceClient,
+      locationId,
+      gingrConfig,
+      dateFrom,
+      dateTo,
+    );
+
+    let rowsUpserted = 0;
+    const chunks = chunkDateRange(dateFrom, dateTo);
+    for (const chunk of chunks) {
+      const rows = await computeSchedulingMatrixRows({
+        supabase: serviceClient,
+        locationId,
+        dateFrom: chunk.from,
+        dateTo: chunk.to,
+      });
+      const result = await upsertSchedulingMatrixRows(serviceClient, rows);
+      rowsUpserted += Number(result.count || 0);
+    }
 
     return jsonResponse({
       ok: true,
       location_id: locationId,
       date_range: [dateFrom, dateTo],
-      rows_upserted: upsertResult.count,
+      rows_upserted: rowsUpserted,
+      chunks_processed: chunks.length,
+      reservation_hydration: reservationHydration,
+      icon_sync: iconSync,
+      source: "canonical_supabase",
     });
   } catch (error: any) {
     console.error("compute-scheduling-matrix error:", error);

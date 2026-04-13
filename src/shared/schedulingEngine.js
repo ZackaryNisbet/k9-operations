@@ -229,6 +229,60 @@ export function getMatrixDisplay(matrix) {
   return { opening, closing, daycare, support };
 }
 
+export function getMatrixProjectedDisplay(matrix) {
+  const projected = matrix?.detail_json?.projection?.display;
+  if (!projected) {
+    return getMatrixDisplay(matrix);
+  }
+
+  return {
+    opening: {
+      large_boarding: toNullableNumber(projected.opening?.large_boarding) ?? 0,
+      small_boarding: toNullableNumber(projected.opening?.small_boarding) ?? 0,
+      private_play_boarding: toNullableNumber(projected.opening?.private_play_boarding) ?? 0,
+      half_and_half_boarding: toNullableNumber(projected.opening?.half_and_half_boarding) ?? 0,
+      unclassified_boarding: toNullableNumber(projected.opening?.unclassified_boarding) ?? 0,
+      total_boarding: toNullableNumber(projected.opening?.total_boarding) ?? 0,
+    },
+    closing: {
+      large_boarding: toNullableNumber(projected.closing?.large_boarding) ?? 0,
+      small_boarding: toNullableNumber(projected.closing?.small_boarding) ?? 0,
+      private_play_boarding: toNullableNumber(projected.closing?.private_play_boarding) ?? 0,
+      half_and_half_boarding: toNullableNumber(projected.closing?.half_and_half_boarding) ?? 0,
+      unclassified_boarding: toNullableNumber(projected.closing?.unclassified_boarding) ?? 0,
+      total_boarding: toNullableNumber(projected.closing?.total_boarding) ?? 0,
+    },
+    daycare: {
+      evaluations: toNullableNumber(projected.daycare?.evaluations) ?? 0,
+      private_play_dayboarding: toNullableNumber(projected.daycare?.private_play_dayboarding) ?? 0,
+      half_and_half_daytime: toNullableNumber(projected.daycare?.half_and_half_daytime) ?? 0,
+      large_daycare: toNullableNumber(projected.daycare?.large_daycare) ?? 0,
+      small_daycare: toNullableNumber(projected.daycare?.small_daycare) ?? 0,
+      unclassified_daycare: toNullableNumber(projected.daycare?.unclassified_daycare) ?? 0,
+      total_daycare: toNullableNumber(projected.daycare?.total_daycare) ?? 0,
+    },
+    support: {
+      departure_baths: toNullableNumber(projected.support?.departure_baths) ?? 0,
+      morning_feeding_dogs: toNullableNumber(projected.support?.morning_feeding_dogs) ?? 0,
+      evening_feeding_dogs: toNullableNumber(projected.support?.evening_feeding_dogs) ?? 0,
+      medication_dogs: toNullableNumber(projected.support?.medication_dogs) ?? 0,
+      total_dog_volume: toNullableNumber(projected.support?.total_dog_volume) ?? 0,
+      tours: toNullableNumber(projected.support?.tours) ?? 0,
+    },
+  };
+}
+
+export function getMatrixProjection(matrix) {
+  return matrix?.detail_json?.projection || null;
+}
+
+export function getMatrixComparison(matrix) {
+  return {
+    last_year_total_dog_volume: toNullableNumber(matrix?.detail_json?.projection?.comparisons?.last_year_total_dog_volume),
+    exact_last_year_display: matrix?.detail_json?.projection?.exact_last_year_display || null,
+  };
+}
+
 export function getMatrixSolverInputs(matrix) {
   const solver = matrix?.detail_json?.solver_inputs || {};
   const display = getMatrixDisplay(matrix);

@@ -235,6 +235,27 @@ Use `slack_search_public` with queries like `CLAIM: CLM-003` or `ALERT:` to find
 
 ## Step 5: Git Workflow
 
+### Local Preview Default For Web Work
+
+For web/UI changes, do **not** use `push to main` as the first testing step.
+
+Default workflow:
+
+1. Make the change locally.
+2. Run the app locally with `npm run dev -- --host 0.0.0.0 --port 4173`.
+3. Give Zack the local review URL:
+   - `http://localhost:4173/` on this Mac
+   - the Vite network URL when same-network testing is useful
+4. Let Zack review and interact with the real app against the real Supabase-backed environment from localhost.
+5. Only after Zack approves the behavior should you commit, push, merge, or deploy to the live URL.
+
+Use local preview as the desktop equivalent of the iPhone Wi-Fi deploy/TestFlight review loop.
+
+Important caveat:
+
+- Frontend-only changes can be safely previewed locally first.
+- Supabase migrations and Edge Function deploys are live changes. If backend work is required, call that out explicitly before applying it so Zack understands that the data path is no longer local-only.
+
 ### Branch Strategy
 
 Each agent works on their own branch:
