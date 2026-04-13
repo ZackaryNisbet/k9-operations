@@ -7,6 +7,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
+  buildManualBathStatusContext,
   buildSuggestedBathStatusContext,
   calculateNights,
   extractBathLikeServices,
@@ -373,6 +374,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   }
 
   const bathDogs: any[] = [];
+  const manualDogs: any[] = [];
   const suggestedDogs: any[] = [];
   const animalIds: string[] = [];
 
@@ -539,6 +541,69 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     });
   }
 
+  const existingBathResIds = new Set([...bathDogs, ...suggestedDogs].map((d) => d.gingrReservationId));
+  const reservationById = new Map(allRes.map((r) => [String(r.gingr_id || ""), r]));
+  const { data: manualOverrideRows } = await supabase
+    .from("ops_bathing_manual_overrides")
+    .select("gingr_reservation_id, animal_gingr_id, bath_type, bath_modifiers, note, added_by_name")
+    .eq("location_id", locationId)
+    .eq("override_date", targetDate)
+    .is("removed_at", null);
+
+  for (const override of (manualOverrideRows || [])) {
+    const resId = String(override.gingr_reservation_id || "");
+    if (!resId || existingBathResIds.has(resId)) continue;
+
+    const r = reservationById.get(resId);
+    if (!r) continue;
+
+    const rd = r.raw_data || {};
+    const startDate = rd.start_date || r.start_date || "";
+    const endDate = rd.end_date || r.end_date || "";
+    const resType = rd.reservation_type || {};
+    const resTypeName = resType.type || r.reservation_type_name || "";
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
+      .filter(Boolean)
+      .map((n: string) => n.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const reservationNotes = notesParts.join(" | ");
+    const animalGingrId = String(override.animal_gingr_id || r.animal_gingr_id || rd.animal?.id || "").trim();
+    const manualBathType = extractBathTypeFromName(String(override.bath_type || "")) || String(override.bath_type || "Standard");
+    const manualBathModifiers = Array.isArray(override.bath_modifiers) ? override.bath_modifiers.filter(Boolean) : [];
+
+    if (animalGingrId) animalIds.push(animalGingrId);
+
+    manualDogs.push({
+      animalGingrId,
+      gingrReservationId: resId,
+      bathServiceId: "",
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed: rd.animal?.breed || "",
+      roomLabel,
+      suiteType: resTypeName,
+      reservationType: resTypeName,
+      reservationCategory: classifyReservationCategory(resTypeName),
+      addonType: manualBathType,
+      bathServiceName: manualBathType,
+      bathModifiers: manualBathModifiers,
+      reservationNotes,
+      manualNote: String(override.note || "").trim(),
+      scheduledAt: "",
+      scheduledTime: "Manual",
+      departureTime: formatTimeHuman(endDate),
+      departureTimeRaw: endDate,
+      startDate,
+      endDate,
+      isCheckedOut: !!r.check_out_date,
+      isDone: false,
+      isFreshNClean: manualBathType === "Fresh N Clean",
+      status: "manual" as string,
+      statusContext: buildManualBathStatusContext(override.added_by_name, override.note),
+    });
+  }
+
   // Fetch bath icons, play icons, and weights
   // iconMap stores ALL bath icons per dog (array) to support multiple bath types
   let iconMap: Record<string, Array<{ title: string; comment: string }>> = {};
@@ -609,7 +674,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   }
 
   // ─── Avg checkout time from cache ──────────────────────────────────────
-  const allDogEntries = [...bathDogs, ...suggestedDogs];
+  const allDogEntries = [...bathDogs, ...manualDogs, ...suggestedDogs];
   const uniqueAnimalIds = [...new Set(allDogEntries.map(d => d.animalGingrId).filter(Boolean))];
   const animalNameMap: Record<string, string> = {};
   const animalResTypeMap: Record<string, string> = {};
@@ -671,7 +736,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       bathModifiers: normalizedBath.bathModifiers,
       bathNotes: iconComments.join(" | "),
       reservationNotes: d.reservationNotes || "",
-      serviceNotes: "",
+      serviceNotes: d.status === "manual" ? (d.manualNote || "") : "",
       weight,
       sizeCategory,
       hasPrivatePlay,
@@ -695,14 +760,17 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   }
 
   const scheduledDogs = bathDogs.map(buildDogOutput);
+  const manualDogsOut = manualDogs.map(buildDogOutput);
   const suggestedDogsOut = suggestedDogs.map(buildDogOutput);
-  const dogs = [...scheduledDogs, ...suggestedDogsOut];
+  const dogs = [...scheduledDogs, ...manualDogsOut, ...suggestedDogsOut];
 
-  // Sort: scheduled first (by scheduledAt), then suggested (by animalName)
+  const statusOrder: Record<string, number> = { scheduled: 0, manual: 1, suggested: 2 };
+
   dogs.sort((a, b) => {
-    if (a.status !== b.status) return a.status === "scheduled" ? -1 : 1;
+    if (a.status !== b.status) return (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
     if (a.siblingGroup && a.siblingGroup === b.siblingGroup) return a.animalName.localeCompare(b.animalName);
     if (a.status === "scheduled") return (a.scheduledAt || "").localeCompare(b.scheduledAt || "");
+    if (a.status === "manual") return a.animalName.localeCompare(b.animalName);
     return a.animalName.localeCompare(b.animalName);
   });
 
@@ -745,8 +813,16 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
 
   // Build summary with category counts
   const scheduledCount = grouped.filter(d => d.status === "scheduled").length;
+  const manualCount = grouped.filter(d => d.status === "manual").length;
   const suggestedCount = grouped.filter(d => d.status === "suggested").length;
-  const byCategory: Record<string, number> = { boarding: 0, daycare: 0, day_boarding: 0, evaluation: 0, suggested: suggestedCount };
+  const byCategory: Record<string, number> = {
+    boarding: 0,
+    daycare: 0,
+    day_boarding: 0,
+    evaluation: 0,
+    suggested: suggestedCount,
+    manual: manualCount,
+  };
   for (const d of grouped) {
     if (d.status === "scheduled" && d.reservationCategory && byCategory[d.reservationCategory] !== undefined) {
       byCategory[d.reservationCategory]++;
@@ -763,6 +839,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     summary: {
       total: totalCount,
       scheduled: scheduledCount,
+      manual: manualCount,
       suggested: suggestedCount,
       byCategory,
     },

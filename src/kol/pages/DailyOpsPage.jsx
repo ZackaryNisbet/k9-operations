@@ -1126,6 +1126,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         avgCheckoutTime: d.avgCheckoutTime || null,
         checkoutHistory: d.checkoutHistory || [],
         reservationDates: d.reservationDates || {},
+        statusContext: d.statusContext || null,
       };
     });
 
@@ -1133,6 +1134,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const filteredRows = bathRows.filter(row => {
       if (bathFilter === "all") return true;
       if (bathFilter === "suggested") return row.status === "suggested";
+      if (bathFilter === "manual") return row.status === "manual";
       return row.status === "scheduled" && row.reservationCategory === bathFilter;
     });
 
@@ -1147,6 +1149,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       { key: "daycare", label: "Daycare", count: catCounts.daycare || 0 },
       { key: "day_boarding", label: "Day Boarding", count: catCounts.day_boarding || 0 },
       { key: "evaluation", label: "Evaluation", count: catCounts.evaluation || 0 },
+      { key: "manual", label: "Manual", count: catCounts.manual || 0 },
       { key: "suggested", label: "Suggested", count: catCounts.suggested || 0 },
     ].filter(p => p.key === "all" || p.count > 0);
 
@@ -1183,6 +1186,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         "Shampoo From Home": { background: "#ECFDF5", color: "#059669" },
         "Fresh N Clean": { background: "#ECFDF5", color: "#059669" },
         "Water Rinse": { background: "#E0F2FE", color: "#0369A1" },
+        "Manual": { background: "#E0F2FE", color: "#0369A1" },
         "Suggested": { background: "#FFF7ED", color: "#C2410C" },
       };
       if (type.includes("Hypo")) return { background: "#FEF3C7", color: "#D97706" };
@@ -1243,7 +1247,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>
               {totalBaths === 0
                 ? `No baths scheduled for ${isToday ? "today" : fmtDate(viewDate)}`
-                : `No ${bathFilter === "suggested" ? "suggested" : bathFilter} baths`}
+                : `No ${bathFilter === "suggested" ? "suggested" : bathFilter === "manual" ? "manual" : bathFilter} baths`}
             </div>
           </Card>
         ) : (
@@ -1273,12 +1277,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                       <tr key={row.resId} style={{
                         borderBottom: i < filteredRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
                         borderTop: isNewGroup ? `2px solid #A7F3D0` : "none",
-                        background: row.isDone ? "#F0FDF4" : row.status === "suggested" ? "#FFF7ED" : isInGroup ? "#F0FDF4" + "33" : "transparent",
+                        background: row.isDone ? "#F0FDF4" : row.status === "manual" ? "#EFF6FF" : row.status === "suggested" ? "#FFF7ED" : isInGroup ? "#F0FDF4" + "33" : "transparent",
                         transition: "background 0.2s",
                       }}>
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             {row.dogName}
+                            {row.status === "manual" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#E0F2FE", color: "#0369A1" }}>Manual</span>}
                             {row.status === "suggested" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FFF7ED", color: "#C2410C" }}>Suggested</span>}
                             {row.hasPrivatePlay && <span title="Private Play" style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#EDE9FE", color: "#7C3AED" }}>PP</span>}
                             {row.sizeCategory === "large" && <span title={row.weight ? `${row.weight} lbs` : "Large dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>LG</span>}
@@ -1292,6 +1297,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           {row.status === "suggested" && row.reservationDates?.start && (
                             <div style={{ fontSize: 10, color: "#C2410C", marginTop: 2 }}>
                               Boarding {row.reservationDates.start.slice(5)} – {row.reservationDates.end.slice(5)}, no bath scheduled
+                            </div>
+                          )}
+                          {row.status === "manual" && row.statusContext?.message && (
+                            <div style={{ fontSize: 10, color: "#0369A1", marginTop: 2 }}>
+                              {row.statusContext.message}
                             </div>
                           )}
                         </td>

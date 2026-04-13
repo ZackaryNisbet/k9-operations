@@ -343,6 +343,12 @@ interface SuggestedDog {
   context?: string;
 }
 
+interface ManualOverrideDog {
+  name: string;
+  bathType: string;
+  note: string;
+}
+
 function detectSuggested(
   appDogs: any[],
   allRes: any[],
@@ -649,6 +655,13 @@ Deno.serve(async (req: Request) => {
 
     // Compare scheduled dogs only (icons-based)
     const comparison = compareBathingData(appDogs, gingrDogs);
+    const manualDogs: ManualOverrideDog[] = appDogs
+      .filter((d: any) => d.status === "manual")
+      .map((d: any) => ({
+        name: dogKey(d.animalName, (d.ownerName || "").split(" ").pop() || ""),
+        bathType: d.bathType || "Standard",
+        note: d.serviceNotes || d.statusContext?.message || "",
+      }));
 
     const duration = Date.now() - startTime;
 
@@ -699,6 +712,10 @@ Deno.serve(async (req: Request) => {
           fresh_n_clean: {
             count: freshNCleanDogs.length,
             dogs: freshNCleanDogs,
+          },
+          manual: {
+            count: manualDogs.length,
+            dogs: manualDogs,
           },
           suggested: {
             count: suggestedDogs.length,

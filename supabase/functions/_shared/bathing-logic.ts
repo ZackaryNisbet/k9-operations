@@ -1,4 +1,7 @@
-export type BathStatusContextCode = "scheduled_other_day" | "no_bath_detected";
+export type BathStatusContextCode =
+  | "scheduled_other_day"
+  | "no_bath_detected"
+  | "manual_override";
 
 export interface BathStatusContext {
   code: BathStatusContextCode;
@@ -105,6 +108,9 @@ const MODIFIER_ORDER = new Map<string, number>([
   ["TOWEL DRY ONLY", 3],
   ["*See account notes*", 4],
 ]);
+
+export const KNOWN_BATH_TYPE_LABELS = [...TYPE_ORDER.keys()];
+export const KNOWN_BATH_MODIFIER_LABELS = [...MODIFIER_ORDER.keys()];
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -246,6 +252,33 @@ export function buildSuggestedBathStatusContext(
   };
 }
 
+export function buildManualBathStatusContext(
+  addedByName?: string | null,
+  note?: string | null,
+): BathStatusContext {
+  const by = normalizeWhitespace(String(addedByName || ""));
+  const cleanNote = normalizeWhitespace(String(note || ""));
+
+  if (cleanNote) {
+    return {
+      code: "manual_override",
+      message: `Manually added: ${cleanNote}`,
+    };
+  }
+
+  if (by) {
+    return {
+      code: "manual_override",
+      message: `Manually added by ${by}`,
+    };
+  }
+
+  return {
+    code: "manual_override",
+    message: "Manually added to this report",
+  };
+}
+
 export function normalizeBathTypeLabel(label: string | null | undefined): string | null {
   const value = toKey(label);
   if (!value) return null;
@@ -262,6 +295,15 @@ export function normalizeBathModifierLabel(label: string | null | undefined): st
     if (rule.match(value)) return rule.label;
   }
   return null;
+}
+
+export function sanitizeBathModifierLabels(labels: Array<string | null | undefined>): string[] {
+  const modifierSet = new Set<string>();
+  for (const label of labels) {
+    const normalized = normalizeBathModifierLabel(label);
+    if (normalized) modifierSet.add(normalized);
+  }
+  return sortByKnownOrder([...modifierSet], MODIFIER_ORDER);
 }
 
 function sortByKnownOrder(values: string[], order: Map<string, number>): string[] {
