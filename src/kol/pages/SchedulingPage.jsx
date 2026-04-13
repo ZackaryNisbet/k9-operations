@@ -5,17 +5,14 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge, Btn } from "../../shared/ui";
+import { Btn } from "../../shared/ui";
 import { useSchedulingData } from "../../hooks/useSchedulingData";
 import {
   TASK_COLORS,
-  SCHEDULE_CONFIG_DEFAULTS,
-  solveOpening,
-  generateFullDayGrid,
   buildDaySummary,
-  validateGrid,
   serializeSchedule,
   applyOverride,
+  getMatrixDisplay,
 } from "../../shared/schedulingEngine";
 
 // ─── Utility Components ───────────────────────────────────────────────────
@@ -55,10 +52,74 @@ function StatusChip({ status }) {
   return <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color }}>{s.label}</span>;
 }
 
-function ConfidenceBadge({ source }) {
-  if (source === "empty" || source === "none") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#FEE2E2", color: "#991B1B", fontWeight: 600 }}>No Data</span>;
-  if (source === "dashboard_fallback" || source === "low") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: C.warnLt, color: C.warn, fontWeight: 600 }}>Estimated</span>;
-  return null;
+function TrustBadge({ state, blocked }) {
+  const effective = blocked ? "blocked" : state;
+  const map = {
+    trusted: { bg: C.sucLt, color: C.suc, label: "Trusted" },
+    estimated: { bg: C.warnLt, color: C.warn, label: "Estimated" },
+    missing: { bg: "#FEE2E2", color: "#991B1B", label: "Missing" },
+    blocked: { bg: "#FEE2E2", color: "#991B1B", label: "Blocked" },
+  };
+  const chip = map[effective] || map.missing;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "3px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: chip.bg, color: chip.color }}>
+      {chip.label}
+    </span>
+  );
+}
+
+const MATRIX_ROW_GROUPS = [
+  {
+    section: "Boarding Opening",
+    rows: [
+      { key: "opening.large_boarding", label: "Large boarding opening" },
+      { key: "opening.small_boarding", label: "Small boarding opening" },
+      { key: "opening.private_play_boarding", label: "Private play boarding opening" },
+      { key: "opening.unclassified_boarding", label: "Unclassified boarding opening" },
+      { key: "opening.total_boarding", label: "Total boarding opening", total: true },
+    ],
+  },
+  {
+    section: "Boarding Closing",
+    rows: [
+      { key: "closing.large_boarding", label: "Large boarding closing" },
+      { key: "closing.small_boarding", label: "Small boarding closing" },
+      { key: "closing.private_play_boarding", label: "Private play boarding closing" },
+      { key: "closing.unclassified_boarding", label: "Unclassified boarding closing" },
+      { key: "closing.total_boarding", label: "Total boarding closing", total: true },
+    ],
+  },
+  {
+    section: "Daycare and Dayboarding",
+    rows: [
+      { key: "daycare.evaluations", label: "Evaluations" },
+      { key: "daycare.private_play_dayboarding", label: "Private play dayboarding" },
+      { key: "daycare.large_daycare", label: "Large daycare" },
+      { key: "daycare.small_daycare", label: "Small daycare" },
+      { key: "daycare.unclassified_daycare", label: "Unclassified daycare" },
+      { key: "daycare.total_daycare", label: "Total daycare", total: true },
+    ],
+  },
+  {
+    section: "Support Drivers",
+    rows: [
+      { key: "support.departure_baths", label: "Departure baths" },
+      { key: "support.morning_feeding_dogs", label: "Morning feeding dogs" },
+      { key: "support.evening_feeding_dogs", label: "Evening feeding dogs" },
+      { key: "support.medication_dogs", label: "Medication dogs" },
+      { key: "support.total_dog_volume", label: "Total dog volume", total: true },
+      { key: "support.tours", label: "Tours" },
+    ],
+  },
+];
+
+function getNestedValue(obj, key) {
+  return key.split(".").reduce((acc, part) => acc?.[part], obj);
+}
+
+function formatMatrixDate(date) {
+  const dt = new Date(`${date}T12:00:00`);
+  return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
 }
 
 // ─── Staff Plan Input (inline mini-form) ──────────────────────────────────
@@ -134,7 +195,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [overrideReason, setOverrideReason] = useState("");
   const [localGrid, setLocalGrid] = useState(null); // For live override preview
 
-  const selectedDay = weekData[selectedDayIdx] || weekData[0];
+  const workbookDays = useMemo(
+    () => weekData.map(day => ({ ...day, display: getMatrixDisplay(day.matrix) })),
+    [weekData]
+  );
+
+  const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
 
   // Build full day summary (including opening solver + grid) for selected day
   const daySummary = useMemo(() => {
@@ -166,8 +232,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   // Generate & save schedule
   const handleGenerate = useCallback(async () => {
-    if (!daySummary?.openingResult) {
+    if (!selectedDay?.staffPlan) {
       addGlobalToast?.("Enter a staff plan first to generate a schedule.", "info");
+      return;
+    }
+    if (!daySummary?.canGenerate || !daySummary?.openingResult) {
+      const blocker = daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0];
+      addGlobalToast?.(blocker || "This day is not ready for schedule generation yet.", "info");
       return;
     }
     try {
@@ -243,9 +314,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [selectedDay, fetchScheduleVersions]);
 
-  const m = selectedDay?.matrix || {};
+  const display = selectedDay?.display || getMatrixDisplay(selectedDay?.matrix || {});
   const req = daySummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
   const assignedPct = selectedDay?.assignedFunctioningPct || 0;
+  const generateDisabled = !selectedDay?.staffPlan || !daySummary?.canGenerate;
+  const generateDisabledReason = !selectedDay?.staffPlan
+    ? "Enter a staff plan to enable schedule generation."
+    : (daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation.");
 
   const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {}, phases: null };
   const { lanes, slots, grid, phases } = gridData;
@@ -281,56 +356,109 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <Btn variant="secondary" size="sm" onClick={() => setShowAssumptions(!showAssumptions)}>
             {showAssumptions ? "Hide" : "Show"} Assumptions
           </Btn>
-          <Btn variant="primary" size="sm" onClick={handleGenerate}>
+          <Btn variant="primary" size="sm" onClick={handleGenerate} disabled={generateDisabled} title={generateDisabledReason}>
             Generate Schedule
           </Btn>
         </div>
       </div>
 
-      {/* ── Section 1: 7-Day Raw Matrix ───────────────────────────────── */}
-      <SectionCard title="7-Day Demand Matrix" subtitle="Operational numbers for the upcoming week — live from Gingr data" icon={<I.Calendar />}>
+      {/* ── Section 1: 7-Day Workbook Matrix ──────────────────────────── */}
+      <SectionCard title="7-Day Demand Matrix" subtitle="Workbook view by day. Click any day column to inspect staffing, trust blockers, and schedule output." icon={<I.Calendar />}>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 780 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1040 }}>
             <thead>
-              <tr style={{ background: C.priLt }}>
-                {["Day", "Gross", "BDG LG", "BDG SM", "BDG ?", "DC LG", "DC SM", "PP", "Baths", "Feed", "Meds", "Arrive", "Depart", "Status"].map(h => (
-                  <th key={h} style={{ padding: "8px 8px", fontWeight: 700, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em", color: C.textMut, textAlign: h === "Day" ? "left" : "center", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                ))}
+              <tr>
+                <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", minWidth: 260, padding: "14px 16px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                  Metric
+                </th>
+                {workbookDays.map((day, index) => {
+                  const selected = index === selectedDayIdx;
+                  const blocked = day.generationBlockers.length > 0;
+                  return (
+                    <th
+                      key={day.date}
+                      onClick={() => setSelectedDayIdx(index)}
+                      style={{
+                        cursor: "pointer",
+                        minWidth: 122,
+                        padding: "12px 12px 14px",
+                        textAlign: "center",
+                        borderBottom: `1px solid ${C.border}`,
+                        background: selected ? "#EEF4FF" : "#F8FAFC",
+                        boxShadow: selected ? `inset 0 -2px 0 ${C.pri}` : "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 16, fontWeight: 800, color: selected ? C.pri : C.text, lineHeight: 1.1 }}>
+                        {day.dayName}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{formatMatrixDate(day.date)}</div>
+                      <div style={{ marginTop: 8 }}>
+                        <TrustBadge state={day.matrixTrustState} blocked={blocked} />
+                      </div>
+                      <div style={{ fontSize: 10, color: blocked ? C.dan : C.textMut, marginTop: 6, minHeight: 14 }}>
+                        {blocked ? `${day.generationBlockers.length} blocker${day.generationBlockers.length === 1 ? "" : "s"}` : day.canGenerate ? "Ready to schedule" : "Waiting on matrix"}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {weekData.map((day, i) => {
-                const sel = i === selectedDayIdx;
-                const mx = day.matrix || {};
+              {MATRIX_ROW_GROUPS.flatMap((group) => {
                 return (
-                  <tr key={day.date} onClick={() => setSelectedDayIdx(i)} style={{ cursor: "pointer", background: sel ? C.priLt : i % 2 === 0 ? C.surface : C.surfaceHover, transition: "background 0.1s" }}>
-                    <td style={{ padding: "8px 8px", fontWeight: sel ? 700 : 500, color: sel ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 700 }}>{day.dayName}</span> <span style={{ color: C.textMut }}>{day.dayNum}</span>
-                      {day.isWeekend && <span style={{ marginLeft: 4, fontSize: 9, padding: "1px 5px", borderRadius: 4, background: C.infoLt, color: C.info, fontWeight: 600 }}>WE</span>}
-                      {" "}<ConfidenceBadge source={mx._source || (day.hasLiveMatrix ? null : mx._confidence)} />
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.borderLight}` }}>{mx.gross_dogs_in_building || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_large || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_small || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.boarding_unknown_size || 0) > 0 ? C.warn : C.textMut }}>{mx.boarding_unknown_size || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_large || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_small || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{(mx.pp_dayboarders || 0) + (mx.pp_overnight_boarders || 0)}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.departure_baths || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.feeding_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
-                      {mx.feeding_dogs || 0}
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.medication_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
-                      {mx.medication_dogs || 0}
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_arriving || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_departing || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}><StatusChip status={day.status} /></td>
-                  </tr>
+                  [
+                    <tr key={`${group.section}-section`}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                        {group.section}
+                      </td>
+                      {workbookDays.map((day, index) => (
+                        <td key={`${group.section}-${day.date}`} style={{ background: index === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                      ))}
+                    </tr>,
+                    ...group.rows.map((row) => (
+                      <tr key={row.key}>
+                        <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: row.total ? "#F8FAFC" : C.surface, borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 13, fontWeight: row.total ? 800 : 600, color: C.text }}>
+                          {row.label}
+                        </td>
+                        {workbookDays.map((day, index) => {
+                          const selected = index === selectedDayIdx;
+                          const rawValue = getNestedValue(day.display, row.key);
+                          const missingValue = rawValue === null || rawValue === undefined;
+                          const valueText = missingValue ? (day.matrixTrustState === "missing" ? "Missing" : "—") : rawValue;
+                          return (
+                            <td
+                              key={`${row.key}-${day.date}`}
+                              onClick={() => setSelectedDayIdx(index)}
+                              style={{
+                                cursor: "pointer",
+                                textAlign: "center",
+                                padding: "10px 8px",
+                                borderBottom: `1px solid ${C.borderLight}`,
+                                background: selected ? "#F8FBFF" : C.surface,
+                                color: missingValue ? C.textMut : row.total ? C.text : C.textSec,
+                                fontSize: missingValue ? 11 : 16,
+                                fontWeight: row.total ? 800 : 700,
+                              }}
+                            >
+                              {valueText}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )),
+                  ]
                 );
               })}
             </tbody>
           </table>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
+          </span>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            Trust notes: {selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}
+          </span>
         </div>
       </SectionCard>
 
@@ -355,48 +483,81 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {selectedDay && (
         <SectionCard
           title={`Required Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Functioning PCT requirement by daypart, driven by the demand matrix above"
+          subtitle="Functioning PCT requirement by daypart, driven by the trusted matrix above"
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-            {[
-              { label: "Opening (AM)", required: req.am },
-              { label: "Midday", required: req.midday },
-              { label: "Closing (PM)", required: req.pm },
-            ].map(({ label, required: reqVal }) => {
-              const gap = Math.max(0, reqVal - assignedPct);
-              const hasGap = assignedPct > 0 && assignedPct < reqVal;
-              return (
-                <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
-                  <div style={{ display: "flex", gap: 20 }}>
-                    <MetricPill label="Required" value={reqVal} />
-                    {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
-                    {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {/* Total hours strip */}
-          {selectedDay.staffPlan && (
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Est. Functional Hours</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
+          {!selectedDay.canShowHeadcount ? (
+            <div style={{ padding: "16px 18px", borderRadius: 12, background: C.warnLt, border: `1px solid ${C.warn}22` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                Headcount stays provisional until this day has a trusted matrix.
+              </div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
+                {generateDisabledReason}
+              </div>
+              {selectedDay.generationBlockers.length > 0 && (
+                <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                </ul>
+              )}
             </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+                {[
+                  { label: "Opening (AM)", required: req.am },
+                  { label: "Midday", required: req.midday },
+                  { label: "Closing (PM)", required: req.pm },
+                ].map(({ label, required: reqVal }) => {
+                  const gap = Math.max(0, reqVal - assignedPct);
+                  const hasGap = assignedPct > 0 && assignedPct < reqVal;
+                  return (
+                    <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
+                      <div style={{ display: "flex", gap: 20 }}>
+                        <MetricPill label="Required" value={reqVal} />
+                        {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
+                        {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedDay.staffPlan && (
+                <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Estimated Functional Hours</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
+                </div>
+              )}
+            </>
           )}
         </SectionCard>
       )}
 
       {/* ── Section 3: Full-Day Rotation Grid ─────────────────────────── */}
-      {lanes.length > 0 && slots.length > 0 && (
+      {selectedDay && (
         <SectionCard
           title={`Rotation Schedule — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Full-day 15-minute slot assignments. Click cells to override."
+          subtitle="Full-day 15-minute slot assignments. Automated only when the selected day is fully trusted."
           icon={<I.Clipboard />}
           style={{ marginTop: 16 }}
         >
+          {!daySummary?.canGenerate ? (
+            <div style={{ padding: "16px 18px", borderRadius: 12, background: C.surfaceHover, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                Rotation generation is locked until the selected day is fully trusted.
+              </div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
+                {generateDisabledReason}
+              </div>
+              {selectedDay.generationBlockers.length > 0 && (
+                <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <>
           {/* Toolbar: density + override toggle + publish */}
           <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             {["compact", "standard", "expanded"].map(d => (
@@ -515,6 +676,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </span>
             ))}
           </div>
+            </>
+          )}
         </SectionCard>
       )}
 
@@ -548,7 +711,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Key Driver</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {m.gross_dogs_in_building || 0} dogs in building drives {req.am} fPCT AM requirement
+                  {display.support.total_dog_volume || 0} total dogs drive the {req.am} functioning PCT opening requirement
                 </p>
               </div>
               {daySummary.openingResult.yardOrder && (
@@ -556,7 +719,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Yard</span>
                   <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
                     {daySummary.openingResult.yardOrder === "large" ? "Large" : "Small"} daycare opened first
-                    ({daySummary.openingResult.yardOrder === "large" ? (m.boarding_large || 0) : (m.boarding_small || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (m.boarding_small || 0) : (m.boarding_large || 0)} other-side dogs)
+                    ({daySummary.openingResult.yardOrder === "large" ? (display.opening.large_boarding || 0) : (display.opening.small_boarding || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (display.opening.small_boarding || 0) : (display.opening.large_boarding || 0)} other-side dogs)
                   </p>
                 </div>
               )}
@@ -569,7 +732,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Bath Target</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {m.departure_baths || 0} departure baths — {(m.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
+                  {display.support.departure_baths || 0} departure baths — {(display.support.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
                 </p>
               </div>
             </div>
