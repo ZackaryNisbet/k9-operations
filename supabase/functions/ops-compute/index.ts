@@ -5,6 +5,14 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildSuggestedBathStatusContext,
+  calculateNights,
+  extractBathLikeServices,
+  getBathSchedulingForDate,
+  isBoardingReservation,
+  normalizeBathDisplay,
+} from "../_shared/bathing-logic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1309,7 +1317,7 @@ const BATH_TYPE_ADDONS = new Set([
 ]);
 // Known bath modifier add-ons (instructions, not a type)
 const BATH_MODIFIER_ADDONS = new Set([
-  "NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*",
+  "NO DRYER", "NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*",
 ]);
 
 function extractBathTypeFromName(svcName: string): string | null {
@@ -1402,28 +1410,62 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     if (!seen.has(id)) { seen.add(id); allRes.push(r); }
   }
 
-  // Filter to dogs with bath scheduled today
+  // Filter to dogs with bath scheduled today. If a mandatory bath exists on
+  // another day of the stay, surface it as Suggested instead of inflating the
+  // scheduled-today parity set.
   const bathDogs: any[] = [];
+  const suggestedDogs: any[] = [];
   const animalIds: string[] = [];
   for (const r of allRes) {
     const rd = r.raw_data || {};
     const rawSvcs = rd.services || [];
     const topSvcs = Array.isArray(r.services) ? r.services : [];
+    const bathServices = extractBathLikeServices(rawSvcs, topSvcs);
+    const { scheduledToday, scheduledOtherDay, hasBathOrGroom } = getBathSchedulingForDate(bathServices, today);
+    if (!hasBathOrGroom) continue;
 
-    // Look for bath service in raw_data.services first, then fall back to top-level services column
-    let bathSvc = rawSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
-    if (!bathSvc) {
-      bathSvc = topSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
-    }
-    const hasBathTop = topSvcs.some((s: any) => { const n = typeof s === "string" ? s : s?.name || ""; return n.toLowerCase().includes("bath"); });
-    if (!bathSvc && !hasBathTop) continue;
-
-    const scheduledAt = bathSvc?.scheduled_at || "";
-    const isScheduledToday = scheduledAt.includes(today);
-    // Prefer raw_data.end_date (has timezone like -04:00) over DB column (UTC)
+    // Prefer raw_data dates when present because they preserve the original local day.
+    const startDate = rd.start_date || r.start_date || "";
     const endDate = rd.end_date || r.end_date || "";
+    const resType = rd.reservation_type || {};
+    const resTypeName = resType.type || r.reservation_type_name || "";
     const isDepartingToday = endDate.includes(today);
-    if (!isScheduledToday && !isDepartingToday) continue;
+    const nights = calculateNights(startDate, endDate);
+
+    if (!scheduledToday) {
+      if (isDepartingToday && isBoardingReservation(resTypeName) && nights >= 2) {
+        const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+        if (animalGingrId) animalIds.push(animalGingrId);
+
+        suggestedDogs.push({
+          animalGingrId,
+          gingrReservationId: String(r.gingr_id || ""),
+          bathServiceId: scheduledOtherDay?.id || "",
+          animalName: r.animal_name || rd.animal?.name || "Unknown",
+          ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+          breed: rd.animal?.breed || "",
+          roomLabel: r.room_assignment || rd.run?.name || "",
+          suiteType: resTypeName,
+          reservationType: resTypeName,
+          reservationCategory: classifyReservationCategory(resTypeName),
+          addonType: null,
+          bathServiceName: scheduledOtherDay?.name || "",
+          bathModifiers: [],
+          reservationNotes: "",
+          scheduledAt: scheduledOtherDay?.scheduledAt || "",
+          scheduledTime: scheduledOtherDay?.scheduledAt ? formatTimeHuman(scheduledOtherDay.scheduledAt) : "—",
+          departureTime: formatTimeHuman(endDate),
+          departureTimeRaw: endDate,
+          startDate,
+          endDate,
+          isCheckedOut: !!r.check_out_date,
+          isDone: false,
+          status: "suggested" as string,
+          statusContext: buildSuggestedBathStatusContext(today, scheduledOtherDay),
+        });
+      }
+      continue;
+    }
 
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
     if (animalGingrId) animalIds.push(animalGingrId);
@@ -1431,7 +1473,6 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     // Use whichever services array has data for addon parsing
     const svcsForAddons = rawSvcs.length > 0 ? rawSvcs : topSvcs;
     const { addonType, modifiers } = parseBathAddonsFromServices(svcsForAddons);
-    const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
     // Combine reservation + animal + owner notes (strip HTML tags for readability)
@@ -1441,11 +1482,10 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       .filter(Boolean);
     const reservationNotes = notesParts.join(" | ");
 
-    const resTypeName = resType.type || r.reservation_type_name || "";
     bathDogs.push({
       animalGingrId,
       gingrReservationId: String(r.gingr_id || ""),
-      bathServiceId: bathSvc?.id ? String(bathSvc.id) : "",
+      bathServiceId: scheduledToday.id || "",
       animalName: r.animal_name || rd.animal?.name || "Unknown",
       ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
       breed: rd.animal?.breed || "",
@@ -1454,24 +1494,24 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       reservationType: resTypeName,
       reservationCategory: classifyReservationCategory(resTypeName),
       addonType,
-      bathServiceName: bathSvc?.name || "",
+      bathServiceName: scheduledToday.name || "",
       bathModifiers: modifiers,
       reservationNotes,
-      scheduledAt,
-      scheduledTime: formatTimeHuman(scheduledAt),
+      scheduledAt: scheduledToday.scheduledAt,
+      scheduledTime: formatTimeHuman(scheduledToday.scheduledAt),
       departureTime: formatTimeHuman(endDate),
       departureTimeRaw: endDate,
-      startDate: r.start_date || "",
-      endDate: r.end_date || "",
+      startDate,
+      endDate,
       isCheckedOut: !!r.check_out_date,
-      isDone: !!bathSvc?.completed_at,
+      isDone: !!scheduledToday.completedAt,
       status: "scheduled" as string,
     });
   }
 
   // ─── Fresh N' Clean auto-detection ─────────────────────────────────────
   // Dogs boarding exactly 1 night, departing today, with no bath service
-  const bathDogResIds = new Set(bathDogs.map(d => d.gingrReservationId));
+  const bathDogResIds = new Set([...bathDogs, ...suggestedDogs].map(d => d.gingrReservationId));
   for (const r of allRes) {
     const resId = String(r.gingr_id || "");
     if (bathDogResIds.has(resId)) continue; // already has a bath
@@ -1604,8 +1644,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   }
 
   // ─── Suggested baths: boarding dogs staying 2+ nights with no bath ─────
-  const scheduledResIds = new Set(bathDogs.map(d => d.gingrReservationId));
-  const suggestedDogs: any[] = [];
+  const scheduledResIds = new Set([...bathDogs, ...suggestedDogs].map(d => d.gingrReservationId));
   for (const r of allRes) {
     const resId = String(r.gingr_id || "");
     if (scheduledResIds.has(resId)) continue;
@@ -1668,6 +1707,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       isCheckedOut: false,
       isDone: false,
       status: "suggested" as string,
+      statusContext: buildSuggestedBathStatusContext(today, null),
     });
   }
 
@@ -1727,14 +1767,13 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const icons = iconMap[d.animalGingrId] || [];
     const iconTitles = icons.map((i: any) => i.title).filter(Boolean);
     const iconComments = icons.map((i: any) => i.comment).filter(Boolean);
-
-    const bathType = d.isFreshNClean
-      ? "Fresh N' Clean"
-      : d.status === "suggested"
-        ? "Suggested"
-        : (iconTitles[0] || d.addonType || extractBathTypeFromName(d.bathServiceName) || "Standard");
-
-    const bathIcons = (d.isFreshNClean || d.status === "suggested") ? [] : iconTitles;
+    const normalizedBath = normalizeBathDisplay({
+      iconTitles,
+      addonType: d.addonType,
+      serviceName: d.bathServiceName,
+      rawModifiers: d.bathModifiers,
+      defaultType: d.isFreshNClean ? "Fresh N Clean" : "Standard",
+    });
 
     const weight = weightMap[d.animalGingrId] ?? null;
     const sizeCategory = getSizeCategory(d.animalGingrId, weight);
@@ -1765,9 +1804,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       breed: d.breed,
       roomLabel: roomName || d.roomLabel,
       suiteType: d.suiteType,
-      bathType,
-      bathIcons,
-      bathModifiers: d.bathModifiers,
+      bathType: normalizedBath.bathType,
+      bathIcons: normalizedBath.bathIcons,
+      bathModifiers: normalizedBath.bathModifiers,
       bathNotes: iconComments.join(" | "),
       reservationNotes: d.reservationNotes || "",
       serviceNotes: (d.isFreshNClean || d.status === "suggested") ? "" : (serviceNotesMap[idx] || ""),
@@ -1782,6 +1821,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       isDone: d.isDone,
       isFreshNClean: !!d.isFreshNClean,
       status: d.status || "scheduled",
+      statusContext: d.statusContext || null,
       reservationType: d.reservationType || d.suiteType,
       reservationCategory: d.reservationCategory || classifyReservationCategory(d.suiteType),
       roomName,
