@@ -13,6 +13,12 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { supabase } from "../../supabaseClient";
 import { C, todayStr } from "../../shared/theme";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
+import {
+  buildPlaygroupAssignmentMap,
+  getDisplayPlaygroup,
+  getDisplayTags,
+  getOperationalPlaygroup,
+} from "../../shared/playgroupAssignments";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -86,26 +92,13 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
  * resilience. No fallback to weight — unclassified dogs are surfaced
  * so staff can fix the missing icon in Gingr.
  * ──────────────────────────────────────────────────────────────────────── */
-/* ── Priority order for playgroup resolution ────────────────────────── */
-const PLAYGROUP_PRIORITY = ['private_play', 'large', 'small', 'evaluation'];
-
 function getDogPlaygroup(dog, res, playgroupMap, allDogTags) {
   const animalId = String(dog?.gingrId || res?.animalGingrId || "");
-  const tags = allDogTags?.[animalId];
-
-  // PP determined by Gingr icon ONLY — not room names, services, or reservation type
-  if (tags && tags.has('private_play')) return 'private_play';
-
-  // Priority among group play tags: large > small
-  if (tags) {
-    for (const p of PLAYGROUP_PRIORITY) {
-      if (tags.has(p)) return p;
-    }
+  const assignment = playgroupMap?.[animalId];
+  const operational = getOperationalPlaygroup(assignment);
+  if (operational) {
+    return operational;
   }
-
-  // Fallback to single-tag playgroupMap
-  const pg = playgroupMap?.[animalId];
-  if (pg) return pg;
   return null; // unclassified
 }
 
@@ -131,6 +124,13 @@ const SIZE_THEME = {
     label: "Private Play",
     badge: "PP",
     icon: "P",
+  },
+  half_and_half: {
+    accent: "#A855F7",     // Purple
+    accentRgb: "168,85,247",
+    label: "Half & Half",
+    badge: "H&H",
+    icon: "H",
   },
   evaluation: {
     accent: "#EAB308",     // Yellow
@@ -241,7 +241,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
-      size: playgroupMap[animalId] || "unclassified",
+      size: getDisplayPlaygroup(playgroupMap[animalId]) || "unclassified",
     };
   });
   const ownerLast = entry.ownerLastName || "";
@@ -388,7 +388,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
-      size: playgroupMap[animalId] || "unclassified",
+      size: getDisplayPlaygroup(playgroupMap[animalId]) || "unclassified",
     };
   });
   const ownerLast = entry.ownerLastName || "";
@@ -636,7 +636,9 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
   const iconData = animalIcons[dog?.gingrId];
   const localPhoto = dogPhotoMap?.[dog?.gingrId];
   const image = localPhoto || iconData?.icon_url || dog?._image;
-  const playgroup = sizeGroup || getDogPlaygroup(dog, res, playgroupMap, allDogTags) || "unclassified";
+  const animalId = String(dog?.gingrId || res?.animalGingrId || "");
+  const assignment = playgroupMap?.[animalId];
+  const playgroup = getDisplayPlaygroup(assignment) || sizeGroup || getDogPlaygroup(dog, res, playgroupMap, allDogTags) || "unclassified";
   const themeKey = playgroup === "large" ? "large" : playgroup === "small" ? "small" : playgroup;
   const theme = SIZE_THEME[themeKey] || SIZE_THEME.unclassified;
 
@@ -647,9 +649,8 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
   const isBoarding = res.type === "boarding";
 
   // All Gingr-assigned tags for this dog (for multi-badge display)
-  const animalId = String(dog?.gingrId || res?.animalGingrId || "");
   const dogTags = allDogTags?.[animalId];
-  const tagList = dogTags ? PLAYGROUP_PRIORITY.filter(p => dogTags.has(p)) : [themeKey];
+  const tagList = Array.isArray(dogTags) && dogTags.length > 0 ? dogTags : [themeKey];
 
   // First-day detection
   const isFirstDay = firstDayDogIds?.has(animalId);
@@ -974,11 +975,9 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId]);
 
-  /* ── Fetch playgroup classification from Gingr icons ────────────── *
-   * Uses v_dog_playgroups view (backed by gingr_animal_icons_live).
-   * Collects ALL tags per dog, then applies priority for primary assignment:
-   *   private_play > large > small > evaluation
-   * allDogTags stores the full set for multi-badge display on cards.
+  /* ── Fetch canonical playgroup assignments from Gingr Play icons ─── *
+   * Uses the server-side per-dog canonical assignment view so TV reads
+   * the same source as scheduling and daily operations.
    * ──────────────────────────────────────────────────────────────────── */
   const [playgroupMap, setPlaygroupMap] = useState({});
   const [allDogTags, setAllDogTags] = useState({});
@@ -990,26 +989,16 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     const fetchPlaygroups = async () => {
       try {
         const { data, error } = await supabase
-          .from("v_dog_playgroups")
-          .select("animal_gingr_id, playgroup, icon_color")
+          .from("v_dog_playgroup_assignments_current")
+          .select("animal_gingr_id, primary_display_playgroup, scheduling_playgroup, has_evaluation, is_half_and_half, playgroup_tags")
           .eq("location_id", locationId);
 
         if (cancelled || error) return;
 
-        // Collect all playgroups per dog
+        const map = buildPlaygroupAssignmentMap(data || []);
         const tagsByDog = {};
-        for (const row of (data || [])) {
-          if (row.playgroup) {
-            const id = String(row.animal_gingr_id);
-            if (!tagsByDog[id]) tagsByDog[id] = new Set();
-            tagsByDog[id].add(row.playgroup);
-          }
-        }
-
-        // Apply priority for primary assignment
-        const map = {};
-        for (const [id, tags] of Object.entries(tagsByDog)) {
-          map[id] = PLAYGROUP_PRIORITY.find(p => tags.has(p)) || [...tags][0];
+        for (const [id, assignment] of Object.entries(map)) {
+          tagsByDog[id] = getDisplayTags(assignment);
         }
         setPlaygroupMap(map);
         setAllDogTags(tagsByDog);

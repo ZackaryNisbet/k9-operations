@@ -2,6 +2,11 @@ import {
   extractBathLikeServices,
   getBathSchedulingForDate,
 } from "./bathing-logic.ts";
+import {
+  buildPlaygroupAssignmentMap,
+  fetchPlaygroupAssignments,
+  type PlaygroupAssignment,
+} from "./playgroup-assignments.ts";
 
 type SupabaseClient = any;
 
@@ -76,13 +81,6 @@ function normalizePlaygroup(playgroup: string | null | undefined): "large" | "sm
   return "unknown";
 }
 
-function hasPrivatePlayService(services: any[] = []): boolean {
-  return services.some((service) => {
-    const name = String(typeof service === "string" ? service : service?.name || "").toLowerCase();
-    return name.includes("private play");
-  });
-}
-
 function isMedicationService(services: any[] = [], targetDate: string): boolean {
   return services.some((service) => {
     const name = String(typeof service === "string" ? service : service?.name || "").toLowerCase();
@@ -114,7 +112,7 @@ function countDistinctAnimals(rows: ReservationRow[]): number {
 function buildReservationRecord(
   row: ReservationRow,
   resTypeMap: Map<string, ReservationTypeRow>,
-  playgroupMap: Map<string, string>,
+  playgroupMap: Map<string, PlaygroupAssignment>,
 ) {
   const services = Array.isArray(row.services) ? row.services : [];
   const typeName = String(row.reservation_type_name || "");
@@ -122,11 +120,8 @@ function buildReservationRecord(
   const startKey = getDateKey(row.start_date);
   const endKey = getDateKey(row.end_date);
   const animalId = String(row.animal_gingr_id || "");
-
-  let playgroup = normalizePlaygroup(playgroupMap.get(animalId));
-  if (playgroup === "unknown" && hasPrivatePlayService(services)) {
-    playgroup = "private_play";
-  }
+  const playgroupAssignment = playgroupMap.get(animalId) || null;
+  const playgroup = normalizePlaygroup(playgroupAssignment?.schedulingPlaygroup);
 
   return {
     ...row,
@@ -136,16 +131,24 @@ function buildReservationRecord(
     endKey,
     playgroup,
     animalId,
+    playgroupAssignment,
+    isHalfAndHalf: !!playgroupAssignment?.isHalfAndHalf,
+    unresolvedPlaygroupReason: playgroupAssignment?.unresolvedReason || (playgroup === "unknown" ? "missing_actionable_play_icon" : null),
   };
 }
 
-function splitCounts(rows: Array<{ playgroup: string }>) {
+function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean }>) {
   let large = 0;
   let small = 0;
   let privatePlay = 0;
+  let halfAndHalf = 0;
   let unknown = 0;
 
   for (const row of rows) {
+    if (row.isHalfAndHalf) {
+      halfAndHalf += 1;
+      continue;
+    }
     switch (row.playgroup) {
       case "large":
         large += 1;
@@ -162,7 +165,7 @@ function splitCounts(rows: Array<{ playgroup: string }>) {
     }
   }
 
-  return { large, small, privatePlay, unknown };
+  return { large, small, privatePlay, halfAndHalf, unknown };
 }
 
 function countDepartureBaths(rows: Array<{ services: any[] }>, targetDate: string): number {
@@ -214,10 +217,28 @@ function buildTrustPayload({
 
   return {
     state: "trusted",
-    source: "gingr_reservations",
+    source: "gingr_reservations + v_dog_playgroup_assignments_current",
     can_generate: blockers.length === 0,
     blockers,
     notes,
+  };
+}
+
+function buildAssignmentSnapshot(row: any) {
+  const assignment = row.playgroupAssignment;
+  return {
+    animal_gingr_id: row.animalId,
+    animal_name: String(row.animal_name || ""),
+    reservation_gingr_id: String(row.gingr_id || ""),
+    reservation_type_name: String(row.reservation_type_name || ""),
+    scheduling_playgroup: row.playgroup === "unknown" ? null : row.playgroup,
+    primary_display_playgroup: assignment?.primaryDisplayPlaygroup || null,
+    is_half_and_half: !!assignment?.isHalfAndHalf,
+    playgroup_tags: assignment?.playgroupTags || [],
+    source_icon_titles: assignment?.sourceIconTitles || [],
+    source_icon_comments: assignment?.sourceIconComments || [],
+    unresolved_reason: row.unresolvedPlaygroupReason || null,
+    half_and_half_note: assignment?.halfAndHalfNote || null,
   };
 }
 
@@ -232,14 +253,10 @@ export async function computeSchedulingMatrixRows({
   dateFrom: string;
   dateTo: string;
 }) {
-  const [resTypesRes, playgroupRes, roomOccRes, runsRes, reservationsRes] = await Promise.all([
+  const [resTypesRes, roomOccRes, runsRes, reservationsRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("name, is_boarding, is_daycare, single_day")
-      .eq("location_id", locationId),
-    supabase
-      .from("v_dog_playgroups")
-      .select("animal_gingr_id, playgroup")
       .eq("location_id", locationId),
     supabase
       .from("gingr_occupancy_snapshot")
@@ -258,11 +275,14 @@ export async function computeSchedulingMatrixRows({
       .is("cancelled_date", null)
       .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
       .gte("end_date", `${dateFrom}T00:00:00`),
+    fetchPlaygroupAssignments({
+      supabase,
+      locationId,
+    }),
   ]);
 
   if (reservationsRes.error) throw reservationsRes.error;
   if (resTypesRes.error) throw resTypesRes.error;
-  if (playgroupRes.error) throw playgroupRes.error;
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
 
@@ -271,10 +291,7 @@ export async function computeSchedulingMatrixRows({
     resTypeMap.set(String(row.name || ""), row);
   }
 
-  const playgroupMap = new Map<string, string>();
-  for (const row of (playgroupRes.data || [])) {
-    playgroupMap.set(String(row.animal_gingr_id || ""), String(row.playgroup || ""));
-  }
+  const playgroupMap = buildPlaygroupAssignmentMap(playgroupAssignments || []);
 
   const totalRooms = new Set(
     (runsRes.data || [])
@@ -302,17 +319,21 @@ export async function computeSchedulingMatrixRows({
     const openingCounts = splitCounts(openingBoarding);
     const closingCounts = splitCounts(closingBoarding);
     const daycareCounts = splitCounts(activeDaycare);
+    const dayboardingCounts = splitCounts(activeDayboarding);
     const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare]);
+    const daytimeHalfAndHalf = daycareCounts.halfAndHalf + dayboardingCounts.halfAndHalf;
 
     const totalBoardingOpening =
-      openingCounts.large + openingCounts.small + openingCounts.privatePlay + openingCounts.unknown;
+      openingCounts.large + openingCounts.small + openingCounts.privatePlay + openingCounts.halfAndHalf + openingCounts.unknown;
     const totalBoardingClosing =
-      closingCounts.large + closingCounts.small + closingCounts.privatePlay + closingCounts.unknown;
+      closingCounts.large + closingCounts.small + closingCounts.privatePlay + closingCounts.halfAndHalf + closingCounts.unknown;
     const totalDaycare =
+      daycareCounts.privatePlay +
       daycareCounts.large +
       daycareCounts.small +
       daycareCounts.unknown +
-      activeDayboarding.length +
+      dayboardingCounts.privatePlay +
+      daytimeHalfAndHalf +
       evaluations.length;
     const totalDogVolume = totalBoardingClosing + totalDaycare;
 
@@ -354,7 +375,7 @@ export async function computeSchedulingMatrixRows({
       daycare_large: daycareCounts.large,
       daycare_small: daycareCounts.small,
       daycare_unknown_size: daycareCounts.unknown,
-      pp_dayboarders: activeDayboarding.length,
+      pp_dayboarders: daycareCounts.privatePlay + dayboardingCounts.privatePlay,
       pp_overnight_boarders: openingCounts.privatePlay,
       departure_baths: departureBaths,
       evaluations: evaluations.length,
@@ -375,6 +396,7 @@ export async function computeSchedulingMatrixRows({
             large_boarding: openingCounts.large,
             small_boarding: openingCounts.small,
             private_play_boarding: openingCounts.privatePlay,
+            half_and_half_boarding: openingCounts.halfAndHalf,
             unclassified_boarding: openingCounts.unknown,
             total_boarding: totalBoardingOpening,
           },
@@ -382,12 +404,14 @@ export async function computeSchedulingMatrixRows({
             large_boarding: closingCounts.large,
             small_boarding: closingCounts.small,
             private_play_boarding: closingCounts.privatePlay,
+            half_and_half_boarding: closingCounts.halfAndHalf,
             unclassified_boarding: closingCounts.unknown,
             total_boarding: totalBoardingClosing,
           },
           daycare: {
             evaluations: evaluations.length,
-            private_play_dayboarding: activeDayboarding.length,
+            private_play_dayboarding: daycareCounts.privatePlay + dayboardingCounts.privatePlay,
+            half_and_half_daytime: daytimeHalfAndHalf,
             large_daycare: daycareCounts.large,
             small_daycare: daycareCounts.small,
             unclassified_daycare: daycareCounts.unknown,
@@ -406,10 +430,23 @@ export async function computeSchedulingMatrixRows({
           peak_large_daycare: peakCounts.large,
           peak_small_daycare: peakCounts.small,
           peak_unknown_daycare: peakCounts.unknown,
-          total_private_play_dogs: openingCounts.privatePlay + activeDayboarding.length,
+          total_private_play_dogs:
+            openingCounts.privatePlay
+            + openingCounts.halfAndHalf
+            + daycareCounts.privatePlay
+            + daycareCounts.halfAndHalf
+            + dayboardingCounts.privatePlay
+            + dayboardingCounts.halfAndHalf,
           morning_feeding_dogs: morningFeedingDogs,
           evening_feeding_dogs: eveningFeedingDogs,
           medication_dogs: medicationDogs,
+        },
+        provenance: {
+          opening_boarding: openingBoarding.map(buildAssignmentSnapshot),
+          closing_boarding: closingBoarding.map(buildAssignmentSnapshot),
+          daytime_daycare: activeDaycare.map(buildAssignmentSnapshot),
+          daytime_dayboarding: activeDayboarding.map(buildAssignmentSnapshot),
+          evaluations: evaluations.map(buildAssignmentSnapshot),
         },
       },
       computed_at: new Date().toISOString(),

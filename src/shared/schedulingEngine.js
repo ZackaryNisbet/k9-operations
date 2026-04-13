@@ -181,25 +181,28 @@ export function getMatrixDisplay(matrix) {
     large_boarding: toNullableNumber(display.opening?.large_boarding) ?? toNumber(matrix?.boarding_large, 0),
     small_boarding: toNullableNumber(display.opening?.small_boarding) ?? toNumber(matrix?.boarding_small, 0),
     private_play_boarding: toNullableNumber(display.opening?.private_play_boarding) ?? toNumber(matrix?.pp_overnight_boarders, 0),
+    half_and_half_boarding: toNullableNumber(display.opening?.half_and_half_boarding) ?? 0,
     unclassified_boarding: toNullableNumber(display.opening?.unclassified_boarding) ?? toNumber(matrix?.boarding_unknown_size, 0),
   };
   opening.total_boarding = toNullableNumber(display.opening?.total_boarding)
-    ?? [opening.large_boarding, opening.small_boarding, opening.private_play_boarding, opening.unclassified_boarding]
+    ?? [opening.large_boarding, opening.small_boarding, opening.private_play_boarding, opening.half_and_half_boarding, opening.unclassified_boarding]
       .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
 
   const closing = {
     large_boarding: toNullableNumber(display.closing?.large_boarding) ?? opening.large_boarding,
     small_boarding: toNullableNumber(display.closing?.small_boarding) ?? opening.small_boarding,
     private_play_boarding: toNullableNumber(display.closing?.private_play_boarding) ?? opening.private_play_boarding,
+    half_and_half_boarding: toNullableNumber(display.closing?.half_and_half_boarding) ?? opening.half_and_half_boarding,
     unclassified_boarding: toNullableNumber(display.closing?.unclassified_boarding) ?? opening.unclassified_boarding,
   };
   closing.total_boarding = toNullableNumber(display.closing?.total_boarding)
-    ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.unclassified_boarding]
+    ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.half_and_half_boarding, closing.unclassified_boarding]
       .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
 
   const daycare = {
     evaluations: toNullableNumber(display.daycare?.evaluations) ?? toNumber(matrix?.evaluations, 0),
     private_play_dayboarding: toNullableNumber(display.daycare?.private_play_dayboarding) ?? toNumber(matrix?.pp_dayboarders, 0),
+    half_and_half_daytime: toNullableNumber(display.daycare?.half_and_half_daytime) ?? 0,
     large_daycare: toNullableNumber(display.daycare?.large_daycare) ?? toNumber(matrix?.daycare_large, 0),
     small_daycare: toNullableNumber(display.daycare?.small_daycare) ?? toNumber(matrix?.daycare_small, 0),
     unclassified_daycare: toNullableNumber(display.daycare?.unclassified_daycare) ?? toNumber(matrix?.daycare_unknown_size, 0),
@@ -208,6 +211,7 @@ export function getMatrixDisplay(matrix) {
     ?? [
       daycare.evaluations,
       daycare.private_play_dayboarding,
+      daycare.half_and_half_daytime,
       daycare.large_daycare,
       daycare.small_daycare,
       daycare.unclassified_daycare,
@@ -233,7 +237,13 @@ export function getMatrixSolverInputs(matrix) {
     peak_large_daycare: toNumber(solver.peak_large_daycare, toNumber(matrix?.daycare_large, 0)),
     peak_small_daycare: toNumber(solver.peak_small_daycare, toNumber(matrix?.daycare_small, 0)),
     peak_unknown_daycare: toNumber(solver.peak_unknown_daycare, toNumber(matrix?.daycare_unknown_size, 0)),
-    total_private_play_dogs: toNumber(solver.total_private_play_dogs, toNumber(display.opening.private_play_boarding, 0) + toNumber(display.daycare.private_play_dayboarding, 0)),
+    total_private_play_dogs: toNumber(
+      solver.total_private_play_dogs,
+      toNumber(display.opening.private_play_boarding, 0)
+      + toNumber(display.opening.half_and_half_boarding, 0)
+      + toNumber(display.daycare.private_play_dayboarding, 0)
+      + toNumber(display.daycare.half_and_half_daytime, 0),
+    ),
     morning_feeding_dogs: toNumber(solver.morning_feeding_dogs, toNumber(display.support.morning_feeding_dogs, 0)),
     evening_feeding_dogs: toNumber(solver.evening_feeding_dogs, toNumber(display.support.evening_feeding_dogs, 0)),
     medication_dogs: toNumber(solver.medication_dogs, toNumber(display.support.medication_dogs, 0)),
@@ -263,7 +273,7 @@ function estimateSplitStrategyFinishMinutes(groupDogsLarge, groupDogsSmall, effe
 function estimateOpeningRequirement(matrix, config) {
   const display = getMatrixDisplay(matrix);
   const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
-  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0) + toNumber(display.opening.half_and_half_boarding, 0);
   const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
   const groupDogsSmall = toNumber(display.opening.small_boarding, 0);
 
@@ -367,7 +377,7 @@ export function evaluateFullPodPass(matrix, staffPlan, config) {
  */
 export function evaluateSplitStrategy(matrix, staffPlan, config) {
   const display = getMatrixDisplay(matrix);
-  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0) + toNumber(display.opening.half_and_half_boarding, 0);
   const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
   const groupDogsSmall = toNumber(display.opening.small_boarding, 0);
 
@@ -635,7 +645,7 @@ export function generateOpeningGrid(matrix, staffPlan, openingResult, config) {
   const openEndIdx = morningSlots.indexOf(openWindow[1]) || 4;
   const solverInputs = getMatrixSolverInputs(matrix);
   const display = getMatrixDisplay(matrix);
-  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0) + toNumber(display.opening.half_and_half_boarding, 0);
   const hasSmallDaycare = solverInputs.peak_small_daycare > 0;
   const strategy = openingResult?.strategy || "split_group_pp";
 
@@ -1094,6 +1104,7 @@ export function applyOverride(grid, lane, slot, newTask, reason) {
 export function buildDaySummary(matrix, staffPlan, config) {
   const mergedConfig = { ...SCHEDULE_CONFIG_DEFAULTS, ...config };
   const trust = getMatrixTrust(matrix);
+  const solverInputs = getMatrixSolverInputs(matrix);
   const generationBlockers = getMatrixBlockers(matrix);
   const canGenerate = canGenerateSchedule(matrix);
   const required = computeRequiredHeadcount(matrix, mergedConfig);
@@ -1118,6 +1129,7 @@ export function buildDaySummary(matrix, staffPlan, config) {
     matrix,
     staffPlan,
     trust,
+    solverInputs,
     generationBlockers,
     canGenerate,
     required,

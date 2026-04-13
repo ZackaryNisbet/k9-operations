@@ -20,6 +20,7 @@ import {
   loadRollCallSessionRow,
   normalizeRollCallSession,
 } from "../_shared/roll-call-logic.ts";
+import { fetchPlaygroupAssignments } from "../_shared/playgroup-assignments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -615,11 +616,15 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   let playIconMap: Record<string, string> = {};
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
-    const [{ data: icons }, { data: playIcons }, { data: animals }] = await Promise.all([
+    const [{ data: icons }, playAssignments, { data: animals }] = await Promise.all([
       supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title, icon_comment")
         .eq("location_id", locationId).eq("icon_group", "Bath").in("animal_gingr_id", animalIds),
-      supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title")
-        .eq("location_id", locationId).eq("icon_group", "Play").in("animal_gingr_id", animalIds),
+      fetchPlaygroupAssignments({
+        supabase,
+        locationId,
+        animalIds,
+        columns: "animal_gingr_id, has_private_play",
+      }),
       supabase.from("gingr_animals").select("gingr_id, weight").in("gingr_id", animalIds),
     ]);
     (icons || []).forEach((r: any) => {
@@ -627,10 +632,9 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       if (!iconMap[id]) iconMap[id] = [];
       iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
     });
-    (playIcons || []).forEach((r: any) => {
-      const title = (r.icon_title || "").toLowerCase();
-      if (title.includes("private") && title.includes("play")) {
-        playIconMap[r.animal_gingr_id] = "private_play";
+    (playAssignments || []).forEach((assignment: any) => {
+      if (assignment?.hasPrivatePlay) {
+        playIconMap[assignment.animalGingrId] = "private_play";
       }
     });
     (animals || []).forEach((a: any) => {
