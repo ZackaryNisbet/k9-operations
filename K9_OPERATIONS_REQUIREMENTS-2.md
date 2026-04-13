@@ -375,7 +375,7 @@ ALTER TABLE gingr_reservation_types ADD COLUMN IF NOT EXISTS service_config JSON
 
 ## Appendix: Key Credentials & Config
 
-- **Gingr API Key:** `a0fec5e66b3c3be8b6085b2708b3806e`
+- **Gingr API Key:** `[REDACTED GINGR API KEY]`
 - **Gingr Subdomain:** `your-gingr-subdomain`
 - **Gingr Location ID:** `1`
 - **Supabase Location ID:** `11111111-1111-1111-1111-111111111111`

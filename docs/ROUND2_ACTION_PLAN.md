@@ -222,7 +222,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Repo: /<path>/workspace/k9-repo/ (already cloned)
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: SkyleraryBrooks/k9-operations
-- GitHub PAT: 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
+- GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zack.nisbet@k9operations.com, name="Skyler Brooks"
 - Product name: "K9 Operations" (never K-9 or k9)
 
@@ -280,7 +280,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Repo: /<path>/workspace/k9-repo/ (already cloned)
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: SkyleraryBrooks/k9-operations
-- GitHub PAT: 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
+- GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zack.nisbet@k9operations.com, name="Skyler Brooks"
 - Product name: "K9 Operations" (never K-9 or k9)
 
@@ -343,12 +343,12 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Repo: /<path>/workspace/k9-repo/ (already cloned)
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: SkyleraryBrooks/k9-operations
-- GitHub PAT: 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
+- GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zack.nisbet@k9operations.com, name="Skyler Brooks"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
-- Supabase service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1enZxY3B0aHFpa3lyb3FoeXB3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDUwMjY0NywiZXhwIjoyMDg2MDc4NjQ3fQ.s4ZpVEzwCW6fACNuYOjcgdrukbkeWhdkqe6qT7LrTnU
+- Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
-- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=a0fec5e66b3c3be8b6085b2708b3806e
+- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=[REDACTED GINGR API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
@@ -425,10 +425,10 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - Repo: /<path>/workspace/k9-repo/ (already cloned)
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: SkyleraryBrooks/k9-operations
-- GitHub PAT: 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
+- GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zack.nisbet@k9operations.com, name="Skyler Brooks"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
-- Supabase service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1enZxY3B0aHFpa3lyb3FoeXB3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDUwMjY0NywiZXhwIjoyMDg2MDc4NjQ3fQ.s4ZpVEzwCW6fACNuYOjcgdrukbkeWhdkqe6qT7LrTnU
+- Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
 - Product name: "K9 Operations" (never K-9 or k9)
 
@@ -498,12 +498,12 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - Repo: /<path>/workspace/k9-repo/ (already cloned)
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: SkyleraryBrooks/k9-operations
-- GitHub PAT: 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
+- GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zack.nisbet@k9operations.com, name="Skyler Brooks"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
-- Supabase service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1enZxY3B0aHFpa3lyb3FoeXB3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDUwMjY0NywiZXhwIjoyMDg2MDc4NjQ3fQ.s4ZpVEzwCW6fACNuYOjcgdrukbkeWhdkqe6qT7LrTnU
+- Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
-- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=a0fec5e66b3c3be8b6085b2708b3806e
+- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=[REDACTED GINGR API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
