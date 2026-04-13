@@ -9,6 +9,11 @@ import {
   loadRollCallSessionRow,
   normalizeRollCallSession,
 } from "../_shared/roll-call-logic.ts";
+import {
+  buildPlaygroupAssignmentMap,
+  fetchPlaygroupAssignments,
+  getCanonicalPlaygroupTags,
+} from "../_shared/playgroup-assignments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -240,14 +245,19 @@ async function modDeparting(
   const animalIds = boardingDepartures.map((d: any) => String(d.animal_id || d.id || "")).filter(Boolean);
   const ownerIds = [...new Set(boardingDepartures.map((d: any) => String(d.owner_id || "")).filter(Boolean))];
 
-  // Batch fetch: profile photos, play group icons, and owner full names
-  const [{ data: animalPhotos }, { data: playIcons }, { data: ownerRows }] = await Promise.all([
+  // Batch fetch: profile photos, canonical playgroup assignments, and owner full names
+  const [{ data: animalPhotos }, playAssignments, { data: ownerRows }] = await Promise.all([
     animalIds.length > 0
       ? supabase.from("gingr_animals").select("gingr_id, image_url, local_photo_url").in("gingr_id", animalIds)
       : { data: [] },
     animalIds.length > 0
-      ? supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title").eq("location_id", locationId).eq("icon_group", "Play").in("animal_gingr_id", animalIds)
-      : { data: [] },
+      ? fetchPlaygroupAssignments({
+          supabase,
+          locationId,
+          animalIds,
+          columns: "animal_gingr_id, playgroup_tags, is_half_and_half",
+        })
+      : Promise.resolve([]),
     ownerIds.length > 0
       ? supabase.from("gingr_owner_cache").select("owner_id, owner_name").in("owner_id", ownerIds)
       : { data: [] },
@@ -286,11 +296,10 @@ async function modDeparting(
     photoMap[a.gingr_id] = a.local_photo_url || a.image_url || "";
   }
 
+  const playgroupMap = buildPlaygroupAssignmentMap(playAssignments || []);
   const playIconMap: Record<string, string[]> = {};
-  for (const icon of playIcons || []) {
-    const id = icon.animal_gingr_id;
-    if (!playIconMap[id]) playIconMap[id] = [];
-    playIconMap[id].push(icon.icon_title || "");
+  for (const [animalId, assignment] of playgroupMap.entries()) {
+    playIconMap[animalId] = getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true });
   }
 
   const ownerNameMap: Record<string, string> = {};

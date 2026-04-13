@@ -15,6 +15,12 @@ import {
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
 import { loadRollCallSessionRow } from "../_shared/roll-call-logic.ts";
+import {
+  buildPlaygroupAssignmentMap,
+  fetchPlaygroupAssignments,
+  getCanonicalPlaygroupTags,
+  getOperationalPlaygroupKey,
+} from "../_shared/playgroup-assignments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1594,19 +1600,19 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
-    const [{ data: icons }, { data: playIcons }, { data: animals }] = await Promise.all([
+    const [{ data: icons }, playAssignments, { data: animals }] = await Promise.all([
       supabase
         .from("gingr_animal_icons_live")
         .select("animal_gingr_id, icon_title, icon_comment")
         .eq("location_id", locationId)
         .eq("icon_group", "Bath")
         .in("animal_gingr_id", animalIds),
-      supabase
-        .from("gingr_animal_icons_live")
-        .select("animal_gingr_id, icon_title")
-        .eq("location_id", locationId)
-        .eq("icon_group", "Play")
-        .in("animal_gingr_id", animalIds),
+      fetchPlaygroupAssignments({
+        supabase,
+        locationId,
+        animalIds,
+        columns: "animal_gingr_id, has_private_play",
+      }),
       supabase
         .from("gingr_animals")
         .select("gingr_id, weight")
@@ -1617,10 +1623,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       if (!iconMap[id]) iconMap[id] = [];
       iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
     });
-    (playIcons || []).forEach((r: any) => {
-      const title = (r.icon_title || "").toLowerCase();
-      if (title.includes("private") && title.includes("play")) {
-        playIconMap[r.animal_gingr_id] = "private_play";
+    (playAssignments || []).forEach((assignment: any) => {
+      if (assignment?.hasPrivatePlay) {
+        playIconMap[assignment.animalGingrId] = "private_play";
       }
     });
     (animals || []).forEach((a: any) => {
@@ -2079,17 +2084,17 @@ async function computeBelongingsReport(
   let emergencyContactMap: Record<string, { name: string; phone: string }> = {};
 
   if (animalIds.length > 0) {
-    const [{ data: animals }, { data: playIcons }] = await Promise.all([
+    const [{ data: animals }, playAssignments] = await Promise.all([
       supabase
         .from("gingr_animals")
         .select("gingr_id, weight, breed, image_url")
         .in("gingr_id", animalIds),
-      supabase
-        .from("gingr_animal_icons_live")
-        .select("animal_gingr_id, icon_title, icon_color")
-        .eq("location_id", locationId)
-        .eq("icon_group", "Play")
-        .in("animal_gingr_id", animalIds),
+      fetchPlaygroupAssignments({
+        supabase,
+        locationId,
+        animalIds,
+        columns: "animal_gingr_id, playgroup_tags, is_half_and_half",
+      }),
     ]);
     for (const a of (animals || [])) {
       const w = a.weight ? parseFloat(a.weight) : null;
@@ -2097,10 +2102,8 @@ async function computeBelongingsReport(
       breedMap[a.gingr_id] = a.breed || "";
       if (a.image_url) photoMap[a.gingr_id] = a.image_url;
     }
-    for (const icon of (playIcons || [])) {
-      const aid = icon.animal_gingr_id;
-      if (!playIconMap[aid]) playIconMap[aid] = [];
-      playIconMap[aid].push(icon.icon_title || "");
+    for (const assignment of (playAssignments || [])) {
+      playIconMap[assignment.animalGingrId] = getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true });
     }
   }
 
@@ -2239,7 +2242,7 @@ async function computeCollarsReport(
 
   const allRes = targetRes || [];
   if (allRes.length === 0) {
-    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, unclassified: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
   }
 
   // Categorize reservations by type
@@ -2262,53 +2265,44 @@ async function computeCollarsReport(
   }
 
   if (categorized.length === 0) {
-    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, unclassified: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
   }
 
-  // Gather all animal IDs for icon + weight/breed lookup
+  // Gather all animal IDs for canonical playgroup + breed lookup
   const animalIds = categorized.map(c => String(c.res.animal_gingr_id || c.res.raw_data?.animal?.id || "").trim()).filter(Boolean);
   const uniqueAnimalIds = [...new Set(animalIds)];
 
-  // Fetch icons + weights/breeds in parallel
-  const [iconsResult, animalsResult] = await Promise.all([
+  // Fetch canonical assignments + breeds in parallel
+  const [playgroupAssignments, animalsResult] = await Promise.all([
     uniqueAnimalIds.length > 0
-      ? supabase.from("gingr_animal_icons_live")
-          .select("animal_gingr_id, icon_title, icon_group, icon_comment")
-          .eq("location_id", locationId)
-          .eq("icon_group", "Play")
-          .in("animal_gingr_id", uniqueAnimalIds)
-      : { data: [] },
+      ? fetchPlaygroupAssignments({
+          supabase,
+          locationId,
+          animalIds: uniqueAnimalIds,
+          columns: [
+            "animal_gingr_id",
+            "size_group",
+            "has_private_play",
+            "has_evaluation",
+            "is_half_and_half",
+            "primary_display_playgroup",
+            "scheduling_playgroup",
+            "playgroup_tags",
+            "source_icon_titles",
+            "source_icon_comments",
+            "half_and_half_note",
+            "unresolved_reason",
+          ].join(", "),
+        })
+      : Promise.resolve([]),
     uniqueAnimalIds.length > 0
       ? supabase.from("gingr_animals")
           .select("gingr_id, weight, breed")
           .in("gingr_id", uniqueAnimalIds)
-      : { data: [] },
+      : Promise.resolve({ data: [] }),
   ]);
 
-  // Build icon maps per animal
-  const playIconMap: Record<string, { hasSmall: boolean; hasLarge: boolean; hasPrivatePlay: boolean; playGroupTitle: string; playGroupComment: string; privatePlayTitle: string; privatePlayComment: string; iconDetails: Array<{ title: string; group: string; comment: string }> }> = {};
-  for (const icon of (iconsResult.data || [])) {
-    const aid = String(icon.animal_gingr_id);
-    if (!playIconMap[aid]) playIconMap[aid] = { hasSmall: false, hasLarge: false, hasPrivatePlay: false, playGroupTitle: "", playGroupComment: "", privatePlayTitle: "", privatePlayComment: "", iconDetails: [] };
-    const title = (icon.icon_title || "").toLowerCase();
-    const rawTitle = icon.icon_title || "";
-    const comment = icon.icon_comment || "";
-    const group = icon.icon_group || "";
-    playIconMap[aid].iconDetails.push({ title: rawTitle, group, comment });
-    if (title.includes("private") && title.includes("play")) {
-      playIconMap[aid].hasPrivatePlay = true;
-      playIconMap[aid].privatePlayTitle = rawTitle;
-      playIconMap[aid].privatePlayComment = comment;
-    } else if (title.includes("small")) {
-      playIconMap[aid].hasSmall = true;
-      playIconMap[aid].playGroupTitle = rawTitle;
-      playIconMap[aid].playGroupComment = comment;
-    } else if (title.includes("large")) {
-      playIconMap[aid].hasLarge = true;
-      playIconMap[aid].playGroupTitle = rawTitle;
-      playIconMap[aid].playGroupComment = comment;
-    }
-  }
+  const playgroupMap = buildPlaygroupAssignmentMap(playgroupAssignments || []);
 
   // Build weight/breed maps
   const weightMap: Record<string, number | null> = {};
@@ -2333,21 +2327,22 @@ async function computeCollarsReport(
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const icons = playIconMap[animalGingrId] || { hasSmall: false, hasLarge: false, hasPrivatePlay: false, playGroupTitle: "", playGroupComment: "", privatePlayTitle: "", privatePlayComment: "", iconDetails: [] };
+    const assignment = playgroupMap.get(animalGingrId) || null;
+    const iconTitles = assignment?.sourceIconTitles || [];
+    const iconComments = assignment?.sourceIconComments || [];
+    const playGroupTitle = iconTitles.find((title) => /playgroup/i.test(title) && !/private/i.test(title)) || "";
+    const privatePlayTitle = iconTitles.find((title) => /private/i.test(title) && /play/i.test(title)) || "";
+    const privatePlayComment = assignment?.halfAndHalfNote || iconComments.find(Boolean) || "";
     const weight = weightMap[animalGingrId] ?? null;
     const sizeCategory = getSizeCategory(animalGingrId, weight);
     const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
     const roomLabel = r.room_assignment || rd.run?.name || "";
-
-    // Also check room assignment for Private Play
-    const roomLower = (roomLabel || "").toLowerCase();
-    const roomHasPP = roomLower.includes("private play") || roomLower.includes(" pp");
-
-    const hasPrivatePlay = icons.hasPrivatePlay || roomHasPP;
-    const hasSizeIcon = icons.hasSmall || icons.hasLarge;
+    const operationalPlaygroup = getOperationalPlaygroupKey(assignment);
+    const hasPrivatePlay = !!assignment?.hasPrivatePlay;
+    const playgroupTags = getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true });
 
     let collarColor = "";
-    let isHalfAndHalf = false;
+    let isHalfAndHalf = !!assignment?.isHalfAndHalf;
 
     if (category === "daycare") {
       collarColor = "pink";
@@ -2356,18 +2351,16 @@ async function computeCollarsReport(
     } else if (category === "evaluation") {
       collarColor = "yellow";
     } else if (category === "boarding") {
-      if (hasPrivatePlay) {
+      if (operationalPlaygroup === "private_play") {
         collarColor = "red";
-        if (hasSizeIcon) {
-          isHalfAndHalf = true;
-        }
-      } else if (icons.hasLarge || sizeCategory === "LG") {
+      } else if (operationalPlaygroup === "large" || sizeCategory === "LG") {
         collarColor = "green";
-      } else if (icons.hasSmall || sizeCategory === "SM") {
+      } else if (operationalPlaygroup === "small" || sizeCategory === "SM") {
         collarColor = "blue";
+      } else if (operationalPlaygroup === "evaluation") {
+        collarColor = "yellow";
       } else {
-        // No icon or size info — default to green (large) as safer assumption
-        collarColor = "green";
+        collarColor = "unclassified";
       }
     }
 
@@ -2390,16 +2383,21 @@ async function computeCollarsReport(
       hasPrivatePlay,
       isHalfAndHalf,
       reservationGingrId,
-      playGroupTitle: icons.playGroupTitle,
-      playGroupComment: icons.playGroupComment,
-      privatePlayTitle: icons.hasPrivatePlay ? icons.privatePlayTitle : "",
-      privatePlayComment: icons.hasPrivatePlay ? icons.privatePlayComment : "",
-      iconDetails: icons.iconDetails,
+      playGroupTitle,
+      playGroupComment: iconComments.find(Boolean) || "",
+      privatePlayTitle: hasPrivatePlay ? privatePlayTitle : "",
+      privatePlayComment: hasPrivatePlay ? privatePlayComment : "",
+      primaryDisplayPlaygroup: assignment?.primaryDisplayPlaygroup || null,
+      playgroupTags,
+      sourceIconTitles: iconTitles,
+      sourceIconComments: iconComments,
+      halfAndHalfNote: assignment?.halfAndHalfNote || null,
+      unresolvedReason: assignment?.unresolvedReason || null,
     });
   }
 
   // Sort by collar color group, then by animal name
-  const colorOrder: Record<string, number> = { pink: 0, red: 1, green: 2, blue: 3, yellow: 4 };
+  const colorOrder: Record<string, number> = { pink: 0, red: 1, green: 2, blue: 3, yellow: 4, unclassified: 5 };
   dogs.sort((a, b) => {
     const ca = colorOrder[a.collarColor] ?? 5;
     const cb = colorOrder[b.collarColor] ?? 5;
@@ -2408,13 +2406,14 @@ async function computeCollarsReport(
   });
 
   // Build summary counts
-  const summary = { total: dogs.length, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 };
+  const summary = { total: dogs.length, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, unclassified: 0, halfAndHalf: 0 };
   for (const d of dogs) {
     if (d.collarColor === "pink") summary.pink++;
     else if (d.collarColor === "red") summary.red++;
     else if (d.collarColor === "green") summary.green++;
     else if (d.collarColor === "blue") summary.blue++;
     else if (d.collarColor === "yellow") summary.yellow++;
+    else if (d.collarColor === "unclassified") summary.unclassified++;
     if (d.isHalfAndHalf) summary.halfAndHalf++;
   }
 
@@ -2961,19 +2960,19 @@ Deno.serve(async (req: Request) => {
       gingrLocationId = creds.gingr_location_id || "1";
     }
 
-    // ─── Fetch playgroup icons from LIVE data (source of truth for size) ───
-    const { data: liveIconRows } = await supabase
-      .from('gingr_animal_icons_live')
-      .select('animal_gingr_id, icon_title, icon_group')
-      .eq('icon_group', 'Play');
-    // Populate the module-level map
+    // ─── Fetch canonical playgroup assignments from Gingr Play icons ────────
+    const liveAssignments = await fetchPlaygroupAssignments({
+      supabase,
+      locationId,
+      columns: "animal_gingr_id, primary_display_playgroup, scheduling_playgroup, has_evaluation",
+    });
+
     _globalPlaygroupMap = {};
-    for (const icon of liveIconRows || []) {
-      const title = (icon.icon_title || '').toLowerCase();
-      if (title.includes('large')) _globalPlaygroupMap[icon.animal_gingr_id] = 'large';
-      else if (title.includes('small')) _globalPlaygroupMap[icon.animal_gingr_id] = 'small';
-      else if (title.includes('private')) _globalPlaygroupMap[icon.animal_gingr_id] = 'private_play';
-      else if (title.includes('evaluation')) _globalPlaygroupMap[icon.animal_gingr_id] = 'evaluation';
+    for (const assignment of liveAssignments || []) {
+      const operational = getOperationalPlaygroupKey(assignment);
+      if (operational) {
+        _globalPlaygroupMap[assignment.animalGingrId] = operational;
+      }
     }
 
     // ─── Fetch Gingr data in parallel ──────────────────────────────────

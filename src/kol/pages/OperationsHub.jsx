@@ -1202,6 +1202,7 @@ function OperationsHub({ data, save, nav, profile }) {
           { key: "green", bg: "#E8F5E9", text: "#2E7D32" },
           { key: "blue", bg: "#E3F2FD", text: "#1565C0" },
           { key: "yellow", bg: "#FFFDE7", text: "#F9A825" },
+          { key: "unclassified", label: "Unclassified", bg: "#F3F4F6", text: "#4B5563" },
           { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
         ];
         return (
