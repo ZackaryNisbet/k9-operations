@@ -19,10 +19,37 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function parseJwtClaims(token: string) {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    return JSON.parse(atob(parts[1]));
+  } catch {
+    return null;
+  }
+}
+
 async function assertLocationAccess(req: Request, locationId: string) {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
     throw Object.assign(new Error("Missing Authorization header"), { status: 401 });
+  }
+
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const serviceClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    serviceRoleKey,
+  );
+
+  if (bearerToken === serviceRoleKey) {
+    return serviceClient;
+  }
+
+  const claims = parseJwtClaims(bearerToken);
+  if (claims?.role === "service_role") {
+    return serviceClient;
   }
 
   const authClient = createClient(
@@ -45,11 +72,6 @@ async function assertLocationAccess(req: Request, locationId: string) {
   if (authError || !user) {
     throw Object.assign(new Error("Unable to authenticate request"), { status: 401 });
   }
-
-  const serviceClient = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
 
   const { data: profiles, error: profileError } = await serviceClient
     .from("lite_profiles")
