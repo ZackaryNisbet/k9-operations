@@ -15,6 +15,11 @@ import {
   isBoardingReservation,
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
+import {
+  getRollCallWorkflowTitle,
+  loadRollCallSessionRow,
+  normalizeRollCallSession,
+} from "../_shared/roll-call-logic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1220,11 +1225,15 @@ Deno.serve(async (req: Request) => {
   try {
     let locationId: string | null = null;
     let date: string | null = null;
+    let kind: string | null = null;
+    let refresh = false;
 
     try {
       const body = await req.json();
       if (body.location_id) locationId = body.location_id;
       if (body.date) date = body.date;
+      if (body.kind) kind = String(body.kind);
+      if (body.refresh === true) refresh = true;
     } catch {
       // No body or invalid JSON
     }
@@ -1249,6 +1258,32 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(supabaseUrl, supabaseServiceKey);
+
+    if (kind === "roll_call_opening" || kind === "roll_call_closing") {
+      const session = normalizeRollCallSession(
+        kind === "roll_call_opening" ? "opening" : "closing",
+      );
+      const row = await loadRollCallSessionRow(sb, locationId, date, session, {
+        createIfMissing: date >= new Date().toLocaleDateString("en-CA", {
+          timeZone: "America/New_York",
+        }),
+        forceRefresh: refresh,
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          date,
+          location_id: locationId,
+          kind,
+          roll_call: row?.computed_items || null,
+          row_id: row?.id || null,
+          title: getRollCallWorkflowTitle(session),
+          missing_snapshot: !row,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Compute all service reports in parallel
     const reservations = await fetchReservationsForDate(sb, locationId, date);

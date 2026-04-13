@@ -14,6 +14,7 @@ import {
   isBoardingReservation,
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
+import { loadRollCallSessionRow } from "../_shared/roll-call-logic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3259,6 +3260,20 @@ Deno.serve(async (req: Request) => {
         "lodging_transfer",
         today,
         lodgingTransfers,
+      ),
+      loadRollCallSessionRow(
+        supabase,
+        locationId,
+        today,
+        "opening",
+        { createIfMissing: true },
+      ),
+      loadRollCallSessionRow(
+        supabase,
+        locationId,
+        today,
+        "closing",
+        { createIfMissing: true },
       ),
       // ─── Future days upserts (14 days) ────────────────────────────
       ...futureReports.flatMap(fr => [
