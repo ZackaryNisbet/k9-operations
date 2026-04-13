@@ -68,49 +68,49 @@ function TrustBadge({ state, blocked }) {
   );
 }
 
-const MATRIX_ROW_GROUPS = [
+const MATRIX_GROUP_TEMPLATES = [
   {
-    section: "Boarding Opening",
+    section: "Opening Boarding",
     rows: [
-      { key: "opening.large_boarding", label: "Large boarding opening" },
-      { key: "opening.small_boarding", label: "Small boarding opening" },
-      { key: "opening.private_play_boarding", label: "Private play boarding opening" },
-      { key: "opening.half_and_half_boarding", label: "Half and half boarding opening" },
-      { key: "opening.unclassified_boarding", label: "Unclassified boarding opening" },
-      { key: "opening.total_boarding", label: "Total boarding opening", total: true },
+      { key: "opening.large_boarding", label: "Large Boarding Opening" },
+      { key: "opening.small_boarding", label: "Small Boarding Opening" },
+      { key: "opening.private_play_boarding", label: "Private Play Boarding Opening" },
+      { key: "opening.half_and_half_boarding", label: "Half and Half Boarding Opening", optional: true },
+      { key: "opening.unclassified_boarding", label: "Unresolved Boarding Opening", optional: true },
+      { key: "opening.total_boarding", label: "Total Boarding Dogs Opening", total: true },
     ],
   },
   {
-    section: "Boarding Closing",
+    section: "Closing Boarding",
     rows: [
-      { key: "closing.large_boarding", label: "Large boarding closing" },
-      { key: "closing.small_boarding", label: "Small boarding closing" },
-      { key: "closing.private_play_boarding", label: "Private play boarding closing" },
-      { key: "closing.half_and_half_boarding", label: "Half and half boarding closing" },
-      { key: "closing.unclassified_boarding", label: "Unclassified boarding closing" },
-      { key: "closing.total_boarding", label: "Total boarding closing", total: true },
+      { key: "closing.large_boarding", label: "Large Boarding Closing" },
+      { key: "closing.small_boarding", label: "Small Boarding Closing" },
+      { key: "closing.private_play_boarding", label: "Private Play Boarding Closing" },
+      { key: "closing.half_and_half_boarding", label: "Half and Half Boarding Closing", optional: true },
+      { key: "closing.unclassified_boarding", label: "Unresolved Boarding Closing", optional: true },
+      { key: "closing.total_boarding", label: "Total Boarding Dogs Closing", total: true },
     ],
   },
   {
-    section: "Daycare and Dayboarding",
+    section: "Daytime Volume",
     rows: [
       { key: "daycare.evaluations", label: "Evaluations" },
-      { key: "daycare.private_play_dayboarding", label: "Private play daytime dogs" },
-      { key: "daycare.half_and_half_daytime", label: "Half and half daytime dogs" },
-      { key: "daycare.large_daycare", label: "Large daycare" },
-      { key: "daycare.small_daycare", label: "Small daycare" },
-      { key: "daycare.unclassified_daycare", label: "Unclassified daycare" },
-      { key: "daycare.total_daycare", label: "Total daycare", total: true },
+      { key: "daycare.private_play_dayboarding", label: "Private Play Dayboarding" },
+      { key: "daycare.half_and_half_daytime", label: "Half and Half Daytime Dogs", optional: true },
+      { key: "daycare.large_daycare", label: "Large Daycare" },
+      { key: "daycare.small_daycare", label: "Small Daycare" },
+      { key: "daycare.unclassified_daycare", label: "Unresolved Daytime Dogs", optional: true },
+      { key: "daycare.total_daycare", label: "Total Daycare Dogs", total: true },
     ],
   },
   {
-    section: "Support Drivers",
+    section: "Support Workload",
     rows: [
-      { key: "support.departure_baths", label: "Departure baths" },
-      { key: "support.morning_feeding_dogs", label: "Morning feeding dogs" },
-      { key: "support.evening_feeding_dogs", label: "Evening feeding dogs" },
-      { key: "support.medication_dogs", label: "Medication dogs" },
-      { key: "support.total_dog_volume", label: "Total dog volume", total: true },
+      { key: "support.departure_baths", label: "Departure Baths" },
+      { key: "support.morning_feeding_dogs", label: "Morning Feeding Dogs" },
+      { key: "support.evening_feeding_dogs", label: "Evening Feeding Dogs" },
+      { key: "support.medication_dogs", label: "Medication Dogs" },
+      { key: "support.total_dog_volume", label: "Total Dog Volume", total: true },
       { key: "support.tours", label: "Tours" },
     ],
   },
@@ -118,6 +118,20 @@ const MATRIX_ROW_GROUPS = [
 
 function getNestedValue(obj, key) {
   return key.split(".").reduce((acc, part) => acc?.[part], obj);
+}
+
+function hasAnyNonZeroValue(days, key) {
+  return days.some((day) => {
+    const value = getNestedValue(day.display, key);
+    return value !== null && value !== undefined && Number(value) !== 0;
+  });
+}
+
+function buildMatrixRowGroups(days) {
+  return MATRIX_GROUP_TEMPLATES.map((group) => ({
+    ...group,
+    rows: group.rows.filter((row) => !row.optional || hasAnyNonZeroValue(days, row.key)),
+  }));
 }
 
 function formatMatrixDate(date) {
@@ -202,6 +216,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     () => weekData.map(day => ({ ...day, display: getMatrixDisplay(day.matrix) })),
     [weekData]
   );
+  const matrixRowGroups = useMemo(() => buildMatrixRowGroups(workbookDays), [workbookDays]);
 
   const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
 
@@ -366,13 +381,16 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       </div>
 
       {/* ── Section 1: 7-Day Workbook Matrix ──────────────────────────── */}
-      <SectionCard title="7-Day Demand Matrix" subtitle="Workbook view by day. Click any day column to inspect staffing, trust blockers, and schedule output." icon={<I.Calendar />}>
+      <SectionCard title="7-Day Demand Matrix" subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
+        <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
+          Total dog volume equals total boarding dogs closing plus total daycare dogs. Tours stay separate so the operational dog count is easy to read.
+        </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1040 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1120 }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", minWidth: 260, padding: "14px 16px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
-                  Metric
+                <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", minWidth: 300, padding: "14px 16px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                  Operational Metric
                 </th>
                 {workbookDays.map((day, index) => {
                   const selected = index === selectedDayIdx;
@@ -407,11 +425,11 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </tr>
             </thead>
             <tbody>
-              {MATRIX_ROW_GROUPS.flatMap((group) => {
+              {matrixRowGroups.flatMap((group) => {
                 return (
                   [
                     <tr key={`${group.section}-section`}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "12px 16px 8px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
                         {group.section}
                       </td>
                       {workbookDays.map((day, index) => (
@@ -420,7 +438,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     </tr>,
                     ...group.rows.map((row) => (
                       <tr key={row.key}>
-                        <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: row.total ? "#F8FAFC" : C.surface, borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 13, fontWeight: row.total ? 800 : 600, color: C.text }}>
+                        <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 13, fontWeight: row.total ? 800 : 600, color: C.text }}>
                           {row.label}
                         </td>
                         {workbookDays.map((day, index) => {
@@ -436,8 +454,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                                 cursor: "pointer",
                                 textAlign: "center",
                                 padding: "10px 8px",
-                                borderBottom: `1px solid ${C.borderLight}`,
-                                background: selected ? "#F8FBFF" : C.surface,
+                                borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
+                                background: row.total ? (selected ? "#EAF2FF" : "#F4F7FB") : (selected ? "#F8FBFF" : C.surface),
                                 color: missingValue ? C.textMut : row.total ? C.text : C.textSec,
                                 fontSize: missingValue ? 11 : 16,
                                 fontWeight: row.total ? 800 : 700,
