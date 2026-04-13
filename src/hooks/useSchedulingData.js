@@ -7,11 +7,16 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import {
   SCHEDULE_CONFIG_DEFAULTS,
+  computeAvailableFunctioningPct,
   computeRequiredHeadcount,
   computeStaffingStatus,
   isWeekend,
   serializeSchedule,
   buildDaySummary,
+  getMatrixTrust,
+  getMatrixTrustState,
+  getMatrixBlockers,
+  canGenerateSchedule,
 } from "../shared/schedulingEngine";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -49,13 +54,27 @@ export function useSchedulingData(locationId, startDate) {
 
   const endDate = dates[6] || startDate;
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;
     const fetchId = ++fetchIdRef.current;
 
     try {
+      if (recompute) {
+        const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
+          body: {
+            location_id: locationId,
+            date_from: startDate,
+            date_to: endDate,
+          },
+        });
+
+        if (computeErr) {
+          console.warn("compute-scheduling-matrix refresh skipped:", computeErr.message || computeErr);
+        }
+      }
+
       // Fetch all data sources in parallel
-      const [matrixRes, staffRes, configRes, dashRes] = await Promise.all([
+      let [matrixRes, staffRes, configRes, dashRes] = await Promise.all([
         // 1. Scheduling matrix (may be empty if compute function hasn't run)
         supabase
           .from("scheduling_matrix_daily")
@@ -92,6 +111,49 @@ export function useSchedulingData(locationId, startDate) {
           .order("metric_date", { ascending: true }),
       ]);
 
+      const matrixCoverage = (matrixRes.data || []).length;
+      if (!recompute && matrixCoverage < dates.length) {
+        const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
+          body: {
+            location_id: locationId,
+            date_from: startDate,
+            date_to: endDate,
+          },
+        });
+
+        if (!computeErr) {
+          [matrixRes, staffRes, configRes, dashRes] = await Promise.all([
+            supabase
+              .from("scheduling_matrix_daily")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("matrix_date", startDate)
+              .lte("matrix_date", endDate)
+              .order("matrix_date", { ascending: true }),
+            supabase
+              .from("daily_staff_plan")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("plan_date", startDate)
+              .lte("plan_date", endDate)
+              .order("plan_date", { ascending: true }),
+            supabase
+              .from("lite_settings")
+              .select("setting_value")
+              .eq("location_id", locationId)
+              .eq("setting_key", "schedule_config")
+              .maybeSingle(),
+            supabase
+              .from("dashboard_metrics_daily")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("metric_date", startDate)
+              .lte("metric_date", endDate)
+              .order("metric_date", { ascending: true }),
+          ]);
+        }
+      }
+
       if (fetchId !== fetchIdRef.current) return; // stale
 
       // Handle table-not-found gracefully (tables may not be deployed yet)
@@ -115,8 +177,8 @@ export function useSchedulingData(locationId, startDate) {
 
   useEffect(() => {
     setLoading(true);
-    fetchAll();
-    intervalRef.current = setInterval(fetchAll, REFRESH_INTERVAL_MS);
+    fetchAll({ recompute: true });
+    intervalRef.current = setInterval(() => fetchAll(), REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalRef.current);
   }, [fetchAll]);
 
@@ -128,13 +190,23 @@ export function useSchedulingData(locationId, startDate) {
       const staffPlan = staffPlans.find(r => r.plan_date === date);
 
       // Build matrix: prefer scheduling_matrix_daily, fall back to dashboard_metrics_daily
-      const matrix = matrixRow || buildMatrixFromDashboard(dashRow, date);
+      const matrix = matrixRow ? normalizeMatrixRow(matrixRow) : buildMatrixFromDashboard(dashRow, date);
+      const trust = getMatrixTrust(matrix);
+      const matrixTrustState = getMatrixTrustState(matrix);
+      const generationBlockers = getMatrixBlockers(matrix);
+      const generationAllowed = canGenerateSchedule(matrix);
 
       // Compute required headcount
       const required = computeRequiredHeadcount(matrix, config);
 
       // Compute staffing status
-      const staffStatus = computeStaffingStatus(required, staffPlan, config);
+      const staffStatus = generationAllowed
+        ? computeStaffingStatus(required, staffPlan, config)
+        : {
+            status: matrixTrustState === "missing" ? "missing" : generationBlockers.length > 0 ? "blocked" : "estimated",
+            warnings: generationBlockers,
+            assignedFunctioningPct: staffPlan ? computeAvailableFunctioningPct(staffPlan) : 0,
+          };
 
       const dt = new Date(date + "T12:00:00");
       const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -147,8 +219,13 @@ export function useSchedulingData(locationId, startDate) {
         matrix,
         staffPlan: staffPlan || null,
         required,
+        trust,
+        matrixTrustState,
+        generationBlockers,
+        canGenerate: generationAllowed,
+        canShowHeadcount: generationAllowed,
         status: staffStatus.status,
-        warnings: [...required.warnings, ...(staffStatus.warnings || [])],
+        warnings: [...required.warnings, ...(staffStatus.warnings || []), ...generationBlockers],
         assignedFunctioningPct: staffStatus.assignedFunctioningPct || 0,
         hasLiveMatrix: !!matrixRow,
         hasDashboardFallback: !matrixRow && !!dashRow,
@@ -312,12 +389,20 @@ export function useSchedulingData(locationId, startDate) {
     config,
     loading,
     error,
-    refresh: fetchAll,
+    refresh: () => fetchAll({ recompute: true }),
     upsertStaffPlan,
     saveSchedule,
     publishSchedule,
     applyScheduleOverride,
     fetchScheduleVersions,
+  };
+}
+
+function normalizeMatrixRow(matrixRow) {
+  return {
+    ...matrixRow,
+    _source: "scheduling_matrix_daily",
+    _confidence: getMatrixTrustState(matrixRow) === "trusted" ? "high" : "low",
   };
 }
 
@@ -361,7 +446,56 @@ function buildMatrixFromDashboard(dashRow, date) {
     rooms_occupied: Math.round((dashRow.occupancy_pct || 0) / 100 * (dashRow.total_room_count || 28)),
     rooms_available: Math.round((1 - (dashRow.occupancy_pct || 0) / 100) * (dashRow.total_room_count || 28)),
     total_rooms: dashRow.total_room_count || 28,
-    detail_json: {},
+    detail_json: {
+      trust: {
+        state: "estimated",
+        source: "dashboard_fallback",
+        can_generate: false,
+        blockers: ["This day is using fallback dashboard metrics instead of the verified Gingr scheduling matrix."],
+        notes: ["Constituent opening, closing, bathing, feeding, and medication rows are not yet verified."],
+      },
+      display: {
+        opening: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          unclassified_boarding: boarding,
+          total_boarding: boarding,
+        },
+        closing: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          unclassified_boarding: boarding,
+          total_boarding: boarding,
+        },
+        daycare: {
+          evaluations: dashRow.evals_today ?? null,
+          private_play_dayboarding: null,
+          large_daycare: null,
+          small_daycare: null,
+          unclassified_daycare: daycare,
+          total_daycare: daycare,
+        },
+        support: {
+          departure_baths: null,
+          morning_feeding_dogs: null,
+          evening_feeding_dogs: null,
+          medication_dogs: null,
+          tours: dashRow.tours_today ?? null,
+          total_dog_volume: totalDogs,
+        },
+      },
+      solver_inputs: {
+        peak_large_daycare: 0,
+        peak_small_daycare: 0,
+        peak_unknown_daycare: daycare,
+        total_private_play_dogs: 0,
+        morning_feeding_dogs: 0,
+        evening_feeding_dogs: 0,
+        medication_dogs: 0,
+      },
+    },
     computed_at: dashRow.computed_at || null,
     _source: "dashboard_fallback",
     _confidence: "low",
@@ -392,7 +526,56 @@ function buildEmptyMatrix(date) {
     rooms_occupied: 0,
     rooms_available: 0,
     total_rooms: 0,
-    detail_json: {},
+    detail_json: {
+      trust: {
+        state: "missing",
+        source: "none",
+        can_generate: false,
+        blockers: ["No scheduling matrix has been computed for this day yet."],
+        notes: [],
+      },
+      display: {
+        opening: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          unclassified_boarding: null,
+          total_boarding: null,
+        },
+        closing: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          unclassified_boarding: null,
+          total_boarding: null,
+        },
+        daycare: {
+          evaluations: null,
+          private_play_dayboarding: null,
+          large_daycare: null,
+          small_daycare: null,
+          unclassified_daycare: null,
+          total_daycare: null,
+        },
+        support: {
+          departure_baths: null,
+          morning_feeding_dogs: null,
+          evening_feeding_dogs: null,
+          medication_dogs: null,
+          tours: null,
+          total_dog_volume: null,
+        },
+      },
+      solver_inputs: {
+        peak_large_daycare: 0,
+        peak_small_daycare: 0,
+        peak_unknown_daycare: 0,
+        total_private_play_dogs: 0,
+        morning_feeding_dogs: 0,
+        evening_feeding_dogs: 0,
+        medication_dogs: 0,
+      },
+    },
     computed_at: null,
     _source: "empty",
     _confidence: "none",
