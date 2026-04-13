@@ -5,6 +5,11 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  addDaysStr,
+  computeSchedulingMatrixRows,
+  upsertSchedulingMatrixRows,
+} from "../_shared/scheduling-matrix.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2438,6 +2443,27 @@ Deno.serve(async (req: Request) => {
     } catch (metricsErr: any) {
       // Non-fatal — dashboard metrics recompute is best-effort
       console.error('Dashboard metrics recompute error:', metricsErr.message);
+    }
+
+    // ── Recompute scheduling matrix after sync ───────────────────────────
+    try {
+      const matrixFrom = dateStrET();
+      const matrixTo = addDaysStr(matrixFrom, 6);
+      const matrixRows = await computeSchedulingMatrixRows({
+        supabase,
+        locationId: location_id,
+        dateFrom: matrixFrom,
+        dateTo: matrixTo,
+      });
+      const matrixResult = await upsertSchedulingMatrixRows(supabase, matrixRows);
+      results["scheduling_matrix"] = {
+        rows_upserted: matrixResult.count,
+        date_from: matrixFrom,
+        date_to: matrixTo,
+      };
+    } catch (matrixErr: any) {
+      console.error("Scheduling matrix recompute error:", matrixErr.message);
+      results["scheduling_matrix"] = { error: matrixErr.message };
     }
 
     // ── Compute cash basis metrics from synced invoices + deposits ───────

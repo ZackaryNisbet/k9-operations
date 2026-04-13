@@ -92,6 +92,216 @@ export function isWeekend(dateStr) {
   return d.getDay() === 0 || d.getDay() === 6;
 }
 
+function toNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function toNullableNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function safeRatioCoverage(count, ratio) {
+  const normalizedCount = Math.max(0, toNumber(count, 0));
+  const normalizedRatio = Math.max(1, toNumber(ratio, 1));
+  return normalizedCount > 0 ? Math.ceil(normalizedCount / normalizedRatio) : 0;
+}
+
+export function getMatrixTrust(matrix) {
+  if (!matrix) {
+    return {
+      state: "missing",
+      source: "none",
+      can_generate: false,
+      blockers: ["No scheduling matrix is available for this day."],
+      notes: [],
+    };
+  }
+
+  if (matrix.detail_json?.trust) {
+    const trust = matrix.detail_json.trust;
+    return {
+      state: trust.state || "trusted",
+      source: trust.source || "scheduling_matrix_daily",
+      can_generate: trust.can_generate !== false,
+      blockers: Array.isArray(trust.blockers) ? trust.blockers : [],
+      notes: Array.isArray(trust.notes) ? trust.notes : [],
+    };
+  }
+
+  if (matrix._source === "dashboard_fallback") {
+    return {
+      state: "estimated",
+      source: "dashboard_fallback",
+      can_generate: false,
+      blockers: ["This day is still using fallback dashboard metrics instead of the verified Gingr scheduling matrix."],
+      notes: ["Constituent opening, closing, feeding, medication, and bath counts are not fully verified."],
+    };
+  }
+
+  if (matrix._source === "empty") {
+    return {
+      state: "missing",
+      source: "none",
+      can_generate: false,
+      blockers: ["No scheduling data has been computed for this day yet."],
+      notes: [],
+    };
+  }
+
+  return {
+    state: "trusted",
+    source: matrix._source || "scheduling_matrix_daily",
+    can_generate: true,
+    blockers: [],
+    notes: [],
+  };
+}
+
+export function getMatrixTrustState(matrix) {
+  return getMatrixTrust(matrix).state;
+}
+
+export function getMatrixBlockers(matrix) {
+  const trust = getMatrixTrust(matrix);
+  return Array.isArray(trust.blockers) ? trust.blockers : [];
+}
+
+export function canGenerateSchedule(matrix) {
+  const trust = getMatrixTrust(matrix);
+  return trust.state === "trusted" && trust.can_generate !== false && getMatrixBlockers(matrix).length === 0;
+}
+
+export function getMatrixDisplay(matrix) {
+  const display = matrix?.detail_json?.display || {};
+
+  const opening = {
+    large_boarding: toNullableNumber(display.opening?.large_boarding) ?? toNumber(matrix?.boarding_large, 0),
+    small_boarding: toNullableNumber(display.opening?.small_boarding) ?? toNumber(matrix?.boarding_small, 0),
+    private_play_boarding: toNullableNumber(display.opening?.private_play_boarding) ?? toNumber(matrix?.pp_overnight_boarders, 0),
+    unclassified_boarding: toNullableNumber(display.opening?.unclassified_boarding) ?? toNumber(matrix?.boarding_unknown_size, 0),
+  };
+  opening.total_boarding = toNullableNumber(display.opening?.total_boarding)
+    ?? [opening.large_boarding, opening.small_boarding, opening.private_play_boarding, opening.unclassified_boarding]
+      .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
+
+  const closing = {
+    large_boarding: toNullableNumber(display.closing?.large_boarding) ?? opening.large_boarding,
+    small_boarding: toNullableNumber(display.closing?.small_boarding) ?? opening.small_boarding,
+    private_play_boarding: toNullableNumber(display.closing?.private_play_boarding) ?? opening.private_play_boarding,
+    unclassified_boarding: toNullableNumber(display.closing?.unclassified_boarding) ?? opening.unclassified_boarding,
+  };
+  closing.total_boarding = toNullableNumber(display.closing?.total_boarding)
+    ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.unclassified_boarding]
+      .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
+
+  const daycare = {
+    evaluations: toNullableNumber(display.daycare?.evaluations) ?? toNumber(matrix?.evaluations, 0),
+    private_play_dayboarding: toNullableNumber(display.daycare?.private_play_dayboarding) ?? toNumber(matrix?.pp_dayboarders, 0),
+    large_daycare: toNullableNumber(display.daycare?.large_daycare) ?? toNumber(matrix?.daycare_large, 0),
+    small_daycare: toNullableNumber(display.daycare?.small_daycare) ?? toNumber(matrix?.daycare_small, 0),
+    unclassified_daycare: toNullableNumber(display.daycare?.unclassified_daycare) ?? toNumber(matrix?.daycare_unknown_size, 0),
+  };
+  daycare.total_daycare = toNullableNumber(display.daycare?.total_daycare)
+    ?? [
+      daycare.evaluations,
+      daycare.private_play_dayboarding,
+      daycare.large_daycare,
+      daycare.small_daycare,
+      daycare.unclassified_daycare,
+    ].reduce((sum, value) => sum + (toNumber(value, 0)), 0);
+
+  const support = {
+    departure_baths: toNullableNumber(display.support?.departure_baths) ?? toNumber(matrix?.departure_baths, 0),
+    morning_feeding_dogs: toNullableNumber(display.support?.morning_feeding_dogs) ?? opening.total_boarding,
+    evening_feeding_dogs: toNullableNumber(display.support?.evening_feeding_dogs) ?? toNumber(matrix?.feeding_dogs, closing.total_boarding),
+    medication_dogs: toNullableNumber(display.support?.medication_dogs) ?? toNumber(matrix?.medication_dogs, 0),
+    total_dog_volume: toNullableNumber(display.support?.total_dog_volume) ?? toNumber(matrix?.gross_dogs_in_building, closing.total_boarding + daycare.total_daycare),
+    tours: toNullableNumber(display.support?.tours) ?? toNumber(matrix?.tours, 0),
+  };
+
+  return { opening, closing, daycare, support };
+}
+
+export function getMatrixSolverInputs(matrix) {
+  const solver = matrix?.detail_json?.solver_inputs || {};
+  const display = getMatrixDisplay(matrix);
+
+  return {
+    peak_large_daycare: toNumber(solver.peak_large_daycare, toNumber(matrix?.daycare_large, 0)),
+    peak_small_daycare: toNumber(solver.peak_small_daycare, toNumber(matrix?.daycare_small, 0)),
+    peak_unknown_daycare: toNumber(solver.peak_unknown_daycare, toNumber(matrix?.daycare_unknown_size, 0)),
+    total_private_play_dogs: toNumber(solver.total_private_play_dogs, toNumber(display.opening.private_play_boarding, 0) + toNumber(display.daycare.private_play_dayboarding, 0)),
+    morning_feeding_dogs: toNumber(solver.morning_feeding_dogs, toNumber(display.support.morning_feeding_dogs, 0)),
+    evening_feeding_dogs: toNumber(solver.evening_feeding_dogs, toNumber(display.support.evening_feeding_dogs, 0)),
+    medication_dogs: toNumber(solver.medication_dogs, toNumber(display.support.medication_dogs, 0)),
+  };
+}
+
+function estimateSplitStrategyFinishMinutes(groupDogsLarge, groupDogsSmall, effectivePct, config) {
+  if (effectivePct < 2) return Infinity;
+
+  const yardOrder = groupDogsLarge >= groupDogsSmall ? "large" : "small";
+  const firstYardDogs = yardOrder === "large" ? groupDogsLarge : groupDogsSmall;
+  const secondYardDogs = yardOrder === "large" ? groupDogsSmall : groupDogsLarge;
+  const helpers = effectivePct - 1;
+  const transportMin = config.group_transport_minutes_each_way;
+  const messRate = config.room_mess_rate_default;
+  const cleanMin = config.morning_room_clean_minutes;
+
+  const loadFirst = (firstYardDogs * transportMin) / Math.max(1, helpers);
+  const cleanFirst = (firstYardDogs * messRate * cleanMin) / Math.max(1, helpers - 1 || 1);
+  const loadSecond = (secondYardDogs * transportMin) / Math.max(1, helpers - 1 || 1);
+  const unloadFirst = (firstYardDogs * transportMin) / Math.max(1, helpers - 1 || 1);
+  const unloadSecond = (secondYardDogs * transportMin) / Math.max(1, helpers - 1 || 1);
+
+  return loadFirst + Math.max(cleanFirst, loadSecond) + unloadFirst + unloadSecond;
+}
+
+function estimateOpeningRequirement(matrix, config) {
+  const display = getMatrixDisplay(matrix);
+  const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
+  const groupDogsSmall = toNumber(display.opening.small_boarding, 0);
+
+  const weekend = isWeekend(matrix.matrix_date);
+  const window = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
+  const windowMinutes = timeToMinutes(window[1]) - timeToMinutes(window[0]);
+  const fullPodPassRequired = Math.max(1, Math.ceil(estimatePodPassTotalMinutes(totalOvernightDogs, config) / Math.max(1, windowMinutes)));
+  const ppReserve = ppDogs > 0 ? Math.max(1, Math.ceil(estimatePodPassTotalMinutes(ppDogs, config) / Math.max(1, windowMinutes))) : 0;
+
+  let splitRequired = Infinity;
+  for (let candidate = Math.max(2, ppReserve + 2); candidate <= 12; candidate++) {
+    const effectivePct = candidate - ppReserve;
+    const finishMinutes = estimateSplitStrategyFinishMinutes(groupDogsLarge, groupDogsSmall, effectivePct, config);
+    if (finishMinutes <= windowMinutes) {
+      splitRequired = candidate;
+      break;
+    }
+  }
+
+  if (totalOvernightDogs <= 24) {
+    return { strategy: "full_pod_pass", requiredPct: fullPodPassRequired };
+  }
+
+  if (totalOvernightDogs <= 30) {
+    const best = Math.min(fullPodPassRequired, splitRequired);
+    return {
+      strategy: best === splitRequired ? "split_group_pp" : "full_pod_pass",
+      requiredPct: Number.isFinite(best) ? best : fullPodPassRequired,
+    };
+  }
+
+  if (Number.isFinite(splitRequired)) {
+    return { strategy: "split_group_pp", requiredPct: splitRequired };
+  }
+
+  return { strategy: "full_pod_pass", requiredPct: fullPodPassRequired };
+}
+
 // ─── Pod Pass Throughput Estimator ────────────────────────────────────────
 
 export function estimatePodPassMinutesPerDog(config) {
@@ -117,7 +327,8 @@ export function estimatePodPassTotalMinutes(dogCount, config) {
  * Evaluate full pod pass strategy for all overnight dogs.
  */
 export function evaluateFullPodPass(matrix, staffPlan, config) {
-  const totalOvernightDogs = matrix.boarding_large + matrix.boarding_small + matrix.pp_overnight_boarders;
+  const display = getMatrixDisplay(matrix);
+  const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
   const totalMinutes = estimatePodPassTotalMinutes(totalOvernightDogs, config);
 
   const weekend = isWeekend(matrix.matrix_date);
@@ -155,9 +366,10 @@ export function evaluateFullPodPass(matrix, staffPlan, config) {
  * Evaluate split strategy: group let-outs for group-play dogs + pod pass for PP dogs.
  */
 export function evaluateSplitStrategy(matrix, staffPlan, config) {
-  const ppDogs = matrix.pp_overnight_boarders;
-  const groupDogsLarge = matrix.boarding_large;
-  const groupDogsSmall = matrix.boarding_small;
+  const display = getMatrixDisplay(matrix);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
+  const groupDogsSmall = toNumber(display.opening.small_boarding, 0);
 
   const weekend = isWeekend(matrix.matrix_date);
   const window = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
@@ -239,7 +451,7 @@ export function solveOpening(matrix, staffPlan, config) {
 
   // Step 1: If full pod pass fits comfortably, use it
   if (podPassResult.feasible) {
-    const totalOvernightDogs = matrix.boarding_large + matrix.boarding_small + matrix.pp_overnight_boarders;
+    const totalOvernightDogs = toNumber(getMatrixDisplay(matrix).opening.total_boarding, 0);
     // Prefer pod pass for <= 24 dogs (pod pass default zone)
     if (totalOvernightDogs <= 24) {
       return { ...podPassResult, selectedReason: "Full pod pass is feasible and preferred for low-volume morning" };
@@ -288,41 +500,36 @@ export function computeAvailableFunctioningPct(staffPlan) {
 export function computeRequiredHeadcount(matrix, config) {
   if (!matrix) return { am: 0, midday: 0, pm: 0, functionalHours: 0, warnings: [], explanation: [] };
 
+  const display = getMatrixDisplay(matrix);
+  const solverInputs = getMatrixSolverInputs(matrix);
+  const trust = getMatrixTrust(matrix);
+  const blockers = getMatrixBlockers(matrix);
   const warnings = [];
   const explanation = [];
 
-  // AM: Opening headcount driven by overnight dogs + baths + daycare coverage
-  const totalOvernightDogs = (matrix.boarding_large || 0) + (matrix.boarding_small || 0) + (matrix.pp_overnight_boarders || 0);
-  const ppDogs = matrix.pp_overnight_boarders || 0;
+  const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
+  const openingRequirement = estimateOpeningRequirement(matrix, config);
+  const peakLargeCoverage = safeRatioCoverage(solverInputs.peak_large_daycare, config.daycare_ratio_large);
+  const peakSmallCoverage = safeRatioCoverage(solverInputs.peak_small_daycare, config.daycare_ratio_small);
+  const unknownCoverage = solverInputs.peak_unknown_daycare > 0 ? 1 : 0;
+  const privatePlayCoverage = solverInputs.total_private_play_dogs > 0 ? 1 : 0;
+  const bathCoverage = toNumber(display.support.departure_baths, 0) > 6 ? 1 : 0;
+  const middayBreakRelief = (peakLargeCoverage + peakSmallCoverage + privatePlayCoverage) > 0 ? 1 : 0;
 
-  // Daycare coverage minimum: 1 for LGDC + 1 for SMDC when dogs present
-  const lgdcCoverage = (matrix.daycare_large || 0) > 0 ? 1 : 0;
-  const smdcCoverage = (matrix.daycare_small || 0) > 0 ? 1 : 0;
-  const dayCovBase = lgdcCoverage + smdcCoverage;
-
-  // Opening staff: transport + daycare standing + PP
-  const transportWork = totalOvernightDogs * (config.group_transport_minutes_each_way || 2);
   const weekend = isWeekend(matrix.matrix_date);
   const window = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
   const windowMin = timeToMinutes(window[1]) - timeToMinutes(window[0]);
-  const transportPct = Math.ceil(transportWork / Math.max(1, windowMin));
-  const ppPct = ppDogs > 0 ? 1 : 0;
+  const openingCoverageFloor = Math.max(1, peakLargeCoverage + peakSmallCoverage + unknownCoverage + privatePlayCoverage + bathCoverage);
+  const amRequired = Math.max(openingRequirement.requiredPct, openingCoverageFloor);
 
-  // Bath workers (if > 6 baths, need dedicated bath PCT)
-  const bathPct = (matrix.departure_baths || 0) > 6 ? 1 : 0;
+  const middayCoreCoverage = peakLargeCoverage + peakSmallCoverage + unknownCoverage + privatePlayCoverage;
+  const middayRequired = Math.max(1, middayCoreCoverage + middayBreakRelief + bathCoverage);
 
-  const amRequired = Math.max(dayCovBase + 1, transportPct + dayCovBase + ppPct + bathPct);
-
-  // Midday: daycare coverage + PP round + break relief
-  const middayPP = ppDogs > 0 ? 1 : 0;
-  const breakRelief = 1; // at least 1 for break coverage
-  const middayRequired = Math.max(dayCovBase + 1, dayCovBase + middayPP + breakRelief);
-
-  // PM/Closing: transport back + feeding + daycare coverage + PP round
-  const feedWork = ((matrix.feeding_dogs || 0) * (config.feeding_minutes_per_dog || 1.5)) +
-    ((matrix.medication_dogs || 0) * (config.medication_minutes_per_dog || 2));
-  const feedPct = feedWork > 30 ? 1 : 0;
-  const pmRequired = Math.max(dayCovBase + 1, dayCovBase + ppPct + feedPct + 1);
+  const feedWork =
+    (solverInputs.evening_feeding_dogs * (config.feeding_minutes_per_dog || 1.5)) +
+    (solverInputs.medication_dogs * (config.medication_minutes_per_dog || 2));
+  const feedPct = Math.ceil(feedWork / Math.max(1, windowMin));
+  const pmRequired = Math.max(1, peakLargeCoverage + peakSmallCoverage + unknownCoverage + privatePlayCoverage + feedPct);
 
   // Total functional hours estimate (rough: am * opening_hours + midday * midday_hours + pm * closing_hours)
   const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
@@ -334,19 +541,26 @@ export function computeRequiredHeadcount(matrix, config) {
   );
 
   // Generate explanation
-  explanation.push(`AM: ${amRequired} functioning PCTs needed — ${totalOvernightDogs} overnight dogs, ${ppDogs} PP dogs, ${matrix.departure_baths || 0} baths`);
-  explanation.push(`Midday: ${middayRequired} functioning PCTs — daycare coverage (${lgdcCoverage} LGDC + ${smdcCoverage} SMDC) + PP + break relief`);
-  explanation.push(`PM: ${pmRequired} functioning PCTs — transport back, feeding (${matrix.feeding_dogs || 0} dogs), meds (${matrix.medication_dogs || 0} dogs)`);
+  explanation.push(`AM: ${amRequired} functioning PCTs needed — ${totalOvernightDogs} boarding dogs opening, ${solverInputs.total_private_play_dogs} private play dogs, ${toNumber(display.support.departure_baths, 0)} departure baths`);
+  explanation.push(`Midday: ${middayRequired} functioning PCTs — peak daycare coverage (${peakLargeCoverage} large + ${peakSmallCoverage} small + ${unknownCoverage} flex) with break relief`);
+  explanation.push(`PM: ${pmRequired} functioning PCTs — closing coverage plus feeding (${solverInputs.evening_feeding_dogs} dogs) and meds (${solverInputs.medication_dogs} dogs)`);
+
+  if (trust.state !== "trusted") {
+    warnings.push(trust.state === "estimated"
+      ? "Scheduling matrix is estimated from fallback data. Automated schedule generation is blocked until the verified matrix is computed."
+      : "Scheduling matrix is missing. Automated schedule generation is blocked until the verified matrix is computed.");
+  }
+  warnings.push(...blockers);
 
   // Warnings
-  if ((matrix.departure_baths || 0) > 10) {
+  if (toNumber(display.support.departure_baths, 0) > 10) {
     warnings.push("Heavy bath day — bath completion may push past target window");
   }
-  if (ppDogs > 8) {
-    warnings.push(`High PP load (${ppDogs} dogs) — dedicated PP functioning PCT needed throughout day`);
+  if (solverInputs.total_private_play_dogs > 8) {
+    warnings.push(`High PP load (${solverInputs.total_private_play_dogs} dogs) — dedicated private play coverage is likely needed throughout the day`);
   }
-  if ((matrix.boarding_unknown_size || 0) + (matrix.daycare_unknown_size || 0) > 5) {
-    warnings.push(`${(matrix.boarding_unknown_size || 0) + (matrix.daycare_unknown_size || 0)} dogs have unknown size classification — headcount may shift after check-in`);
+  if (toNumber(matrix.boarding_unknown_size, 0) + toNumber(matrix.daycare_unknown_size, 0) > 0) {
+    warnings.push(`${toNumber(matrix.boarding_unknown_size, 0) + toNumber(matrix.daycare_unknown_size, 0)} dogs have unknown size classification — headcount stays blocked until the playgroup split is verified`);
   }
 
   return {
@@ -419,8 +633,10 @@ export function generateOpeningGrid(matrix, staffPlan, openingResult, config) {
   lanes.forEach(lane => { grid[lane] = {}; });
 
   const openEndIdx = morningSlots.indexOf(openWindow[1]) || 4;
-  const ppDogs = matrix.pp_overnight_boarders || 0;
-  const totalBoardingDogs = (matrix.boarding_large || 0) + (matrix.boarding_small || 0);
+  const solverInputs = getMatrixSolverInputs(matrix);
+  const display = getMatrixDisplay(matrix);
+  const ppDogs = toNumber(display.opening.private_play_boarding, 0);
+  const hasSmallDaycare = solverInputs.peak_small_daycare > 0;
   const strategy = openingResult?.strategy || "split_group_pp";
 
   // Assign tasks by phase
@@ -474,19 +690,19 @@ export function generateOpeningGrid(matrix, staffPlan, openingResult, config) {
       } else if (ti < openEndIdx + 4) {
         // Core daycare ramp-up
         if (li % 3 === 0) grid[lane][t] = "lgdc";
-        else if (li % 3 === 1) grid[lane][t] = "smdc";
+        else if (li % 3 === 1) grid[lane][t] = hasSmallDaycare ? "smdc" : "lgdc";
         else grid[lane][t] = ppDogs > 0 ? "pp" : "lgdc";
       } else if (ti < openEndIdx + 8) {
         // Core rotation
         const phase = Math.floor((ti - openEndIdx - 4) / 2);
         if (li === 0) grid[lane][t] = "lgdc";
-        else if (li === 1) grid[lane][t] = phase === 0 ? "smdc" : "lgdc";
+        else if (li === 1) grid[lane][t] = hasSmallDaycare && phase === 0 ? "smdc" : "lgdc";
         else if (li === 2) grid[lane][t] = phase === 0 ? "bath" : "pp";
         else grid[lane][t] = ti === openEndIdx + 6 ? "break" : "lgdc";
       } else {
         // Late morning
         if (li === 0) grid[lane][t] = "lgdc";
-        else if (li === 1) grid[lane][t] = "smdc";
+        else if (li === 1) grid[lane][t] = hasSmallDaycare ? "smdc" : "lgdc";
         else if (ti % 4 === 0 && li > 1) grid[lane][t] = "break";
         else grid[lane][t] = "disinfect";
       }
@@ -516,7 +732,8 @@ export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
   const grid = {};
   lanes.forEach(lane => { grid[lane] = {}; });
 
-  const ppDogs = (matrix.pp_overnight_boarders || 0) + (matrix.pp_dayboarders || 0);
+  const solverInputs = getMatrixSolverInputs(matrix);
+  const ppDogs = solverInputs.total_private_play_dogs;
   const hasBaths = (matrix.departure_baths || 0) > 0;
   const strategy = openingResult?.strategy || "split_group_pp";
   const hasSup = staffPlan.supervisor_present;
@@ -554,7 +771,7 @@ export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
       }
 
       // PCT / CSR-as-PCT assignment by phase
-      grid[lane][t] = assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrentBreaks, t);
+      grid[lane][t] = assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrentBreaks, t, solverInputs);
     });
   });
 
@@ -633,8 +850,9 @@ function assignSupervisorTask(phase, slotMin, ti, phases, matrix, config, breakT
   }
 }
 
-function assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrent, t) {
+function assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrent, t, solverInputs) {
   const crewLaneCount = lanes.filter(l => !l.startsWith("SUP")).length;
+  const hasSmallDaycare = solverInputs.peak_small_daycare > 0;
 
   switch (phase) {
     case "OPEN": {
@@ -647,7 +865,7 @@ function assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config,
       if (li === 0) return "transport";
       if (li === 1 && hasBaths) return "bath";
       if (li === 2) return "room_clean";
-      return (matrix.daycare_small || 0) > 0 ? "smdc" : "lgdc";
+      return hasSmallDaycare ? "smdc" : "lgdc";
     }
     case "CORE": {
       // Rotating daycare coverage + PP + baths + staggered breaks
@@ -655,14 +873,14 @@ function assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config,
     }
     case "LATE_AM": {
       if (li === 0) return "lgdc";
-      if (li === 1) return "smdc";
+      if (li === 1) return hasSmallDaycare ? "smdc" : "lgdc";
       if (li === 2) return ppDogs > 0 ? "pp" : "foam";
       return "disinfect";
     }
     case "PM_CORE": {
       // Afternoon core: daycare + PP + float
       if (li === 0) return "lgdc";
-      if (li === 1) return (matrix.daycare_small || 0) > 0 ? "smdc" : "lgdc";
+      if (li === 1) return hasSmallDaycare ? "smdc" : "lgdc";
       if (li === 2 && ppDogs > 0) return "pp";
       return "housekeeping";
     }
@@ -743,6 +961,7 @@ function assignPmMidTask(slotMin, ti, li, crewCount, breakTracker, maxConcurrent
  */
 export function validateGrid(grid, lanes, slots, matrix, config) {
   const violations = [];
+  const solverInputs = getMatrixSolverInputs(matrix);
   const weekend = isWeekend(matrix.matrix_date);
   const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
   const publicHours = weekend ? config.public_hours_weekend : config.public_hours_weekday;
@@ -754,7 +973,7 @@ export function validateGrid(grid, lanes, slots, matrix, config) {
     const isCore = slotMin >= coreStartMin && slotMin < coreEndMin;
 
     // Check LGDC coverage during core hours
-    if (isCore && (matrix.daycare_large || 0) > 0) {
+    if (isCore && solverInputs.peak_large_daycare > 0) {
       const lgdcCoverage = lanes.some(l => grid[l]?.[t] === "lgdc");
       if (!lgdcCoverage) {
         violations.push({ slot: t, type: "lgdc_uncovered", message: `LGDC uncovered at ${t} — hard constraint violation` });
@@ -762,7 +981,7 @@ export function validateGrid(grid, lanes, slots, matrix, config) {
     }
 
     // Check SMDC coverage during core hours
-    if (isCore && (matrix.daycare_small || 0) > 0) {
+    if (isCore && solverInputs.peak_small_daycare > 0) {
       const smdcCoverage = lanes.some(l => grid[l]?.[t] === "smdc");
       if (!smdcCoverage) {
         violations.push({ slot: t, type: "smdc_uncovered", message: `SMDC uncovered at ${t} — hard constraint violation` });
@@ -874,13 +1093,15 @@ export function applyOverride(grid, lane, slot, newTask, reason) {
  */
 export function buildDaySummary(matrix, staffPlan, config) {
   const mergedConfig = { ...SCHEDULE_CONFIG_DEFAULTS, ...config };
-
+  const trust = getMatrixTrust(matrix);
+  const generationBlockers = getMatrixBlockers(matrix);
+  const canGenerate = canGenerateSchedule(matrix);
   const required = computeRequiredHeadcount(matrix, mergedConfig);
   const staffStatus = computeStaffingStatus(required, staffPlan, mergedConfig);
-  const openingResult = staffPlan ? solveOpening(matrix, staffPlan, mergedConfig) : null;
+  const openingResult = staffPlan && canGenerate ? solveOpening(matrix, staffPlan, mergedConfig) : null;
 
   // Generate full-day grid (AM + PM) instead of just opening
-  const gridResult = staffPlan
+  const gridResult = staffPlan && canGenerate
     ? generateFullDayGrid(matrix, staffPlan, openingResult, mergedConfig)
     : null;
 
@@ -891,11 +1112,14 @@ export function buildDaySummary(matrix, staffPlan, config) {
     violations = validation.violations;
   }
 
-  const allWarnings = [...required.warnings, ...(staffStatus.warnings || []), ...(openingResult?.warnings || [])];
+  const allWarnings = [...required.warnings, ...(staffStatus.warnings || []), ...(openingResult?.warnings || []), ...generationBlockers];
 
   return {
     matrix,
     staffPlan,
+    trust,
+    generationBlockers,
+    canGenerate,
     required,
     staffStatus,
     openingResult,
