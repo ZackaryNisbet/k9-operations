@@ -272,37 +272,37 @@ export async function fetchEarliestOperationalStartDates({
     if (!chunk.length) continue;
 
     const animalIdList = chunk.map((animalId) => `'${escapeSqlLiteral(animalId)}'`).join(", ");
-    const sql = `
-      SELECT
-        r.animal_gingr_id,
-        min(r.start_date)::text AS earliest_start
-      FROM public.gingr_reservations r
-      LEFT JOIN public.gingr_reservation_types rt
-        ON rt.location_id = r.location_id
-       AND rt.gingr_id::text = r.reservation_type_id::text
-      WHERE r.location_id = $1
-        AND r.cancelled_date IS NULL
-        AND r.start_date IS NOT NULL
-        AND r.animal_gingr_id IN (${animalIdList})
-        AND CASE
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%tour%' THEN false
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%groom%' THEN false
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%bath%' THEN false
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%evaluation%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%eval%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day boarding%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day board%' THEN true
-          WHEN coalesce(rt.is_daycare, false) THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%daycare%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day care%' THEN true
-          WHEN coalesce(rt.is_boarding, false) THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%boarding%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%lodge%' THEN true
-          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%kennel%' THEN true
-          ELSE false
-        END
-      GROUP BY r.animal_gingr_id
-    `;
+    const sql = [
+      "SELECT",
+      "  r.animal_gingr_id,",
+      "  min(r.start_date)::text AS earliest_start",
+      "FROM public.gingr_reservations r",
+      "LEFT JOIN public.gingr_reservation_types rt",
+      "  ON rt.location_id = r.location_id",
+      " AND rt.gingr_id::text = r.reservation_type_id::text",
+      "WHERE r.location_id = ($1)::text",
+      "  AND r.cancelled_date IS NULL",
+      "  AND r.start_date IS NOT NULL",
+      `  AND r.animal_gingr_id IN (${animalIdList})`,
+      "  AND CASE",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%tour%' THEN false",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%groom%' THEN false",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%bath%' THEN false",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%evaluation%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%eval%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day boarding%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day board%' THEN true",
+      "    WHEN coalesce(rt.is_daycare, false) THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%daycare%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day care%' THEN true",
+      "    WHEN coalesce(rt.is_boarding, false) THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%boarding%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%lodge%' THEN true",
+      "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%kennel%' THEN true",
+      "    ELSE false",
+      "  END",
+      "GROUP BY r.animal_gingr_id",
+    ].join("\n");
     const { data, error } = await supabase.rpc("exec_sql", {
       query: sql,
       params: [locationId],
