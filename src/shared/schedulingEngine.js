@@ -6,10 +6,10 @@
 export const SCHEDULE_CONFIG_DEFAULTS = {
   weekday_am_open_window: ["06:00", "07:00"],
   weekend_am_open_window: ["07:00", "09:00"],
-  weekday_site_hours: ["06:00", "20:00"],
+  weekday_site_hours: ["06:00", "19:30"],
   weekend_site_hours: ["07:00", "18:00"],
   public_hours_weekday: ["07:00", "19:00"],
-  public_hours_weekend: ["08:00", "18:00"],
+  public_hours_weekend: ["09:00", "18:00"],
   daycare_ratio_large: 25,
   daycare_ratio_small: 25,
   small_daycare_practical_ratio: 35,
@@ -55,6 +55,8 @@ export const TASK_COLORS = {
   foam: { bg: "#F1F5F9", text: "#475569", label: "Foam" },
   dailies: { bg: "#F8FAFC", text: "#64748B", label: "Dailies" },
   eod: { bg: "#F1F5F9", text: "#475569", label: "EOD / Close" },
+  lobby: { bg: "#E0F2FE", text: "#075985", label: "Lobby" },
+  manager_coverage: { bg: "#ECFCCB", text: "#3F6212", label: "Manager Coverage" },
   off: { bg: "#FFFFFF", text: "#CBD5E1", label: "Off Shift" },
 };
 
@@ -225,8 +227,6 @@ export function deriveStaffPlanFromShiftEntries({
   locationId = "",
   planDate,
   shiftEntries,
-  allowCsrAsPct = false,
-  allowModAsPct = false,
   notes = "",
 }) {
   const entries = (shiftEntries || []).map((entry) => ({
@@ -256,10 +256,9 @@ export function deriveStaffPlanFromShiftEntries({
     shift: "full",
     ...counts,
     supervisor_present: counts.supervisor_count > 0,
-    allow_csr_as_pct: !!allowCsrAsPct,
-    allow_mod_as_pct: !!allowModAsPct,
+    allow_csr_as_pct: false,
+    allow_mod_as_pct: false,
     staff_names: entries,
-    shift_entries: entries,
     notes,
   };
 }
@@ -1387,7 +1386,7 @@ export function serializeSchedule(matrix, staffPlan, daySummary, config) {
       supervisor_present: staffPlan.supervisor_present,
       allow_csr_as_pct: staffPlan.allow_csr_as_pct,
       allow_mod_as_pct: staffPlan.allow_mod_as_pct,
-      shift_entries: shiftEntries,
+      staff_names: shiftEntries,
     },
     dog_metrics: {
       boarding_large: matrix.boarding_large,
@@ -1423,14 +1422,18 @@ export function serializeSchedule(matrix, staffPlan, daySummary, config) {
 /**
  * Apply a single cell override to a grid. Returns a new grid (immutable).
  */
-export function applyOverride(grid, lane, slot, newTask, reason) {
+export function applyOverride(grid, lane, slot, newTask, notes) {
   const newGrid = {};
   for (const l of Object.keys(grid)) {
     newGrid[l] = { ...grid[l] };
   }
-  const previousTask = newGrid[lane]?.[slot] || null;
+  const previousCell = newGrid[lane]?.[slot] || null;
+  const previousTask = typeof previousCell === "string" ? previousCell : previousCell?.task || null;
   if (newGrid[lane]) {
-    newGrid[lane][slot] = newTask;
+    const existingCell = newGrid[lane][slot];
+    newGrid[lane][slot] = typeof existingCell === "object" && existingCell !== null
+      ? { ...existingCell, task: newTask, notes: notes || "" }
+      : { task: newTask, notes: notes || "" };
   }
   return {
     grid: newGrid,
@@ -1439,7 +1442,7 @@ export function applyOverride(grid, lane, slot, newTask, reason) {
       slot,
       previous_task: previousTask,
       new_task: newTask,
-      reason: reason || "",
+      notes: notes || "",
       applied_at: new Date().toISOString(),
     },
   };
