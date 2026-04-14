@@ -79,6 +79,7 @@ const MATRIX_GROUP_TEMPLATES = [
       { key: "opening.small_boarding", label: "Small Boarding Opening" },
       { key: "opening.private_play_boarding", label: "Private Play Boarding Opening" },
       { key: "opening.half_and_half_boarding", label: "Half and Half Boarding Opening", optional: true },
+      { key: "opening.evaluation_boarding", label: "Evaluation Boarding Opening", optional: true },
       { key: "opening.unclassified_boarding", label: "Unresolved Boarding Opening", optional: true },
       { key: "opening.total_boarding", label: "Total Boarding Dogs Opening", total: true },
     ],
@@ -90,6 +91,7 @@ const MATRIX_GROUP_TEMPLATES = [
       { key: "closing.small_boarding", label: "Small Boarding Closing" },
       { key: "closing.private_play_boarding", label: "Private Play Boarding Closing" },
       { key: "closing.half_and_half_boarding", label: "Half and Half Boarding Closing", optional: true },
+      { key: "closing.evaluation_boarding", label: "Evaluation Boarding Closing", optional: true },
       { key: "closing.unclassified_boarding", label: "Unresolved Boarding Closing", optional: true },
       { key: "closing.total_boarding", label: "Total Boarding Dogs Closing", total: true },
     ],
@@ -164,6 +166,74 @@ function formatWeekRange(startDate) {
   return `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
+function formatCompletionRate(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return `${Math.round(numeric * 100)}%`;
+}
+
+function humanizeFallbackMode(mode) {
+  switch (mode) {
+    case "exact_prior_year":
+      return "exact prior year";
+    case "same_weekday_prior_year":
+      return "same weekday prior year";
+    case "exact_prior_years_2_to_4":
+      return "same date from 2-4 years back";
+    case "same_weekday_prior_years_2_to_4":
+      return "same weekday from 2-4 years back";
+    case "carry_forward_no_history":
+      return "carry current bookings";
+    default:
+      return null;
+  }
+}
+
+function getProjectionSummaryLines(day) {
+  const explanation = day?.projection?.explanations?.support_total_dog_volume;
+  if (!explanation || !day?.projection?.lead_days) return [];
+
+  const lines = [`${explanation.lead_days} days out`];
+  if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
+    const completion = explanation.exact_prior_year_final > 0
+      ? formatCompletionRate((explanation.exact_prior_year_as_of || 0) / explanation.exact_prior_year_final)
+      : null;
+    lines.push(`Last year: ${explanation.exact_prior_year_as_of || 0} of ${explanation.exact_prior_year_final} booked${completion ? ` (${completion})` : ""}`);
+  }
+  if (explanation.fallback_mode && explanation.fallback_mode !== "exact_prior_year" && explanation.fallback_mode !== "carry_forward_no_history") {
+    lines.push(`Using ${humanizeFallbackMode(explanation.fallback_mode)} (${explanation.sample_count || 0} sample${explanation.sample_count === 1 ? "" : "s"})`);
+  }
+  return lines;
+}
+
+function getProjectionTooltip({ explanation, currentValue, projectedValue }) {
+  if (!explanation) {
+    return `${currentValue} currently booked. Projected to ${projectedValue}.`;
+  }
+
+  const lines = [
+    `${currentValue} currently booked -> ${projectedValue} projected`,
+    `${explanation.lead_days || 0} days out`,
+  ];
+
+  if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
+    lines.push(`Exact prior year: ${explanation.exact_prior_year_as_of || 0} booked by now, ${explanation.exact_prior_year_final} final`);
+  }
+  if (explanation.completion_rate !== null && explanation.completion_rate !== undefined) {
+    const rate = formatCompletionRate(explanation.completion_rate);
+    if (rate) lines.push(`Completion rate used: ${rate}`);
+  }
+  const fallback = humanizeFallbackMode(explanation.fallback_mode);
+  if (fallback && explanation.fallback_mode !== "exact_prior_year") {
+    lines.push(`Fallback mode: ${fallback}`);
+  }
+  if (explanation.sample_count) {
+    lines.push(`Sample count: ${explanation.sample_count}`);
+  }
+
+  return lines.join("\n");
+}
+
 function renderMatrixCellValue({ row, day, mode }) {
   const currentValue = getDayMatrixValue(day, row, "current");
   const projectedValue = getDayMatrixValue(day, row, "projected");
@@ -182,9 +252,11 @@ function renderMatrixCellValue({ row, day, mode }) {
     const explanation = day.projection?.explanations?.[row.key.replaceAll(".", "_")] || null;
     const currentText = currentValue ?? "—";
     const projectedText = projectedValue ?? currentValue ?? "—";
-    const title = explanation
-      ? `${currentText} currently booked. Projected to ${projectedText}. ${explanation.sample_count || 0} historical samples at ${explanation.lead_days} days out.`
-      : `${currentText} currently booked. Projected to ${projectedText}.`;
+    const title = getProjectionTooltip({
+      explanation,
+      currentValue: currentText,
+      projectedValue: projectedText,
+    });
 
     return {
       title,
@@ -581,9 +653,16 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           LY total: {day.comparison.last_year_total_dog_volume}
                         </div>
                       )}
-                      <div style={{ fontSize: 10, color: blocked ? C.dan : C.textMut, marginTop: 6, minHeight: 14 }}>
-                        {blocked ? `${day.generationBlockers.length} blocker${day.generationBlockers.length === 1 ? "" : "s"}` : day.canGenerate ? "Ready to schedule" : "Waiting on matrix"}
+                      <div style={{ fontSize: 10, color: blocked ? C.dan : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
+                        {blocked ? (day.generationBlockers[0] || "Blocked") : day.canGenerate ? "Ready to schedule" : "Waiting on matrix"}
                       </div>
+                      {matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, lineHeight: 1.35 }}>
+                          {getProjectionSummaryLines(day).map((line) => (
+                            <div key={`${day.date}-${line}`}>{line}</div>
+                          ))}
+                        </div>
+                      )}
                       {auditDay && (
                         <div style={{ fontSize: 10, color: auditDay.status === "match" ? C.suc : auditDay.status === "mismatch" ? C.dan : C.textMut, marginTop: 6, minHeight: 14 }}>
                           {auditDay.status === "match"
@@ -601,7 +680,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     Weekly Total
                   </div>
                   <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
-                    Visible week
+                    Dog-days across visible week
                   </div>
                 </th>
               </tr>
@@ -701,8 +780,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           </span>
           <span style={{ fontSize: 11, color: C.textMut }}>
             {matrixMode === "projected"
-              ? `Projection basis: ${selectedDay?.projection?.sample_count || 0} historical sample dates at ${selectedDay?.projection?.lead_days || 0} days out.`
+              ? (
+                getProjectionSummaryLines(selectedDay).join(" • ")
+                || "Projected mode uses prior-year booking pace from GINGR created dates."
+              )
               : `Trust notes: ${selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}`}
+          </span>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            Weekly totals shown in the workbook are dog-days, not unique reservations.
           </span>
           {auditResult?.summary && (
             <span style={{ fontSize: 11, color: C.textMut }}>
@@ -735,13 +820,20 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     ? "Visible matrix matches live Gingr reservation and icon data."
                     : dayAudit.status === "missing_matrix"
                       ? "This day has no matrix row to compare yet."
-                      : `${dayAudit.mismatch_count} metric difference${dayAudit.mismatch_count === 1 ? "" : "s"} found.`}
+                      : `${dayAudit.mismatch_count} audit issue${dayAudit.mismatch_count === 1 ? "" : "s"} found.`}
                 </div>
                 {dayAudit.status === "mismatch" && (
                   <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
                     {dayAudit.mismatches.slice(0, 4).map((mismatch) => (
                       <div key={mismatch.key} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
                         <span style={{ fontWeight: 700 }}>{mismatch.label}:</span> matrix {mismatch.matrix_value}, Gingr {mismatch.gingr_value}
+                        <span style={{ color: C.textMut }}> ({mismatch.category.replaceAll("_", " ")})</span>
+                      </div>
+                    ))}
+                    {(dayAudit.projection_issues || []).map((issue, index) => (
+                      <div key={`${dayAudit.date}-projection-${index}`} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 700 }}>{issue.label}</span>
+                        <span style={{ color: C.textMut }}> ({issue.category.replaceAll("_", " ")})</span>
                       </div>
                     ))}
                     {dayAudit.mismatches.length > 4 && (

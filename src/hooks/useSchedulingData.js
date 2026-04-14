@@ -53,22 +53,39 @@ export function useSchedulingData(locationId, startDate) {
 
   const endDate = dates[6] || startDate;
 
+  const recomputeDates = useCallback(async (targetDates) => {
+    const orderedDates = [...new Set((targetDates || []).filter(Boolean))].sort();
+    const failures = [];
+
+    for (const date of orderedDates) {
+      const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
+        body: {
+          location_id: locationId,
+          date_from: date,
+          date_to: date,
+        },
+      });
+
+      if (computeErr) {
+        failures.push({
+          date,
+          error: computeErr.message || String(computeErr),
+        });
+      }
+    }
+
+    return failures;
+  }, [locationId]);
+
   const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;
     const fetchId = ++fetchIdRef.current;
 
     try {
       if (recompute) {
-        const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
-          body: {
-            location_id: locationId,
-            date_from: startDate,
-            date_to: endDate,
-          },
-        });
-
-        if (computeErr) {
-          console.warn("compute-scheduling-matrix refresh skipped:", computeErr.message || computeErr);
+        const computeFailures = await recomputeDates(dates);
+        if (computeFailures.length) {
+          console.warn("compute-scheduling-matrix refresh failures:", computeFailures);
         }
       }
 
@@ -102,15 +119,11 @@ export function useSchedulingData(locationId, startDate) {
 
       const matrixCoverage = (matrixRes.data || []).length;
       if (!recompute && matrixCoverage < dates.length) {
-        const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
-          body: {
-            location_id: locationId,
-            date_from: startDate,
-            date_to: endDate,
-          },
-        });
+        const existingDates = new Set((matrixRes.data || []).map((row) => row.matrix_date));
+        const missingDates = dates.filter((date) => !existingDates.has(date));
+        const computeFailures = await recomputeDates(missingDates);
 
-        if (!computeErr) {
+        if (!computeFailures.length) {
           [matrixRes, staffRes, configRes] = await Promise.all([
             supabase
               .from("scheduling_matrix_daily")
@@ -133,6 +146,8 @@ export function useSchedulingData(locationId, startDate) {
               .eq("setting_key", "schedule_config")
               .maybeSingle(),
           ]);
+        } else {
+          console.warn("compute-scheduling-matrix missing-day refresh failures:", computeFailures);
         }
       }
 
@@ -153,7 +168,7 @@ export function useSchedulingData(locationId, startDate) {
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false);
     }
-  }, [locationId, startDate, endDate, dates]);
+  }, [locationId, startDate, endDate, dates, recomputeDates]);
 
   useEffect(() => {
     setLoading(true);
@@ -428,6 +443,7 @@ function buildEmptyMatrix(date) {
         source: "none",
         can_generate: false,
         blockers: ["No scheduling matrix has been computed for this day yet."],
+        blocker_details: [],
         notes: [],
       },
       display: {
@@ -436,6 +452,7 @@ function buildEmptyMatrix(date) {
           small_boarding: null,
           private_play_boarding: null,
           half_and_half_boarding: null,
+          evaluation_boarding: null,
           unclassified_boarding: null,
           total_boarding: null,
         },
@@ -444,6 +461,7 @@ function buildEmptyMatrix(date) {
           small_boarding: null,
           private_play_boarding: null,
           half_and_half_boarding: null,
+          evaluation_boarding: null,
           unclassified_boarding: null,
           total_boarding: null,
         },

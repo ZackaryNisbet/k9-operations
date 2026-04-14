@@ -16,7 +16,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const COMPUTE_CHUNK_DAYS = 7;
+// Later projected weeks can exceed the Edge worker resource ceiling when we
+// compute an entire 7-day slice in one pass. Keep the request surface as a
+// range, but process one matrix day at a time server-side so later weeks stay
+// reliable without user intervention.
+const COMPUTE_CHUNK_DAYS = 1;
+const LIVE_HYDRATION_HORIZON_DAYS = 6;
 const RESERVATION_RETRY_DELAYS_MS = [250, 750, 1500];
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -337,25 +342,31 @@ Deno.serve(async (req: Request) => {
 
     const dateFrom = String(body.date_from || dateStrET());
     const dateTo = String(body.date_to || addDaysStr(dateFrom, 6));
+    const liveHydrationThrough = addDaysStr(dateStrET(), LIVE_HYDRATION_HORIZON_DAYS);
+    const shouldLiveHydrate = dateFrom <= liveHydrationThrough;
 
     const serviceClient = await assertLocationAccess(req, locationId);
     const gingrConfig = await getGingrConfigForLocation(serviceClient, locationId);
 
-    const reservationHydration = await hydrateSchedulingReservationsFromGingr(
-      serviceClient,
-      locationId,
-      gingrConfig,
-      dateFrom,
-      dateTo,
-    );
+    const reservationHydration = shouldLiveHydrate
+      ? await hydrateSchedulingReservationsFromGingr(
+        serviceClient,
+        locationId,
+        gingrConfig,
+        dateFrom,
+        dateTo,
+      )
+      : { hydrated: 0, skipped: true, mode: "synced_reservations_only" };
 
-    const iconSync = await syncSchedulingIconsForRange(
-      serviceClient,
-      locationId,
-      gingrConfig,
-      dateFrom,
-      dateTo,
-    );
+    const iconSync = shouldLiveHydrate
+      ? await syncSchedulingIconsForRange(
+        serviceClient,
+        locationId,
+        gingrConfig,
+        dateFrom,
+        dateTo,
+      )
+      : { synced: 0, animals: 0, skipped: true, mode: "synced_icons_only" };
 
     let rowsUpserted = 0;
     const chunks = chunkDateRange(dateFrom, dateTo);

@@ -1,9 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   addDaysStr,
+  annotateReservationsWithOperationalHistory,
   buildReservationRecord,
   buildReservationTypeMaps,
   computeDemandSnapshotForDate,
+  fetchEarliestOperationalStartDates,
 } from "../_shared/scheduling-matrix.ts";
 import {
   buildPlaygroupAssignmentMap,
@@ -24,12 +26,14 @@ const METRIC_DEFINITIONS = [
   { key: "opening.small_boarding", label: "Small Boarding Opening" },
   { key: "opening.private_play_boarding", label: "Private Play Boarding Opening" },
   { key: "opening.half_and_half_boarding", label: "Half and Half Boarding Opening" },
+  { key: "opening.evaluation_boarding", label: "Evaluation Boarding Opening" },
   { key: "opening.unclassified_boarding", label: "Unresolved Boarding Opening" },
   { key: "opening.total_boarding", label: "Total Boarding Dogs Opening" },
   { key: "closing.large_boarding", label: "Large Boarding Closing" },
   { key: "closing.small_boarding", label: "Small Boarding Closing" },
   { key: "closing.private_play_boarding", label: "Private Play Boarding Closing" },
   { key: "closing.half_and_half_boarding", label: "Half and Half Boarding Closing" },
+  { key: "closing.evaluation_boarding", label: "Evaluation Boarding Closing" },
   { key: "closing.unclassified_boarding", label: "Unresolved Boarding Closing" },
   { key: "closing.total_boarding", label: "Total Boarding Dogs Closing" },
   { key: "daycare.evaluations", label: "Evaluations" },
@@ -327,6 +331,22 @@ function toMetricMap(display: any) {
   return metrics;
 }
 
+function getMismatchCategory(metricKey: string) {
+  if (metricKey.includes("evaluation")) return "evaluation_heuristic_mismatch";
+  if (
+    metricKey.includes("large_boarding")
+    || metricKey.includes("small_boarding")
+    || metricKey.includes("private_play")
+    || metricKey.includes("half_and_half")
+    || metricKey.includes("unclassified")
+    || metricKey.includes("large_daycare")
+    || metricKey.includes("small_daycare")
+  ) {
+    return "playgroup_classification_mismatch";
+  }
+  return "reservation_mismatch";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -389,10 +409,17 @@ Deno.serve(async (req: Request) => {
       reservations: directReservations,
     });
     const resTypeMaps = buildReservationTypeMaps(resTypeRows || []);
-    const reservations = directReservations
+    const baseReservations = directReservations
       .map(mapGingrReservationRow)
       .filter((row) => !row.cancelled_date)
       .map((row) => buildReservationRecord(row, resTypeMaps, playgroupMap));
+    const earliestOperationalStartByAnimal = await fetchEarliestOperationalStartDates({
+      supabase: serviceClient,
+      locationId,
+      animalIds: baseReservations.map((row: any) => row.animalId),
+      resTypeMaps,
+    });
+    const reservations = annotateReservationsWithOperationalHistory(baseReservations, earliestOperationalStartByAnimal);
     const matrixByDate = new Map((matrixRows || []).map((row: any) => [row.matrix_date, row]));
 
     const days = enumerateDates(dateFrom, dateTo).map((targetDate) => {
@@ -411,23 +438,36 @@ Deno.serve(async (req: Request) => {
         .map((metric) => ({
           key: metric.key,
           label: metric.label,
+          category: getMismatchCategory(metric.key),
           matrix_value: matrixMetrics[metric.key] ?? 0,
           gingr_value: gingrMetrics[metric.key] ?? 0,
           delta: (matrixMetrics[metric.key] ?? 0) - (gingrMetrics[metric.key] ?? 0),
         }))
         .filter((metric) => metric.delta !== 0);
 
+      const projectionIssues = [];
+      if (targetDate > new Date().toISOString().slice(0, 10)) {
+        const totalVolumeExplanation = matrixRow?.detail_json?.projection?.explanations?.support_total_dog_volume || null;
+        if (!totalVolumeExplanation) {
+          projectionIssues.push({
+            category: "projection_explanation_mismatch",
+            label: "Missing projected total dog volume explanation",
+          });
+        }
+      }
+
       const status = !matrixDisplay
         ? "missing_matrix"
-        : mismatches.length > 0
+        : mismatches.length > 0 || projectionIssues.length > 0
           ? "mismatch"
           : "match";
 
       return {
         date: targetDate,
         status,
-        mismatch_count: mismatches.length,
+        mismatch_count: mismatches.length + projectionIssues.length,
         mismatches,
+        projection_issues: projectionIssues,
         matrix_computed_at: matrixRow?.computed_at || null,
         gingr_display: liveSnapshot.display,
         matrix_display: matrixDisplay,
@@ -436,7 +476,7 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       ok: true,
-      audit_source: "gingr_live_api",
+      audit_source: "gingr_live_api + synced_history",
       audited_at: new Date().toISOString(),
       date_range: [dateFrom, dateTo],
       summary: {
