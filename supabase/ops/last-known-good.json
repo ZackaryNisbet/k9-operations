@@ -2,25 +2,25 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "XL recovery cleanup baseline",
+      "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "compute-scheduling-matrix": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "9a561c412197ec3e321c79e24897126769b747e8",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "Stable post-recovery scheduling compute baseline",
+      "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "XL recovery cleanup baseline",
+      "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "ops-compute-ondemand": {
       "commit": null,
@@ -37,11 +37,11 @@
       "updatedAt": null
     },
     "gingr-boh-poll": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "XL recovery cleanup baseline",
+      "updatedAt": "2026-04-14T02:46:41.138Z"
     }
   }
 }
