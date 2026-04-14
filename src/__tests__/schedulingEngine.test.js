@@ -18,6 +18,7 @@ import {
   computeAvailableFunctioningPct,
   computeRequiredHeadcount,
   computeStaffingStatus,
+  deriveStaffPlanFromShiftEntries,
   generateOpeningGrid,
   generateFullDayGrid,
   validateGrid,
@@ -356,6 +357,24 @@ describe('Staffing status computation', () => {
     // 3 PCT + 1 SUP = 4
     expect(available).toBe(4);
   });
+
+  it('uses shift entries to compute daypart-specific assigned coverage', () => {
+    const req = { am: 4, midday: 3, pm: 3 };
+    const plan = deriveStaffPlanFromShiftEntries({
+      locationId: 'cherry_hill',
+      planDate: '2026-04-13',
+      shiftEntries: [
+        { position: 'supervisor', name: 'SUP', shift_start: '06:00', shift_end: '20:00' },
+        { position: 'pct', name: 'Open 1', shift_start: '06:00', shift_end: '14:00' },
+        { position: 'pct', name: 'Open 2', shift_start: '06:00', shift_end: '14:00' },
+        { position: 'pct', name: 'Closer', shift_start: '12:00', shift_end: '20:00' },
+      ],
+    });
+    const status = computeStaffingStatus(req, plan, cfg, '2026-04-13');
+
+    expect(status.assignedByDaypart).toEqual({ am: 3, midday: 4, pm: 2 });
+    expect(status.status).toBe('short');
+  });
 });
 
 // ─── Full Day Summary Tests ──────────────────────────────────────────────────
@@ -385,11 +404,14 @@ describe('buildDaySummary integration', () => {
     expect(summary.grid.lanes.length).toBe(5); // 4 PCT + 1 SUP
   });
 
-  it('handles no staff plan gracefully', () => {
+  it('auto-generates an optimal schedule when no staff plan is entered', () => {
     const matrix = makeMatrix();
-    const summary = buildDaySummary(matrix, null, cfg);
-    expect(summary.openingResult).toBeNull();
-    expect(summary.grid).toBeNull();
+    const summary = buildDaySummary(matrix, null, cfg, { demandMode: 'projected', autoPlan: true });
+    expect(summary.scheduleKind).toBe('optimal');
+    expect(summary.staffPlan).toBeDefined();
+    expect(summary.staffPlan.shift_entries.length).toBeGreaterThan(0);
+    expect(summary.openingResult).toBeDefined();
+    expect(summary.grid).toBeDefined();
     expect(summary.required.am).toBeGreaterThan(0);
   });
 });
@@ -417,13 +439,13 @@ describe('Matrix trust gating', () => {
     expect(summary.grid).toBeNull();
   });
 
-  it('blocks trusted rows that still carry unresolved blockers', () => {
+  it('allows trusted rows with unresolved warnings to generate schedules', () => {
     const matrix = makeMatrix({
       detail_json: {
         trust: {
           state: 'trusted',
           source: 'gingr_reservations',
-          can_generate: false,
+          can_generate: true,
           blockers: ['3 daytime dogs are missing a verified size/playgroup assignment.'],
           notes: [],
         },
@@ -432,8 +454,10 @@ describe('Matrix trust gating', () => {
     });
 
     const summary = buildDaySummary(matrix, makeStaffPlan(), cfg);
-    expect(canGenerateSchedule(matrix)).toBe(false);
+    expect(canGenerateSchedule(matrix)).toBe(true);
+    expect(summary.canGenerate).toBe(true);
     expect(summary.generationBlockers).toContain('3 daytime dogs are missing a verified size/playgroup assignment.');
+    expect(summary.openingResult).toBeDefined();
   });
 });
 

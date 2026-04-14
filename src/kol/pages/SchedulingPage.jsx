@@ -9,6 +9,7 @@ import { Btn } from "../../shared/ui";
 import { useSchedulingData } from "../../hooks/useSchedulingData";
 import {
   TASK_COLORS,
+  SHIFT_POSITION_OPTIONS,
   buildDaySummary,
   serializeSchedule,
   applyOverride,
@@ -16,6 +17,8 @@ import {
   getMatrixProjectedDisplay,
   getMatrixProjection,
   getMatrixComparison,
+  deriveStaffPlanFromShiftEntries,
+  getShiftEntries,
 } from "../../shared/schedulingEngine";
 
 // ─── Utility Components ───────────────────────────────────────────────────
@@ -126,22 +129,38 @@ function getNestedValue(obj, key) {
   return key.split(".").reduce((acc, part) => acc?.[part], obj);
 }
 
+function getDayCurrentDisplay(day) {
+  return day?.currentDisplay || getMatrixDisplay(day?.matrix || day || {});
+}
+
+function getDayProjectedDisplay(day) {
+  return day?.projectedDisplay || getMatrixProjectedDisplay(day?.matrix || day || {});
+}
+
+function getDayProjection(day) {
+  return day?.projection || getMatrixProjection(day?.matrix || day || {});
+}
+
+function getDayComparison(day) {
+  return day?.comparison || getMatrixComparison(day?.matrix || day || {});
+}
+
 function getDayMatrixValue(day, row, mode = "current") {
   if (row.comparison) {
-    return getNestedValue({ comparison: day.comparison || {} }, row.key);
+    return getNestedValue({ comparison: getDayComparison(day) }, row.key);
   }
 
-  const source = mode === "projected" ? day.projectedDisplay : day.currentDisplay;
+  const source = mode === "projected" ? getDayProjectedDisplay(day) : getDayCurrentDisplay(day);
   return getNestedValue(source, row.key);
 }
 
 function hasAnyNonZeroValue(days, key) {
   return days.some((day) => {
     const value = key.startsWith("comparison.")
-      ? getNestedValue({ comparison: day.comparison || {} }, key)
+      ? getNestedValue({ comparison: getDayComparison(day) }, key)
       : (
-        getNestedValue(day.currentDisplay, key)
-        ?? getNestedValue(day.projectedDisplay, key)
+        getNestedValue(getDayCurrentDisplay(day), key)
+        ?? getNestedValue(getDayProjectedDisplay(day), key)
       );
     return value !== null && value !== undefined && Number(value) !== 0;
   });
@@ -190,8 +209,9 @@ function humanizeFallbackMode(mode) {
 }
 
 function getProjectionSummaryLines(day) {
-  const explanation = day?.projection?.explanations?.support_total_dog_volume;
-  if (!explanation || !day?.projection?.lead_days) return [];
+  const projection = day?.projection || getMatrixProjection(day?.matrix || day);
+  const explanation = projection?.explanations?.support_total_dog_volume;
+  if (!explanation || !projection?.lead_days) return [];
 
   const lines = [`${explanation.lead_days} days out`];
   if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
@@ -238,6 +258,7 @@ function renderMatrixCellValue({ row, day, mode }) {
   const currentValue = getDayMatrixValue(day, row, "current");
   const projectedValue = getDayMatrixValue(day, row, "projected");
   const comparisonValue = row.comparison ? currentValue : null;
+  const projection = getDayProjection(day);
   const missingValue = (mode === "projected" ? projectedValue : currentValue) === null || (mode === "projected" ? projectedValue : currentValue) === undefined;
 
   if (row.comparison) {
@@ -248,8 +269,8 @@ function renderMatrixCellValue({ row, day, mode }) {
     };
   }
 
-  if (mode === "projected" && day.projection?.lead_days > 0) {
-    const explanation = day.projection?.explanations?.[row.key.replaceAll(".", "_")] || null;
+  if (mode === "projected" && projection?.lead_days > 0) {
+    const explanation = projection?.explanations?.[row.key.replaceAll(".", "_")] || null;
     const currentText = currentValue ?? "—";
     const projectedText = projectedValue ?? currentValue ?? "—";
     const title = getProjectionTooltip({
@@ -278,54 +299,165 @@ function renderMatrixCellValue({ row, day, mode }) {
   };
 }
 
-// ─── Staff Plan Input (inline mini-form) ──────────────────────────────────
+// ─── Staff Shift Input ────────────────────────────────────────────────────
 
-function StaffPlanInput({ day, onSave, disabled }) {
-  const sp = day.staffPlan || {};
-  const [pct, setPct] = useState(sp.pct_count || 0);
-  const [csr, setCsr] = useState(sp.csr_count || 0);
-  const [supPresent, setSupPresent] = useState(sp.supervisor_present || false);
-  const [csrAsPct, setCsrAsPct] = useState(sp.allow_csr_as_pct || false);
+function createDefaultShiftEntry(day, position = "pct") {
+  const defaultStart = day?.isWeekend ? "07:00" : "06:00";
+  const defaultEnd = day?.isWeekend ? "15:00" : "14:00";
+  return {
+    id: `${position}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    position,
+    name: "",
+    shift_start: defaultStart,
+    shift_end: defaultEnd,
+  };
+}
+
+function StaffShiftPlanner({ day, onSave, onGenerated, disabled }) {
+  const existingEntries = useMemo(() => getShiftEntries(day?.staffPlan), [day?.date, day?.staffPlan]);
+  const [shiftEntries, setShiftEntries] = useState(existingEntries.length ? existingEntries : [createDefaultShiftEntry(day)]);
+  const [allowCsrAsPct, setAllowCsrAsPct] = useState(!!day?.staffPlan?.allow_csr_as_pct);
+  const [allowModAsPct, setAllowModAsPct] = useState(!!day?.staffPlan?.allow_mod_as_pct);
   const [dirty, setDirty] = useState(false);
 
-  const handleSave = () => {
-    onSave({
-      plan_date: day.date,
-      shift: "full",
-      pct_count: pct,
-      csr_count: csr,
-      supervisor_count: supPresent ? 1 : 0,
-      mod_count: 0,
-      supervisor_present: supPresent,
-      allow_csr_as_pct: csrAsPct,
-      allow_mod_as_pct: false,
-      staff_names: [],
-    });
+  React.useEffect(() => {
+    const nextEntries = existingEntries.length ? existingEntries : [createDefaultShiftEntry(day)];
+    setShiftEntries(nextEntries);
+    setAllowCsrAsPct(!!day?.staffPlan?.allow_csr_as_pct);
+    setAllowModAsPct(!!day?.staffPlan?.allow_mod_as_pct);
     setDirty(false);
+  }, [day?.date, day?.staffPlan, existingEntries]);
+
+  const updateEntry = (id, patch) => {
+    setShiftEntries((current) => current.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
+    setDirty(true);
   };
 
-  const inputStyle = { width: 48, padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontWeight: 600, textAlign: "center", fontFamily: "inherit" };
-  const labelStyle = { fontSize: 11, color: C.textMut, fontWeight: 600 };
+  const removeEntry = (id) => {
+    setShiftEntries((current) => current.filter((entry) => entry.id !== id));
+    setDirty(true);
+  };
+
+  const addEntry = () => {
+    setShiftEntries((current) => [...current, createDefaultShiftEntry(day)]);
+    setDirty(true);
+  };
+
+  const handleSave = () => {
+    const cleaned = shiftEntries
+      .map((entry) => ({
+        ...entry,
+        name: String(entry.name || "").trim(),
+        shift_start: String(entry.shift_start || "").slice(0, 5),
+        shift_end: String(entry.shift_end || "").slice(0, 5),
+      }))
+      .filter((entry) => entry.shift_start && entry.shift_end);
+
+    const plan = deriveStaffPlanFromShiftEntries({
+      locationId: day?.matrix?.location_id,
+      planDate: day.date,
+      shiftEntries: cleaned,
+      allowCsrAsPct,
+      allowModAsPct,
+    });
+
+    onSave(plan);
+    setDirty(false);
+    onGenerated?.();
+  };
+
+  const inputStyle = {
+    width: "100%",
+    padding: "6px 8px",
+    border: `1px solid ${C.border}`,
+    borderRadius: 8,
+    fontSize: 12,
+    fontFamily: "inherit",
+    background: C.surface,
+  };
 
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={labelStyle}>PCTs</span>
-        <input type="number" min={0} max={20} value={pct} onChange={e => { setPct(+e.target.value); setDirty(true); }} style={inputStyle} disabled={disabled} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 620 }}>
+          <thead>
+            <tr>
+              {["Position", "Name", "Shift Start", "Shift End", ""].map((label) => (
+                <th
+                  key={label || "actions"}
+                  style={{
+                    padding: "8px 10px",
+                    textAlign: label === "" ? "right" : "left",
+                    borderBottom: `1px solid ${C.border}`,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    color: C.textMut,
+                    background: "#F8FAFC",
+                  }}
+                >
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shiftEntries.map((entry) => (
+              <tr key={entry.id}>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <select value={entry.position} onChange={(e) => updateEntry(entry.id, { position: e.target.value })} style={inputStyle} disabled={disabled}>
+                    {SHIFT_POSITION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <input value={entry.name} onChange={(e) => updateEntry(entry.id, { name: e.target.value })} placeholder="Optional name" style={inputStyle} disabled={disabled} />
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <input type="time" value={entry.shift_start} onChange={(e) => updateEntry(entry.id, { shift_start: e.target.value })} style={inputStyle} disabled={disabled} />
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <input type="time" value={entry.shift_end} onChange={(e) => updateEntry(entry.id, { shift_end: e.target.value })} style={inputStyle} disabled={disabled} />
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}`, textAlign: "right" }}>
+                  <button
+                    onClick={() => removeEntry(entry.id)}
+                    disabled={disabled || shiftEntries.length === 1}
+                    style={{ padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={labelStyle}>CSRs</span>
-        <input type="number" min={0} max={10} value={csr} onChange={e => { setCsr(+e.target.value); setDirty(true); }} style={inputStyle} disabled={disabled} />
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={addEntry}
+          disabled={disabled}
+          style={{ padding: "6px 12px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.text, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+        >
+          Add Shift
+        </button>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
+          <input type="checkbox" checked={allowCsrAsPct} onChange={(e) => { setAllowCsrAsPct(e.target.checked); setDirty(true); }} disabled={disabled} />
+          Allow CSR backfill as functioning PCT
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
+          <input type="checkbox" checked={allowModAsPct} onChange={(e) => { setAllowModAsPct(e.target.checked); setDirty(true); }} disabled={disabled} />
+          Allow MOD backfill as functioning PCT
+        </label>
+        {dirty && <span style={{ fontSize: 11, color: C.warn }}>Unsaved shift edits</span>}
+        <div style={{ flex: 1 }} />
+        <Btn variant="primary" size="sm" onClick={handleSave} disabled={disabled}>
+          Save Shifts & Generate Adjusted Schedule
+        </Btn>
       </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
-        <input type="checkbox" checked={supPresent} onChange={e => { setSupPresent(e.target.checked); setDirty(true); }} disabled={disabled} />
-        SUP present
-      </label>
-      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
-        <input type="checkbox" checked={csrAsPct} onChange={e => { setCsrAsPct(e.target.checked); setDirty(true); }} disabled={disabled} />
-        CSR→fPCT
-      </label>
-      {dirty && <Btn variant="primary" size="sm" onClick={handleSave}>Save Plan</Btn>}
     </div>
   );
 }
@@ -343,6 +475,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [viewDensity, setViewDensity] = useState("standard");
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const [scheduleView, setScheduleView] = useState("optimal");
 
   // Version & override state
   const [savedVersions, setSavedVersions] = useState([]);
@@ -373,11 +506,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
 
-  // Build full day summary (including opening solver + grid) for selected day
-  const daySummary = useMemo(() => {
+  const optimalSummary = useMemo(() => {
     if (!selectedDay?.matrix) return null;
-    return buildDaySummary(selectedDay.matrix, selectedDay.staffPlan, config);
+    return buildDaySummary(selectedDay.matrix, null, config, { demandMode: "projected", autoPlan: true });
   }, [selectedDay, config]);
+
+  const adjustedSummary = useMemo(() => {
+    if (!selectedDay?.matrix || !selectedDay?.staffPlan) return null;
+    return buildDaySummary(selectedDay.matrix, selectedDay.staffPlan, config, { demandMode: "projected" });
+  }, [selectedDay, config]);
+
+  const visibleSummary = scheduleView === "adjusted" && adjustedSummary ? adjustedSummary : optimalSummary;
 
   // Reset override state when day changes
   const prevDayRef = React.useRef(selectedDayIdx);
@@ -388,6 +527,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       setLocalGrid(null);
       setActiveScheduleId(null);
       setSavedVersions([]);
+      setScheduleView("optimal");
       prevDayRef.current = selectedDayIdx;
     }
   }, [selectedDayIdx]);
@@ -400,29 +540,26 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
       await upsertStaffPlan(plan);
+      setScheduleView("adjusted");
       addGlobalToast?.("Staff plan saved", "success");
     } catch (err) {
       addGlobalToast?.("Failed to save staff plan: " + (err.message || "unknown error"), "error");
     }
   }, [upsertStaffPlan, addGlobalToast]);
 
-  // Generate & save schedule
+  // Save currently visible schedule
   const handleGenerate = useCallback(async () => {
-    if (!selectedDay?.staffPlan) {
-      addGlobalToast?.("Enter a staff plan first to generate a schedule.", "info");
-      return;
-    }
-    if (!daySummary?.canGenerate || !daySummary?.openingResult) {
-      const blocker = daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0];
+    if (!visibleSummary?.canGenerate || !visibleSummary?.openingResult) {
+      const blocker = visibleSummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0];
       addGlobalToast?.(blocker || "This day is not ready for schedule generation yet.", "info");
       return;
     }
     try {
-      const payload = serializeSchedule(selectedDay.matrix, selectedDay.staffPlan, daySummary, config);
+      const payload = serializeSchedule(selectedDay.matrix, visibleSummary.staffPlan, visibleSummary, config);
       const result = await saveSchedule(payload);
       setActiveScheduleId(result.id);
       setLocalGrid(null);
-      addGlobalToast?.(`Schedule saved as draft v${result.version}: ${daySummary.openingResult.selectedReason}`, "success");
+      addGlobalToast?.(`Schedule saved as draft v${result.version}: ${visibleSummary.openingResult.selectedReason}`, "success");
 
       // Refresh versions
       const versions = await fetchScheduleVersions(selectedDay.date);
@@ -430,12 +567,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     } catch (err) {
       // If table doesn't exist yet, still show the local schedule
       if (err?.code === "42P01") {
-        addGlobalToast?.(`Schedule generated locally (table not deployed yet): ${daySummary.openingResult.selectedReason}`, "success");
+        addGlobalToast?.(`Schedule generated locally (table not deployed yet): ${visibleSummary.openingResult.selectedReason}`, "success");
       } else {
         addGlobalToast?.("Failed to save schedule: " + (err.message || "unknown error"), "error");
       }
     }
-  }, [daySummary, selectedDay, config, saveSchedule, fetchScheduleVersions, addGlobalToast]);
+  }, [visibleSummary, selectedDay, config, saveSchedule, fetchScheduleVersions, addGlobalToast]);
 
   // Publish schedule
   const handlePublish = useCallback(async (scheduleId) => {
@@ -471,13 +608,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
 
     // Apply locally for immediate visual feedback
-    const currentGrid = localGrid || daySummary?.grid?.grid || {};
+    const currentGrid = localGrid || visibleSummary?.grid?.grid || {};
     const result = applyOverride(currentGrid, lane, slot, overrideTask, overrideReason);
     setLocalGrid(result.grid);
     setSelectedCell(null);
     setOverrideTask("");
     setOverrideReason("");
-  }, [selectedCell, overrideTask, overrideReason, activeScheduleId, localGrid, daySummary, applyScheduleOverride, addGlobalToast]);
+  }, [selectedCell, overrideTask, overrideReason, activeScheduleId, localGrid, visibleSummary, applyScheduleOverride, addGlobalToast]);
 
   // Load versions for selected day
   const handleLoadVersions = useCallback(async () => {
@@ -512,17 +649,18 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, [runAudit, viewStartDate, addGlobalToast]);
 
   const display = selectedDay?.currentDisplay || getMatrixDisplay(selectedDay?.matrix || {});
-  const matrixDisplay = matrixMode === "projected"
-    ? (selectedDay?.projectedDisplay || display)
-    : display;
-  const req = daySummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
-  const assignedPct = selectedDay?.assignedFunctioningPct || 0;
-  const generateDisabled = !selectedDay?.staffPlan || !daySummary?.canGenerate;
-  const generateDisabledReason = !selectedDay?.staffPlan
-    ? "Enter a staff plan to enable schedule generation."
-    : (daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation.");
+  const projectedDisplay = selectedDay?.projectedDisplay || getMatrixProjectedDisplay(selectedDay?.matrix || {});
+  const matrixDisplay = matrixMode === "projected" ? projectedDisplay : display;
+  const req = optimalSummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
+  const assignedByDaypart = adjustedSummary?.staffStatus?.assignedByDaypart || { am: 0, midday: 0, pm: 0 };
+  const visibleWarnings = visibleSummary?.warnings || optimalSummary?.warnings || [];
+  const hasAdjustedSchedule = !!adjustedSummary;
+  const showingAdjustedSchedule = scheduleView === "adjusted" && hasAdjustedSchedule;
+  const saveButtonLabel = showingAdjustedSchedule ? "Save Staff-Adjusted Schedule" : "Save Optimal Schedule";
+  const generateDisabled = !visibleSummary?.canGenerate;
+  const generateDisabledReason = visibleSummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation yet.";
 
-  const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {}, phases: null };
+  const gridData = visibleSummary?.grid || { lanes: [], slots: [], grid: {}, phases: null };
   const { lanes, slots, grid, phases } = gridData;
 
   const fmt12 = (t) => {
@@ -557,7 +695,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             {showAssumptions ? "Hide" : "Show"} Assumptions
           </Btn>
           <Btn variant="primary" size="sm" onClick={handleGenerate} disabled={generateDisabled} title={generateDisabledReason}>
-            Generate Schedule
+            {saveButtonLabel}
           </Btn>
         </div>
       </div>
@@ -614,7 +752,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 </th>
                 {workbookDays.map((day, index) => {
                   const selected = index === selectedDayIdx;
-                  const blocked = day.generationBlockers.length > 0;
+                  const blocked = !day.canGenerate;
+                  const comparison = getMatrixComparison(day.matrix || day);
                   const auditDay = auditByDate.get(day.date);
                   const baseBackground = auditDay?.status === "match"
                     ? "#F0FDF4"
@@ -648,13 +787,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                       <div style={{ marginTop: 8 }}>
                         <TrustBadge state={day.matrixTrustState} blocked={blocked} />
                       </div>
-                      {day.comparison?.last_year_total_dog_volume !== null && day.comparison?.last_year_total_dog_volume !== undefined && (
+                      {comparison?.last_year_total_dog_volume !== null && comparison?.last_year_total_dog_volume !== undefined && (
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
-                          LY total: {day.comparison.last_year_total_dog_volume}
+                          LY total: {comparison.last_year_total_dog_volume}
                         </div>
                       )}
-                      <div style={{ fontSize: 10, color: blocked ? C.dan : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
-                        {blocked ? (day.generationBlockers[0] || "Blocked") : day.canGenerate ? "Ready to schedule" : "Waiting on matrix"}
+                      <div style={{ fontSize: 10, color: blocked ? C.dan : day.generationBlockers.length > 0 ? C.warn : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
+                        {blocked
+                          ? (day.generationBlockers[0] || "Waiting on matrix")
+                          : day.generationBlockers.length > 0
+                            ? day.generationBlockers[0]
+                            : "Ready to schedule"}
                       </div>
                       {matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, lineHeight: 1.35 }}>
@@ -852,17 +995,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}
       {selectedDay && (
         <SectionCard
-          title={`Staff Plan — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Enter available staff for this day. Drives required headcount and schedule generation."
+          title={`Staff Shift Plan — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Optional second step. The ideal BE rotation schedule already auto-generates from projected Gingr demand; enter real shifts to compare and adjust it."
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
-          <StaffPlanInput day={selectedDay} onSave={handleStaffPlanSave} />
-          {!selectedDay.staffPlan && (
-            <p style={{ fontSize: 11, color: C.warn, marginTop: 8, fontStyle: "italic" }}>
-              No staff plan entered yet. Required headcount is computed from the demand matrix; enter a staff plan to see gap analysis and generate schedules.
-            </p>
-          )}
+          <StaffShiftPlanner day={selectedDay} onSave={handleStaffPlanSave} onGenerated={() => setScheduleView("adjusted")} />
+          <p style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.6 }}>
+            Enter shifts in the format <strong>Position | Name | Shift Start | Shift End</strong>. Saving the shift plan keeps the optimal schedule intact and creates a staff-adjusted comparison view for this day.
+          </p>
         </SectionCard>
       )}
 
@@ -870,7 +1011,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {selectedDay && (
         <SectionCard
           title={`Required Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Functioning PCT requirement by daypart, driven by the trusted matrix above"
+          subtitle="Ideal functioning PCT requirement by daypart, generated automatically from projected Gingr demand"
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
@@ -892,30 +1033,40 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
                 {[
-                  { label: "Opening (AM)", required: req.am },
-                  { label: "Midday", required: req.midday },
-                  { label: "Closing (PM)", required: req.pm },
-                ].map(({ label, required: reqVal }) => {
-                  const gap = Math.max(0, reqVal - assignedPct);
-                  const hasGap = assignedPct > 0 && assignedPct < reqVal;
+                  { key: "am", label: "Opening (AM)", required: req.am },
+                  { key: "midday", label: "Midday", required: req.midday },
+                  { key: "pm", label: "Closing (PM)", required: req.pm },
+                ].map(({ key, label, required: reqVal }) => {
+                  const assigned = assignedByDaypart[key] || 0;
+                  const gap = Math.max(0, reqVal - assigned);
+                  const hasGap = hasAdjustedSchedule && assigned < reqVal;
                   return (
                     <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
                       <div style={{ display: "flex", gap: 20 }}>
-                        <MetricPill label="Required" value={reqVal} />
-                        {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
-                        {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
+                        <MetricPill label="Optimal" value={reqVal} />
+                        {hasAdjustedSchedule && <MetricPill label="Scheduled" value={assigned} warn={hasGap} />}
+                        {hasAdjustedSchedule && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
                       </div>
                     </div>
                   );
                 })}
               </div>
-              {selectedDay.staffPlan && (
-                <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Estimated Functional Hours</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
-                </div>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Projected Demand Basis</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{projectedDisplay?.support?.total_dog_volume || 0} dogs</span>
+                <span style={{ fontSize: 12, color: C.textMut }}>Estimated functional hours: {req.functionalHours} hrs</span>
+                {hasAdjustedSchedule && (
+                  <span style={{ fontSize: 12, color: C.textMut }}>
+                    Staff-adjusted comparison uses your saved shift coverage at AM, midday, and PM anchors.
+                  </span>
+                )}
+                {!hasAdjustedSchedule && (
+                  <span style={{ fontSize: 12, color: C.textMut }}>
+                    No staff shifts entered yet. The optimal view is the default staffing recommendation.
+                  </span>
+                )}
+              </div>
             </>
           )}
         </SectionCard>
@@ -925,14 +1076,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {selectedDay && (
         <SectionCard
           title={`Rotation Schedule — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Full-day 15-minute slot assignments. Automated only when the selected day is fully trusted."
+          subtitle="The ideal BE rotation schedule auto-generates from projected Gingr demand. Save shifts above to compare the optimal plan with a staff-adjusted version."
           icon={<I.Clipboard />}
           style={{ marginTop: 16 }}
         >
-          {!daySummary?.canGenerate ? (
+          {!optimalSummary?.canGenerate ? (
             <div style={{ padding: "16px 18px", borderRadius: 12, background: C.surfaceHover, border: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                Rotation generation is locked until the selected day is fully trusted.
+                Rotation generation is locked until the selected day has a trusted matrix.
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
                 {generateDisabledReason}
@@ -945,6 +1096,45 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </div>
           ) : (
             <>
+          {hasAdjustedSchedule && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setScheduleView("optimal")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${!showingAdjustedSchedule ? C.pri : C.border}`,
+                  background: !showingAdjustedSchedule ? C.priLt : C.surface,
+                  color: !showingAdjustedSchedule ? C.pri : C.textMut,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Show Optimal Schedule
+              </button>
+              <button
+                onClick={() => setScheduleView("adjusted")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${showingAdjustedSchedule ? C.pri : C.border}`,
+                  background: showingAdjustedSchedule ? C.priLt : C.surface,
+                  color: showingAdjustedSchedule ? C.pri : C.textMut,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Show Staff-Adjusted Schedule
+              </button>
+              <span style={{ fontSize: 11, color: C.textMut, alignSelf: "center" }}>
+                Viewing {showingAdjustedSchedule ? "staff-adjusted" : "optimal"} schedule
+              </span>
+            </div>
+          )}
           {/* Toolbar: density + override toggle + publish */}
           <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             {["compact", "standard", "expanded"].map(d => (
@@ -975,12 +1165,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           )}
 
           {/* Violations banner */}
-          {(daySummary?.violations || []).length > 0 && (
+          {(visibleSummary?.violations || []).length > 0 && (
             <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 8, background: C.danLt, border: `1px solid ${C.dan}22` }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Constraint Violations ({daySummary.violations.length})</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Constraint Violations ({visibleSummary.violations.length})</span>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: 11, color: C.dan }}>
-                {daySummary.violations.slice(0, 5).map((v, i) => <li key={i}>{v.message}</li>)}
-                {daySummary.violations.length > 5 && <li>...and {daySummary.violations.length - 5} more</li>}
+                {visibleSummary.violations.slice(0, 5).map((v, i) => <li key={i}>{v.message}</li>)}
+                {visibleSummary.violations.length > 5 && <li>...and {visibleSummary.violations.length - 5} more</li>}
               </ul>
             </div>
           )}
@@ -1069,20 +1259,20 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       )}
 
       {/* ── Section 4: Rationale / Explanation Panel ───────────────────── */}
-      {daySummary?.openingResult && (
+      {visibleSummary?.openingResult && (
         <SectionCard
           title="Opening Rationale"
-          subtitle="Why this headcount was recommended and which strategy was selected"
+          subtitle={showingAdjustedSchedule ? "Why the staff-adjusted opening plan was selected" : "Why the optimal projected-demand opening plan was selected"}
           icon={<I.InfoCircle />}
           style={{ marginTop: 16 }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1px solid ${C.pri}22` }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, marginBottom: 4 }}>
-                Strategy: {daySummary.openingResult.strategy === "full_pod_pass" ? "Full Pod Pass" : "Split (Group Let-Outs + PP Pod Pass)"}
+                Strategy: {visibleSummary.openingResult.strategy === "full_pod_pass" ? "Full Pod Pass" : "Split (Group Let-Outs + PP Pod Pass)"}
               </div>
               <p style={{ fontSize: 12, color: C.textSec, margin: 0, lineHeight: 1.6 }}>
-                {daySummary.openingResult.selectedReason}
+                {visibleSummary.openingResult.selectedReason}
               </p>
             </div>
 
@@ -1090,7 +1280,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Explanation</span>
               <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.8 }}>
-                {daySummary.explanation.map((line, i) => <li key={i}>{line}</li>)}
+                {visibleSummary.explanation.map((line, i) => <li key={i}>{line}</li>)}
               </ul>
             </div>
 
@@ -1098,28 +1288,28 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Key Driver</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {display.support.total_dog_volume || 0} total dogs drive the {req.am} functioning PCT opening requirement
+                  {projectedDisplay.support.total_dog_volume || 0} projected total dogs drive the {req.am} ideal functioning PCT opening requirement
                 </p>
               </div>
-              {daySummary.openingResult.yardOrder && (
+              {visibleSummary.openingResult.yardOrder && (
                 <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Yard</span>
                   <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                    {daySummary.openingResult.yardOrder === "large" ? "Large" : "Small"} daycare opened first
-                    ({daySummary.openingResult.yardOrder === "large" ? (display.opening.large_boarding || 0) : (display.opening.small_boarding || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (display.opening.small_boarding || 0) : (display.opening.large_boarding || 0)} other-side dogs)
+                    {visibleSummary.openingResult.yardOrder === "large" ? "Large" : "Small"} daycare opened first
+                    ({visibleSummary.openingResult.yardOrder === "large" ? (matrixDisplay.opening.large_boarding || 0) : (matrixDisplay.opening.small_boarding || 0)} dogs &gt; {visibleSummary.openingResult.yardOrder === "large" ? (matrixDisplay.opening.small_boarding || 0) : (matrixDisplay.opening.large_boarding || 0)} other-side dogs)
                   </p>
                 </div>
               )}
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Feasibility</span>
-                <p style={{ fontSize: 12, fontWeight: 600, color: daySummary.openingResult.feasible ? C.suc : C.dan, margin: "4px 0 0" }}>
-                  {daySummary.openingResult.feasible ? "Feasible — opening covered with current staffing" : "Infeasible — additional functioning PCTs needed"}
+                <p style={{ fontSize: 12, fontWeight: 600, color: visibleSummary.openingResult.feasible ? C.suc : C.dan, margin: "4px 0 0" }}>
+                  {visibleSummary.openingResult.feasible ? "Feasible — opening covered with the active schedule view" : "Infeasible — additional functioning PCTs needed"}
                 </p>
               </div>
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Bath Target</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {display.support.departure_baths || 0} departure baths — {(display.support.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
+                  {matrixDisplay.support.departure_baths || 0} departure baths — {(matrixDisplay.support.departure_baths || 0) > 6 ? "may require dedicated bath functioning PCT by 07:30" : "manageable within normal rotation"}
                 </p>
               </div>
             </div>
@@ -1134,27 +1324,26 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
         icon={<I.AlertTriangle />}
         style={{ marginTop: 16 }}
       >
-        {(!selectedDay?.warnings || selectedDay.warnings.length === 0) ? (
+        {visibleWarnings.length === 0 ? (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0" }}>
             <I.CheckCircle />
             <span style={{ fontSize: 13, fontWeight: 600, color: C.suc }}>
-              {selectedDay?.staffPlan ? "No shortages or warnings for this day. All dayparts covered." : "Enter a staff plan to see shortage analysis."}
+              {hasAdjustedSchedule ? "No shortages or warnings for this day. The saved shift plan covers every modeled daypart." : "No manager warnings right now. The optimal schedule is being generated directly from projected Gingr demand."}
             </span>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {selectedDay.warnings.map((w, i) => (
+            {visibleWarnings.map((w, i) => (
               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}22` }}>
                 <I.AlertTriangle style={{ color: C.warn, flexShrink: 0, marginTop: 1 }} />
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{w}</div>
                   <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
-                    {w.includes("Opening") && "Consider moving a CSR to functioning PCT role during early AM or requesting MOD backfill."}
-                    {w.includes("Bath") && "Bath throughput may push completion past the target window. Consider starting baths at 06:30 or adding a second bath functioning PCT."}
-                    {w.includes("PM") && "Afternoon closing coverage is short. Return-to-room transport and dinner feed may run late."}
-                    {w.includes("unknown size") && "Future arrivals lack playgroup icon data. Size classification will update after check-in."}
-                    {w.includes("No staff plan") && "Enter a staff plan above to enable gap analysis and schedule generation."}
-                    {w.includes("PP") && "High private play load may require a dedicated functioning PCT throughout the day."}
+                    {w.includes("Opening") && "Opening demand exceeds the currently shown staffing mix. Add an earlier shift or compare against the optimal plan."}
+                    {w.includes("Bath") && "Bath throughput may push completion past the target window. Consider adding a dedicated bath opening shift."}
+                    {w.includes("PM") && "Closing coverage is short. Return-to-room transport and dinner feed may run late without additional closing support."}
+                    {w.includes("unresolved playgroup") && "This is informational, not a hard blocker. The schedule still generates, but verify the final playgroup split before publishing."}
+                    {w.includes("PP") && "High private play load may justify a dedicated private play lane during the busiest dayparts."}
                   </div>
                 </div>
               </div>

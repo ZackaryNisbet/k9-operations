@@ -55,7 +55,15 @@ export const TASK_COLORS = {
   foam: { bg: "#F1F5F9", text: "#475569", label: "Foam" },
   dailies: { bg: "#F8FAFC", text: "#64748B", label: "Dailies" },
   eod: { bg: "#F1F5F9", text: "#475569", label: "EOD / Close" },
+  off: { bg: "#FFFFFF", text: "#CBD5E1", label: "Off Shift" },
 };
+
+export const SHIFT_POSITION_OPTIONS = [
+  { value: "pct", label: "Pet Care Technician" },
+  { value: "csr", label: "Customer Service Representative" },
+  { value: "supervisor", label: "Supervisor" },
+  { value: "mod", label: "Manager on Duty" },
+];
 
 // ─── Time Utilities ───────────────────────────────────────────────────────
 
@@ -82,6 +90,13 @@ export function addMinutesToTime(timeStr, minutes) {
   return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
 }
 
+export function minutesToTime(totalMinutes) {
+  const normalized = Math.max(0, Number(totalMinutes) || 0);
+  const h = Math.floor(normalized / 60);
+  const m = normalized % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 export function timeToMinutes(timeStr) {
   const [h, m] = timeStr.split(":").map(Number);
   return h * 60 + m;
@@ -101,6 +116,184 @@ function toNullableNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function normalizeShiftPosition(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["pct", "pet care technician", "petcaretechnician", "pet_care_technician"].includes(normalized)) return "pct";
+  if (["csr", "customer service representative", "customer_service_representative"].includes(normalized)) return "csr";
+  if (["sup", "supervisor"].includes(normalized)) return "supervisor";
+  if (["mod", "manager on duty", "manager", "assistant manager", "general manager"].includes(normalized)) return "mod";
+  return "pct";
+}
+
+function normalizeShiftTime(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  return `${String(Number(match[1])).padStart(2, "0")}:${match[2]}`;
+}
+
+function getShiftPositionLabel(position) {
+  return SHIFT_POSITION_OPTIONS.find((option) => option.value === position)?.label || "Pet Care Technician";
+}
+
+function compareShiftEntries(a, b) {
+  const startDiff = timeToMinutes(a.shift_start || "00:00") - timeToMinutes(b.shift_start || "00:00");
+  if (startDiff !== 0) return startDiff;
+  const positionOrder = { supervisor: 0, mod: 1, pct: 2, csr: 3 };
+  return (positionOrder[a.position] ?? 9) - (positionOrder[b.position] ?? 9);
+}
+
+export function getShiftEntries(staffPlan) {
+  const rawEntries = Array.isArray(staffPlan?.shift_entries)
+    ? staffPlan.shift_entries
+    : Array.isArray(staffPlan?.staff_names)
+      ? staffPlan.staff_names
+      : [];
+
+  return rawEntries
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") return null;
+      const position = normalizeShiftPosition(entry.position);
+      const shiftStart = normalizeShiftTime(entry.shift_start);
+      const shiftEnd = normalizeShiftTime(entry.shift_end);
+      const name = String(entry.name || "").trim();
+      if (!shiftStart || !shiftEnd) return null;
+      return {
+        id: entry.id || `${position}-${name || index + 1}-${shiftStart}-${shiftEnd}`,
+        position,
+        name,
+        shift_start: shiftStart,
+        shift_end: shiftEnd,
+      };
+    })
+    .filter(Boolean)
+    .sort(compareShiftEntries);
+}
+
+function isShiftEntryActive(entry, timeStr) {
+  const slotMinutes = timeToMinutes(timeStr);
+  const start = timeToMinutes(entry.shift_start || "00:00");
+  const end = timeToMinutes(entry.shift_end || "00:00");
+  return slotMinutes >= start && slotMinutes < end;
+}
+
+function countFunctioningFromEntries(entries, staffPlan, timeStr) {
+  const allowCsr = !!staffPlan?.allow_csr_as_pct;
+  const allowMod = !!staffPlan?.allow_mod_as_pct;
+
+  return entries.reduce((sum, entry) => {
+    if (!isShiftEntryActive(entry, timeStr)) return sum;
+    if (entry.position === "pct") return sum + 1;
+    if (entry.position === "csr") return sum + (allowCsr ? 1 : 0);
+    if (entry.position === "supervisor") return sum + 1;
+    if (entry.position === "mod") return sum + (allowMod ? 1 : 0);
+    return sum;
+  }, 0);
+}
+
+function getDaypartAnchorTimes(matrixDate, config) {
+  const weekend = isWeekend(matrixDate);
+  const openWindow = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
+  const publicHours = weekend ? config.public_hours_weekend : config.public_hours_weekday;
+  const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
+
+  return {
+    am: addMinutesToTime(openWindow[0], 15),
+    midday: minutesToTime(Math.round((timeToMinutes(publicHours[0]) + timeToMinutes(publicHours[1])) / 2)),
+    pm: addMinutesToTime(siteHours[1], -45),
+  };
+}
+
+export function computeDaypartAvailability(matrixDate, staffPlan, config) {
+  if (!staffPlan) return { am: 0, midday: 0, pm: 0 };
+  const entries = getShiftEntries(staffPlan);
+  if (!entries.length) {
+    const total = computeAvailableFunctioningPct(staffPlan);
+    return { am: total, midday: total, pm: total };
+  }
+  const anchors = getDaypartAnchorTimes(matrixDate, config);
+  return {
+    am: countFunctioningFromEntries(entries, staffPlan, anchors.am),
+    midday: countFunctioningFromEntries(entries, staffPlan, anchors.midday),
+    pm: countFunctioningFromEntries(entries, staffPlan, anchors.pm),
+  };
+}
+
+export function deriveStaffPlanFromShiftEntries({
+  locationId = "",
+  planDate,
+  shiftEntries,
+  allowCsrAsPct = false,
+  allowModAsPct = false,
+  notes = "",
+}) {
+  const entries = (shiftEntries || []).map((entry) => ({
+    ...entry,
+    position: normalizeShiftPosition(entry.position),
+    shift_start: normalizeShiftTime(entry.shift_start),
+    shift_end: normalizeShiftTime(entry.shift_end),
+    name: String(entry.name || "").trim(),
+  })).filter((entry) => entry.shift_start && entry.shift_end);
+
+  const counts = entries.reduce((acc, entry) => {
+    if (entry.position === "pct") acc.pct_count += 1;
+    else if (entry.position === "csr") acc.csr_count += 1;
+    else if (entry.position === "supervisor") acc.supervisor_count += 1;
+    else if (entry.position === "mod") acc.mod_count += 1;
+    return acc;
+  }, {
+    pct_count: 0,
+    csr_count: 0,
+    supervisor_count: 0,
+    mod_count: 0,
+  });
+
+  return {
+    location_id: locationId,
+    plan_date: planDate,
+    shift: "full",
+    ...counts,
+    supervisor_present: counts.supervisor_count > 0,
+    allow_csr_as_pct: !!allowCsrAsPct,
+    allow_mod_as_pct: !!allowModAsPct,
+    staff_names: entries,
+    shift_entries: entries,
+    notes,
+  };
+}
+
+export function buildOptimalStaffPlan(matrix, required, config) {
+  const weekend = isWeekend(matrix?.matrix_date);
+  const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
+  const maxRequired = Math.max(required?.am || 0, required?.midday || 0, required?.pm || 0, 1);
+  const supervisorCount = 1;
+  const pctCount = Math.max(maxRequired - supervisorCount, 1);
+
+  const shiftEntries = [
+    {
+      position: "supervisor",
+      name: "Optimal Supervisor",
+      shift_start: siteHours[0],
+      shift_end: siteHours[1],
+    },
+    ...Array.from({ length: pctCount }, (_, index) => ({
+      position: "pct",
+      name: `Optimal Pet Care Technician ${index + 1}`,
+      shift_start: siteHours[0],
+      shift_end: siteHours[1],
+    })),
+  ];
+
+  return deriveStaffPlanFromShiftEntries({
+    locationId: matrix?.location_id || "",
+    planDate: matrix?.matrix_date,
+    shiftEntries,
+    allowCsrAsPct: false,
+    allowModAsPct: false,
+    notes: "Auto-generated optimal staffing plan from projected Gingr demand.",
+  });
 }
 
 function safeRatioCoverage(count, ratio) {
@@ -175,7 +368,42 @@ export function getMatrixBlockers(matrix) {
 
 export function canGenerateSchedule(matrix) {
   const trust = getMatrixTrust(matrix);
-  return trust.state === "trusted" && trust.can_generate !== false && getMatrixBlockers(matrix).length === 0;
+  return trust.state === "trusted";
+}
+
+function resolveDemandMode(matrix, requestedMode = "current") {
+  const projection = getMatrixProjection(matrix);
+  if (requestedMode === "projected" && projection?.state === "projected") {
+    return "projected";
+  }
+  return "current";
+}
+
+function getDemandDisplay(matrix, requestedMode = "current") {
+  return resolveDemandMode(matrix, requestedMode) === "projected"
+    ? getMatrixProjectedDisplay(matrix)
+    : getMatrixDisplay(matrix);
+}
+
+function getDemandSolverInputs(matrix, requestedMode = "current") {
+  if (resolveDemandMode(matrix, requestedMode) === "current") {
+    return getMatrixSolverInputs(matrix);
+  }
+
+  const projected = getMatrixProjectedDisplay(matrix);
+  return {
+    peak_large_daycare: toNumber(projected.daycare.large_daycare, 0),
+    peak_small_daycare: toNumber(projected.daycare.small_daycare, 0),
+    peak_unknown_daycare: toNumber(projected.daycare.unclassified_daycare, 0),
+    total_private_play_dogs:
+      toNumber(projected.opening.private_play_boarding, 0)
+      + toNumber(projected.opening.half_and_half_boarding, 0)
+      + toNumber(projected.daycare.private_play_dayboarding, 0)
+      + toNumber(projected.daycare.half_and_half_daytime, 0),
+    morning_feeding_dogs: toNumber(projected.support.morning_feeding_dogs, 0),
+    evening_feeding_dogs: toNumber(projected.support.evening_feeding_dogs, 0),
+    medication_dogs: toNumber(projected.support.medication_dogs, 0),
+  };
 }
 
 export function getMatrixDisplay(matrix) {
@@ -332,8 +560,8 @@ function estimateSplitStrategyFinishMinutes(groupDogsLarge, groupDogsSmall, effe
   return loadFirst + Math.max(cleanFirst, loadSecond) + unloadFirst + unloadSecond;
 }
 
-function estimateOpeningRequirement(matrix, config) {
-  const display = getMatrixDisplay(matrix);
+function estimateOpeningRequirement(matrix, config, demandMode = "current") {
+  const display = getDemandDisplay(matrix, demandMode);
   const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
   const ppDogs = toNumber(display.opening.private_play_boarding, 0) + toNumber(display.opening.half_and_half_boarding, 0);
   const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
@@ -398,8 +626,8 @@ export function estimatePodPassTotalMinutes(dogCount, config) {
 /**
  * Evaluate full pod pass strategy for all overnight dogs.
  */
-export function evaluateFullPodPass(matrix, staffPlan, config) {
-  const display = getMatrixDisplay(matrix);
+export function evaluateFullPodPass(matrix, staffPlan, config, options = {}) {
+  const display = getDemandDisplay(matrix, options.demandMode);
   const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
   const totalMinutes = estimatePodPassTotalMinutes(totalOvernightDogs, config);
 
@@ -408,7 +636,7 @@ export function evaluateFullPodPass(matrix, staffPlan, config) {
   const windowMinutes = timeToMinutes(window[1]) - timeToMinutes(window[0]);
 
   const requiredFunctioningPct = Math.max(1, Math.ceil(totalMinutes / windowMinutes));
-  const availableFunctioningPct = computeAvailableFunctioningPct(staffPlan);
+  const availableFunctioningPct = computeAvailableFunctioningPct(staffPlan, { time: window[0] });
   const feasible = requiredFunctioningPct <= availableFunctioningPct;
   const finishMinutes = Math.ceil(totalMinutes / Math.max(1, Math.min(requiredFunctioningPct, availableFunctioningPct)));
 
@@ -437,8 +665,8 @@ export function evaluateFullPodPass(matrix, staffPlan, config) {
 /**
  * Evaluate split strategy: group let-outs for group-play dogs + pod pass for PP dogs.
  */
-export function evaluateSplitStrategy(matrix, staffPlan, config) {
-  const display = getMatrixDisplay(matrix);
+export function evaluateSplitStrategy(matrix, staffPlan, config, options = {}) {
+  const display = getDemandDisplay(matrix, options.demandMode);
   const ppDogs = toNumber(display.opening.private_play_boarding, 0) + toNumber(display.opening.half_and_half_boarding, 0);
   const groupDogsLarge = toNumber(display.opening.large_boarding, 0);
   const groupDogsSmall = toNumber(display.opening.small_boarding, 0);
@@ -446,7 +674,7 @@ export function evaluateSplitStrategy(matrix, staffPlan, config) {
   const weekend = isWeekend(matrix.matrix_date);
   const window = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
   const windowMinutes = timeToMinutes(window[1]) - timeToMinutes(window[0]);
-  const availableFunctioningPct = computeAvailableFunctioningPct(staffPlan);
+  const availableFunctioningPct = computeAvailableFunctioningPct(staffPlan, { time: window[0] });
 
   // Reserve PP labor
   const ppMinutes = ppDogs > 0 ? estimatePodPassTotalMinutes(ppDogs, config) : 0;
@@ -517,9 +745,9 @@ export function evaluateSplitStrategy(matrix, staffPlan, config) {
 /**
  * Run the V1 opening decision tree.
  */
-export function solveOpening(matrix, staffPlan, config) {
-  const podPassResult = evaluateFullPodPass(matrix, staffPlan, config);
-  const splitResult = evaluateSplitStrategy(matrix, staffPlan, config);
+export function solveOpening(matrix, staffPlan, config, options = {}) {
+  const podPassResult = evaluateFullPodPass(matrix, staffPlan, config, options);
+  const splitResult = evaluateSplitStrategy(matrix, staffPlan, config, options);
 
   // Step 1: If full pod pass fits comfortably, use it
   if (podPassResult.feasible) {
@@ -555,8 +783,12 @@ export function solveOpening(matrix, staffPlan, config) {
 
 // ─── Staff Availability Computation ───────────────────────────────────────
 
-export function computeAvailableFunctioningPct(staffPlan) {
+export function computeAvailableFunctioningPct(staffPlan, options = {}) {
   if (!staffPlan) return 0;
+  const entries = getShiftEntries(staffPlan);
+  if (entries.length && options.time) {
+    return countFunctioningFromEntries(entries, staffPlan, options.time);
+  }
   let total = staffPlan.pct_count || 0;
   if (staffPlan.allow_csr_as_pct) total += (staffPlan.csr_count || 0);
   if (staffPlan.supervisor_present) total += (staffPlan.supervisor_count || 0);
@@ -569,18 +801,19 @@ export function computeAvailableFunctioningPct(staffPlan) {
 /**
  * Compute required functioning PCT counts for AM, midday, and PM from matrix + config.
  */
-export function computeRequiredHeadcount(matrix, config) {
+export function computeRequiredHeadcount(matrix, config, options = {}) {
   if (!matrix) return { am: 0, midday: 0, pm: 0, functionalHours: 0, warnings: [], explanation: [] };
 
-  const display = getMatrixDisplay(matrix);
-  const solverInputs = getMatrixSolverInputs(matrix);
+  const demandMode = resolveDemandMode(matrix, options.demandMode);
+  const display = getDemandDisplay(matrix, demandMode);
+  const solverInputs = getDemandSolverInputs(matrix, demandMode);
   const trust = getMatrixTrust(matrix);
   const blockers = getMatrixBlockers(matrix);
   const warnings = [];
   const explanation = [];
 
   const totalOvernightDogs = toNumber(display.opening.total_boarding, 0);
-  const openingRequirement = estimateOpeningRequirement(matrix, config);
+  const openingRequirement = estimateOpeningRequirement(matrix, config, demandMode);
   const peakLargeCoverage = safeRatioCoverage(solverInputs.peak_large_daycare, config.daycare_ratio_large);
   const peakSmallCoverage = safeRatioCoverage(solverInputs.peak_small_daycare, config.daycare_ratio_small);
   const unknownCoverage = solverInputs.peak_unknown_daycare > 0 ? 1 : 0;
@@ -613,7 +846,7 @@ export function computeRequiredHeadcount(matrix, config) {
   );
 
   // Generate explanation
-  explanation.push(`AM: ${amRequired} functioning PCTs needed — ${totalOvernightDogs} boarding dogs opening, ${solverInputs.total_private_play_dogs} private play dogs, ${toNumber(display.support.departure_baths, 0)} departure baths`);
+  explanation.push(`${demandMode === "projected" ? "Projected" : "Booked"} AM: ${amRequired} functioning PCTs needed — ${totalOvernightDogs} boarding dogs opening, ${solverInputs.total_private_play_dogs} private play dogs, ${toNumber(display.support.departure_baths, 0)} departure baths`);
   explanation.push(`Midday: ${middayRequired} functioning PCTs — peak daycare coverage (${peakLargeCoverage} large + ${peakSmallCoverage} small + ${unknownCoverage} flex) with break relief`);
   explanation.push(`PM: ${pmRequired} functioning PCTs — closing coverage plus feeding (${solverInputs.evening_feeding_dogs} dogs) and meds (${solverInputs.medication_dogs} dogs)`);
 
@@ -632,7 +865,7 @@ export function computeRequiredHeadcount(matrix, config) {
     warnings.push(`High PP load (${solverInputs.total_private_play_dogs} dogs) — dedicated private play coverage is likely needed throughout the day`);
   }
   if (toNumber(matrix.boarding_unknown_size, 0) + toNumber(matrix.daycare_unknown_size, 0) > 0) {
-    warnings.push(`${toNumber(matrix.boarding_unknown_size, 0) + toNumber(matrix.daycare_unknown_size, 0)} dogs have unknown size classification — headcount stays blocked until the playgroup split is verified`);
+    warnings.push(`${toNumber(matrix.boarding_unknown_size, 0) + toNumber(matrix.daycare_unknown_size, 0)} dogs still have unresolved playgroup classification — schedule generated using the current known mix, but verify the split before publishing`);
   }
 
   return {
@@ -642,21 +875,22 @@ export function computeRequiredHeadcount(matrix, config) {
     functionalHours,
     warnings,
     explanation,
+    demandMode,
   };
 }
 
 /**
  * Compute staffing status for a day given required vs assigned counts.
  */
-export function computeStaffingStatus(required, staffPlan, config) {
+export function computeStaffingStatus(required, staffPlan, config, matrixDate) {
   if (!staffPlan) return { status: "no_plan", warnings: ["No staff plan entered for this day"] };
 
-  const available = computeAvailableFunctioningPct(staffPlan);
+  const assignedByDaypart = computeDaypartAvailability(matrixDate, staffPlan, config);
   const warnings = [];
 
-  const amGap = required.am - available;
-  const middayGap = required.midday - available;
-  const pmGap = required.pm - available;
+  const amGap = required.am - assignedByDaypart.am;
+  const middayGap = required.midday - assignedByDaypart.midday;
+  const pmGap = required.pm - assignedByDaypart.pm;
 
   if (amGap > 0) warnings.push(`Opening short by ${amGap} functioning PCT(s)`);
   if (middayGap > 0) warnings.push(`Midday short by ${middayGap} functioning PCT(s)`);
@@ -667,7 +901,12 @@ export function computeStaffingStatus(required, staffPlan, config) {
   if (maxGap > 0) status = "short";
   else if (maxGap === 0) status = "borderline";
 
-  return { status, warnings, assignedFunctioningPct: available };
+  return {
+    status,
+    warnings,
+    assignedFunctioningPct: Math.max(assignedByDaypart.am, assignedByDaypart.midday, assignedByDaypart.pm),
+    assignedByDaypart,
+  };
 }
 
 // ─── Rotation Grid Generator (opening block) ─────────────────────────────
@@ -798,8 +1037,8 @@ export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
 
   const allSlots = build15MinSlots(siteHours[0], siteHours[1]);
 
-  // Build lanes
-  const lanes = buildStaffLanes(staffPlan);
+  const laneDefs = buildStaffLaneDefinitions(staffPlan);
+  const lanes = laneDefs.map((lane) => lane.label);
 
   const grid = {};
   lanes.forEach(lane => { grid[lane] = {}; });
@@ -825,10 +1064,19 @@ export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
   allSlots.forEach((t, ti) => {
     const slotMin = timeToMinutes(t);
     const phase = getPhaseForSlot(slotMin, phases);
+    const activeLaneDefs = laneDefs.filter((laneDef) => isLaneDefinitionActive(laneDef, t));
+    const activeCrewLaneLabels = activeLaneDefs.filter((laneDef) => laneDef.kind !== "supervisor").map((laneDef) => laneDef.label);
 
-    lanes.forEach((lane, li) => {
-      const isSup = lane === "SUP";
-      const isCsr = lane.startsWith("CSR");
+    laneDefs.forEach((laneDef) => {
+      const lane = laneDef.label;
+      const activeCrewIndex = activeCrewLaneLabels.indexOf(lane);
+      const isSup = laneDef.kind === "supervisor";
+      const isCsr = laneDef.kind === "csr";
+
+      if (!isLaneDefinitionActive(laneDef, t)) {
+        grid[lane][t] = "off";
+        return;
+      }
 
       // CSR prep protection: 30 min before public hours
       if (isCsr && slotMin >= (publicOpenMin - 30) && slotMin < publicOpenMin) {
@@ -843,25 +1091,61 @@ export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
       }
 
       // PCT / CSR-as-PCT assignment by phase
-      grid[lane][t] = assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrentBreaks, t, solverInputs);
+      grid[lane][t] = assignCrewTask(phase, slotMin, ti, activeCrewIndex, activeCrewLaneLabels, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrentBreaks, t, solverInputs);
     });
   });
 
-  return { lanes, slots: allSlots, grid, phases };
+  return { lanes, slots: allSlots, grid, phases, laneMeta: laneDefs };
+}
+
+function buildLaneLabel(entry, indexByKind) {
+  if (entry.name) return `${getShiftPositionLabel(entry.position)} — ${entry.name}`;
+  return `${getShiftPositionLabel(entry.position)} ${indexByKind}`;
+}
+
+function buildStaffLaneDefinitions(staffPlan) {
+  const shiftEntries = getShiftEntries(staffPlan);
+  if (shiftEntries.length) {
+    const counters = { pct: 0, csr: 0, supervisor: 0, mod: 0 };
+    return shiftEntries.map((entry) => {
+      counters[entry.position] = (counters[entry.position] || 0) + 1;
+      return {
+        label: buildLaneLabel(entry, counters[entry.position]),
+        kind: entry.position === "supervisor" ? "supervisor" : entry.position,
+        shift_start: entry.shift_start,
+        shift_end: entry.shift_end,
+        name: entry.name,
+        position: entry.position,
+      };
+    });
+  }
+
+  const numPct = staffPlan?.pct_count || 0;
+  const numCsr = staffPlan?.csr_count || 0;
+  const hasSup = staffPlan?.supervisor_present;
+  const laneDefs = [];
+  for (let i = 1; i <= numPct; i++) laneDefs.push({ label: `fPCT ${i}`, kind: "pct" });
+  if (staffPlan?.allow_csr_as_pct && numCsr > 0) {
+    for (let i = 1; i <= numCsr; i++) laneDefs.push({ label: `CSR→fPCT ${i}`, kind: "csr" });
+  }
+  if (hasSup) laneDefs.push({ label: "SUP", kind: "supervisor" });
+  if (laneDefs.length === 0) {
+    laneDefs.push(
+      { label: "fPCT 1", kind: "pct" },
+      { label: "fPCT 2", kind: "pct" },
+      { label: "fPCT 3", kind: "pct" },
+    );
+  }
+  return laneDefs;
+}
+
+function isLaneDefinitionActive(laneDef, timeStr) {
+  if (!laneDef.shift_start || !laneDef.shift_end) return true;
+  return isShiftEntryActive(laneDef, timeStr);
 }
 
 function buildStaffLanes(staffPlan) {
-  const numPct = staffPlan.pct_count || 0;
-  const numCsr = staffPlan.csr_count || 0;
-  const hasSup = staffPlan.supervisor_present;
-  const lanes = [];
-  for (let i = 1; i <= numPct; i++) lanes.push(`fPCT ${i}`);
-  if (staffPlan.allow_csr_as_pct && numCsr > 0) {
-    for (let i = 1; i <= numCsr; i++) lanes.push(`CSR→fPCT ${i}`);
-  }
-  if (hasSup) lanes.push("SUP");
-  if (lanes.length === 0) lanes.push("fPCT 1", "fPCT 2", "fPCT 3");
-  return lanes;
+  return buildStaffLaneDefinitions(staffPlan).map((lane) => lane.label);
 }
 
 function buildPhases(weekend, siteHours, openWindow) {
@@ -1090,6 +1374,7 @@ export function validateGrid(grid, lanes, slots, matrix, config) {
  * Serialize a generated schedule for storage in rotation_schedules table.
  */
 export function serializeSchedule(matrix, staffPlan, daySummary, config) {
+  const shiftEntries = getShiftEntries(staffPlan);
   return {
     location_id: matrix.location_id,
     schedule_date: matrix.matrix_date,
@@ -1102,6 +1387,7 @@ export function serializeSchedule(matrix, staffPlan, daySummary, config) {
       supervisor_present: staffPlan.supervisor_present,
       allow_csr_as_pct: staffPlan.allow_csr_as_pct,
       allow_mod_as_pct: staffPlan.allow_mod_as_pct,
+      shift_entries: shiftEntries,
     },
     dog_metrics: {
       boarding_large: matrix.boarding_large,
@@ -1127,6 +1413,8 @@ export function serializeSchedule(matrix, staffPlan, daySummary, config) {
       headcount: daySummary.required,
       opening: daySummary.openingResult,
       lines: daySummary.explanation,
+      demand_mode: daySummary.demandMode || "current",
+      schedule_kind: daySummary.scheduleKind || "staff_adjusted",
     },
     generated_at: new Date().toISOString(),
   };
@@ -1163,19 +1451,21 @@ export function applyOverride(grid, lane, slot, newTask, reason) {
  * Build a complete day analysis from matrix + staff plan + config.
  * Returns everything the UI needs for one day.
  */
-export function buildDaySummary(matrix, staffPlan, config) {
+export function buildDaySummary(matrix, staffPlan, config, options = {}) {
   const mergedConfig = { ...SCHEDULE_CONFIG_DEFAULTS, ...config };
+  const demandMode = resolveDemandMode(matrix, options.demandMode || "current");
   const trust = getMatrixTrust(matrix);
-  const solverInputs = getMatrixSolverInputs(matrix);
+  const solverInputs = getDemandSolverInputs(matrix, demandMode);
   const generationBlockers = getMatrixBlockers(matrix);
   const canGenerate = canGenerateSchedule(matrix);
-  const required = computeRequiredHeadcount(matrix, mergedConfig);
-  const staffStatus = computeStaffingStatus(required, staffPlan, mergedConfig);
-  const openingResult = staffPlan && canGenerate ? solveOpening(matrix, staffPlan, mergedConfig) : null;
+  const required = computeRequiredHeadcount(matrix, mergedConfig, { demandMode });
+  const effectiveStaffPlan = staffPlan || (canGenerate && options.autoPlan !== false ? buildOptimalStaffPlan(matrix, required, mergedConfig) : null);
+  const staffStatus = computeStaffingStatus(required, effectiveStaffPlan, mergedConfig, matrix?.matrix_date);
+  const openingResult = effectiveStaffPlan && canGenerate ? solveOpening(matrix, effectiveStaffPlan, mergedConfig, { demandMode }) : null;
 
   // Generate full-day grid (AM + PM) instead of just opening
-  const gridResult = staffPlan && canGenerate
-    ? generateFullDayGrid(matrix, staffPlan, openingResult, mergedConfig)
+  const gridResult = effectiveStaffPlan && canGenerate
+    ? generateFullDayGrid(matrix, effectiveStaffPlan, openingResult, mergedConfig)
     : null;
 
   // Validate the grid
@@ -1189,16 +1479,19 @@ export function buildDaySummary(matrix, staffPlan, config) {
 
   return {
     matrix,
-    staffPlan,
+    staffPlan: effectiveStaffPlan,
+    inputStaffPlan: staffPlan,
     trust,
     solverInputs,
     generationBlockers,
     canGenerate,
+    demandMode,
     required,
     staffStatus,
     openingResult,
     grid: gridResult,
     violations,
+    scheduleKind: staffPlan ? "staff_adjusted" : "optimal",
     warnings: allWarnings,
     explanation: [
       ...(required.explanation || []),

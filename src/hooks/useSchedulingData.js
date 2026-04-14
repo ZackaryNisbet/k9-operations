@@ -196,7 +196,7 @@ export function useSchedulingData(locationId, startDate) {
       const staffStatus = generationAllowed
         ? computeStaffingStatus(required, staffPlan, config)
         : {
-            status: matrixTrustState === "missing" ? "missing" : generationBlockers.length > 0 ? "blocked" : "estimated",
+            status: matrixTrustState === "missing" ? "missing" : "estimated",
             warnings: generationBlockers,
             assignedFunctioningPct: staffPlan ? computeAvailableFunctioningPct(staffPlan) : 0,
           };
