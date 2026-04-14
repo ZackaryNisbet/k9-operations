@@ -5,12 +5,24 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  addDaysStr,
+  computeSchedulingMatrixRows,
+  upsertSchedulingMatrixRows,
+} from "../_shared/scheduling-matrix.ts";
+import {
+  buildIconIdentityKey,
+  upsertAnimalIconsFromGingr,
+} from "../_shared/gingr-icons.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+const SCHEDULING_FUTURE_SYNC_DAYS = 28;
+const SCHEDULING_IMMEDIATE_RECOMPUTE_DAYS = 7;
 
 // ─── Eastern Time helper ─────────────────────────────────────────────────────
 // Edge functions run in UTC. All date-sensitive operations must use ET.
@@ -340,19 +352,19 @@ async function syncReservations(
   }
 
   // ── Parallel Gingr API fetches ──────────────────────────────────────────
-  // Fire checked-in, all-states (today), and future reservation queries in
-  // parallel to stay within the edge-function timeout (~150 s).
+  // Fire checked-in and today's all-states queries in parallel. Future
+  // sold-room data is fetched day-by-day below because Gingr's exact-date
+  // query shape is materially more complete than the broader future range
+  // query for scheduling use cases.
   const tomorrow = new Date(now.getTime() + 1 * 86400000).toISOString().split("T")[0];
-  const futureEndDate = new Date(now.getTime() + 14 * 86400000).toISOString().split("T")[0];
+  const futureEndDate = new Date(now.getTime() + SCHEDULING_FUTURE_SYNC_DAYS * 86400000).toISOString().split("T")[0];
   const recentDate = dateStrET();
 
-  const [checkedInResult, allResult, futureResult] = await Promise.all([
+  const [checkedInResult, allResult] = await Promise.all([
     gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "true" })
       .catch((e: any) => { console.error("checked-in fetch error:", e.message); return { data: {} }; }),
     gingrFetch(subdomain, "reservations", apiKey, "POST", { start_date: recentDate, end_date: recentDate })
       .catch((e: any) => { console.error("all-states fetch error:", e.message); return { data: {} }; }),
-    gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "false", start_date: tomorrow, end_date: futureEndDate })
-      .catch((e: any) => { console.error("future fetch error:", e.message); return { data: {} }; }),
   ]);
 
   // ── Upsert checked-in reservations ────────────────────────────────────
@@ -430,12 +442,35 @@ async function syncReservations(
     console.error("All-states reservation re-sync error:", allErr.message);
   }
 
-  // ── Upsert future reservations (next 14 days) ────────────────────────
+  // ── Upsert future reservations (next scheduling horizon) ─────────────
   let futureSynced = 0;
   try {
-    const futureResMap = futureResult.data || {};
-    const futureReservations = (Object.values(futureResMap) as any[]).filter(
-      (r) => typeof r === "object" && r.start_date >= tomorrow
+    const futureDates = enumerateDateRange(tomorrow, futureEndDate);
+    const futureResults = await Promise.all(
+      futureDates.map((futureDate) =>
+        gingrFetch(subdomain, "reservations", apiKey, "POST", {
+          start_date: futureDate,
+          end_date: futureDate,
+        }).catch((e: any) => {
+          console.error(`future day fetch error (${futureDate}):`, e.message);
+          return { data: {} };
+        }),
+      ),
+    );
+
+    const futureById = new Map<string, any>();
+    for (const result of futureResults) {
+      const futureResMap = result.data || {};
+      for (const reservation of Object.values(futureResMap) as any[]) {
+        if (!reservation || typeof reservation !== "object") continue;
+        const reservationId = String(reservation.reservation_id || "");
+        if (!reservationId) continue;
+        futureById.set(reservationId, reservation);
+      }
+    }
+
+    const futureReservations = Array.from(futureById.values()).filter(
+      (r) => typeof r === "object",
     );
 
     if (futureReservations.length > 0) {
@@ -1442,9 +1477,8 @@ async function backfillRoomOccupancy(
 }
 
 // ─── Sync Animal Icons via get_icons ──────────────────────────────────────
-// Fetches icon assignments for all checked-in dogs and upserts to
-// gingr_animal_icons_live. Uses title-based matching for playgroup detection
-// to support multi-location setups where template IDs may differ.
+// Refreshes icon assignments for the operational horizon so current dogs and
+// upcoming scheduled dogs share the same canonical icon source.
 
 async function syncAnimalIcons(
   supabase: any,
@@ -1452,119 +1486,44 @@ async function syncAnimalIcons(
   apiKey: string,
   locationId: string
 ): Promise<{ synced: number; animals: number }> {
-  // 1. Get all checked-in animal IDs from gingr_reservations
-  const { data: checkedIn } = await supabase
+  const today = dateStrET();
+  const futureEndDate = addDaysStr(today, SCHEDULING_FUTURE_SYNC_DAYS);
+
+  // Refresh icons for dogs that are active now or already sold inside the
+  // scheduling horizon. This prevents future scheduling from depending on
+  // stale icon rows for dogs that are not physically checked in yet.
+  const { data: horizonReservations, error } = await supabase
     .from("gingr_reservations")
     .select("animal_gingr_id")
     .eq("location_id", locationId)
-    .not("check_in_date", "is", null)
     .is("check_out_date", null)
-    .is("cancelled_date", null);
+    .is("cancelled_date", null)
+    .lt("start_date", `${addDaysStr(futureEndDate, 1)}T00:00:00`)
+    .gte("end_date", `${today}T00:00:00`);
 
-  const animalIds = [
-    ...new Set(
-      (checkedIn || [])
-        .map((r: any) => r.animal_gingr_id)
-        .filter((id: any) => id != null)
-    ),
-  ] as string[];
+  if (error) {
+    throw new Error(`gingr_reservations icon scope query error: ${error.message}`);
+  }
+
+  const animalIds = [...new Set(
+    (horizonReservations || [])
+      .map((row: any) => String(row.animal_gingr_id || "").trim())
+      .filter(Boolean),
+  )];
 
   if (animalIds.length === 0) {
-    // No dogs checked in — skip icon sync but keep existing icons (permanent storage)
     return { synced: 0, animals: 0 };
   }
 
-  // 2. Call get_icons — animal_ids must be JSON-stringified, NOT form-encoded arrays
-  const params = new URLSearchParams();
-  params.append("key", apiKey);
-  params.append("animal_ids", JSON.stringify(animalIds.map(Number)));
-  params.append("owner_ids", "null");
-
-  const url = `https://${subdomain}.gingrapp.com/api/v1/get_icons`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-    body: params.toString(),
+  const result = await upsertAnimalIconsFromGingr({
+    supabase,
+    locationId,
+    gingrConfig: { subdomain, apiKey },
+    animalIds,
   });
 
-  if (!resp.ok) {
-    throw new Error(`get_icons error ${resp.status}: ${await resp.text()}`);
-  }
-
-  const result = await resp.json();
-  if (!result.success || result.error) {
-    throw new Error(`get_icons failed: ${JSON.stringify(result).slice(0, 200)}`);
-  }
-
-  const animalsData = result.data?.animals || {};
-  const iconRows: any[] = [];
-  const seenAnimalIds = new Set<string>();
-
-  for (const [animalId, animalEntry] of Object.entries(animalsData) as [string, any][]) {
-    seenAnimalIds.add(animalId);
-    const icons = animalEntry?.icons || [];
-    for (const icon of icons) {
-      const now = new Date().toISOString();
-      iconRows.push({
-        location_id: locationId,
-        animal_gingr_id: animalId,
-        icon_template_id: String(icon.color_label_template_id || icon.id || ""),
-        icon_title: icon.title || null,
-        icon_group: icon.name || null,
-        icon_color: icon.color || null,
-        icon_class: icon.class || null,
-        icon_comment: icon.comment || null,
-        synced_at: now,
-        first_seen_at: now,
-        last_seen_at: now,
-      });
-    }
-  }
-
-  // 3. Icons for departed dogs are KEPT (permanent storage).
-
-  // 4. Upsert fresh icons first (no delete — avoids race condition where
-  // checkout TV sees empty icons between delete and re-insert).
-  const deduped = new Map<string, any>();
-  for (const row of iconRows) {
-    const key = `${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`;
-    deduped.set(key, row);
-  }
-  const dedupedRows = [...deduped.values()];
-
-  if (dedupedRows.length > 0) {
-    for (let i = 0; i < dedupedRows.length; i += 500) {
-      const chunk = dedupedRows.slice(i, i + 500);
-      const { error } = await supabase
-        .from("gingr_animal_icons_live")
-        .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
-      if (error) throw new Error(`gingr_animal_icons_live upsert error: ${error.message}`);
-    }
-  }
-
-  // 5. Remove stale icons for checked-in dogs — icons in DB but NOT in
-  // the Gingr API response (icon was removed in Gingr).
-  // Runs AFTER upsert so icons are never temporarily missing (no race condition).
-  const freshKeys = new Set(dedupedRows.map(r => `${r.animal_gingr_id}|${r.icon_template_id}`));
-  for (let i = 0; i < animalIds.length; i += 500) {
-    const chunk = animalIds.slice(i, i + 500);
-    const { data: existing } = await supabase
-      .from("gingr_animal_icons_live")
-      .select("id, animal_gingr_id, icon_template_id")
-      .eq("location_id", locationId)
-      .in("animal_gingr_id", chunk);
-    const staleIds = (existing || [])
-      .filter(e => !freshKeys.has(`${e.animal_gingr_id}|${e.icon_template_id}`))
-      .map(e => e.id);
-    if (staleIds.length > 0) {
-      for (let j = 0; j < staleIds.length; j += 500) {
-        await supabase.from("gingr_animal_icons_live").delete().in("id", staleIds.slice(j, j + 500));
-      }
-    }
-  }
-
-  console.log(`Icons sync: ${iconRows.length} icons for ${seenAnimalIds.size} animals`);
-  return { synced: iconRows.length, animals: seenAnimalIds.size };
+  console.log(`Icons sync: ${result.synced} icons for ${result.animals} animals`);
+  return { synced: result.synced, animals: result.animals };
 }
 
 // ─── Mass Icon Pull — ALL animals in gingr_animals ───────────────────────
@@ -1617,12 +1576,20 @@ async function syncAllAnimalIcons(
       totalAnimals++;
       const icons = animalEntry?.icons || [];
       for (const icon of icons) {
+        const iconTemplateId = String(icon.color_label_template_id || icon.id || "");
+        const iconGroup = icon.name || null;
+        const iconTitle = icon.title || null;
         iconRows.push({
           location_id: locationId,
           animal_gingr_id: animalId,
-          icon_template_id: String(icon.color_label_template_id || icon.id || ""),
-          icon_title: icon.title || null,
-          icon_group: icon.name || null,
+          icon_template_id: iconTemplateId,
+          icon_identity_key: buildIconIdentityKey({
+            iconTemplateId,
+            iconGroup,
+            iconTitle,
+          }),
+          icon_title: iconTitle,
+          icon_group: iconGroup,
           icon_color: icon.color || null,
           icon_class: icon.class || null,
           icon_comment: icon.comment || null,
@@ -1636,12 +1603,12 @@ async function syncAllAnimalIcons(
     if (iconRows.length > 0) {
       const deduped = new Map<string, any>();
       for (const row of iconRows) {
-        deduped.set(`${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`, row);
+        deduped.set(`${row.location_id}|${row.animal_gingr_id}|${row.icon_identity_key}`, row);
       }
       for (let j = 0; j < [...deduped.values()].length; j += 500) {
         const chunk = [...deduped.values()].slice(j, j + 500);
         await supabase.from("gingr_animal_icons_live")
-          .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
+          .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_identity_key" });
       }
       totalIcons += deduped.size;
     }
@@ -1948,6 +1915,16 @@ function getDateChunks(start: string, end: string, maxDays: number): [string, st
   }
 
   return chunks;
+}
+
+function enumerateDateRange(start: string, end: string): string[] {
+  const dates: string[] = [];
+  let current = start;
+  while (current <= end) {
+    dates.push(current);
+    current = addDaysStr(current, 1);
+  }
+  return dates;
 }
 
 function updateSyncState(
@@ -2438,6 +2415,30 @@ Deno.serve(async (req: Request) => {
     } catch (metricsErr: any) {
       // Non-fatal — dashboard metrics recompute is best-effort
       console.error('Dashboard metrics recompute error:', metricsErr.message);
+    }
+
+    // ── Recompute current-week scheduling matrix after sync ──────────────
+    // Longer horizons are kept warm by staggered cron jobs; keeping the
+    // sync-time recompute to the current week makes Gingr sync materially
+    // more reliable while still refreshing the operationally critical dates.
+    try {
+      const matrixFrom = dateStrET();
+      const matrixTo = addDaysStr(matrixFrom, SCHEDULING_IMMEDIATE_RECOMPUTE_DAYS - 1);
+      const matrixRows = await computeSchedulingMatrixRows({
+        supabase,
+        locationId: location_id,
+        dateFrom: matrixFrom,
+        dateTo: matrixTo,
+      });
+      const matrixResult = await upsertSchedulingMatrixRows(supabase, matrixRows);
+      results["scheduling_matrix"] = {
+        rows_upserted: matrixResult.count,
+        date_from: matrixFrom,
+        date_to: matrixTo,
+      };
+    } catch (matrixErr: any) {
+      console.error("Scheduling matrix recompute error:", matrixErr.message);
+      results["scheduling_matrix"] = { error: matrixErr.message };
     }
 
     // ── Compute cash basis metrics from synced invoices + deposits ───────

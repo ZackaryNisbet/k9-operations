@@ -1,21 +1,21 @@
 // K9 Operations — Scheduling Page
 // Week Plan + Day Rotation + Required Headcount + Explanation + Warnings + Assumptions
-// Uses live Supabase data from scheduling_matrix_daily (with dashboard_metrics fallback).
+// Uses live Supabase data from scheduling_matrix_daily.
 
 import React, { useState, useMemo, useCallback } from "react";
 import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge, Btn } from "../../shared/ui";
+import { Btn } from "../../shared/ui";
 import { useSchedulingData } from "../../hooks/useSchedulingData";
 import {
   TASK_COLORS,
-  SCHEDULE_CONFIG_DEFAULTS,
-  solveOpening,
-  generateFullDayGrid,
   buildDaySummary,
-  validateGrid,
   serializeSchedule,
   applyOverride,
+  getMatrixDisplay,
+  getMatrixProjectedDisplay,
+  getMatrixProjection,
+  getMatrixComparison,
 } from "../../shared/schedulingEngine";
 
 // ─── Utility Components ───────────────────────────────────────────────────
@@ -55,10 +55,227 @@ function StatusChip({ status }) {
   return <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color }}>{s.label}</span>;
 }
 
-function ConfidenceBadge({ source }) {
-  if (source === "empty" || source === "none") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#FEE2E2", color: "#991B1B", fontWeight: 600 }}>No Data</span>;
-  if (source === "dashboard_fallback" || source === "low") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: C.warnLt, color: C.warn, fontWeight: 600 }}>Estimated</span>;
-  return null;
+function TrustBadge({ state, blocked }) {
+  const effective = blocked ? "blocked" : state;
+  const map = {
+    trusted: { bg: C.sucLt, color: C.suc, label: "Trusted" },
+    estimated: { bg: C.warnLt, color: C.warn, label: "Estimated" },
+    missing: { bg: "#FEE2E2", color: "#991B1B", label: "Missing" },
+    blocked: { bg: "#FEE2E2", color: "#991B1B", label: "Blocked" },
+  };
+  const chip = map[effective] || map.missing;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "3px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: chip.bg, color: chip.color }}>
+      {chip.label}
+    </span>
+  );
+}
+
+const MATRIX_GROUP_TEMPLATES = [
+  {
+    section: "Opening Boarding",
+    rows: [
+      { key: "opening.large_boarding", label: "Large Boarding Opening" },
+      { key: "opening.small_boarding", label: "Small Boarding Opening" },
+      { key: "opening.private_play_boarding", label: "Private Play Boarding Opening" },
+      { key: "opening.half_and_half_boarding", label: "Half and Half Boarding Opening", optional: true },
+      { key: "opening.evaluation_boarding", label: "Evaluation Boarding Opening", optional: true },
+      { key: "opening.unclassified_boarding", label: "Unresolved Boarding Opening", optional: true },
+      { key: "opening.total_boarding", label: "Total Boarding Dogs Opening", total: true },
+    ],
+  },
+  {
+    section: "Closing Boarding",
+    rows: [
+      { key: "closing.large_boarding", label: "Large Boarding Closing" },
+      { key: "closing.small_boarding", label: "Small Boarding Closing" },
+      { key: "closing.private_play_boarding", label: "Private Play Boarding Closing" },
+      { key: "closing.half_and_half_boarding", label: "Half and Half Boarding Closing", optional: true },
+      { key: "closing.evaluation_boarding", label: "Evaluation Boarding Closing", optional: true },
+      { key: "closing.unclassified_boarding", label: "Unresolved Boarding Closing", optional: true },
+      { key: "closing.total_boarding", label: "Total Boarding Dogs Closing", total: true },
+    ],
+  },
+  {
+    section: "Daytime Volume",
+    rows: [
+      { key: "daycare.evaluations", label: "Evaluations" },
+      { key: "daycare.private_play_dayboarding", label: "Private Play Dayboarding" },
+      { key: "daycare.half_and_half_daytime", label: "Half and Half Daytime Dogs", optional: true },
+      { key: "daycare.large_daycare", label: "Large Daycare" },
+      { key: "daycare.small_daycare", label: "Small Daycare" },
+      { key: "daycare.unclassified_daycare", label: "Unresolved Daytime Dogs", optional: true },
+      { key: "daycare.total_daycare", label: "Total Daycare Dogs", total: true },
+    ],
+  },
+  {
+    section: "Support Workload",
+    rows: [
+      { key: "support.departure_baths", label: "Departure Baths" },
+      { key: "support.morning_feeding_dogs", label: "Morning Feeding Dogs" },
+      { key: "support.evening_feeding_dogs", label: "Evening Feeding Dogs" },
+      { key: "support.medication_dogs", label: "Medication Dogs" },
+      { key: "support.total_dog_volume", label: "Total Dog Volume", total: true },
+      { key: "comparison.last_year_total_dog_volume", label: "Last Year Total Dog Volume", optional: true, comparison: true },
+      { key: "support.tours", label: "Tours" },
+    ],
+  },
+];
+
+function getNestedValue(obj, key) {
+  return key.split(".").reduce((acc, part) => acc?.[part], obj);
+}
+
+function getDayMatrixValue(day, row, mode = "current") {
+  if (row.comparison) {
+    return getNestedValue({ comparison: day.comparison || {} }, row.key);
+  }
+
+  const source = mode === "projected" ? day.projectedDisplay : day.currentDisplay;
+  return getNestedValue(source, row.key);
+}
+
+function hasAnyNonZeroValue(days, key) {
+  return days.some((day) => {
+    const value = key.startsWith("comparison.")
+      ? getNestedValue({ comparison: day.comparison || {} }, key)
+      : (
+        getNestedValue(day.currentDisplay, key)
+        ?? getNestedValue(day.projectedDisplay, key)
+      );
+    return value !== null && value !== undefined && Number(value) !== 0;
+  });
+}
+
+function buildMatrixRowGroups(days) {
+  return MATRIX_GROUP_TEMPLATES.map((group) => ({
+    ...group,
+    rows: group.rows.filter((row) => !row.optional || hasAnyNonZeroValue(days, row.key)),
+  }));
+}
+
+function formatMatrixDate(date) {
+  const dt = new Date(`${date}T12:00:00`);
+  return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
+}
+
+function formatWeekRange(startDate) {
+  const start = new Date(`${startDate}T12:00:00`);
+  const end = new Date(start.getTime());
+  end.setDate(end.getDate() + 6);
+  return `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+function formatCompletionRate(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return `${Math.round(numeric * 100)}%`;
+}
+
+function humanizeFallbackMode(mode) {
+  switch (mode) {
+    case "exact_prior_year":
+      return "exact prior year";
+    case "same_weekday_prior_year":
+      return "same weekday prior year";
+    case "exact_prior_years_2_to_4":
+      return "same date from 2-4 years back";
+    case "same_weekday_prior_years_2_to_4":
+      return "same weekday from 2-4 years back";
+    case "carry_forward_no_history":
+      return "carry current bookings";
+    default:
+      return null;
+  }
+}
+
+function getProjectionSummaryLines(day) {
+  const explanation = day?.projection?.explanations?.support_total_dog_volume;
+  if (!explanation || !day?.projection?.lead_days) return [];
+
+  const lines = [`${explanation.lead_days} days out`];
+  if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
+    const completion = explanation.exact_prior_year_final > 0
+      ? formatCompletionRate((explanation.exact_prior_year_as_of || 0) / explanation.exact_prior_year_final)
+      : null;
+    lines.push(`Last year: ${explanation.exact_prior_year_as_of || 0} of ${explanation.exact_prior_year_final} booked${completion ? ` (${completion})` : ""}`);
+  }
+  if (explanation.fallback_mode && explanation.fallback_mode !== "exact_prior_year" && explanation.fallback_mode !== "carry_forward_no_history") {
+    lines.push(`Using ${humanizeFallbackMode(explanation.fallback_mode)} (${explanation.sample_count || 0} sample${explanation.sample_count === 1 ? "" : "s"})`);
+  }
+  return lines;
+}
+
+function getProjectionTooltip({ explanation, currentValue, projectedValue }) {
+  if (!explanation) {
+    return `${currentValue} currently booked. Projected to ${projectedValue}.`;
+  }
+
+  const lines = [
+    `${currentValue} currently booked -> ${projectedValue} projected`,
+    `${explanation.lead_days || 0} days out`,
+  ];
+
+  if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
+    lines.push(`Exact prior year: ${explanation.exact_prior_year_as_of || 0} booked by now, ${explanation.exact_prior_year_final} final`);
+  }
+  if (explanation.completion_rate !== null && explanation.completion_rate !== undefined) {
+    const rate = formatCompletionRate(explanation.completion_rate);
+    if (rate) lines.push(`Completion rate used: ${rate}`);
+  }
+  const fallback = humanizeFallbackMode(explanation.fallback_mode);
+  if (fallback && explanation.fallback_mode !== "exact_prior_year") {
+    lines.push(`Fallback mode: ${fallback}`);
+  }
+  if (explanation.sample_count) {
+    lines.push(`Sample count: ${explanation.sample_count}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderMatrixCellValue({ row, day, mode }) {
+  const currentValue = getDayMatrixValue(day, row, "current");
+  const projectedValue = getDayMatrixValue(day, row, "projected");
+  const comparisonValue = row.comparison ? currentValue : null;
+  const missingValue = (mode === "projected" ? projectedValue : currentValue) === null || (mode === "projected" ? projectedValue : currentValue) === undefined;
+
+  if (row.comparison) {
+    return {
+      title: comparisonValue === null || comparisonValue === undefined ? "No year-over-year comparison available." : `Exact same date last year total dog volume: ${comparisonValue}`,
+      content: comparisonValue === null || comparisonValue === undefined ? "—" : comparisonValue,
+      missingValue: comparisonValue === null || comparisonValue === undefined,
+    };
+  }
+
+  if (mode === "projected" && day.projection?.lead_days > 0) {
+    const explanation = day.projection?.explanations?.[row.key.replaceAll(".", "_")] || null;
+    const currentText = currentValue ?? "—";
+    const projectedText = projectedValue ?? currentValue ?? "—";
+    const title = getProjectionTooltip({
+      explanation,
+      currentValue: currentText,
+      projectedValue: projectedText,
+    });
+
+    return {
+      title,
+      content: (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentText}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
+          <span style={{ fontSize: 16, fontWeight: row.total ? 800 : 700, color: C.text }}>{projectedText}</span>
+        </div>
+      ),
+      missingValue,
+    };
+  }
+
+  return {
+    title: missingValue ? "No data available for this row." : `${currentValue}`,
+    content: missingValue ? "—" : currentValue,
+    missingValue,
+  };
 }
 
 // ─── Staff Plan Input (inline mini-form) ──────────────────────────────────
@@ -118,8 +335,10 @@ function StaffPlanInput({ day, onSave, disabled }) {
 export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const locationId = profile?.location_id;
   const today = todayStr();
+  const [viewStartDate, setViewStartDate] = useState(today);
+  const [matrixMode, setMatrixMode] = useState("current");
 
-  const { weekData, config, loading, error, refresh, upsertStaffPlan, saveSchedule, publishSchedule, applyScheduleOverride, fetchScheduleVersions } = useSchedulingData(locationId, today);
+  const { weekData, config, loading, error, refresh, upsertStaffPlan, saveSchedule, publishSchedule, applyScheduleOverride, fetchScheduleVersions, runAudit } = useSchedulingData(locationId, viewStartDate);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [viewDensity, setViewDensity] = useState("standard");
@@ -133,8 +352,26 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [overrideTask, setOverrideTask] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [localGrid, setLocalGrid] = useState(null); // For live override preview
+  const [auditResult, setAuditResult] = useState(null);
+  const [auditRunning, setAuditRunning] = useState(false);
 
-  const selectedDay = weekData[selectedDayIdx] || weekData[0];
+  const workbookDays = useMemo(
+    () => weekData.map(day => ({
+      ...day,
+      currentDisplay: getMatrixDisplay(day.matrix),
+      projectedDisplay: getMatrixProjectedDisplay(day.matrix),
+      projection: getMatrixProjection(day.matrix),
+      comparison: getMatrixComparison(day.matrix),
+    })),
+    [weekData]
+  );
+  const matrixRowGroups = useMemo(() => buildMatrixRowGroups(workbookDays), [workbookDays]);
+  const auditByDate = useMemo(
+    () => new Map((auditResult?.days || []).map((day) => [day.date, day])),
+    [auditResult]
+  );
+
+  const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
 
   // Build full day summary (including opening solver + grid) for selected day
   const daySummary = useMemo(() => {
@@ -155,6 +392,11 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [selectedDayIdx]);
 
+  React.useEffect(() => {
+    setSelectedDayIdx(0);
+    setAuditResult(null);
+  }, [viewStartDate]);
+
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
       await upsertStaffPlan(plan);
@@ -166,8 +408,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   // Generate & save schedule
   const handleGenerate = useCallback(async () => {
-    if (!daySummary?.openingResult) {
+    if (!selectedDay?.staffPlan) {
       addGlobalToast?.("Enter a staff plan first to generate a schedule.", "info");
+      return;
+    }
+    if (!daySummary?.canGenerate || !daySummary?.openingResult) {
+      const blocker = daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0];
+      addGlobalToast?.(blocker || "This day is not ready for schedule generation yet.", "info");
       return;
     }
     try {
@@ -243,9 +490,37 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [selectedDay, fetchScheduleVersions]);
 
-  const m = selectedDay?.matrix || {};
+  const handleRunAudit = useCallback(async () => {
+    try {
+      setAuditRunning(true);
+      const result = await runAudit({
+        dateFrom: viewStartDate,
+        dateTo: addDays(viewStartDate, 6),
+      });
+      setAuditResult(result);
+      const summary = result?.summary || {};
+      if ((summary.mismatching_days || 0) > 0 || (summary.missing_days || 0) > 0) {
+        addGlobalToast?.(`Audit finished: ${summary.matching_days || 0} matched, ${summary.mismatching_days || 0} mismatched, ${summary.missing_days || 0} missing matrix day(s).`, "info");
+      } else {
+        addGlobalToast?.(`Audit finished: all ${summary.matching_days || 0} visible day(s) match live Gingr data.`, "success");
+      }
+    } catch (err) {
+      addGlobalToast?.("Scheduling audit failed: " + (err.message || "unknown error"), "error");
+    } finally {
+      setAuditRunning(false);
+    }
+  }, [runAudit, viewStartDate, addGlobalToast]);
+
+  const display = selectedDay?.currentDisplay || getMatrixDisplay(selectedDay?.matrix || {});
+  const matrixDisplay = matrixMode === "projected"
+    ? (selectedDay?.projectedDisplay || display)
+    : display;
   const req = daySummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
   const assignedPct = selectedDay?.assignedFunctioningPct || 0;
+  const generateDisabled = !selectedDay?.staffPlan || !daySummary?.canGenerate;
+  const generateDisabledReason = !selectedDay?.staffPlan
+    ? "Enter a staff plan to enable schedule generation."
+    : (daySummary?.generationBlockers?.[0] || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation.");
 
   const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {}, phases: null };
   const { lanes, slots, grid, phases } = gridData;
@@ -281,57 +556,297 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <Btn variant="secondary" size="sm" onClick={() => setShowAssumptions(!showAssumptions)}>
             {showAssumptions ? "Hide" : "Show"} Assumptions
           </Btn>
-          <Btn variant="primary" size="sm" onClick={handleGenerate}>
+          <Btn variant="primary" size="sm" onClick={handleGenerate} disabled={generateDisabled} title={generateDisabledReason}>
             Generate Schedule
           </Btn>
         </div>
       </div>
 
-      {/* ── Section 1: 7-Day Raw Matrix ───────────────────────────────── */}
-      <SectionCard title="7-Day Demand Matrix" subtitle="Operational numbers for the upcoming week — live from Gingr data" icon={<I.Calendar />}>
+      {/* ── Section 1: 7-Day Workbook Matrix ──────────────────────────── */}
+      <SectionCard title="7-Day Demand Matrix" subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, -7))}>← Previous Week</Btn>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{formatWeekRange(viewStartDate)}</div>
+            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(today)}>This Week</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, 7))}>Next Week →</Btn>
+            {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading week…</span>}
+            {auditRunning && <span style={{ fontSize: 11, color: C.textMut }}>Auditing live Gingr…</span>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <Btn variant="secondary" size="sm" onClick={handleRunAudit} disabled={auditRunning || loading}>
+              {auditRunning ? "Running Audit…" : "Run Audit"}
+            </Btn>
+            {[
+              { id: "current", label: "Currently Booked" },
+              { id: "projected", label: "Projected" },
+            ].map((option) => (
+              <button
+                key={option.id}
+                onClick={() => setMatrixMode(option.id)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${matrixMode === option.id ? C.pri : C.border}`,
+                  background: matrixMode === option.id ? C.priLt : C.surface,
+                  color: matrixMode === option.id ? C.pri : C.textMut,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
+          Total dog volume equals total boarding dogs closing plus total daycare dogs. Tours stay separate so the operational dog count is easy to read.
+          {matrixMode === "projected" && " Projected mode shows currently booked values moving to a statistically projected final count based on historical pickup pace from Gingr reservation created dates."}
+        </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 780 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1260 }}>
             <thead>
-              <tr style={{ background: C.priLt }}>
-                {["Day", "Gross", "BDG LG", "BDG SM", "BDG ?", "DC LG", "DC SM", "PP", "Baths", "Feed", "Meds", "Arrive", "Depart", "Status"].map(h => (
-                  <th key={h} style={{ padding: "8px 8px", fontWeight: 700, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em", color: C.textMut, textAlign: h === "Day" ? "left" : "center", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                ))}
+              <tr>
+                <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", minWidth: 300, padding: "14px 16px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                  Operational Metric
+                </th>
+                {workbookDays.map((day, index) => {
+                  const selected = index === selectedDayIdx;
+                  const blocked = day.generationBlockers.length > 0;
+                  const auditDay = auditByDate.get(day.date);
+                  const baseBackground = auditDay?.status === "match"
+                    ? "#F0FDF4"
+                    : auditDay?.status === "mismatch"
+                      ? "#FEF2F2"
+                      : "#F8FAFC";
+                  return (
+                    <th
+                      key={day.date}
+                      onClick={() => setSelectedDayIdx(index)}
+                      style={{
+                        cursor: "pointer",
+                        minWidth: 122,
+                        padding: "12px 12px 14px",
+                        textAlign: "center",
+                        borderBottom: `1px solid ${C.border}`,
+                        background: selected ? "#EEF4FF" : baseBackground,
+                        boxShadow: selected
+                          ? `inset 0 -2px 0 ${C.pri}`
+                          : auditDay?.status === "match"
+                            ? "inset 0 -2px 0 #16A34A"
+                            : auditDay?.status === "mismatch"
+                              ? "inset 0 -2px 0 #DC2626"
+                              : "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 16, fontWeight: 800, color: selected ? C.pri : C.text, lineHeight: 1.1 }}>
+                        {day.dayName}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{formatMatrixDate(day.date)}</div>
+                      <div style={{ marginTop: 8 }}>
+                        <TrustBadge state={day.matrixTrustState} blocked={blocked} />
+                      </div>
+                      {day.comparison?.last_year_total_dog_volume !== null && day.comparison?.last_year_total_dog_volume !== undefined && (
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
+                          LY total: {day.comparison.last_year_total_dog_volume}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: blocked ? C.dan : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
+                        {blocked ? (day.generationBlockers[0] || "Blocked") : day.canGenerate ? "Ready to schedule" : "Waiting on matrix"}
+                      </div>
+                      {matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, lineHeight: 1.35 }}>
+                          {getProjectionSummaryLines(day).map((line) => (
+                            <div key={`${day.date}-${line}`}>{line}</div>
+                          ))}
+                        </div>
+                      )}
+                      {auditDay && (
+                        <div style={{ fontSize: 10, color: auditDay.status === "match" ? C.suc : auditDay.status === "mismatch" ? C.dan : C.textMut, marginTop: 6, minHeight: 14 }}>
+                          {auditDay.status === "match"
+                            ? "Audit OK"
+                            : auditDay.status === "mismatch"
+                              ? `Audit Δ${auditDay.mismatch_count}`
+                              : "Audit missing"}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
+                <th style={{ minWidth: 132, padding: "12px 12px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "#F8FAFC" }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>
+                    Weekly Total
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
+                    Dog-days across visible week
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {weekData.map((day, i) => {
-                const sel = i === selectedDayIdx;
-                const mx = day.matrix || {};
+              {matrixRowGroups.flatMap((group) => {
                 return (
-                  <tr key={day.date} onClick={() => setSelectedDayIdx(i)} style={{ cursor: "pointer", background: sel ? C.priLt : i % 2 === 0 ? C.surface : C.surfaceHover, transition: "background 0.1s" }}>
-                    <td style={{ padding: "8px 8px", fontWeight: sel ? 700 : 500, color: sel ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 700 }}>{day.dayName}</span> <span style={{ color: C.textMut }}>{day.dayNum}</span>
-                      {day.isWeekend && <span style={{ marginLeft: 4, fontSize: 9, padding: "1px 5px", borderRadius: 4, background: C.infoLt, color: C.info, fontWeight: 600 }}>WE</span>}
-                      {" "}<ConfidenceBadge source={mx._source || (day.hasLiveMatrix ? null : mx._confidence)} />
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.borderLight}` }}>{mx.gross_dogs_in_building || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_large || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_small || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.boarding_unknown_size || 0) > 0 ? C.warn : C.textMut }}>{mx.boarding_unknown_size || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_large || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_small || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{(mx.pp_dayboarders || 0) + (mx.pp_overnight_boarders || 0)}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.departure_baths || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.feeding_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
-                      {mx.feeding_dogs || 0}
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.medication_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
-                      {mx.medication_dogs || 0}
-                    </td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_arriving || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_departing || 0}</td>
-                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}><StatusChip status={day.status} /></td>
-                  </tr>
+                  [
+                    <tr key={`${group.section}-section`}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "12px 16px 8px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                        {group.section}
+                      </td>
+                      {workbookDays.map((day, index) => (
+                        <td key={`${group.section}-${day.date}`} style={{ background: index === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                      ))}
+                      <td style={{ background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                    </tr>,
+                    ...group.rows.map((row) => (
+                      <tr key={row.key}>
+                        <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 13, fontWeight: row.total ? 800 : 600, color: C.text }}>
+                          {row.label}
+                        </td>
+                        {workbookDays.map((day, index) => {
+                          const selected = index === selectedDayIdx;
+                          const cellValue = renderMatrixCellValue({
+                            row,
+                            day,
+                            mode: matrixMode,
+                          });
+                          return (
+                            <td
+                              key={`${row.key}-${day.date}`}
+                              onClick={() => setSelectedDayIdx(index)}
+                              title={cellValue.title}
+                              style={{
+                                cursor: "pointer",
+                                textAlign: "center",
+                                padding: "10px 8px",
+                                borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
+                                background: row.total ? (selected ? "#EAF2FF" : "#F4F7FB") : (selected ? "#F8FBFF" : C.surface),
+                                color: cellValue.missingValue ? C.textMut : row.total ? C.text : C.textSec,
+                                fontSize: cellValue.missingValue ? 11 : 16,
+                                fontWeight: row.total ? 800 : 700,
+                              }}
+                            >
+                              {cellValue.content}
+                            </td>
+                          );
+                        })}
+                        <td
+                          style={{
+                            textAlign: "center",
+                            padding: "10px 8px",
+                            borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
+                            background: row.total ? "#F4F7FB" : C.surface,
+                            color: row.total ? C.text : C.textSec,
+                            fontSize: 16,
+                            fontWeight: row.total ? 800 : 700,
+                          }}
+                        >
+                          {(() => {
+                            const total = workbookDays.reduce((sum, day) => {
+                              const value = getDayMatrixValue(day, row, matrixMode);
+                              const numeric = Number(value);
+                              return Number.isFinite(numeric) ? sum + numeric : sum;
+                            }, 0);
+
+                            if (matrixMode === "projected" && !row.comparison) {
+                              const currentTotal = workbookDays.reduce((sum, day) => {
+                                const value = getDayMatrixValue(day, row, "current");
+                                const numeric = Number(value);
+                                return Number.isFinite(numeric) ? sum + numeric : sum;
+                              }, 0);
+                              return (
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal}</span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
+                                  <span>{total}</span>
+                                </div>
+                              );
+                            }
+
+                            return total;
+                          })()}
+                        </td>
+                      </tr>
+                    )),
+                  ]
                 );
               })}
             </tbody>
           </table>
         </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
+          </span>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            {matrixMode === "projected"
+              ? (
+                getProjectionSummaryLines(selectedDay).join(" • ")
+                || "Projected mode uses prior-year booking pace from GINGR created dates."
+              )
+              : `Trust notes: ${selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}`}
+          </span>
+          <span style={{ fontSize: 11, color: C.textMut }}>
+            Weekly totals shown in the workbook are dog-days, not unique reservations.
+          </span>
+          {auditResult?.summary && (
+            <span style={{ fontSize: 11, color: C.textMut }}>
+              Audit: {auditResult.summary.matching_days} matched, {auditResult.summary.mismatching_days} mismatched, {auditResult.summary.missing_days} missing.
+            </span>
+          )}
+        </div>
+        {auditResult?.days?.length > 0 && (
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {auditResult.days.map((dayAudit) => (
+              <div
+                key={dayAudit.date}
+                style={{
+                  border: `1px solid ${dayAudit.status === "match" ? "#86EFAC" : dayAudit.status === "mismatch" ? "#FCA5A5" : C.border}`,
+                  background: dayAudit.status === "match" ? "#F0FDF4" : dayAudit.status === "mismatch" ? "#FEF2F2" : C.surface,
+                  borderRadius: 12,
+                  padding: "12px 14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                    {new Date(`${dayAudit.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: dayAudit.status === "match" ? C.suc : dayAudit.status === "mismatch" ? C.dan : C.textMut }}>
+                    {dayAudit.status === "match" ? "MATCH" : dayAudit.status === "mismatch" ? "MISMATCH" : "MISSING"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>
+                  {dayAudit.status === "match"
+                    ? "Visible matrix matches live Gingr reservation and icon data."
+                    : dayAudit.status === "missing_matrix"
+                      ? "This day has no matrix row to compare yet."
+                      : `${dayAudit.mismatch_count} audit issue${dayAudit.mismatch_count === 1 ? "" : "s"} found.`}
+                </div>
+                {dayAudit.status === "mismatch" && (
+                  <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+                    {dayAudit.mismatches.slice(0, 4).map((mismatch) => (
+                      <div key={mismatch.key} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 700 }}>{mismatch.label}:</span> matrix {mismatch.matrix_value}, Gingr {mismatch.gingr_value}
+                        <span style={{ color: C.textMut }}> ({mismatch.category.replaceAll("_", " ")})</span>
+                      </div>
+                    ))}
+                    {(dayAudit.projection_issues || []).map((issue, index) => (
+                      <div key={`${dayAudit.date}-projection-${index}`} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 700 }}>{issue.label}</span>
+                        <span style={{ color: C.textMut }}> ({issue.category.replaceAll("_", " ")})</span>
+                      </div>
+                    ))}
+                    {dayAudit.mismatches.length > 4 && (
+                      <div style={{ fontSize: 11, color: C.textMut }}>
+                        {dayAudit.mismatches.length - 4} more difference{dayAudit.mismatches.length - 4 === 1 ? "" : "s"} hidden.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}
@@ -355,48 +870,81 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {selectedDay && (
         <SectionCard
           title={`Required Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Functioning PCT requirement by daypart, driven by the demand matrix above"
+          subtitle="Functioning PCT requirement by daypart, driven by the trusted matrix above"
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-            {[
-              { label: "Opening (AM)", required: req.am },
-              { label: "Midday", required: req.midday },
-              { label: "Closing (PM)", required: req.pm },
-            ].map(({ label, required: reqVal }) => {
-              const gap = Math.max(0, reqVal - assignedPct);
-              const hasGap = assignedPct > 0 && assignedPct < reqVal;
-              return (
-                <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
-                  <div style={{ display: "flex", gap: 20 }}>
-                    <MetricPill label="Required" value={reqVal} />
-                    {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
-                    {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {/* Total hours strip */}
-          {selectedDay.staffPlan && (
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Est. Functional Hours</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
+          {!selectedDay.canShowHeadcount ? (
+            <div style={{ padding: "16px 18px", borderRadius: 12, background: C.warnLt, border: `1px solid ${C.warn}22` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                Headcount stays provisional until this day has a trusted matrix.
+              </div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
+                {generateDisabledReason}
+              </div>
+              {selectedDay.generationBlockers.length > 0 && (
+                <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                </ul>
+              )}
             </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+                {[
+                  { label: "Opening (AM)", required: req.am },
+                  { label: "Midday", required: req.midday },
+                  { label: "Closing (PM)", required: req.pm },
+                ].map(({ label, required: reqVal }) => {
+                  const gap = Math.max(0, reqVal - assignedPct);
+                  const hasGap = assignedPct > 0 && assignedPct < reqVal;
+                  return (
+                    <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
+                      <div style={{ display: "flex", gap: 20 }}>
+                        <MetricPill label="Required" value={reqVal} />
+                        {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
+                        {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedDay.staffPlan && (
+                <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Estimated Functional Hours</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
+                </div>
+              )}
+            </>
           )}
         </SectionCard>
       )}
 
       {/* ── Section 3: Full-Day Rotation Grid ─────────────────────────── */}
-      {lanes.length > 0 && slots.length > 0 && (
+      {selectedDay && (
         <SectionCard
           title={`Rotation Schedule — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Full-day 15-minute slot assignments. Click cells to override."
+          subtitle="Full-day 15-minute slot assignments. Automated only when the selected day is fully trusted."
           icon={<I.Clipboard />}
           style={{ marginTop: 16 }}
         >
+          {!daySummary?.canGenerate ? (
+            <div style={{ padding: "16px 18px", borderRadius: 12, background: C.surfaceHover, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                Rotation generation is locked until the selected day is fully trusted.
+              </div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
+                {generateDisabledReason}
+              </div>
+              {selectedDay.generationBlockers.length > 0 && (
+                <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <>
           {/* Toolbar: density + override toggle + publish */}
           <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
             {["compact", "standard", "expanded"].map(d => (
@@ -515,6 +1063,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </span>
             ))}
           </div>
+            </>
+          )}
         </SectionCard>
       )}
 
@@ -548,7 +1098,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Key Driver</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {m.gross_dogs_in_building || 0} dogs in building drives {req.am} fPCT AM requirement
+                  {display.support.total_dog_volume || 0} total dogs drive the {req.am} functioning PCT opening requirement
                 </p>
               </div>
               {daySummary.openingResult.yardOrder && (
@@ -556,7 +1106,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Yard</span>
                   <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
                     {daySummary.openingResult.yardOrder === "large" ? "Large" : "Small"} daycare opened first
-                    ({daySummary.openingResult.yardOrder === "large" ? (m.boarding_large || 0) : (m.boarding_small || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (m.boarding_small || 0) : (m.boarding_large || 0)} other-side dogs)
+                    ({daySummary.openingResult.yardOrder === "large" ? (display.opening.large_boarding || 0) : (display.opening.small_boarding || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (display.opening.small_boarding || 0) : (display.opening.large_boarding || 0)} other-side dogs)
                   </p>
                 </div>
               )}
@@ -569,7 +1119,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Bath Target</span>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
-                  {m.departure_baths || 0} departure baths — {(m.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
+                  {display.support.departure_baths || 0} departure baths — {(display.support.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
                 </p>
               </div>
             </div>

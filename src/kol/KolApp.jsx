@@ -49,6 +49,7 @@ import CheckoutNotesPage from "./pages/CheckoutNotesPage";
 import DogProfilePage from "./pages/DogProfilePage";
 import RolePage from "./pages/RolePage";
 import RoleLayoutPage from "./pages/RoleLayoutPage";
+import RollCallSessionsPage from "./pages/RollCallSessionsPage";
 import HomePage from "./pages/HomePage";
 import TrainingPage from "./pages/TrainingPage";
 import SchedulingPage from "./pages/SchedulingPage";
@@ -97,6 +98,8 @@ const LITE_PAGE_SLUGS = {
   "ops-pamper": "ops/pamper",
   "ops-svc": "ops/service",
   "ops-weekly-maintenance": "ops/weekly-maintenance",
+  "ops-roll-call-opening": "ops/roll-call/opening",
+  "ops-roll-call-closing": "ops/roll-call/closing",
   "role-page": "role-page",
   "role-layout": "role-layout",
   "eod": "eod",
@@ -690,6 +693,8 @@ function LeanAppInner() {
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
       case "ops-weekly-maintenance": return "Weekly Maintenance";
+      case "ops-roll-call-opening": return "Opening Roll Call";
+      case "ops-roll-call-closing": return "Closing Roll Call";
       case "role-page": return "My Work";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
@@ -920,6 +925,10 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="svc" nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
       case "ops-weekly-maintenance":
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
+      case "ops-roll-call-opening":
+        return <RollCallSessionsPage profile={profile} currentLocation={currentLocation} initialSession="opening" />;
+      case "ops-roll-call-closing":
+        return <RollCallSessionsPage profile={profile} currentLocation={currentLocation} initialSession="closing" />;
       case "role-page":
         return <RolePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} userLocationRoles={userLocationRoles} currentLocation={currentLocation} />;
       case "role-layout":
@@ -1243,4 +1252,3 @@ function LeanAppInner() {
 export default function LiteApp() {
   return <LeanAppErrorBoundary><LeanAppInner /></LeanAppErrorBoundary>;
 }
-
