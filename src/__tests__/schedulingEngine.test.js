@@ -347,15 +347,13 @@ describe('Staffing status computation', () => {
   it('counts CSR as fPCT when allow_csr_as_pct is true', () => {
     const plan = makeStaffPlan({ pct_count: 3, csr_count: 2, allow_csr_as_pct: true });
     const available = computeAvailableFunctioningPct(plan);
-    // 3 PCT + 2 CSR + 1 SUP = 6
-    expect(available).toBe(6);
+    expect(available).toBe(5);
   });
 
   it('does not count CSR when allow_csr_as_pct is false', () => {
     const plan = makeStaffPlan({ pct_count: 3, csr_count: 2, allow_csr_as_pct: false });
     const available = computeAvailableFunctioningPct(plan);
-    // 3 PCT + 1 SUP = 4
-    expect(available).toBe(4);
+    expect(available).toBe(3);
   });
 
   it('uses shift entries to compute daypart-specific assigned coverage', () => {
@@ -372,7 +370,7 @@ describe('Staffing status computation', () => {
     });
     const status = computeStaffingStatus(req, plan, cfg, '2026-04-13');
 
-    expect(status.assignedByDaypart).toEqual({ am: 3, midday: 4, pm: 2 });
+    expect(status.assignedByDaypart).toEqual({ am: 2, midday: 3, pm: 1 });
     expect(status.status).toBe('short');
   });
 });

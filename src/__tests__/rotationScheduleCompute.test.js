@@ -96,6 +96,23 @@ describe("buildRotationSchedulePayload", () => {
     expect(firstSlots.every((slot) => slot.interval_minutes === 10)).toBe(true);
     expect(payload.grid.slots.some((slot) => slot.time === "19:00")).toBe(true);
     expect(payload.grid.slots[payload.grid.slots.length - 1].time).toBe("19:00");
+    expect(payload.shift_recommendations.opening_shift.role_label).toBe("Dedicated backend PCTs");
+    expect(payload.grid.lanes.some((lane) => lane.position === "supervisor")).toBe(true);
+  });
+
+  it("keeps the supervisor as a support lane instead of backend opening labor", () => {
+    const payload = buildRotationSchedulePayload({
+      matrix: makeMatrix(),
+      config: normalizeRotationConfig({}),
+      mode: "optimal",
+    });
+
+    const supervisorLane = payload.grid.lanes.find((lane) => lane.position === "supervisor");
+    expect(supervisorLane).toBeTruthy();
+    expect(payload.grid.cells[supervisorLane.id]["06:00"].task).toBe("manager_coverage");
+    expect(payload.grid.cells[supervisorLane.id]["07:00"].task).toBe("feed");
+    expect(payload.grid.cells[supervisorLane.id]["08:00"].task).toBe("feeding_report");
+    expect(payload.grid.cells[supervisorLane.id]["08:30"].task).toBe("admin");
   });
 
   it("uses staff_names for actual staffing and keeps csr/mod lanes visible", () => {
