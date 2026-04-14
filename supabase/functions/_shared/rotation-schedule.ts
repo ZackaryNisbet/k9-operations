@@ -38,6 +38,8 @@ export const ROTATION_TASK_DEFINITIONS: Record<string, { label: string }> = {
   float: { label: "Float / Available" },
   lobby: { label: "Lobby" },
   manager_coverage: { label: "Manager Coverage" },
+  admin: { label: "Paperwork / Admin" },
+  feeding_report: { label: "Feeding Report" },
   eod: { label: "Close / End of Day" },
   off: { label: "Off Shift" },
 };
@@ -86,6 +88,10 @@ type RotationShiftRecommendation = {
   start: string;
   end: string;
   headcount: number;
+  role_label: string;
+  scheduled_hours: number;
+  working_hours_after_breaks: number;
+  break_minutes_per_shift: number;
 };
 
 type RotationPayload = {
@@ -454,6 +460,18 @@ function buildWorkloadBreakdown(matrix: any, config: any, workload: ReturnType<t
   ];
 }
 
+function getShiftLaborSummary(headcount: number, start: string, end: string, config: any) {
+  const scheduledHours = (timeToMinutes(end) - timeToMinutes(start)) / 60;
+  const breakMinutesPerShift = scheduledHours >= 6 ? toNumber(config.break_minutes, 30) : 0;
+  const workingHoursPerShift = Math.max(0, scheduledHours - (breakMinutesPerShift / 60));
+  return {
+    role_label: "Dedicated backend PCTs",
+    scheduled_hours: Number((headcount * scheduledHours).toFixed(1)),
+    working_hours_after_breaks: Number((headcount * workingHoursPerShift).toFixed(1)),
+    break_minutes_per_shift: breakMinutesPerShift,
+  };
+}
+
 function getOpeningShiftFrame(matrixDate: string, config: any) {
   if (isWeekend(matrixDate)) {
     return {
@@ -482,10 +500,17 @@ function getClosingShiftFrame(matrixDate: string, config: any) {
 function buildOptimalShiftEntries(matrix: any, config: any, workload: ReturnType<typeof buildWorkloadModel>) {
   const openingFrame = getOpeningShiftFrame(matrix.matrix_date, config);
   const closingFrame = getClosingShiftFrame(matrix.matrix_date, config);
+  const supervisorEntry: ShiftEntry = {
+    id: "optimal-supervisor-support",
+    position: "supervisor",
+    name: "Optimal Supervisor",
+    shift_start: openingFrame.start,
+    shift_end: openingFrame.end,
+  };
   const openingEntries: ShiftEntry[] = Array.from({ length: workload.openingHeadcount }, (_, index) => ({
     id: `optimal-opening-${index + 1}`,
-    position: index === 0 ? "supervisor" : "pct",
-    name: index === 0 ? "Optimal Supervisor" : `Optimal Pet Care Technician ${index}`,
+    position: "pct",
+    name: `Optimal Pet Care Technician ${index + 1}`,
     shift_start: openingFrame.start,
     shift_end: openingFrame.end,
   }));
@@ -496,7 +521,7 @@ function buildOptimalShiftEntries(matrix: any, config: any, workload: ReturnType
     shift_start: closingFrame.start,
     shift_end: closingFrame.end,
   }));
-  return [...openingEntries, ...closingEntries];
+  return [supervisorEntry, ...openingEntries, ...closingEntries];
 }
 
 function getPositionLabel(position: string) {
@@ -635,6 +660,26 @@ function getPreOpenTasks(slotIndex: number, totalSlots: number, workload: Return
   };
 }
 
+function getSupervisorSupportTask(slotTime: string, matrixDate: string, config: any) {
+  const weekend = isWeekend(matrixDate);
+  const publicOpen = weekend ? config.weekend_am_open_window[1] : config.weekday_am_open_window[1];
+  const slotMinutes = timeToMinutes(slotTime);
+  const publicOpenMinutes = timeToMinutes(publicOpen);
+  const feedEnd = publicOpenMinutes + 60;
+  const reportEnd = publicOpenMinutes + 90;
+
+  if (slotMinutes < publicOpenMinutes) {
+    return createCell("manager_coverage", "Supervision / Support");
+  }
+  if (slotMinutes < feedEnd) {
+    return createCell("feed", "Feeding / Medications");
+  }
+  if (slotMinutes < reportEnd) {
+    return createCell("feeding_report", "Feeding Report");
+  }
+  return createCell("admin", "Paperwork / Admin");
+}
+
 function buildTaskPoolForHour(hourBlock: number, slotTime: string, workload: ReturnType<typeof buildWorkloadModel>, matrixDate: string, config: any) {
   const tasks: RotationCell[] = [];
   const slotMinutes = timeToMinutes(slotTime);
@@ -719,18 +764,24 @@ export function buildRotationSchedulePayload({
   const normalizedConfig = normalizeRotationConfig(config);
   const workload = buildWorkloadModel(matrix, normalizedConfig);
   const scheduleKind = mode;
+  const openingFrame = getOpeningShiftFrame(matrix.matrix_date, normalizedConfig);
+  const closingFrame = getClosingShiftFrame(matrix.matrix_date, normalizedConfig);
+  const openingLabor = getShiftLaborSummary(workload.openingHeadcount, openingFrame.start, openingFrame.end, normalizedConfig);
+  const closingLabor = getShiftLaborSummary(workload.closingHeadcount, closingFrame.start, closingFrame.end, normalizedConfig);
   const shiftRecommendations = {
     opening_shift: {
-      label: `Optimal Opening Shift (${formatTimeLabel(getOpeningShiftFrame(matrix.matrix_date, normalizedConfig).start)}–${formatTimeLabel(getOpeningShiftFrame(matrix.matrix_date, normalizedConfig).end)})`,
-      start: getOpeningShiftFrame(matrix.matrix_date, normalizedConfig).start,
-      end: getOpeningShiftFrame(matrix.matrix_date, normalizedConfig).end,
+      label: `Optimal Opening Shift (${formatTimeLabel(openingFrame.start)}–${formatTimeLabel(openingFrame.end)})`,
+      start: openingFrame.start,
+      end: openingFrame.end,
       headcount: workload.openingHeadcount,
+      ...openingLabor,
     },
     closing_shift: {
-      label: `Optimal Closing Shift (${formatTimeLabel(getClosingShiftFrame(matrix.matrix_date, normalizedConfig).start)}–${formatTimeLabel(getClosingShiftFrame(matrix.matrix_date, normalizedConfig).end)})`,
-      start: getClosingShiftFrame(matrix.matrix_date, normalizedConfig).start,
-      end: getClosingShiftFrame(matrix.matrix_date, normalizedConfig).end,
+      label: `Optimal Closing Shift (${formatTimeLabel(closingFrame.start)}–${formatTimeLabel(closingFrame.end)})`,
+      start: closingFrame.start,
+      end: closingFrame.end,
       headcount: workload.closingHeadcount,
+      ...closingLabor,
     },
   };
 
@@ -745,7 +796,7 @@ export function buildRotationSchedulePayload({
   slots.forEach((slot) => {
     const activeLanes = lanes.filter((lane) => laneIsActive(lane, slot.time));
     const requiredCoverage = getRequiredCoverageForSlot(slot.time, matrix.matrix_date, workload, normalizedConfig);
-    const alwaysBackend = activeLanes.filter((lane) => lane.position === "pct" || lane.position === "supervisor");
+    const alwaysBackend = activeLanes.filter((lane) => lane.position === "pct");
     const supportLanes = activeLanes
       .filter((lane) => lane.position === "csr" || lane.position === "mod")
       .sort((a, b) => (a.position === b.position ? 0 : a.position === "csr" ? -1 : 1));
@@ -795,7 +846,9 @@ export function buildRotationSchedulePayload({
           cells[lane.id][slot.time] = createCell("break");
           return;
         }
-        if (lane.position === "csr") {
+        if (lane.position === "supervisor") {
+          cells[lane.id][slot.time] = getSupervisorSupportTask(slot.time, matrix.matrix_date, normalizedConfig);
+        } else if (lane.position === "csr") {
           cells[lane.id][slot.time] = createCell("lobby");
         } else if (lane.position === "mod") {
           cells[lane.id][slot.time] = createCell("manager_coverage");
