@@ -183,6 +183,44 @@ function formatWeekRange(startDate) {
   return `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
+function getMondayStart(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
+function getDayIndexFromMonday(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
+}
+
+function getShiftHourSummary(frame, breakMinutes = 30) {
+  if (!frame) return null;
+  const scheduledHoursPerShift = (Number(frame.end.slice(0, 2)) * 60 + Number(frame.end.slice(3, 5)) - Number(frame.start.slice(0, 2)) * 60 - Number(frame.start.slice(3, 5))) / 60;
+  const workingHoursPerShift = Math.max(0, scheduledHoursPerShift - ((frame.break_minutes_per_shift ?? breakMinutes) / 60));
+  return {
+    scheduledHoursPerShift,
+    workingHoursPerShift,
+    totalScheduledHours: frame.scheduled_hours ?? Number((frame.headcount * scheduledHoursPerShift).toFixed(1)),
+    totalWorkingHours: frame.working_hours_after_breaks ?? Number((frame.headcount * workingHoursPerShift).toFixed(1)),
+  };
+}
+
+function summarizeSupportRoles(entries) {
+  const counts = entries.reduce((acc, entry) => {
+    acc[entry.position] = (acc[entry.position] || 0) + 1;
+    return acc;
+  }, {});
+  const labels = [];
+  if (counts.supervisor) labels.push(`${counts.supervisor} supervisor${counts.supervisor === 1 ? "" : "s"}`);
+  if (counts.csr) labels.push(`${counts.csr} CSR${counts.csr === 1 ? "" : "s"}`);
+  if (counts.mod) labels.push(`${counts.mod} manager${counts.mod === 1 ? "" : "s"}`);
+  return labels.join(", ");
+}
+
 function formatCompletionRate(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
@@ -464,7 +502,7 @@ function countShiftCoverage(entries, startTime, endTime) {
 export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const locationId = profile?.location_id;
   const today = todayStr();
-  const [viewStartDate, setViewStartDate] = useState(today);
+  const [viewStartDate, setViewStartDate] = useState(getMondayStart(today));
   const [matrixMode, setMatrixMode] = useState("current");
 
   const {
@@ -582,9 +620,9 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, [selectedDayIdx]);
 
   React.useEffect(() => {
-    setSelectedDayIdx(0);
+    setSelectedDayIdx(viewStartDate === getMondayStart(today) ? getDayIndexFromMonday(today) : 0);
     setAuditResult(null);
-  }, [viewStartDate]);
+  }, [viewStartDate, today]);
 
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
@@ -749,8 +787,11 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   const openingFrame = visibleRotation?.shift_recommendations?.opening_shift || null;
   const closingFrame = visibleRotation?.shift_recommendations?.closing_shift || null;
-  const actualOpeningCount = openingFrame ? countShiftCoverage(selectedShiftEntries, openingFrame.start, openingFrame.end) : 0;
-  const actualClosingCount = closingFrame ? countShiftCoverage(selectedShiftEntries, closingFrame.start, closingFrame.end) : 0;
+  const actualOpeningCount = openingFrame ? countShiftCoverage(selectedShiftEntries.filter((entry) => entry.position === "pct"), openingFrame.start, openingFrame.end) : 0;
+  const actualClosingCount = closingFrame ? countShiftCoverage(selectedShiftEntries.filter((entry) => entry.position === "pct"), closingFrame.start, closingFrame.end) : 0;
+  const supportRoleSummary = summarizeSupportRoles(selectedShiftEntries);
+  const openingHours = getShiftHourSummary(openingFrame, config.break_minutes);
+  const closingHours = getShiftHourSummary(closingFrame, config.break_minutes);
 
   const display = selectedDay?.currentDisplay || getMatrixDisplay(selectedDay?.matrix || {});
   const projectedDisplay = selectedDay?.projectedDisplay || getMatrixProjectedDisplay(selectedDay?.matrix || {});
@@ -780,7 +821,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 0 48px" }}>
+    <div style={{ maxWidth: 1440, margin: "0 auto", padding: "0 8px 48px" }}>
       {/* ── Page Header ───────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
@@ -805,7 +846,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, -7))}>← Previous Week</Btn>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{formatWeekRange(viewStartDate)}</div>
-            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(today)}>This Week</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(getMondayStart(today))}>This Week</Btn>
             <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, 7))}>Next Week →</Btn>
             {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading week…</span>}
             {auditRunning && <span style={{ fontSize: 11, color: C.textMut }}>Auditing live Gingr…</span>}
@@ -843,10 +884,10 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           {matrixMode === "projected" && " Projected mode shows currently booked values moving to a statistically projected final count based on historical pickup pace from Gingr reservation created dates."}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1260 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", minWidth: 300, padding: "14px 16px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                <th style={{ position: "sticky", left: 0, zIndex: 3, background: "#F8FAFC", width: 250, padding: "12px 12px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
                   Operational Metric
                 </th>
                 {workbookDays.map((day, index) => {
@@ -865,8 +906,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                       onClick={() => setSelectedDayIdx(index)}
                       style={{
                         cursor: "pointer",
-                        minWidth: 122,
-                        padding: "12px 12px 14px",
+                        width: 112,
+                        padding: "10px 8px 12px",
                         textAlign: "center",
                         borderBottom: `1px solid ${C.border}`,
                         background: selected ? "#EEF4FF" : baseBackground,
@@ -917,7 +958,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     </th>
                   );
                 })}
-                <th style={{ minWidth: 132, padding: "12px 12px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "#F8FAFC" }}>
+                <th style={{ position: "sticky", right: 0, zIndex: 3, width: 118, padding: "10px 8px 12px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "#F8FAFC", boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>
                     Weekly Total
                   </div>
@@ -932,17 +973,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 return (
                   [
                     <tr key={`${group.section}-section`}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "12px 16px 8px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "10px 12px 8px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
                         {group.section}
                       </td>
                       {workbookDays.map((day, index) => (
                         <td key={`${group.section}-${day.date}`} style={{ background: index === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
                       ))}
-                      <td style={{ background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                      <td style={{ position: "sticky", right: 0, zIndex: 2, background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
                     </tr>,
                     ...group.rows.map((row) => (
                       <tr key={row.key}>
-                        <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "10px 16px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 13, fontWeight: row.total ? 800 : 600, color: C.text }}>
+                        <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "9px 12px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 12, fontWeight: row.total ? 800 : 600, color: C.text }}>
                           {row.label}
                         </td>
                         {workbookDays.map((day, index) => {
@@ -974,13 +1015,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                         })}
                         <td
                           style={{
+                            position: "sticky",
+                            right: 0,
+                            zIndex: 2,
                             textAlign: "center",
-                            padding: "10px 8px",
+                            padding: "9px 8px",
                             borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
                             background: row.total ? "#F4F7FB" : C.surface,
                             color: row.total ? C.text : C.textSec,
                             fontSize: 16,
                             fontWeight: row.total ? 800 : 700,
+                            boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)",
                           }}
                         >
                           {(() => {
@@ -1139,9 +1184,19 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     <div key={frame.label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{frame.label}</div>
                       <div style={{ display: "flex", gap: 20 }}>
-                        <MetricPill label="Optimal" value={frame.headcount} />
-                        {hasAdjustedSchedule && <MetricPill label="Scheduled" value={assigned} warn={hasGap} />}
+                        <MetricPill label="Optimal PCTs" value={frame.headcount} />
+                        {hasAdjustedSchedule && <MetricPill label="Scheduled PCTs" value={assigned} warn={hasGap} />}
                         {hasAdjustedSchedule && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
+                      </div>
+                      <div style={{ marginTop: 10, display: "grid", gap: 4, fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
+                        <div><strong style={{ color: C.text }}>Role:</strong> {frame.role_label || "Dedicated backend PCTs"}</div>
+                        {index === 0 && <div>Supervisor support is shown separately in the rotation grid and is not counted in this PCT headcount.</div>}
+                        {((index === 0 ? openingHours : closingHours)) && (
+                          <>
+                            <div>{frame.headcount} × {(index === 0 ? openingHours : closingHours).scheduledHoursPerShift.toFixed(1)} hr shifts = {(index === 0 ? openingHours : closingHours).totalScheduledHours.toFixed(1)} scheduled hours</div>
+                            <div>After {frame.break_minutes_per_shift ?? config.break_minutes}-minute breaks = {(index === 0 ? openingHours : closingHours).totalWorkingHours.toFixed(1)} working hours</div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1153,12 +1208,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 <span style={{ fontSize: 12, color: C.textMut }}>{optimalRotation?.peak_active_coverage?.note}</span>
                 {hasAdjustedSchedule && (
                   <span style={{ fontSize: 12, color: C.textMut }}>
-                    Actual Staffing compares your entered opening and closing shifts against the optimal backend requirement.
+                    Actual Staffing compares your entered dedicated PCT shifts against the optimal backend PCT requirement.
                   </span>
                 )}
                 {!hasAdjustedSchedule && (
                   <span style={{ fontSize: 12, color: C.textMut }}>
                     No staff shifts entered yet. The optimal view is the default staffing recommendation.
+                  </span>
+                )}
+                {supportRoleSummary && (
+                  <span style={{ fontSize: 12, color: C.textMut }}>
+                    Entered support roles: {supportRoleSummary}.
                   </span>
                 )}
               </div>

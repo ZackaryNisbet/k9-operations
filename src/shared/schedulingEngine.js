@@ -52,6 +52,8 @@ export const TASK_COLORS = {
   sup: { bg: "#FEF3C7", text: "#92400E", label: "Supervisor Tasks" },
   disinfect: { bg: "#F1F5F9", text: "#475569", label: "Disinfect" },
   housekeeping: { bg: "#F8FAFC", text: "#64748B", label: "Housekeeping" },
+  admin: { bg: "#ECFCCB", text: "#3F6212", label: "Paperwork / Admin" },
+  feeding_report: { bg: "#E0F2FE", text: "#075985", label: "Feeding Report" },
   foam: { bg: "#F1F5F9", text: "#475569", label: "Foam" },
   dailies: { bg: "#F8FAFC", text: "#64748B", label: "Dailies" },
   eod: { bg: "#F1F5F9", text: "#475569", label: "EOD / Close" },
@@ -189,7 +191,6 @@ function countFunctioningFromEntries(entries, staffPlan, timeStr) {
     if (!isShiftEntryActive(entry, timeStr)) return sum;
     if (entry.position === "pct") return sum + 1;
     if (entry.position === "csr") return sum + (allowCsr ? 1 : 0);
-    if (entry.position === "supervisor") return sum + 1;
     if (entry.position === "mod") return sum + (allowMod ? 1 : 0);
     return sum;
   }, 0);
@@ -267,8 +268,7 @@ export function buildOptimalStaffPlan(matrix, required, config) {
   const weekend = isWeekend(matrix?.matrix_date);
   const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
   const maxRequired = Math.max(required?.am || 0, required?.midday || 0, required?.pm || 0, 1);
-  const supervisorCount = 1;
-  const pctCount = Math.max(maxRequired - supervisorCount, 1);
+  const pctCount = Math.max(maxRequired, 1);
 
   const shiftEntries = [
     {
@@ -790,7 +790,6 @@ export function computeAvailableFunctioningPct(staffPlan, options = {}) {
   }
   let total = staffPlan.pct_count || 0;
   if (staffPlan.allow_csr_as_pct) total += (staffPlan.csr_count || 0);
-  if (staffPlan.supervisor_present) total += (staffPlan.supervisor_count || 0);
   if (staffPlan.allow_mod_as_pct) total += (staffPlan.mod_count || 0);
   return total;
 }
