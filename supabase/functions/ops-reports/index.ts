@@ -4,6 +4,16 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  getRollCallWorkflowTitle,
+  loadRollCallSessionRow,
+  normalizeRollCallSession,
+} from "../_shared/roll-call-logic.ts";
+import {
+  buildPlaygroupAssignmentMap,
+  fetchPlaygroupAssignments,
+  getCanonicalPlaygroupTags,
+} from "../_shared/playgroup-assignments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -141,66 +151,32 @@ function parseAnimalNames(animalNames: string): Array<{ dogName: string; ownerNa
 // ============================================================================
 // REPORT 1: MOD Roll Call
 // ============================================================================
-async function modRollCall(supabase: any, locationId: string, date: string) {
-  const { data: rooms, error } = await supabase
-    .from("gingr_room_occupancy")
-    .select("gingr_run_id, run_name, area_name, animal_names, current_animals, occupied")
-    .eq("location_id", locationId)
-    .eq("occupancy_date", date)
-    .eq("occupied", true)
-    .order("area_name")
-    .order("run_name");
-
-  if (error) throw new Error(`Room occupancy query failed: ${error.message}`);
-
-  // Group by area
-  const areaMap: Record<string, any[]> = {};
-  let totalDogs = 0;
-  let totalRooms = 0;
-
-  for (const room of rooms || []) {
-    const area = room.area_name || "Other";
-    if (!areaMap[area]) areaMap[area] = [];
-    const dogs = parseAnimalNames(room.animal_names);
-    totalDogs += dogs.length;
-    totalRooms++;
-    areaMap[area].push({
-      roomName: room.run_name,
-      runId: room.gingr_run_id,
-      dogCount: dogs.length,
-      dogs,
-    });
-  }
-
-  // Sort rooms within each area naturally
-  for (const area of Object.keys(areaMap)) {
-    areaMap[area].sort((a: any, b: any) => a.roomName.localeCompare(b.roomName, undefined, { numeric: true }));
-  }
-
-  // Order areas by known priority
-  const AREA_ORDER = ["Luxury Suites", "Executive Rooms", "Double Compartments", "Single Compartments", "Temporary Lodging"];
-  const sortedAreas = Object.keys(areaMap).sort((a, b) => {
-    const ai = AREA_ORDER.findIndex(o => a.toLowerCase().includes(o.toLowerCase()));
-    const bi = AREA_ORDER.findIndex(o => b.toLowerCase().includes(o.toLowerCase()));
-    if (ai === -1 && bi === -1) return a.localeCompare(b);
-    if (ai === -1) return 1;
-    if (bi === -1) return -1;
-    return ai - bi;
+async function modRollCall(
+  supabase: any,
+  locationId: string,
+  date: string,
+  sessionInput?: string,
+) {
+  const session = normalizeRollCallSession(sessionInput);
+  const row = await loadRollCallSessionRow(supabase, locationId, date, session, {
+    createIfMissing: date >= todayET(),
   });
-
-  const areas = sortedAreas.map(name => ({
-    name,
-    rooms: areaMap[name],
-    roomCount: areaMap[name].length,
-    dogCount: areaMap[name].reduce((sum: number, r: any) => sum + r.dogCount, 0),
-  }));
-
+  const computed = row?.computed_items || {
+    summary: { session, totalRooms: 0, totalDogs: 0 },
+    areas: [],
+    rooms: [],
+  };
   return {
     type: "mod_roll_call",
+    session,
+    title: getRollCallWorkflowTitle(session),
     date,
-    totalRooms,
-    totalDogs,
-    areas,
+    totalRooms: computed.summary?.totalRooms || 0,
+    totalDogs: computed.summary?.totalDogs || 0,
+    areas: computed.areas || [],
+    rooms: computed.rooms || [],
+    items: row?.items || {},
+    missingSnapshot: !row,
   };
 }
 
@@ -269,14 +245,19 @@ async function modDeparting(
   const animalIds = boardingDepartures.map((d: any) => String(d.animal_id || d.id || "")).filter(Boolean);
   const ownerIds = [...new Set(boardingDepartures.map((d: any) => String(d.owner_id || "")).filter(Boolean))];
 
-  // Batch fetch: profile photos, play group icons, and owner full names
-  const [{ data: animalPhotos }, { data: playIcons }, { data: ownerRows }] = await Promise.all([
+  // Batch fetch: profile photos, canonical playgroup assignments, and owner full names
+  const [{ data: animalPhotos }, playAssignments, { data: ownerRows }] = await Promise.all([
     animalIds.length > 0
       ? supabase.from("gingr_animals").select("gingr_id, image_url, local_photo_url").in("gingr_id", animalIds)
       : { data: [] },
     animalIds.length > 0
-      ? supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title").eq("location_id", locationId).eq("icon_group", "Play").in("animal_gingr_id", animalIds)
-      : { data: [] },
+      ? fetchPlaygroupAssignments({
+          supabase,
+          locationId,
+          animalIds,
+          columns: "animal_gingr_id, playgroup_tags, is_half_and_half",
+        })
+      : Promise.resolve([]),
     ownerIds.length > 0
       ? supabase.from("gingr_owner_cache").select("owner_id, owner_name").in("owner_id", ownerIds)
       : { data: [] },
@@ -315,11 +296,10 @@ async function modDeparting(
     photoMap[a.gingr_id] = a.local_photo_url || a.image_url || "";
   }
 
+  const playgroupMap = buildPlaygroupAssignmentMap(playAssignments || []);
   const playIconMap: Record<string, string[]> = {};
-  for (const icon of playIcons || []) {
-    const id = icon.animal_gingr_id;
-    if (!playIconMap[id]) playIconMap[id] = [];
-    playIconMap[id].push(icon.icon_title || "");
+  for (const [animalId, assignment] of playgroupMap.entries()) {
+    playIconMap[animalId] = getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true });
   }
 
   const ownerNameMap: Record<string, string> = {};
@@ -531,7 +511,13 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { type, location_id: locationId, date: dateOverride, owner_ids: ownerIdsRaw } = body;
+    const {
+      type,
+      location_id: locationId,
+      date: dateOverride,
+      owner_ids: ownerIdsRaw,
+      session: sessionInput,
+    } = body;
 
     if (!locationId) {
       return new Response(
@@ -552,61 +538,64 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Load Gingr credentials (same pattern as ops-compute)
-    const { data: settingsRows } = await supabase
-      .from("lite_settings")
-      .select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", "gingr_config")
-      .limit(1);
-
-    const gingrConfig = settingsRows?.[0]?.setting_value;
-    let gingrSubdomain: string;
-    let gingrApiKey: string;
-    let gingrLocationId: string;
-
-    if (gingrConfig?.api_key && gingrConfig?.subdomain) {
-      gingrSubdomain = gingrConfig.subdomain;
-      gingrApiKey = gingrConfig.api_key;
-      gingrLocationId = gingrConfig.gingr_location_id || "1";
-    } else {
-      const { data: creds } = await supabase
-        .from("k9_gingr_credentials")
-        .select("gingr_subdomain, gingr_api_key, gingr_location_id")
-        .eq("location_id", locationId)
-        .maybeSingle();
-
-      if (!creds) {
-        return new Response(
-          JSON.stringify({ error: "No Gingr credentials found for location" }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      gingrSubdomain = creds.gingr_subdomain;
-      gingrApiKey = creds.gingr_api_key;
-      gingrLocationId = creds.gingr_location_id || "1";
-    }
-
     let result: any;
     switch (type) {
       case "mod_roll_call":
-        result = await modRollCall(supabase, locationId, date);
+        result = await modRollCall(supabase, locationId, date, sessionInput);
         break;
       case "mod_departing":
-        result = await modDeparting(supabase, locationId, date, gingrSubdomain, gingrApiKey, gingrLocationId);
-        break;
       case "csr_emergency":
-        result = await csrEmergencyContact(supabase, locationId, date, gingrSubdomain, gingrApiKey, gingrLocationId);
-        break;
-      case "owner_lookup":
-        if (ownerIds.length === 0) {
-          return new Response(
-            JSON.stringify({ error: "owner_ids is required for owner_lookup" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
+      case "owner_lookup": {
+        // Load Gingr credentials only for report types that still need live Gingr access.
+        const { data: settingsRows } = await supabase
+          .from("lite_settings")
+          .select("setting_value")
+          .eq("location_id", locationId)
+          .eq("setting_key", "gingr_config")
+          .limit(1);
+
+        const gingrConfig = settingsRows?.[0]?.setting_value;
+        let gingrSubdomain: string;
+        let gingrApiKey: string;
+        let gingrLocationId: string;
+
+        if (gingrConfig?.api_key && gingrConfig?.subdomain) {
+          gingrSubdomain = gingrConfig.subdomain;
+          gingrApiKey = gingrConfig.api_key;
+          gingrLocationId = gingrConfig.gingr_location_id || "1";
+        } else {
+          const { data: creds } = await supabase
+            .from("k9_gingr_credentials")
+            .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+            .eq("location_id", locationId)
+            .maybeSingle();
+
+          if (!creds) {
+            return new Response(
+              JSON.stringify({ error: "No Gingr credentials found for location" }),
+              { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+            );
+          }
+          gingrSubdomain = creds.gingr_subdomain;
+          gingrApiKey = creds.gingr_api_key;
+          gingrLocationId = creds.gingr_location_id || "1";
         }
-        result = await ownerLookup(supabase, ownerIds, gingrSubdomain, gingrApiKey);
+
+        if (type === "mod_departing") {
+          result = await modDeparting(supabase, locationId, date, gingrSubdomain, gingrApiKey, gingrLocationId);
+        } else if (type === "csr_emergency") {
+          result = await csrEmergencyContact(supabase, locationId, date, gingrSubdomain, gingrApiKey, gingrLocationId);
+        } else {
+          if (ownerIds.length === 0) {
+            return new Response(
+              JSON.stringify({ error: "owner_ids is required for owner_lookup" }),
+              { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+            );
+          }
+          result = await ownerLookup(supabase, ownerIds, gingrSubdomain, gingrApiKey);
+        }
         break;
+      }
     }
 
     return new Response(

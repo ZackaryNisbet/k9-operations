@@ -1,17 +1,22 @@
 // K9 Operations — Scheduling Data Hook
 // Fetches scheduling_matrix_daily, daily_staff_plan, and schedule_config from Supabase.
-// Falls back to dashboard_metrics_daily + gingr_reservations when scheduling_matrix_daily
-// hasn't been populated yet (pre-compute-function deployment).
+// Scheduling uses only the canonical server-computed matrix; if a day has not been
+// computed yet, the UI should show it as missing rather than falling back to occupancy.
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import {
   SCHEDULE_CONFIG_DEFAULTS,
+  computeAvailableFunctioningPct,
   computeRequiredHeadcount,
   computeStaffingStatus,
   isWeekend,
   serializeSchedule,
   buildDaySummary,
+  getMatrixTrust,
+  getMatrixTrustState,
+  getMatrixBlockers,
+  canGenerateSchedule,
 } from "../shared/schedulingEngine";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -31,7 +36,6 @@ export function useSchedulingData(locationId, startDate) {
   const [matrixRows, setMatrixRows] = useState([]);
   const [staffPlans, setStaffPlans] = useState([]);
   const [config, setConfig] = useState(SCHEDULE_CONFIG_DEFAULTS);
-  const [dashboardMetrics, setDashboardMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const fetchIdRef = useRef(0);
@@ -49,14 +53,44 @@ export function useSchedulingData(locationId, startDate) {
 
   const endDate = dates[6] || startDate;
 
-  const fetchAll = useCallback(async () => {
+  const recomputeDates = useCallback(async (targetDates) => {
+    const orderedDates = [...new Set((targetDates || []).filter(Boolean))].sort();
+    const failures = [];
+
+    for (const date of orderedDates) {
+      const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
+        body: {
+          location_id: locationId,
+          date_from: date,
+          date_to: date,
+        },
+      });
+
+      if (computeErr) {
+        failures.push({
+          date,
+          error: computeErr.message || String(computeErr),
+        });
+      }
+    }
+
+    return failures;
+  }, [locationId]);
+
+  const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;
     const fetchId = ++fetchIdRef.current;
 
     try {
-      // Fetch all data sources in parallel
-      const [matrixRes, staffRes, configRes, dashRes] = await Promise.all([
-        // 1. Scheduling matrix (may be empty if compute function hasn't run)
+      if (recompute) {
+        const computeFailures = await recomputeDates(dates);
+        if (computeFailures.length) {
+          console.warn("compute-scheduling-matrix refresh failures:", computeFailures);
+        }
+      }
+
+      // Fetch all canonical data sources in parallel
+      let [matrixRes, staffRes, configRes] = await Promise.all([
         supabase
           .from("scheduling_matrix_daily")
           .select("*")
@@ -81,28 +115,51 @@ export function useSchedulingData(locationId, startDate) {
           .eq("location_id", locationId)
           .eq("setting_key", "schedule_config")
           .maybeSingle(),
-
-        // 4. Dashboard metrics as fallback data source
-        supabase
-          .from("dashboard_metrics_daily")
-          .select("*")
-          .eq("location_id", locationId)
-          .gte("metric_date", startDate)
-          .lte("metric_date", endDate)
-          .order("metric_date", { ascending: true }),
       ]);
+
+      const matrixCoverage = (matrixRes.data || []).length;
+      if (!recompute && matrixCoverage < dates.length) {
+        const existingDates = new Set((matrixRes.data || []).map((row) => row.matrix_date));
+        const missingDates = dates.filter((date) => !existingDates.has(date));
+        const computeFailures = await recomputeDates(missingDates);
+
+        if (!computeFailures.length) {
+          [matrixRes, staffRes, configRes] = await Promise.all([
+            supabase
+              .from("scheduling_matrix_daily")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("matrix_date", startDate)
+              .lte("matrix_date", endDate)
+              .order("matrix_date", { ascending: true }),
+            supabase
+              .from("daily_staff_plan")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("plan_date", startDate)
+              .lte("plan_date", endDate)
+              .order("plan_date", { ascending: true }),
+            supabase
+              .from("lite_settings")
+              .select("setting_value")
+              .eq("location_id", locationId)
+              .eq("setting_key", "schedule_config")
+              .maybeSingle(),
+          ]);
+        } else {
+          console.warn("compute-scheduling-matrix missing-day refresh failures:", computeFailures);
+        }
+      }
 
       if (fetchId !== fetchIdRef.current) return; // stale
 
       // Handle table-not-found gracefully (tables may not be deployed yet)
       const matrix = matrixRes.error && matrixRes.error.code === "42P01" ? [] : (matrixRes.data || []);
       const plans = staffRes.error && staffRes.error.code === "42P01" ? [] : (staffRes.data || []);
-      const dashRows = dashRes.data || [];
       const configVal = configRes.data?.setting_value || {};
 
       setMatrixRows(matrix);
       setStaffPlans(plans);
-      setDashboardMetrics(dashRows);
       setConfig({ ...SCHEDULE_CONFIG_DEFAULTS, ...configVal });
       setError(null);
     } catch (err) {
@@ -111,30 +168,38 @@ export function useSchedulingData(locationId, startDate) {
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false);
     }
-  }, [locationId, startDate, endDate, dates]);
+  }, [locationId, startDate, endDate, dates, recomputeDates]);
 
   useEffect(() => {
     setLoading(true);
     fetchAll();
-    intervalRef.current = setInterval(fetchAll, REFRESH_INTERVAL_MS);
+    intervalRef.current = setInterval(() => fetchAll(), REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalRef.current);
   }, [fetchAll]);
 
-  // Build week data by merging matrix + dashboard fallback + staff plans
+  // Build week data by merging the canonical matrix with any saved staff plans.
   const weekData = useMemo(() => {
     return dates.map(date => {
       const matrixRow = matrixRows.find(r => r.matrix_date === date);
-      const dashRow = dashboardMetrics.find(r => r.metric_date === date);
       const staffPlan = staffPlans.find(r => r.plan_date === date);
 
-      // Build matrix: prefer scheduling_matrix_daily, fall back to dashboard_metrics_daily
-      const matrix = matrixRow || buildMatrixFromDashboard(dashRow, date);
+      const matrix = matrixRow ? normalizeMatrixRow(matrixRow) : buildEmptyMatrix(date);
+      const trust = getMatrixTrust(matrix);
+      const matrixTrustState = getMatrixTrustState(matrix);
+      const generationBlockers = getMatrixBlockers(matrix);
+      const generationAllowed = canGenerateSchedule(matrix);
 
       // Compute required headcount
       const required = computeRequiredHeadcount(matrix, config);
 
       // Compute staffing status
-      const staffStatus = computeStaffingStatus(required, staffPlan, config);
+      const staffStatus = generationAllowed
+        ? computeStaffingStatus(required, staffPlan, config)
+        : {
+            status: matrixTrustState === "missing" ? "missing" : generationBlockers.length > 0 ? "blocked" : "estimated",
+            warnings: generationBlockers,
+            assignedFunctioningPct: staffPlan ? computeAvailableFunctioningPct(staffPlan) : 0,
+          };
 
       const dt = new Date(date + "T12:00:00");
       const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -147,15 +212,20 @@ export function useSchedulingData(locationId, startDate) {
         matrix,
         staffPlan: staffPlan || null,
         required,
+        trust,
+        matrixTrustState,
+        generationBlockers,
+        canGenerate: generationAllowed,
+        canShowHeadcount: generationAllowed,
         status: staffStatus.status,
-        warnings: [...required.warnings, ...(staffStatus.warnings || [])],
+        warnings: [...required.warnings, ...(staffStatus.warnings || []), ...generationBlockers],
         assignedFunctioningPct: staffStatus.assignedFunctioningPct || 0,
         hasLiveMatrix: !!matrixRow,
-        hasDashboardFallback: !matrixRow && !!dashRow,
-        hasNoData: !matrixRow && !dashRow,
+        hasDashboardFallback: false,
+        hasNoData: !matrixRow,
       };
     });
-  }, [dates, matrixRows, dashboardMetrics, staffPlans, config]);
+  }, [dates, matrixRows, staffPlans, config]);
 
   // Upsert a staff plan
   const upsertStaffPlan = useCallback(async (plan) => {
@@ -307,64 +377,39 @@ export function useSchedulingData(locationId, startDate) {
     return data || [];
   }, [locationId]);
 
+  const runAudit = useCallback(async ({ dateFrom, dateTo }) => {
+    const { data, error: auditErr } = await supabase.functions.invoke("scheduling-audit", {
+      body: {
+        location_id: locationId,
+        date_from: dateFrom,
+        date_to: dateTo,
+      },
+    });
+
+    if (auditErr) throw auditErr;
+    return data;
+  }, [locationId]);
+
   return {
     weekData,
     config,
     loading,
     error,
-    refresh: fetchAll,
+    refresh: () => fetchAll({ recompute: true }),
     upsertStaffPlan,
     saveSchedule,
     publishSchedule,
     applyScheduleOverride,
     fetchScheduleVersions,
+    runAudit,
   };
 }
 
-/**
- * Build a scheduling-matrix-compatible object from dashboard_metrics_daily.
- * This is the fallback path when scheduling_matrix_daily hasn't been computed yet.
- * Many fields are estimated or zero since dashboard_metrics doesn't have the full breakdown.
- */
-function buildMatrixFromDashboard(dashRow, date) {
-  if (!dashRow) {
-    return buildEmptyMatrix(date);
-  }
-
-  // dashboard_metrics_daily has: dogs_in_house, boarding_in_house, daycare_in_house,
-  // dogs_going_home, dogs_arriving, occupancy_pct, tours_today, evals_today, total_room_count
-  const totalDogs = dashRow.dogs_in_house || dashRow.dogs_expected || 0;
-  const boarding = dashRow.boarding_in_house || 0;
-  const daycare = dashRow.daycare_in_house || 0;
-
-  // We don't have large/small split from dashboard_metrics, so mark as unknown
+function normalizeMatrixRow(matrixRow) {
   return {
-    matrix_date: date,
-    location_id: dashRow.location_id || "",
-    boarding_large: 0,
-    boarding_small: 0,
-    boarding_unknown_size: boarding,
-    daycare_large: 0,
-    daycare_small: 0,
-    daycare_unknown_size: daycare,
-    pp_dayboarders: 0,
-    pp_overnight_boarders: 0,
-    departure_baths: 0,
-    evaluations: dashRow.evals_today || 0,
-    tours: dashRow.tours_today || 0,
-    gross_dogs_in_building: totalDogs,
-    feeding_dogs: 0,
-    medication_dogs: 0,
-    dogs_arriving: dashRow.dogs_arriving || 0,
-    dogs_departing: dashRow.dogs_going_home || 0,
-    dogs_checked_out: dashRow.dogs_checked_out || 0,
-    rooms_occupied: Math.round((dashRow.occupancy_pct || 0) / 100 * (dashRow.total_room_count || 28)),
-    rooms_available: Math.round((1 - (dashRow.occupancy_pct || 0) / 100) * (dashRow.total_room_count || 28)),
-    total_rooms: dashRow.total_room_count || 28,
-    detail_json: {},
-    computed_at: dashRow.computed_at || null,
-    _source: "dashboard_fallback",
-    _confidence: "low",
+    ...matrixRow,
+    _source: "scheduling_matrix_daily",
+    _confidence: getMatrixTrustState(matrixRow) === "trusted" ? "high" : "low",
   };
 }
 
@@ -392,7 +437,62 @@ function buildEmptyMatrix(date) {
     rooms_occupied: 0,
     rooms_available: 0,
     total_rooms: 0,
-    detail_json: {},
+    detail_json: {
+      trust: {
+        state: "missing",
+        source: "none",
+        can_generate: false,
+        blockers: ["No scheduling matrix has been computed for this day yet."],
+        blocker_details: [],
+        notes: [],
+      },
+      display: {
+        opening: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          half_and_half_boarding: null,
+          evaluation_boarding: null,
+          unclassified_boarding: null,
+          total_boarding: null,
+        },
+        closing: {
+          large_boarding: null,
+          small_boarding: null,
+          private_play_boarding: null,
+          half_and_half_boarding: null,
+          evaluation_boarding: null,
+          unclassified_boarding: null,
+          total_boarding: null,
+        },
+        daycare: {
+          evaluations: null,
+          private_play_dayboarding: null,
+          half_and_half_daytime: null,
+          large_daycare: null,
+          small_daycare: null,
+          unclassified_daycare: null,
+          total_daycare: null,
+        },
+        support: {
+          departure_baths: null,
+          morning_feeding_dogs: null,
+          evening_feeding_dogs: null,
+          medication_dogs: null,
+          tours: null,
+          total_dog_volume: null,
+        },
+      },
+      solver_inputs: {
+        peak_large_daycare: 0,
+        peak_small_daycare: 0,
+        peak_unknown_daycare: 0,
+        total_private_play_dogs: 0,
+        morning_feeding_dogs: 0,
+        evening_feeding_dogs: 0,
+        medication_dogs: 0,
+      },
+    },
     computed_at: null,
     _source: "empty",
     _confidence: "none",
