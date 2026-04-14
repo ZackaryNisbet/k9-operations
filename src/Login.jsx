@@ -125,14 +125,20 @@ export default function Login() {
     setLoading(true);
     if (mode === 'forgot') {
       if (!email.trim()) { setError('Enter your email address'); setLoading(false); return; }
-      const { error } = await resetPassword(email);
-      if (error) setError(error.message);
+      const { error, timedOut, unavailable } = await resetPassword(email);
+      if (error) {
+        if (timedOut || unavailable) setError('Password reset is temporarily unavailable. Please try again in a moment.');
+        else setError(error.message);
+      }
       else setResetSent(true);
       setLoading(false);
       return;
     }
-    const { error } = await signIn(email, password);
-    if (error) setError(error.message);
+    const { error, timedOut, unavailable } = await signIn(email, password);
+    if (error) {
+      if (timedOut || unavailable) setError('Authentication service is temporarily unavailable. Please try again in a moment.');
+      else setError(error.message);
+    }
     setLoading(false);
   };
 

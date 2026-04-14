@@ -47,6 +47,7 @@ import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
+import { summarizeAuthFailure } from './authRuntime';
 import Login from './Login';
 import SignupPage from './SignupPage';
 import App from './App';
@@ -55,6 +56,67 @@ import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
 import LandingPage from './LandingPage';
 
+function AuthStatusScreen({ title, description, authError, onRetry }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#14532D', fontFamily: "'Outfit', sans-serif", padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 460, background: '#166534', borderRadius: 20, padding: '36px 32px', boxShadow: '0 20px 60px rgba(0,0,0,0.28)', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#F0F2F5', letterSpacing: '-0.02em' }}>K9 Operations</div>
+          <div style={{ fontSize: 11, color: '#84CC16', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 6 }}>
+            Service Status
+          </div>
+        </div>
+
+        <div style={{ fontSize: 22, fontWeight: 800, color: '#F0F2F5', marginBottom: 10, textAlign: 'center' }}>{title}</div>
+        <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.78)', lineHeight: 1.6, textAlign: 'center', marginBottom: 16 }}>{description}</div>
+
+        {authError?.stage && (
+          <div style={{ marginBottom: 20, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#84CC16', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Diagnostic</div>
+            <div style={{ fontSize: 12, color: '#F0F2F5' }}>{summarizeAuthFailure(authError)}</div>
+            {authError?.requestHint && (
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>{authError.requestHint}</div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={onRetry}
+            style={{
+              padding: '12px 22px',
+              borderRadius: 10,
+              border: 'none',
+              background: '#84CC16',
+              color: '#14532D',
+              fontSize: 14,
+              fontWeight: 800,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            Retry
+          </button>
+          <a
+            href="/welcome"
+            style={{
+              padding: '12px 22px',
+              borderRadius: 10,
+              border: '1.5px solid rgba(255,255,255,0.18)',
+              background: 'rgba(255,255,255,0.06)',
+              color: '#F0F2F5',
+              fontSize: 14,
+              fontWeight: 700,
+              textDecoration: 'none',
+            }}
+          >
+            Go to Welcome
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Root() {
   // Route detection — evaluated on each render so refreshes work correctly
@@ -77,12 +139,12 @@ function Root() {
   if (isSignupPage) return <SignupPage />;
   if (isPublicPricing) return <LandingPage />;
 
-  const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
+  const { user, profile, loading, authStatus, authError, retryBootstrap, needsPasswordSet, updatePassword } = useAuth();
 
   // Auto-claim invitation in the background (assigns location + role)
   const [claimAttempted, setClaimAttempted] = useState(false);
   useEffect(() => {
-    if (!loading && profile && !profile.location_id && !claimAttempted && !needsPasswordSet) {
+    if (authStatus === 'ready' && profile && !profile.location_id && !claimAttempted && !needsPasswordSet) {
       setClaimAttempted(true);
       supabase.rpc('claim_invitation', { user_email: user.email })
         .then(({ data: result }) => {
@@ -90,7 +152,7 @@ function Root() {
         })
         .catch(() => {});
     }
-  }, [loading, profile, claimAttempted, needsPasswordSet]);
+  }, [authStatus, profile, claimAttempted, needsPasswordSet, user?.email]);
 
   // Password set form state
   const [newPassword, setNewPassword] = useState('');
@@ -122,6 +184,28 @@ function Root() {
           <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', marginTop: 16 }}>&copy; 2026 K9 Operations LLC</div>
         </div>
       </div>
+    );
+  }
+
+  if (authStatus === 'auth_unavailable') {
+    return (
+      <AuthStatusScreen
+        title="Authentication Service Unavailable"
+        description="We could not reach the authentication service. The app is up, but sign-in and session bootstrap are temporarily unavailable."
+        authError={authError}
+        onRetry={retryBootstrap}
+      />
+    );
+  }
+
+  if (authStatus === 'profile_unavailable') {
+    return (
+      <AuthStatusScreen
+        title="Profile Load Unavailable"
+        description="Authentication completed, but we could not load the staff profile needed to enter the app."
+        authError={authError}
+        onRetry={retryBootstrap}
+      />
     );
   }
 

@@ -2,8 +2,14 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import {
+  AUTH_TIMEOUTS,
+  classifyAuthFailure,
+  isAuthTransportError,
+  withAuthTimeout,
+} from './authRuntime';
 
 const AuthContext = createContext({});
 
@@ -13,86 +19,191 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState('loading');
+  const [authError, setAuthError] = useState(null);
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
+  const runIdRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const isRunActive = useCallback((runId) => runIdRef.current === runId, []);
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (cancelled) return;
-      const u = session?.user ?? null;
-      setUser(u);
-      // Check if user needs to set a permanent password (invited with temp password)
-      if (u && u.user_metadata?.force_password_change === true) {
-        setNeedsPasswordSet(true);
-      }
-      if (u) fetchProfile(u.id);
-      else setLoading(false);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (cancelled) return;
-      if (event === 'PASSWORD_RECOVERY') {
-        setNeedsPasswordSet(true);
-      }
-      const u = session?.user ?? null;
-      setUser(u);
-      // Also check force_password_change on sign-in (temp password invite flow)
-      if (u && u.user_metadata?.force_password_change === true) {
-        setNeedsPasswordSet(true);
-      }
-      if (u) fetchProfile(u.id);
-      else { setProfile(null); setLoading(false); }
-    });
-
-    return () => {
-      cancelled = true;
-      subscription.unsubscribe();
-    };
+  const beginRun = useCallback(() => {
+    runIdRef.current += 1;
+    return runIdRef.current;
   }, []);
 
-  const fetchProfile = async (userId) => {
-    const { data: rpcRows } = await supabase.rpc('get_my_profile');
+  const setSignedOutState = useCallback((runId = runIdRef.current) => {
+    if (!isRunActive(runId)) return;
+    setUser(null);
+    setProfile(null);
+    setNeedsPasswordSet(false);
+    setAuthError(null);
+    setAuthStatus('signed_out');
+    setLoading(false);
+  }, [isRunActive]);
+
+  const fetchProfile = useCallback(async (userId) => {
+    const profileResult = await withAuthTimeout(
+      () => supabase.rpc('get_my_profile'),
+      { stage: 'get_my_profile', ms: AUTH_TIMEOUTS.getProfile }
+    );
+    if (profileResult?.error) {
+      throw classifyAuthFailure(profileResult.error, { stage: 'get_my_profile' });
+    }
+
+    const rpcRows = profileResult?.data;
     const existing = rpcRows?.[0] || null;
 
     if (existing) {
-      setProfile(existing);
-      setLoading(false);
       // Stamp last_accessed_at (fire-and-forget)
       supabase.from('profiles').update({ last_accessed_at: new Date().toISOString() }).eq('id', userId).then(() => {});
-      return;
+      return existing;
     }
 
     // No profile yet — auto-create one (for new sign-ups)
-    const { data: authData } = await supabase.auth.getUser();
-    const authUser = authData?.user;
+    const authUserResult = await withAuthTimeout(
+      () => supabase.auth.getUser(),
+      { stage: 'profile_bootstrap', ms: AUTH_TIMEOUTS.profileBootstrap }
+    );
+    if (authUserResult?.error) {
+      throw classifyAuthFailure(authUserResult.error, { stage: 'profile_bootstrap' });
+    }
+
+    const authUser = authUserResult?.data?.user;
     const newProfile = {
       id: userId,
       email: authUser?.email || '',
       full_name: authUser?.user_metadata?.full_name || '',
       role: 'staff',
     };
-    const { data: created, error: insertErr } = await supabase
-      .from('profiles')
-      .insert(newProfile)
-      .select()
-      .single();
+
+    const insertResult = await withAuthTimeout(
+      () => supabase.from('profiles').insert(newProfile).select().single(),
+      { stage: 'profile_bootstrap', ms: AUTH_TIMEOUTS.profileBootstrap }
+    );
+
+    const { data: created, error: insertErr } = insertResult;
 
     if (created) {
-      setProfile(created);
-    } else {
-      // If insert fails (e.g. RLS policy not set up), use a minimal profile
-      console.warn('Could not auto-create profile:', insertErr);
-      setProfile({ id: userId, email: authUser?.email || '', full_name: authUser?.user_metadata?.full_name || '', role: 'staff', location_id: null });
+      return created;
     }
-    setLoading(false);
-  };
+    // If insert fails (e.g. RLS policy not set up), use a minimal profile
+    console.warn('Could not auto-create profile:', insertErr);
+    return {
+      id: userId,
+      email: authUser?.email || '',
+      full_name: authUser?.user_metadata?.full_name || '',
+      role: 'staff',
+      location_id: null,
+    };
+  }, []);
+
+  const hydrateUser = useCallback(async (nextUser, runId = runIdRef.current) => {
+    if (!isRunActive(runId)) return;
+    setUser(nextUser);
+    setNeedsPasswordSet(nextUser?.user_metadata?.force_password_change === true);
+
+    try {
+      const nextProfile = await fetchProfile(nextUser.id);
+      if (!isRunActive(runId)) return;
+      setProfile(nextProfile);
+      setAuthError(null);
+      setAuthStatus('ready');
+      setLoading(false);
+    } catch (error) {
+      const failure = classifyAuthFailure(error, { stage: error?.stage || 'get_my_profile' });
+      if (!isRunActive(runId)) return;
+      setProfile(null);
+      setAuthError(failure);
+      setAuthStatus(failure.kind);
+      setLoading(false);
+    }
+  }, [fetchProfile, isRunActive]);
+
+  const bootstrapAuth = useCallback(async () => {
+    const runId = beginRun();
+    setLoading(true);
+    setAuthStatus('loading');
+    setAuthError(null);
+
+    try {
+      const sessionResult = await withAuthTimeout(
+        () => supabase.auth.getSession(),
+        { stage: 'get_session', ms: AUTH_TIMEOUTS.getSession }
+      );
+      if (sessionResult?.error) {
+        throw classifyAuthFailure(sessionResult.error, { stage: 'get_session' });
+      }
+
+      const nextUser = sessionResult?.data?.session?.user ?? null;
+      if (!nextUser) {
+        setSignedOutState(runId);
+        return;
+      }
+
+      await hydrateUser(nextUser, runId);
+    } catch (error) {
+      const failure = classifyAuthFailure(error, { stage: error?.stage || 'get_session' });
+      if (!isRunActive(runId)) return;
+      setUser(null);
+      setProfile(null);
+      setNeedsPasswordSet(false);
+      setAuthError(failure);
+      setAuthStatus(failure.kind);
+      setLoading(false);
+    }
+  }, [beginRun, hydrateUser, isRunActive, setSignedOutState]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    bootstrapAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled || event === 'INITIAL_SESSION') return;
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setNeedsPasswordSet(true);
+      }
+
+      const nextUser = session?.user ?? null;
+      if (!nextUser) {
+        setSignedOutState(beginRun());
+        return;
+      }
+
+      setAuthStatus('loading');
+      setLoading(true);
+      setAuthError(null);
+      hydrateUser(nextUser, beginRun());
+    });
+
+    return () => {
+      cancelled = true;
+      runIdRef.current += 1;
+      subscription.unsubscribe();
+    };
+  }, [beginRun, bootstrapAuth, hydrateUser, setSignedOutState]);
 
   const signIn = async (email, password) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error };
+    try {
+      const result = await withAuthTimeout(
+        () => supabase.auth.signInWithPassword({ email, password }),
+        { stage: 'sign_in', ms: AUTH_TIMEOUTS.signIn }
+      );
+
+      return {
+        error: result?.error || null,
+        timedOut: false,
+        unavailable: !!result?.error && isAuthTransportError(result.error),
+      };
+    } catch (error) {
+      const failure = classifyAuthFailure(error, { stage: 'sign_in' });
+      return {
+        error: failure,
+        timedOut: !!failure.timedOut,
+        unavailable: failure.kind === 'auth_unavailable',
+      };
+    }
   };
 
   const signUp = async (email, password, fullName) => {
@@ -105,10 +216,27 @@ export function AuthProvider({ children }) {
   };
 
   const resetPassword = async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
-    });
-    return { error };
+    try {
+      const result = await withAuthTimeout(
+        () => supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        }),
+        { stage: 'reset_password', ms: AUTH_TIMEOUTS.resetPassword }
+      );
+
+      return {
+        error: result?.error || null,
+        timedOut: false,
+        unavailable: false,
+      };
+    } catch (error) {
+      const failure = classifyAuthFailure(error, { stage: 'reset_password' });
+      return {
+        error: failure,
+        timedOut: !!failure.timedOut,
+        unavailable: failure.kind === 'auth_unavailable',
+      };
+    }
   };
 
   const updatePassword = async (newPassword) => {
@@ -122,20 +250,38 @@ export function AuthProvider({ children }) {
 
   const refreshProfile = async () => {
     if (!user) return;
-    const { data: rpcRows } = await supabase.rpc('get_my_profile');
-    const updated = rpcRows?.[0] || null;
+    const result = await withAuthTimeout(
+      () => supabase.rpc('get_my_profile'),
+      { stage: 'get_my_profile', ms: AUTH_TIMEOUTS.getProfile }
+    );
+    if (result?.error) {
+      throw classifyAuthFailure(result.error, { stage: 'get_my_profile' });
+    }
+    const updated = result?.data?.[0] || null;
     if (updated) setProfile(updated);
   };
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setNeedsPasswordSet(false);
+    setSignedOutState(beginRun());
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut, resetPassword, updatePassword, needsPasswordSet, refreshProfile }}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      loading,
+      authStatus,
+      authError,
+      signIn,
+      signUp,
+      signOut,
+      resetPassword,
+      updatePassword,
+      needsPasswordSet,
+      refreshProfile,
+      retryBootstrap: bootstrapAuth,
+    }}>
       {children}
     </AuthContext.Provider>
   );
