@@ -71,17 +71,32 @@ async function assertLocationAccess(req: Request, locationId: string) {
     throw Object.assign(new Error("Unable to authenticate request"), { status: 401 });
   }
 
-  const { data: profiles, error: profileError } = await serviceClient
-    .from("lite_profiles")
-    .select("location_id, role, is_active")
-    .eq("user_id", user.id)
-    .eq("is_active", true);
+  const [
+    { data: liteProfiles, error: profileError },
+    { data: ownerProfile, error: ownerProfileError },
+  ] = await Promise.all([
+    serviceClient
+      .from("lite_profiles")
+      .select("location_id, role, is_active")
+      .eq("user_id", user.id)
+      .eq("is_active", true),
+    serviceClient
+      .from("profiles")
+      .select("id, role")
+      .eq("id", user.id)
+      .in("role", ["owner", "role_owner"])
+      .maybeSingle(),
+  ]);
 
   if (profileError) {
     throw Object.assign(profileError, { status: 500 });
   }
 
-  const hasAccess = (profiles || []).some((profile: any) =>
+  if (ownerProfileError) {
+    throw Object.assign(ownerProfileError, { status: 500 });
+  }
+
+  const hasAccess = !!ownerProfile || (liteProfiles || []).some((profile: any) =>
     profile.role === "enterprise_admin" || profile.location_id === locationId,
   );
 
