@@ -8,6 +8,7 @@
     "build": "vite build",
     "prebuild": "node scripts/generate-test-results.js",
     "preview": "vite preview",
+    "auth:probe": "node scripts/probe-supabase-auth.mjs",
     "test": "vitest run",
     "test:report": "node scripts/generate-test-results.js"
   },
