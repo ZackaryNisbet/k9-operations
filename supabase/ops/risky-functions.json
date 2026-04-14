@@ -1,0 +1,23 @@
+{
+  "projectRef": "xuzvqcpthqikyroqhypw",
+  "functions": {
+    "gingr-sync": {
+      "verifyJwt": false
+    },
+    "compute-scheduling-matrix": {
+      "verifyJwt": false
+    },
+    "ops-compute": {
+      "verifyJwt": true
+    },
+    "ops-compute-ondemand": {
+      "verifyJwt": true
+    },
+    "scheduling-audit": {
+      "verifyJwt": true
+    },
+    "gingr-boh-poll": {
+      "verifyJwt": true
+    }
+  }
+}
