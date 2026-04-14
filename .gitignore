@@ -9,3 +9,4 @@ public/test-results.json
 public/test-results.json.raw
 .vercel
 .env*.local
+supabase/ops/deploy-history.jsonl

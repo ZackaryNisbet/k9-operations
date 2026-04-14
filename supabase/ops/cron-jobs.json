@@ -1,0 +1,222 @@
+{
+  "projectRef": "YOUR_SUPABASE_PROJECT_REF",
+  "jobs": [
+    {
+      "jobname": "gingr-boh-poll-a",
+      "schedule": "* * * * *",
+      "auth": "vault",
+      "function": "gingr-boh-poll",
+      "payload": { "location_id": "11111111-1111-1111-1111-111111111111" }
+    },
+    {
+      "jobname": "gingr-today-sync",
+      "schedule": "*/5 * * * *",
+      "auth": "vault",
+      "function": "gingr-sync",
+      "payload": { "sync_type": "today-sync", "location_id": "11111111-1111-1111-1111-111111111111" }
+    },
+    {
+      "jobname": "gingr-incremental-sync",
+      "schedule": "*/15 * * * *",
+      "auth": "vault",
+      "function": "gingr-sync",
+      "payload": { "sync_type": "incremental", "location_id": "11111111-1111-1111-1111-111111111111" }
+    },
+    {
+      "jobname": "gingr-tv-poll",
+      "schedule": "* * * * *",
+      "auth": "vault",
+      "function": "gingr-sync",
+      "payload": { "sync_type": "tv-poll", "location_id": "11111111-1111-1111-1111-111111111111" }
+    },
+    {
+      "jobname": "de-expansion-daily",
+      "schedule": "0 7 * * *",
+      "auth": "vault",
+      "function": "gingr-sync",
+      "payload": { "sync_type": "de-expansion", "location_id": "your-gingr-subdomain" }
+    },
+    {
+      "jobname": "ops-compute-poll",
+      "schedule": "* * * * *",
+      "auth": "vault",
+      "function": "ops-compute",
+      "payload": { "location_id": "11111111-1111-1111-1111-111111111111" }
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-current-week",
+      "schedule": "*/5 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "current_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-7",
+      "schedule": "0 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 7
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-8",
+      "schedule": "1 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 8
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-9",
+      "schedule": "2 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 9
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-10",
+      "schedule": "3 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 10
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-11",
+      "schedule": "4 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 11
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-12",
+      "schedule": "5 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 12
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-13",
+      "schedule": "6 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 13
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-14",
+      "schedule": "7 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 14
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-15",
+      "schedule": "8 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 15
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-16",
+      "schedule": "9 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 16
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-17",
+      "schedule": "10 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 17
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-18",
+      "schedule": "11 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 18
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-19",
+      "schedule": "12 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 19
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-20",
+      "schedule": "13 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 20
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-21",
+      "schedule": "14 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 21
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-22",
+      "schedule": "15 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 22
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-23",
+      "schedule": "16 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 23
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-24",
+      "schedule": "17 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 24
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-25",
+      "schedule": "18 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 25
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-26",
+      "schedule": "19 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 26
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-27",
+      "schedule": "20 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 27
+    }
+  ]
+}

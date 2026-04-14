@@ -1,0 +1,47 @@
+{
+  "projectRef": "YOUR_SUPABASE_PROJECT_REF",
+  "functions": {
+    "gingr-sync": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    },
+    "compute-scheduling-matrix": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    },
+    "ops-compute": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    },
+    "ops-compute-ondemand": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    },
+    "scheduling-audit": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    },
+    "gingr-boh-poll": {
+      "commit": null,
+      "sourceRef": null,
+      "action": null,
+      "note": "",
+      "updatedAt": null
+    }
+  }
+}

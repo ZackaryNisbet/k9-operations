@@ -9,6 +9,10 @@
     "prebuild": "node scripts/generate-test-results.js",
     "preview": "vite preview",
     "auth:probe": "node scripts/probe-supabase-auth.mjs",
+    "supabase:functions:deploy-risky": "node scripts/deploy-risky-functions.mjs",
+    "supabase:functions:rollback": "node scripts/rollback-functions.mjs",
+    "supabase:cron:audit": "node scripts/audit-cron-jobs.mjs",
+    "supabase:cron:reconcile": "node scripts/reconcile-cron-jobs.mjs",
     "test": "vitest run",
     "test:report": "node scripts/generate-test-results.js"
   },
