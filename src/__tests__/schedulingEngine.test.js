@@ -409,7 +409,7 @@ describe('buildDaySummary integration', () => {
     const summary = buildDaySummary(matrix, null, cfg, { demandMode: 'projected', autoPlan: true });
     expect(summary.scheduleKind).toBe('optimal');
     expect(summary.staffPlan).toBeDefined();
-    expect(summary.staffPlan.shift_entries.length).toBeGreaterThan(0);
+    expect(summary.staffPlan.staff_names.length).toBeGreaterThan(0);
     expect(summary.openingResult).toBeDefined();
     expect(summary.grid).toBeDefined();
     expect(summary.required.am).toBeGreaterThan(0);
@@ -636,8 +636,8 @@ describe('Full-day grid generation', () => {
     const opening = solveOpening(matrix, plan, cfg);
     const { slots } = generateFullDayGrid(matrix, plan, opening, cfg);
     expect(slots[0]).toBe('06:00');
-    expect(slots[slots.length - 1]).toBe('19:45');
-    expect(slots.length).toBe(56); // 14 hours * 4 slots
+    expect(slots[slots.length - 1]).toBe('19:15');
+    expect(slots.length).toBe(54); // 13.5 hours * 4 slots
   });
 
   it('generates slots for weekend hours', () => {
@@ -791,10 +791,10 @@ describe('applyOverride', () => {
     const originalTask = grid[lane][slot];
 
     const result = applyOverride(grid, lane, slot, 'pp', 'Manager requested PP coverage');
-    expect(result.grid[lane][slot]).toBe('pp');
+    expect(result.grid[lane][slot].task).toBe('pp');
     expect(result.override.previous_task).toBe(originalTask);
     expect(result.override.new_task).toBe('pp');
-    expect(result.override.reason).toBe('Manager requested PP coverage');
+    expect(result.override.notes).toBe('Manager requested PP coverage');
 
     // Original grid should be unchanged (immutable)
     expect(grid[lane][slot]).toBe(originalTask);

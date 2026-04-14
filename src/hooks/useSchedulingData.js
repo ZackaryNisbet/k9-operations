@@ -11,8 +11,6 @@ import {
   computeRequiredHeadcount,
   computeStaffingStatus,
   isWeekend,
-  serializeSchedule,
-  buildDaySummary,
   getMatrixTrust,
   getMatrixTrustState,
   getMatrixBlockers,
@@ -229,10 +227,19 @@ export function useSchedulingData(locationId, startDate) {
 
   // Upsert a staff plan
   const upsertStaffPlan = useCallback(async (plan) => {
+    const sanitizedPlan = {
+      ...plan,
+      allow_csr_as_pct: false,
+      allow_mod_as_pct: false,
+      staff_names: Array.isArray(plan?.staff_names) ? plan.staff_names : [],
+      updated_at: new Date().toISOString(),
+    };
+    delete sanitizedPlan.shift_entries;
+
     const { error: err } = await supabase
       .from("daily_staff_plan")
       .upsert(
-        { location_id: locationId, ...plan, updated_at: new Date().toISOString() },
+        { location_id: locationId, ...sanitizedPlan },
         { onConflict: "location_id,plan_date,shift" }
       );
     if (err) throw err;
@@ -319,7 +326,7 @@ export function useSchedulingData(locationId, startDate) {
   /**
    * Apply an override to a saved schedule. Updates the grid and appends to the overrides log.
    */
-  const applyScheduleOverride = useCallback(async (scheduleId, lane, slot, newTask, reason) => {
+  const applyScheduleOverride = useCallback(async (scheduleId, lane, slot, newTask, notes) => {
     // Fetch current schedule
     const { data: schedule, error: fetchErr } = await supabase
       .from("rotation_schedules")
@@ -333,10 +340,17 @@ export function useSchedulingData(locationId, startDate) {
     const currentOverrides = schedule.overrides || [];
 
     // Apply the override
-    const previousTask = currentGrid[lane]?.[slot] || null;
+    const previousCell = currentGrid[lane]?.[slot] || null;
+    const previousTask = typeof previousCell === "string" ? previousCell : previousCell?.task || null;
     const newGrid = { ...currentGrid };
     if (newGrid[lane]) {
-      newGrid[lane] = { ...newGrid[lane], [slot]: newTask };
+      const existingCell = newGrid[lane]?.[slot];
+      newGrid[lane] = {
+        ...newGrid[lane],
+        [slot]: typeof existingCell === "object" && existingCell !== null
+          ? { ...existingCell, task: newTask, notes: notes || "" }
+          : { task: newTask, notes: notes || "" },
+      };
     }
 
     const overrideEntry = {
@@ -344,7 +358,7 @@ export function useSchedulingData(locationId, startDate) {
       slot,
       previous_task: previousTask,
       new_task: newTask,
-      reason: reason || "",
+      notes: notes || "",
       applied_at: new Date().toISOString(),
     };
 
@@ -390,6 +404,19 @@ export function useSchedulingData(locationId, startDate) {
     return data;
   }, [locationId]);
 
+  const computeRotationSchedule = useCallback(async ({ scheduleDate, mode = "optimal" }) => {
+    const { data, error: rotationErr } = await supabase.functions.invoke("compute-rotation-schedule", {
+      body: {
+        location_id: locationId,
+        schedule_date: scheduleDate,
+        mode,
+      },
+    });
+
+    if (rotationErr) throw rotationErr;
+    return data;
+  }, [locationId]);
+
   return {
     weekData,
     config,
@@ -402,6 +429,7 @@ export function useSchedulingData(locationId, startDate) {
     applyScheduleOverride,
     fetchScheduleVersions,
     runAudit,
+    computeRotationSchedule,
   };
 }
 
