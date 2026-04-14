@@ -35,6 +35,8 @@ type ReservationRow = {
   services?: any[] | null;
 };
 
+const ANIMAL_HISTORY_BATCH_SIZE = 200;
+
 function getDateKey(value?: string | null): string {
   return String(value || "").slice(0, 10);
 }
@@ -101,32 +103,75 @@ function weightedAverage(
   return weightSum > 0 ? weightedSum / weightSum : fallback;
 }
 
-function getProjectionReferenceDates(targetDate: string): string[] {
-  const results = new Set<string>();
+type ProjectionFallbackMode =
+  | "exact_prior_year"
+  | "same_weekday_prior_year"
+  | "exact_prior_years_2_to_4"
+  | "same_weekday_prior_years_2_to_4";
+
+type ProjectionCandidate = {
+  sampleDate: string;
+  fallbackMode: ProjectionFallbackMode;
+  dateDistance: number;
+  yearOffset: number;
+};
+
+function getProjectionCandidates(targetDate: string): ProjectionCandidate[] {
+  const results: ProjectionCandidate[] = [];
+  const seen = new Set<string>();
   const targetWeekday = getWeekday(targetDate);
 
-  for (let yearOffset = 1; yearOffset <= 4; yearOffset += 1) {
-    const anchor = shiftYearsStr(targetDate, -yearOffset);
-    if (anchor >= targetDate) continue;
-    results.add(anchor);
+  const addCandidate = (
+    sampleDate: string,
+    fallbackMode: ProjectionFallbackMode,
+    dateDistance: number,
+    yearOffset: number,
+  ) => {
+    if (!sampleDate || sampleDate >= targetDate || seen.has(sampleDate)) return;
+    seen.add(sampleDate);
+    results.push({
+      sampleDate,
+      fallbackMode,
+      dateDistance,
+      yearOffset,
+    });
+  };
 
+  const exactLastYear = shiftYearsStr(targetDate, -1);
+  addCandidate(exactLastYear, "exact_prior_year", 0, 1);
+
+  for (let delta = -21; delta <= 21; delta += 1) {
+    if (delta === 0) continue;
+    const candidate = addDaysStr(exactLastYear, delta);
+    if (getWeekday(candidate) === targetWeekday) {
+      addCandidate(candidate, "same_weekday_prior_year", Math.abs(delta), 1);
+    }
+  }
+
+  for (let yearOffset = 2; yearOffset <= 4; yearOffset += 1) {
+    const anchor = shiftYearsStr(targetDate, -yearOffset);
+    addCandidate(anchor, "exact_prior_years_2_to_4", 0, yearOffset);
+  }
+
+  for (let yearOffset = 2; yearOffset <= 4; yearOffset += 1) {
+    const anchor = shiftYearsStr(targetDate, -yearOffset);
     for (let delta = -21; delta <= 21; delta += 1) {
+      if (delta === 0) continue;
       const candidate = addDaysStr(anchor, delta);
-      if (candidate >= targetDate) continue;
       if (getWeekday(candidate) === targetWeekday) {
-        results.add(candidate);
+        addCandidate(candidate, "same_weekday_prior_years_2_to_4", Math.abs(delta), yearOffset);
       }
     }
   }
 
-  return Array.from(results).sort();
+  return results;
 }
 
 function buildHistoricalWindow(targetDates: string[]) {
   const references = new Set<string>();
   for (const date of targetDates) {
-    for (const ref of getProjectionReferenceDates(date)) {
-      references.add(ref);
+    for (const candidate of getProjectionCandidates(date)) {
+      references.add(candidate.sampleDate);
     }
   }
 
@@ -140,6 +185,14 @@ function buildHistoricalWindow(targetDates: string[]) {
     windowStart: ordered[0],
     windowEnd: ordered[ordered.length - 1],
   };
+}
+
+function buildDateOverlapOrFilter(dateKeys: string[]) {
+  const uniqueDates = [...new Set((dateKeys || []).filter(Boolean))].sort();
+  if (!uniqueDates.length) return null;
+  return uniqueDates
+    .map((dateKey) => `and(start_date.lt.${addDaysStr(dateKey, 1)}T00:00:00,end_date.gte.${dateKey}T00:00:00)`)
+    .join(",");
 }
 
 export function classifySchedulingReservationType(
@@ -188,6 +241,120 @@ export function buildReservationTypeMaps(rows: ReservationTypeRow[]) {
   }
 
   return { byName, byId };
+}
+
+function isOperationalReservationClass(
+  cls: ReturnType<typeof classifySchedulingReservationType>,
+) {
+  return cls === "boarding" || cls === "daycare" || cls === "dayboarding" || cls === "evaluation";
+}
+
+function escapeSqlLiteral(value: string) {
+  return String(value || "").replaceAll("'", "''");
+}
+
+export async function fetchEarliestOperationalStartDates({
+  supabase,
+  locationId,
+  animalIds,
+  resTypeMaps,
+}: {
+  supabase: SupabaseClient;
+  locationId: string;
+  animalIds: string[];
+  resTypeMaps: { byName: Map<string, ReservationTypeRow>; byId: Map<string, ReservationTypeRow> };
+}) {
+  const earliestByAnimal = new Map<string, string>();
+  const uniqueAnimalIds = [...new Set((animalIds || []).map((value) => String(value || "").trim()).filter(Boolean))];
+
+  for (let i = 0; i < uniqueAnimalIds.length; i += ANIMAL_HISTORY_BATCH_SIZE) {
+    const chunk = uniqueAnimalIds.slice(i, i + ANIMAL_HISTORY_BATCH_SIZE);
+    if (!chunk.length) continue;
+
+    const animalIdList = chunk.map((animalId) => `'${escapeSqlLiteral(animalId)}'`).join(", ");
+    const sql = `
+      SELECT
+        r.animal_gingr_id,
+        min(r.start_date)::text AS earliest_start
+      FROM public.gingr_reservations r
+      LEFT JOIN public.gingr_reservation_types rt
+        ON rt.location_id = r.location_id
+       AND rt.gingr_id::text = r.reservation_type_id::text
+      WHERE r.location_id = $1
+        AND r.cancelled_date IS NULL
+        AND r.start_date IS NOT NULL
+        AND r.animal_gingr_id IN (${animalIdList})
+        AND CASE
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%tour%' THEN false
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%groom%' THEN false
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%bath%' THEN false
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%evaluation%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%eval%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day boarding%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day board%' THEN true
+          WHEN coalesce(rt.is_daycare, false) THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%daycare%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day care%' THEN true
+          WHEN coalesce(rt.is_boarding, false) THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%boarding%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%lodge%' THEN true
+          WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%kennel%' THEN true
+          ELSE false
+        END
+      GROUP BY r.animal_gingr_id
+    `;
+    const { data, error } = await supabase.rpc("exec_sql", {
+      query: sql,
+      params: [locationId],
+    });
+
+    if (error) throw error;
+
+    for (const row of Array.isArray(data) ? data : []) {
+      const animalId = String(row?.animal_gingr_id || "").trim();
+      const startKey = getDateKey(row?.earliest_start);
+      if (!animalId || !startKey || earliestByAnimal.has(animalId)) continue;
+      earliestByAnimal.set(animalId, startKey);
+    }
+  }
+
+  return earliestByAnimal;
+}
+
+export function annotateReservationsWithOperationalHistory(
+  reservations: any[],
+  earliestOperationalStartByAnimal: Map<string, string>,
+) {
+  return reservations.map((row) => {
+    const earliestOperationalStart = earliestOperationalStartByAnimal.get(row.animalId) || null;
+    const isFirstEverDaycareVisit = row.cls === "daycare"
+      && !!earliestOperationalStart
+      && row.startKey === earliestOperationalStart;
+
+    return {
+      ...row,
+      earliestOperationalStart,
+      isFirstEverDaycareVisit,
+    };
+  });
+}
+
+export function getStayDayIndex(row: any, targetDate: string) {
+  if (!row?.startKey || row.startKey > targetDate) return null;
+  return diffDays(row.startKey, targetDate) + 1;
+}
+
+export function isEvaluationBoardingToday(row: any, targetDate: string) {
+  return row?.cls === "boarding"
+    && row?.unresolvedPlaygroupReason === "evaluation_only"
+    && getStayDayIndex(row, targetDate) === 1;
+}
+
+function getEvaluationSource(row: any) {
+  if (row?.cls === "evaluation") return "explicit_evaluation_reservation_type";
+  if (row?.isFirstEverDaycareVisit) return "first_ever_daycare_visit";
+  if (row?.unresolvedPlaygroupReason === "evaluation_only") return "evaluation_only_play_icon";
+  return null;
 }
 
 function summarizeRoomOccupancy(roomSnapshots: any[] = []): Record<string, { occupied: number; available: number; total: number }> {
@@ -243,14 +410,19 @@ export function buildReservationRecord(
   };
 }
 
-function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean }>) {
+function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean; unresolvedPlaygroupReason?: string | null; cls?: string; startKey?: string }>, targetDate: string) {
   let large = 0;
   let small = 0;
   let privatePlay = 0;
   let halfAndHalf = 0;
+  let evaluationBoarding = 0;
   let unknown = 0;
 
   for (const row of rows) {
+    if (isEvaluationBoardingToday(row, targetDate)) {
+      evaluationBoarding += 1;
+      continue;
+    }
     if (row.isHalfAndHalf) {
       halfAndHalf += 1;
       continue;
@@ -271,7 +443,7 @@ function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean }>
     }
   }
 
-  return { large, small, privatePlay, halfAndHalf, unknown };
+  return { large, small, privatePlay, halfAndHalf, evaluationBoarding, unknown };
 }
 
 function countDepartureBaths(rows: Array<{ services: any[] }>, targetDate: string): number {
@@ -294,29 +466,85 @@ function uniqueMedicationDogs(rows: Array<{ animalId: string; services: any[] }>
   return animalIds.size;
 }
 
-function buildTrustPayload({
-  openingUnknown,
-  closingUnknown,
-  daycareUnknown,
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export function buildBlockerDetails(
+  rows: any[],
+  targetDate: string,
+  scope: "opening_boarding" | "closing_boarding" | "daytime",
+) {
+  const grouped = new Map<string, { kind: string; count: number; scope: string; dogIds: string[]; label: string }>();
+
+  const scopeSuffix = scope === "opening_boarding"
+    ? "in opening boarding"
+    : scope === "closing_boarding"
+      ? "in closing boarding"
+      : "in daytime volume";
+
+  for (const row of rows) {
+    const stayDayIndex = getStayDayIndex(row, targetDate);
+    let kind: string | null = null;
+    let label = "";
+
+    if (row?.cls === "boarding" && row?.unresolvedPlaygroupReason === "evaluation_only" && stayDayIndex && stayDayIndex > 1) {
+      kind = "evaluation_boarding_pending_playgroup_outcome";
+      label = `${pluralize(1, "evaluation boarder")} pending playgroup outcome ${scopeSuffix}`;
+    } else if (row?.unresolvedPlaygroupReason === "conflicting_size_icons") {
+      kind = "unresolved_playgroup_conflict";
+      label = `${pluralize(1, "unresolved playgroup conflict")} ${scopeSuffix}`;
+    } else if (row?.unresolvedPlaygroupReason === "missing_actionable_play_icon" || row?.unresolvedPlaygroupReason === "no_actionable_icon") {
+      kind = "missing_actionable_play_icon";
+      label = `${pluralize(1, "dog")} missing actionable play icon ${scopeSuffix}`;
+    }
+
+    if (!kind) continue;
+
+    const key = `${scope}:${kind}`;
+    const existing = grouped.get(key) || {
+      kind,
+      count: 0,
+      scope,
+      dogIds: [],
+      label,
+    };
+    existing.count += 1;
+    if (row?.animalId) existing.dogIds.push(String(row.animalId));
+    grouped.set(key, existing);
+  }
+
+  return Array.from(grouped.values()).map((detail) => {
+    let label = detail.label;
+    if (detail.count > 1) {
+      if (detail.kind === "evaluation_boarding_pending_playgroup_outcome") {
+        label = `${pluralize(detail.count, "evaluation boarder")} pending playgroup outcome ${scopeSuffix}`;
+      } else if (detail.kind === "unresolved_playgroup_conflict") {
+        label = `${pluralize(detail.count, "unresolved playgroup conflict")} ${scopeSuffix}`;
+      } else {
+        label = `${pluralize(detail.count, "dog")} missing actionable play icon ${scopeSuffix}`;
+      }
+    }
+
+    return {
+      kind: detail.kind,
+      label,
+      count: detail.count,
+      scope: detail.scope,
+      dog_ids: [...new Set(detail.dogIds)],
+    };
+  });
+}
+
+export function buildTrustPayload({
+  blockerDetails,
   roomCountsEstimated,
 }: {
-  openingUnknown: number;
-  closingUnknown: number;
-  daycareUnknown: number;
+  blockerDetails: Array<{ kind: string; label: string; count: number; scope: string; dog_ids: string[] }>;
   roomCountsEstimated: boolean;
 }) {
-  const blockers: string[] = [];
   const notes: string[] = [];
 
-  if (openingUnknown > 0) {
-    blockers.push(`${openingUnknown} opening boarding dogs are missing a verified size/playgroup assignment.`);
-  }
-  if (closingUnknown > 0) {
-    blockers.push(`${closingUnknown} closing boarding dogs are missing a verified size/playgroup assignment.`);
-  }
-  if (daycareUnknown > 0) {
-    blockers.push(`${daycareUnknown} daytime dogs are missing a verified size/playgroup assignment.`);
-  }
   if (roomCountsEstimated) {
     notes.push("Room occupancy counts are estimated from the latest available room totals.");
   }
@@ -324,14 +552,17 @@ function buildTrustPayload({
   return {
     state: "trusted",
     source: "gingr_reservations + v_dog_playgroup_assignments_current",
-    can_generate: blockers.length === 0,
-    blockers,
+    can_generate: blockerDetails.length === 0,
+    blockers: blockerDetails.map((detail) => detail.label),
+    blocker_details: blockerDetails,
     notes,
   };
 }
 
-function buildAssignmentSnapshot(row: any) {
+function buildAssignmentSnapshot(row: any, targetDate: string) {
   const assignment = row.playgroupAssignment;
+  const stayDayIndex = getStayDayIndex(row, targetDate);
+  const isEvaluationBoarding = isEvaluationBoardingToday(row, targetDate);
   return {
     animal_gingr_id: row.animalId,
     animal_name: String(row.animal_name || ""),
@@ -345,6 +576,24 @@ function buildAssignmentSnapshot(row: any) {
     source_icon_comments: assignment?.sourceIconComments || [],
     unresolved_reason: row.unresolvedPlaygroupReason || null,
     half_and_half_note: assignment?.halfAndHalfNote || null,
+    classification_reason: isEvaluationBoarding
+      ? "evaluation_only_boarding_day_1"
+      : row.cls === "evaluation"
+        ? "explicit_evaluation_reservation_type"
+        : row.isFirstEverDaycareVisit
+          ? "first_ever_daycare_visit"
+          : row.isHalfAndHalf
+            ? "half_and_half"
+            : row.playgroup === "large"
+              ? "large_playgroup"
+              : row.playgroup === "small"
+                ? "small_playgroup"
+                : row.playgroup === "private_play"
+                  ? "private_play"
+                  : row.unresolvedPlaygroupReason || null,
+    evaluation_source: getEvaluationSource(row),
+    stay_day_index: stayDayIndex,
+    is_evaluation_boarding_today: isEvaluationBoarding,
   };
 }
 
@@ -374,6 +623,7 @@ function buildDisplayShape({
     small_boarding: openingCounts.small,
     private_play_boarding: openingCounts.privatePlay,
     half_and_half_boarding: openingCounts.halfAndHalf,
+    evaluation_boarding: openingCounts.evaluationBoarding,
     unclassified_boarding: openingCounts.unknown,
   };
   const closing = {
@@ -381,6 +631,7 @@ function buildDisplayShape({
     small_boarding: closingCounts.small,
     private_play_boarding: closingCounts.privatePlay,
     half_and_half_boarding: closingCounts.halfAndHalf,
+    evaluation_boarding: closingCounts.evaluationBoarding,
     unclassified_boarding: closingCounts.unknown,
   };
   const daycare = {
@@ -389,7 +640,7 @@ function buildDisplayShape({
     half_and_half_daytime: daytimeHalfAndHalf,
     large_daycare: daycareCounts.large,
     small_daycare: daycareCounts.small,
-    unclassified_daycare: daycareCounts.unknown,
+    unclassified_daycare: daycareCounts.unknown + dayboardingCounts.unknown,
   };
 
   const openingTotal =
@@ -397,12 +648,14 @@ function buildDisplayShape({
     + opening.small_boarding
     + opening.private_play_boarding
     + opening.half_and_half_boarding
+    + opening.evaluation_boarding
     + opening.unclassified_boarding;
   const closingTotal =
     closing.large_boarding
     + closing.small_boarding
     + closing.private_play_boarding
     + closing.half_and_half_boarding
+    + closing.evaluation_boarding
     + closing.unclassified_boarding;
   const daycareTotal =
     daycare.evaluations
@@ -442,11 +695,13 @@ function flattenDisplay(display: any) {
     opening_small_boarding: Number(display?.opening?.small_boarding || 0),
     opening_private_play_boarding: Number(display?.opening?.private_play_boarding || 0),
     opening_half_and_half_boarding: Number(display?.opening?.half_and_half_boarding || 0),
+    opening_evaluation_boarding: Number(display?.opening?.evaluation_boarding || 0),
     opening_unclassified_boarding: Number(display?.opening?.unclassified_boarding || 0),
     closing_large_boarding: Number(display?.closing?.large_boarding || 0),
     closing_small_boarding: Number(display?.closing?.small_boarding || 0),
     closing_private_play_boarding: Number(display?.closing?.private_play_boarding || 0),
     closing_half_and_half_boarding: Number(display?.closing?.half_and_half_boarding || 0),
+    closing_evaluation_boarding: Number(display?.closing?.evaluation_boarding || 0),
     closing_unclassified_boarding: Number(display?.closing?.unclassified_boarding || 0),
     daycare_evaluations: Number(display?.daycare?.evaluations || 0),
     daycare_private_play_dayboarding: Number(display?.daycare?.private_play_dayboarding || 0),
@@ -455,18 +710,22 @@ function flattenDisplay(display: any) {
     daycare_small_daycare: Number(display?.daycare?.small_daycare || 0),
     daycare_unclassified_daycare: Number(display?.daycare?.unclassified_daycare || 0),
     support_departure_baths: Number(display?.support?.departure_baths || 0),
+    support_morning_feeding_dogs: Number(display?.support?.morning_feeding_dogs || 0),
+    support_evening_feeding_dogs: Number(display?.support?.evening_feeding_dogs || 0),
     support_medication_dogs: Number(display?.support?.medication_dogs || 0),
+    support_total_dog_volume: Number(display?.support?.total_dog_volume || 0),
     support_tours: Number(display?.support?.tours || 0),
   };
 }
 
 function buildDisplayFromFlat(flat: Record<string, number>) {
-  return buildDisplayShape({
+  const display = buildDisplayShape({
     openingCounts: {
       large: Number(flat.opening_large_boarding || 0),
       small: Number(flat.opening_small_boarding || 0),
       privatePlay: Number(flat.opening_private_play_boarding || 0),
       halfAndHalf: Number(flat.opening_half_and_half_boarding || 0),
+      evaluationBoarding: Number(flat.opening_evaluation_boarding || 0),
       unknown: Number(flat.opening_unclassified_boarding || 0),
     },
     closingCounts: {
@@ -474,6 +733,7 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
       small: Number(flat.closing_small_boarding || 0),
       privatePlay: Number(flat.closing_private_play_boarding || 0),
       halfAndHalf: Number(flat.closing_half_and_half_boarding || 0),
+      evaluationBoarding: Number(flat.closing_evaluation_boarding || 0),
       unknown: Number(flat.closing_unclassified_boarding || 0),
     },
     daycareCounts: {
@@ -481,6 +741,7 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
       small: Number(flat.daycare_small_daycare || 0),
       privatePlay: Number(flat.daycare_private_play_dayboarding || 0),
       halfAndHalf: Number(flat.daycare_half_and_half_daytime || 0),
+      evaluationBoarding: 0,
       unknown: Number(flat.daycare_unclassified_daycare || 0),
     },
     dayboardingCounts: {
@@ -488,6 +749,7 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
       small: 0,
       privatePlay: 0,
       halfAndHalf: 0,
+      evaluationBoarding: 0,
       unknown: 0,
     },
     evaluationsCount: Number(flat.daycare_evaluations || 0),
@@ -495,6 +757,16 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
     medicationDogs: Number(flat.support_medication_dogs || 0),
     toursCount: Number(flat.support_tours || 0),
   });
+
+  return {
+    ...display,
+    support: {
+      ...display.support,
+      morning_feeding_dogs: Number(flat.support_morning_feeding_dogs ?? display.support.morning_feeding_dogs),
+      evening_feeding_dogs: Number(flat.support_evening_feeding_dogs ?? display.support.evening_feeding_dogs),
+      total_dog_volume: Number(flat.support_total_dog_volume ?? display.support.total_dog_volume),
+    },
+  };
 }
 
 export function computeDemandSnapshotForDate({
@@ -512,17 +784,17 @@ export function computeDemandSnapshotForDate({
 
   const openingBoarding = activeToday.filter((row) => row.cls === "boarding" && row.startKey < targetDate);
   const closingBoarding = activeToday.filter((row) => row.cls === "boarding" && row.endKey > targetDate);
-  const activeBoardingForPeak = activeToday.filter((row) => row.cls === "boarding");
-  const activeDaycare = activeToday.filter((row) => row.cls === "daycare");
+  const activeBoardingForPeak = activeToday.filter((row) => row.cls === "boarding" && !isEvaluationBoardingToday(row, targetDate));
+  const evaluations = activeToday.filter((row) => row.cls === "evaluation" || row.isFirstEverDaycareVisit);
+  const activeDaycare = activeToday.filter((row) => row.cls === "daycare" && !row.isFirstEverDaycareVisit);
   const activeDayboarding = activeToday.filter((row) => row.cls === "dayboarding");
-  const evaluations = activeToday.filter((row) => row.cls === "evaluation");
   const tours = activeToday.filter((row) => row.cls === "tour");
 
-  const openingCounts = splitCounts(openingBoarding);
-  const closingCounts = splitCounts(closingBoarding);
-  const daycareCounts = splitCounts(activeDaycare);
-  const dayboardingCounts = splitCounts(activeDayboarding);
-  const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare]);
+  const openingCounts = splitCounts(openingBoarding, targetDate);
+  const closingCounts = splitCounts(closingBoarding, targetDate);
+  const daycareCounts = splitCounts(activeDaycare, targetDate);
+  const dayboardingCounts = splitCounts(activeDayboarding, targetDate);
+  const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare], targetDate);
 
   const dogsArriving = countDistinctAnimals(
     activeToday.filter((row) => row.startKey === targetDate && row.cls !== "tour" && row.cls !== "grooming"),
@@ -588,15 +860,13 @@ export function computeDemandSnapshotForDate({
   };
 }
 
-function projectionWeight(targetDate: string, sampleDate: string) {
-  const exactLastYear = shiftYearsStr(targetDate, -1);
-  if (sampleDate === exactLastYear) return 4;
-  const distance = Math.abs(diffDays(sampleDate, exactLastYear));
-  if (distance <= 7) return 2;
-  return 1;
+function projectionWeight(candidate: ProjectionCandidate) {
+  const recencyWeight = 1 / candidate.yearOffset;
+  const distanceWeight = candidate.dateDistance === 0 ? 1 : 1 / (candidate.dateDistance + 1);
+  return recencyWeight * distanceWeight;
 }
 
-function buildProjectionForDate({
+export function buildProjectionForDate({
   targetDate,
   currentDate,
   currentSnapshot,
@@ -614,7 +884,7 @@ function buildProjectionForDate({
   const leadDays = Math.max(0, diffDays(currentDate, targetDate));
   const currentFlat = flattenDisplay(currentSnapshot.display);
   const exactLastYear = shiftYearsStr(targetDate, -1);
-  const exactLastYearReservations = historicalReservations.filter((row) => row.startKey <= exactLastYear && row.endKey > exactLastYear);
+  const exactLastYearReservations = historicalReservations.filter((row) => row.startKey <= exactLastYear && row.endKey >= exactLastYear);
   const exactLastYearSnapshot = exactLastYearReservations.length > 0
     ? computeDemandSnapshotForDate({
       targetDate: exactLastYear,
@@ -640,7 +910,7 @@ function buildProjectionForDate({
     };
   }
 
-  const referenceDates = getProjectionReferenceDates(targetDate);
+  const candidates = getProjectionCandidates(targetDate);
   const projectedFlat: Record<string, number> = { ...currentFlat };
   const explanations: Record<string, any> = {};
   let exactLastYearDisplayProjected: any = exactLastYearDisplay;
@@ -670,17 +940,20 @@ function buildProjectionForDate({
     return snapshot;
   };
 
-  const samples = referenceDates.map((sampleDate) => {
+  const samples = candidates.map((candidate) => {
+    const sampleDate = candidate.sampleDate;
     const finalSnapshot = getHistoricalSnapshot(sampleDate);
     const asOfDate = addDaysStr(sampleDate, -leadDays);
     const asOfSnapshot = getHistoricalSnapshot(sampleDate, asOfDate);
-    const weight = projectionWeight(targetDate, sampleDate);
+    const weight = projectionWeight(candidate);
     if (sampleDate === exactLastYear) {
       exactLastYearDisplayProjected = finalSnapshot.display;
     }
     return {
+      ...candidate,
       sampleDate,
       weight,
+      asOfDate,
       finalFlat: flattenDisplay(finalSnapshot.display),
       asOfFlat: flattenDisplay(asOfSnapshot.display),
       finalDisplay: finalSnapshot.display,
@@ -691,15 +964,59 @@ function buildProjectionForDate({
 
   for (const metricKey of metricKeys) {
     const currentValue = Number(currentFlat[metricKey] || 0);
-    const usableSamples = samples.filter((sample) => Number(sample.finalFlat[metricKey] || 0) > 0);
+    const exactSample = samples.find((sample) => sample.fallbackMode === "exact_prior_year") || null;
+    const exactLastYearFinal = exactSample ? Number(exactSample.finalFlat[metricKey] || 0) : 0;
+    const exactLastYearAsOf = exactSample ? Number(exactSample.asOfFlat[metricKey] || 0) : 0;
+    const explanationKey = metricKey.replaceAll(".", "_");
+
+    const usableByMode = new Map<ProjectionFallbackMode, any[]>();
+    for (const mode of [
+      "exact_prior_year",
+      "same_weekday_prior_year",
+      "exact_prior_years_2_to_4",
+      "same_weekday_prior_years_2_to_4",
+    ] as ProjectionFallbackMode[]) {
+      usableByMode.set(
+        mode,
+        samples.filter((sample) => {
+          if (sample.fallbackMode !== mode) return false;
+          const finalValue = Number(sample.finalFlat[metricKey] || 0);
+          const asOfValue = Number(sample.asOfFlat[metricKey] || 0);
+          if (finalValue <= 0) return false;
+          if (currentValue === 0) return true;
+          return asOfValue > 0;
+        }),
+      );
+    }
+
+    const chosenMode = (
+      usableByMode.get("exact_prior_year")?.length
+        ? "exact_prior_year"
+        : usableByMode.get("same_weekday_prior_year")?.length
+          ? "same_weekday_prior_year"
+          : usableByMode.get("exact_prior_years_2_to_4")?.length
+            ? "exact_prior_years_2_to_4"
+            : usableByMode.get("same_weekday_prior_years_2_to_4")?.length
+              ? "same_weekday_prior_years_2_to_4"
+              : null
+    ) as ProjectionFallbackMode | null;
+
+    const usableSamples = chosenMode ? usableByMode.get(chosenMode) || [] : [];
     sampleCount = Math.max(sampleCount, usableSamples.length);
 
     if (!usableSamples.length) {
-      explanations[metricKey] = {
+      explanations[explanationKey] = {
+        target_date: targetDate,
+        as_of_date: currentDate,
         current_value: currentValue,
         projected_value: currentValue,
         lead_days: leadDays,
-        method: "carry_forward_no_history",
+        exact_prior_year_as_of: exactLastYearAsOf || null,
+        exact_prior_year_final: exactLastYearFinal || null,
+        completion_rate: exactLastYearFinal > 0 && exactLastYearAsOf > 0
+          ? Number((exactLastYearAsOf / exactLastYearFinal).toFixed(4))
+          : null,
+        fallback_mode: "carry_forward_no_history",
         sample_count: 0,
       };
       continue;
@@ -707,65 +1024,33 @@ function buildProjectionForDate({
 
     const weights = usableSamples.map((sample) => sample.weight);
     const finalValues = usableSamples.map((sample) => Number(sample.finalFlat[metricKey] || 0));
-    const baselineFinal = weightedAverage(finalValues, weights, currentValue);
+    const asOfValues = usableSamples.map((sample) => Number(sample.asOfFlat[metricKey] || 0));
+    const weightedFinal = weightedAverage(finalValues, weights, currentValue);
+    const weightedAsOf = weightedAverage(asOfValues, weights, 0);
+    const completionRate = currentValue === 0
+      ? (weightedFinal > 0 ? clampNumber(weightedAsOf / weightedFinal, 0, 1) : 0)
+      : (weightedFinal > 0 && weightedAsOf > 0 ? clampNumber(weightedAsOf / weightedFinal, 0.01, 1) : 0);
 
-    const multiplierSamples = usableSamples
-      .map((sample) => {
-        const asOfValue = Number(sample.asOfFlat[metricKey] || 0);
-        const finalValue = Number(sample.finalFlat[metricKey] || 0);
-        if (asOfValue <= 0 || finalValue <= 0) return null;
-        return {
-          weight: sample.weight,
-          latePickupRatio: clampNumber((finalValue - asOfValue) / asOfValue, 0, 3),
-          completionRate: clampNumber(asOfValue / finalValue, 0, 1),
-          asOfValue,
-          finalValue,
-        };
-      })
-      .filter(Boolean) as Array<{ weight: number; latePickupRatio: number; completionRate: number; asOfValue: number; finalValue: number }>;
-
-    let projectedValue = currentValue;
-    let method = "carry_forward";
-    let avgLatePickupRatio = 0;
-    let avgCompletionRate = 1;
-
-    if (currentValue === 0) {
-      projectedValue = Math.round(baselineFinal);
-      method = "seasonal_baseline";
-    } else if (multiplierSamples.length > 0) {
-      const multiplierWeights = multiplierSamples.map((sample) => sample.weight);
-      avgLatePickupRatio = weightedAverage(
-        multiplierSamples.map((sample) => sample.latePickupRatio),
-        multiplierWeights,
-        0,
-      );
-      avgCompletionRate = weightedAverage(
-        multiplierSamples.map((sample) => sample.completionRate),
-        multiplierWeights,
-        1,
-      );
-      const pickupProjection = currentValue * (1 + avgLatePickupRatio);
-      const pickupWeight = Math.min(0.8, multiplierSamples.length / 6);
-      projectedValue = Math.round(
-        (pickupProjection * pickupWeight) + (baselineFinal * (1 - pickupWeight)),
-      );
-      method = "pickup_curve_blend";
-    } else {
-      projectedValue = Math.round(baselineFinal);
-      method = "baseline_only";
-    }
+    const projectedValue = currentValue === 0
+      ? Math.round(weightedFinal)
+      : completionRate > 0
+        ? Math.round(currentValue / completionRate)
+        : currentValue;
 
     projectedFlat[metricKey] = Math.max(currentValue, projectedValue);
-    explanations[metricKey] = {
+    explanations[explanationKey] = {
+      target_date: targetDate,
+      as_of_date: currentDate,
       current_value: currentValue,
       projected_value: projectedFlat[metricKey],
       lead_days: leadDays,
-      method,
+      exact_prior_year_as_of: exactLastYearAsOf || null,
+      exact_prior_year_final: exactLastYearFinal || null,
+      completion_rate: completionRate > 0 ? Number(completionRate.toFixed(4)) : null,
+      fallback_mode: chosenMode,
       sample_count: usableSamples.length,
-      avg_late_pickup_ratio: Number(avgLatePickupRatio.toFixed(4)),
-      avg_completion_rate: Number(avgCompletionRate.toFixed(4)),
-      baseline_final_average: Number(baselineFinal.toFixed(2)),
-      exact_last_year_final: exactLastYearDisplayProjected ? Number(flattenDisplay(exactLastYearDisplayProjected)[metricKey] || 0) : null,
+      sample_dates: usableSamples.map((sample) => sample.sampleDate),
+      baseline_final_average: Number(weightedFinal.toFixed(2)),
     };
   }
 
@@ -797,9 +1082,10 @@ export async function computeSchedulingMatrixRows({
   dateTo: string;
 }) {
   const targetDates = enumerateDates(dateFrom, dateTo);
-  const historicalWindow = buildHistoricalWindow(targetDates);
+  const exactHistoricalDates = [...new Set(targetDates.map((dateKey) => shiftYearsStr(dateKey, -1)))];
+  const exactHistoricalOverlapFilter = buildDateOverlapOrFilter(exactHistoricalDates);
 
-  const [resTypesRes, roomOccRes, runsRes, reservationsRes, historicalReservationsRes, playgroupAssignments] = await Promise.all([
+  const [resTypesRes, roomOccRes, runsRes, reservationsRes, exactHistoricalReservationsRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("gingr_id, name, is_boarding, is_daycare, single_day")
@@ -821,14 +1107,13 @@ export async function computeSchedulingMatrixRows({
       .is("cancelled_date", null)
       .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
       .gte("end_date", `${dateFrom}T00:00:00`),
-    historicalWindow
+    exactHistoricalOverlapFilter
       ? supabase
         .from("gingr_reservations")
         .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
         .eq("location_id", locationId)
         .is("cancelled_date", null)
-        .lt("start_date", `${addDaysStr(historicalWindow.windowEnd, 1)}T00:00:00`)
-        .gte("end_date", `${historicalWindow.windowStart}T00:00:00`)
+        .or(exactHistoricalOverlapFilter)
       : Promise.resolve({ data: [], error: null }),
     fetchPlaygroupAssignments({
       supabase,
@@ -837,7 +1122,7 @@ export async function computeSchedulingMatrixRows({
   ]);
 
   if (reservationsRes.error) throw reservationsRes.error;
-  if (historicalReservationsRes.error) throw historicalReservationsRes.error;
+  if (exactHistoricalReservationsRes.error) throw exactHistoricalReservationsRes.error;
   if (resTypesRes.error) throw resTypesRes.error;
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
@@ -852,13 +1137,85 @@ export async function computeSchedulingMatrixRows({
       .filter(Boolean),
   ).size;
   const roomByDate = summarizeRoomOccupancy(roomOccRes.data || []);
+  const historicalFetchCache = new Map<string, any[]>();
+  const fetchReservationRecordsForDateKeys = async (dateKeys: string[]) => {
+    const normalizedDateKeys = [...new Set((dateKeys || []).filter(Boolean))].sort();
+    if (!normalizedDateKeys.length) return [];
 
-  const reservations = (reservationsRes.data || []).map((row: ReservationRow) =>
+    const cacheKey = normalizedDateKeys.join("|");
+    const cached = historicalFetchCache.get(cacheKey);
+    if (cached) return cached;
+
+    const overlapFilter = buildDateOverlapOrFilter(normalizedDateKeys);
+    if (!overlapFilter) {
+      historicalFetchCache.set(cacheKey, []);
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("gingr_reservations")
+      .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+      .eq("location_id", locationId)
+      .is("cancelled_date", null)
+      .or(overlapFilter);
+
+    if (error) throw error;
+
+    const records = (data || []).map((row: ReservationRow) =>
+      buildReservationRecord(row, resTypeMaps, playgroupMap),
+    );
+    historicalFetchCache.set(cacheKey, records);
+    return records;
+  };
+
+  const baseReservations = (reservationsRes.data || []).map((row: ReservationRow) =>
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
-  const historicalReservations = (historicalReservationsRes.data || []).map((row: ReservationRow) =>
+  const exactHistoricalReservations = (exactHistoricalReservationsRes.data || []).map((row: ReservationRow) =>
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
+  const baseHistoricalReservations = [...exactHistoricalReservations];
+
+  for (const targetDate of targetDates) {
+    const exactSampleDate = shiftYearsStr(targetDate, -1);
+    const exactActiveRows = exactHistoricalReservations.filter((row) => row.startKey <= exactSampleDate && row.endKey >= exactSampleDate);
+    const hasExactOperationalRows = exactActiveRows.some((row) => row.cls !== "tour" && row.cls !== "grooming");
+    if (hasExactOperationalRows) continue;
+
+    for (const fallbackMode of [
+      "same_weekday_prior_year",
+      "exact_prior_years_2_to_4",
+      "same_weekday_prior_years_2_to_4",
+    ] as ProjectionFallbackMode[]) {
+      const candidateDates = getProjectionCandidates(targetDate)
+        .filter((candidate) => candidate.fallbackMode === fallbackMode)
+        .map((candidate) => candidate.sampleDate);
+      const fallbackRows = await fetchReservationRecordsForDateKeys(candidateDates);
+      const hasFallbackOperationalRows = candidateDates.some((sampleDate) =>
+        fallbackRows.some((row) => row.startKey <= sampleDate && row.endKey >= sampleDate && row.cls !== "tour" && row.cls !== "grooming"),
+      );
+
+      for (const row of fallbackRows) {
+        if (!baseHistoricalReservations.some((existing) => existing.gingr_id === row.gingr_id)) {
+          baseHistoricalReservations.push(row);
+        }
+      }
+
+      if (hasFallbackOperationalRows) break;
+    }
+  }
+
+  const earliestOperationalStartByAnimal = await fetchEarliestOperationalStartDates({
+    supabase,
+    locationId,
+    animalIds: [
+      ...baseReservations.map((row: any) => row.animalId),
+      ...baseHistoricalReservations.map((row: any) => row.animalId),
+    ],
+    resTypeMaps,
+  });
+  const reservations = annotateReservationsWithOperationalHistory(baseReservations, earliestOperationalStartByAnimal);
+  const historicalReservations = annotateReservationsWithOperationalHistory(baseHistoricalReservations, earliestOperationalStartByAnimal);
 
   const rows = [];
   const currentDate = dateStrET();
@@ -878,10 +1235,14 @@ export async function computeSchedulingMatrixRows({
       totalRooms,
     });
 
+    const blockerDetails = [
+      ...buildBlockerDetails(snapshot.openingBoarding, targetDate, "opening_boarding"),
+      ...buildBlockerDetails(snapshot.closingBoarding, targetDate, "closing_boarding"),
+      ...buildBlockerDetails([...snapshot.activeDaycare, ...snapshot.activeDayboarding], targetDate, "daytime"),
+    ];
+
     const trust = buildTrustPayload({
-      openingUnknown: snapshot.openingCounts.unknown,
-      closingUnknown: snapshot.closingCounts.unknown,
-      daycareUnknown: snapshot.daycareCounts.unknown,
+      blockerDetails,
       roomCountsEstimated: snapshot.roomCountsEstimated,
     });
 
@@ -893,7 +1254,7 @@ export async function computeSchedulingMatrixRows({
       boarding_unknown_size: snapshot.openingCounts.unknown,
       daycare_large: snapshot.daycareCounts.large,
       daycare_small: snapshot.daycareCounts.small,
-      daycare_unknown_size: snapshot.daycareCounts.unknown,
+      daycare_unknown_size: snapshot.daycareCounts.unknown + snapshot.dayboardingCounts.unknown,
       pp_dayboarders: snapshot.display.daycare.private_play_dayboarding,
       pp_overnight_boarders: snapshot.openingCounts.privatePlay,
       departure_baths: snapshot.departureBaths,
@@ -914,11 +1275,11 @@ export async function computeSchedulingMatrixRows({
         projection,
         solver_inputs: snapshot.solverInputs,
         provenance: {
-          opening_boarding: snapshot.openingBoarding.map(buildAssignmentSnapshot),
-          closing_boarding: snapshot.closingBoarding.map(buildAssignmentSnapshot),
-          daytime_daycare: snapshot.activeDaycare.map(buildAssignmentSnapshot),
-          daytime_dayboarding: snapshot.activeDayboarding.map(buildAssignmentSnapshot),
-          evaluations: snapshot.evaluations.map(buildAssignmentSnapshot),
+          opening_boarding: snapshot.openingBoarding.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
+          closing_boarding: snapshot.closingBoarding.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
+          daytime_daycare: snapshot.activeDaycare.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
+          daytime_dayboarding: snapshot.activeDayboarding.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
+          evaluations: snapshot.evaluations.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
         },
       },
       computed_at: new Date().toISOString(),

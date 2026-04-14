@@ -127,6 +127,7 @@ export function getMatrixTrust(matrix) {
       source: trust.source || "scheduling_matrix_daily",
       can_generate: trust.can_generate !== false,
       blockers: Array.isArray(trust.blockers) ? trust.blockers : [],
+      blocker_details: Array.isArray(trust.blocker_details) ? trust.blocker_details : [],
       notes: Array.isArray(trust.notes) ? trust.notes : [],
     };
   }
@@ -137,6 +138,7 @@ export function getMatrixTrust(matrix) {
       source: "dashboard_fallback",
       can_generate: false,
       blockers: ["This day is still using fallback dashboard metrics instead of the verified Gingr scheduling matrix."],
+      blocker_details: [],
       notes: ["Constituent opening, closing, feeding, medication, and bath counts are not fully verified."],
     };
   }
@@ -147,6 +149,7 @@ export function getMatrixTrust(matrix) {
       source: "none",
       can_generate: false,
       blockers: ["No scheduling data has been computed for this day yet."],
+      blocker_details: [],
       notes: [],
     };
   }
@@ -156,6 +159,7 @@ export function getMatrixTrust(matrix) {
     source: matrix._source || "scheduling_matrix_daily",
     can_generate: true,
     blockers: [],
+    blocker_details: [],
     notes: [],
   };
 }
@@ -182,10 +186,11 @@ export function getMatrixDisplay(matrix) {
     small_boarding: toNullableNumber(display.opening?.small_boarding) ?? toNumber(matrix?.boarding_small, 0),
     private_play_boarding: toNullableNumber(display.opening?.private_play_boarding) ?? toNumber(matrix?.pp_overnight_boarders, 0),
     half_and_half_boarding: toNullableNumber(display.opening?.half_and_half_boarding) ?? 0,
+    evaluation_boarding: toNullableNumber(display.opening?.evaluation_boarding) ?? 0,
     unclassified_boarding: toNullableNumber(display.opening?.unclassified_boarding) ?? toNumber(matrix?.boarding_unknown_size, 0),
   };
   opening.total_boarding = toNullableNumber(display.opening?.total_boarding)
-    ?? [opening.large_boarding, opening.small_boarding, opening.private_play_boarding, opening.half_and_half_boarding, opening.unclassified_boarding]
+    ?? [opening.large_boarding, opening.small_boarding, opening.private_play_boarding, opening.half_and_half_boarding, opening.evaluation_boarding, opening.unclassified_boarding]
       .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
 
   const closing = {
@@ -193,10 +198,11 @@ export function getMatrixDisplay(matrix) {
     small_boarding: toNullableNumber(display.closing?.small_boarding) ?? opening.small_boarding,
     private_play_boarding: toNullableNumber(display.closing?.private_play_boarding) ?? opening.private_play_boarding,
     half_and_half_boarding: toNullableNumber(display.closing?.half_and_half_boarding) ?? opening.half_and_half_boarding,
+    evaluation_boarding: toNullableNumber(display.closing?.evaluation_boarding) ?? opening.evaluation_boarding,
     unclassified_boarding: toNullableNumber(display.closing?.unclassified_boarding) ?? opening.unclassified_boarding,
   };
   closing.total_boarding = toNullableNumber(display.closing?.total_boarding)
-    ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.half_and_half_boarding, closing.unclassified_boarding]
+    ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.half_and_half_boarding, closing.evaluation_boarding, closing.unclassified_boarding]
       .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
 
   const daycare = {
@@ -241,6 +247,7 @@ export function getMatrixProjectedDisplay(matrix) {
       small_boarding: toNullableNumber(projected.opening?.small_boarding) ?? 0,
       private_play_boarding: toNullableNumber(projected.opening?.private_play_boarding) ?? 0,
       half_and_half_boarding: toNullableNumber(projected.opening?.half_and_half_boarding) ?? 0,
+      evaluation_boarding: toNullableNumber(projected.opening?.evaluation_boarding) ?? 0,
       unclassified_boarding: toNullableNumber(projected.opening?.unclassified_boarding) ?? 0,
       total_boarding: toNullableNumber(projected.opening?.total_boarding) ?? 0,
     },
@@ -249,6 +256,7 @@ export function getMatrixProjectedDisplay(matrix) {
       small_boarding: toNullableNumber(projected.closing?.small_boarding) ?? 0,
       private_play_boarding: toNullableNumber(projected.closing?.private_play_boarding) ?? 0,
       half_and_half_boarding: toNullableNumber(projected.closing?.half_and_half_boarding) ?? 0,
+      evaluation_boarding: toNullableNumber(projected.closing?.evaluation_boarding) ?? 0,
       unclassified_boarding: toNullableNumber(projected.closing?.unclassified_boarding) ?? 0,
       total_boarding: toNullableNumber(projected.closing?.total_boarding) ?? 0,
     },
