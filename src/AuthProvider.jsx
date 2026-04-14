@@ -8,6 +8,7 @@ import {
   AUTH_TIMEOUTS,
   classifyAuthFailure,
   isAuthTransportError,
+  resolveAuthStateTransition,
   withAuthTimeout,
 } from './authRuntime';
 
@@ -23,6 +24,11 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
   const runIdRef = useRef(0);
+  const userRef = useRef(null);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const isRunActive = useCallback((runId) => runIdRef.current === runId, []);
 
@@ -159,15 +165,29 @@ export function AuthProvider({ children }) {
     bootstrapAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (cancelled || event === 'INITIAL_SESSION') return;
+      if (cancelled) return;
 
       if (event === 'PASSWORD_RECOVERY') {
         setNeedsPasswordSet(true);
       }
 
       const nextUser = session?.user ?? null;
-      if (!nextUser) {
+      const transition = resolveAuthStateTransition(event, {
+        currentUserId: userRef.current?.id ?? null,
+        nextUserId: nextUser?.id ?? null,
+      });
+
+      if (transition === 'ignore') return;
+
+      if (transition === 'signed_out') {
         setSignedOutState(beginRun());
+        return;
+      }
+
+      if (transition === 'quiet_refresh') {
+        setUser(nextUser);
+        setNeedsPasswordSet(nextUser?.user_metadata?.force_password_change === true);
+        setAuthError(null);
         return;
       }
 
