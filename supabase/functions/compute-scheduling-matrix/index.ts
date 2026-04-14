@@ -31,6 +31,12 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function schedulingComputeDisabled() {
+  return ["1", "true", "yes", "on"].includes(
+    String(Deno.env.get("SCHEDULING_COMPUTE_DISABLED") || "").trim().toLowerCase(),
+  );
+}
+
 function enumerateDates(dateFrom: string, dateTo: string) {
   const dates: string[] = [];
   let current = dateFrom;
@@ -346,6 +352,15 @@ Deno.serve(async (req: Request) => {
     const shouldLiveHydrate = dateFrom <= liveHydrationThrough;
 
     const serviceClient = await assertLocationAccess(req, locationId);
+    if (schedulingComputeDisabled()) {
+      return jsonResponse({
+        ok: true,
+        disabled: true,
+        location_id: locationId,
+        date_range: [dateFrom, dateTo],
+        source: "compute_disabled",
+      }, 202);
+    }
     const gingrConfig = await getGingrConfigForLocation(serviceClient, locationId);
 
     const reservationHydration = shouldLiveHydrate
