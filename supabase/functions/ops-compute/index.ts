@@ -2087,7 +2087,7 @@ async function computeBelongingsReport(
     const [{ data: animals }, playAssignments] = await Promise.all([
       supabase
         .from("gingr_animals")
-        .select("gingr_id, weight, breed, image_url")
+        .select("gingr_id, weight, breed_name, image_url")
         .in("gingr_id", animalIds),
       fetchPlaygroupAssignments({
         supabase,
@@ -2099,7 +2099,7 @@ async function computeBelongingsReport(
     for (const a of (animals || [])) {
       const w = a.weight ? parseFloat(a.weight) : null;
       weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-      breedMap[a.gingr_id] = a.breed || "";
+      breedMap[a.gingr_id] = a.breed_name || "";
       if (a.image_url) photoMap[a.gingr_id] = a.image_url;
     }
     for (const assignment of (playAssignments || [])) {
@@ -2297,7 +2297,7 @@ async function computeCollarsReport(
       : Promise.resolve([]),
     uniqueAnimalIds.length > 0
       ? supabase.from("gingr_animals")
-          .select("gingr_id, weight, breed")
+          .select("gingr_id, weight, breed_name")
           .in("gingr_id", uniqueAnimalIds)
       : Promise.resolve({ data: [] }),
   ]);
@@ -2310,7 +2310,7 @@ async function computeCollarsReport(
   for (const a of (animalsResult.data || [])) {
     const w = a.weight ? parseFloat(a.weight) : null;
     weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-    breedMap[a.gingr_id] = a.breed || "";
+    breedMap[a.gingr_id] = a.breed_name || "";
   }
 
   // Classify each dog into collar color
@@ -2494,12 +2494,12 @@ async function computeLodgingTransfers(
   if (uniqueAnimalIds.length > 0) {
     const { data: animals } = await supabase
       .from("gingr_animals")
-      .select("gingr_id, weight, breed")
+      .select("gingr_id, weight, breed_name")
       .in("gingr_id", uniqueAnimalIds);
     for (const a of animals || []) {
       const w = a.weight ? parseFloat(a.weight) : null;
       weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-      breedMap[a.gingr_id] = a.breed || "";
+      breedMap[a.gingr_id] = a.breed_name || "";
     }
   }
 
@@ -3009,12 +3009,12 @@ Deno.serve(async (req: Request) => {
     if (ppAnimalIds.length > 0) {
       const { data: ppAnimals } = await supabase
         .from("gingr_animals")
-        .select("gingr_id, weight, breed")
+        .select("gingr_id, weight, breed_name")
         .in("gingr_id", ppAnimalIds);
       for (const a of ppAnimals || []) {
         const w = a.weight ? parseFloat(a.weight) : null;
         ppWeightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-        ppBreedMap[a.gingr_id] = a.breed || "";
+        ppBreedMap[a.gingr_id] = a.breed_name || "";
       }
     }
     const privatePlay = computePrivatePlay(reservations, ppWeightMap, ppBreedMap);
@@ -3114,12 +3114,12 @@ Deno.serve(async (req: Request) => {
       if (futureAnimalIds.length > 0) {
         const { data: futureAnimals } = await supabase
           .from("gingr_animals")
-          .select("gingr_id, weight, breed")
+          .select("gingr_id, weight, breed_name")
           .in("gingr_id", futureAnimalIds);
         for (const a of futureAnimals || []) {
           const w = a.weight ? parseFloat(a.weight) : null;
           futureWeightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-          futureBreedMap[a.gingr_id] = a.breed || "";
+          futureBreedMap[a.gingr_id] = a.breed_name || "";
         }
       }
       const privatePlayFuture = computePrivatePlay(reservationsFuture, futureWeightMap, futureBreedMap);
