@@ -24,6 +24,12 @@ const corsHeaders = {
 const SCHEDULING_FUTURE_SYNC_DAYS = 28;
 const SCHEDULING_IMMEDIATE_RECOMPUTE_DAYS = 7;
 
+function schedulingComputeDisabled() {
+  return ["1", "true", "yes", "on"].includes(
+    String(Deno.env.get("SCHEDULING_COMPUTE_DISABLED") || "").trim().toLowerCase(),
+  );
+}
+
 // ─── Eastern Time helper ─────────────────────────────────────────────────────
 // Edge functions run in UTC. All date-sensitive operations must use ET.
 function nowET(): Date {
@@ -2422,20 +2428,27 @@ Deno.serve(async (req: Request) => {
     // sync-time recompute to the current week makes Gingr sync materially
     // more reliable while still refreshing the operationally critical dates.
     try {
-      const matrixFrom = dateStrET();
-      const matrixTo = addDaysStr(matrixFrom, SCHEDULING_IMMEDIATE_RECOMPUTE_DAYS - 1);
-      const matrixRows = await computeSchedulingMatrixRows({
-        supabase,
-        locationId: location_id,
-        dateFrom: matrixFrom,
-        dateTo: matrixTo,
-      });
-      const matrixResult = await upsertSchedulingMatrixRows(supabase, matrixRows);
-      results["scheduling_matrix"] = {
-        rows_upserted: matrixResult.count,
-        date_from: matrixFrom,
-        date_to: matrixTo,
-      };
+      if (schedulingComputeDisabled()) {
+        results["scheduling_matrix"] = {
+          disabled: true,
+          source: "compute_disabled",
+        };
+      } else {
+        const matrixFrom = dateStrET();
+        const matrixTo = addDaysStr(matrixFrom, SCHEDULING_IMMEDIATE_RECOMPUTE_DAYS - 1);
+        const matrixRows = await computeSchedulingMatrixRows({
+          supabase,
+          locationId: location_id,
+          dateFrom: matrixFrom,
+          dateTo: matrixTo,
+        });
+        const matrixResult = await upsertSchedulingMatrixRows(supabase, matrixRows);
+        results["scheduling_matrix"] = {
+          rows_upserted: matrixResult.count,
+          date_from: matrixFrom,
+          date_to: matrixTo,
+        };
+      }
     } catch (matrixErr: any) {
       console.error("Scheduling matrix recompute error:", matrixErr.message);
       results["scheduling_matrix"] = { error: matrixErr.message };
