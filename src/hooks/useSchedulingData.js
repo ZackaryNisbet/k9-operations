@@ -19,6 +19,28 @@ import {
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+async function extractEdgeFunctionError(fnError) {
+  if (!fnError) return "Unknown edge function error";
+  try {
+    if (fnError.context?.body) {
+      const reader = fnError.context.body.getReader?.();
+      if (reader) {
+        const { value } = await reader.read();
+        const text = new TextDecoder().decode(value);
+        try {
+          const parsed = JSON.parse(text);
+          return parsed.error || parsed.message || text;
+        } catch {
+          return text;
+        }
+      }
+    }
+  } catch {
+    // Fall through to the generic message.
+  }
+  return fnError.message || "Unknown edge function error";
+}
+
 /**
  * useSchedulingData(locationId, startDate)
  *
@@ -400,7 +422,9 @@ export function useSchedulingData(locationId, startDate) {
       },
     });
 
-    if (auditErr) throw auditErr;
+    if (auditErr) {
+      throw new Error(await extractEdgeFunctionError(auditErr));
+    }
     return data;
   }, [locationId]);
 
@@ -413,7 +437,9 @@ export function useSchedulingData(locationId, startDate) {
       },
     });
 
-    if (rotationErr) throw rotationErr;
+    if (rotationErr) {
+      throw new Error(await extractEdgeFunctionError(rotationErr));
+    }
     return data;
   }, [locationId]);
 
