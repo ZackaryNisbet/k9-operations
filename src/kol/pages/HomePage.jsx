@@ -4,7 +4,7 @@
 // with exception-first cards and shortcuts to key areas.
 // Aligned to the mobile product's role-based mental model.
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr, OPERATIONS_CATALOG } from "../../shared/theme";
 import { I } from "../../shared/icons";
@@ -12,6 +12,7 @@ import { Badge } from "../../shared/ui";
 import { getOpsProgress, getOpsCountLabel, getRoomCleaningStats, getPPStats } from "../../shared/opsHelpers";
 import { computeOccupancyMetrics, computeServiceMetrics } from "../../shared/metricsHelpers";
 import { DEFAULT_INVENTORY_SCHEDULE, getInventoryCycleStart, getInventoryOverdueInfo, normalizeInventorySchedule } from "./inventorySchedule";
+import useWorkflowProgressSnapshot, { SNAPSHOT_TO_TYPE_SUB, formatWorkflowCountLabel } from "../../hooks/useWorkflowProgressSnapshot";
 
 // ─── Role classification helper ──────────────────────────────────────────────
 const STAFF_ROLES = new Set(["pct", "csr"]);
@@ -277,19 +278,11 @@ function MetricCard({ label, value, subtext, color }) {
 }
 
 // ─── Operations progress summary ─────────────────────────────────────────────
-function OpsProgressSummary({ data, viewDate, nav }) {
+function OpsProgressSummary({ data, viewDate, nav, locationId }) {
+  const { rows: workflowRows, rowMap: workflowRowMap } = useWorkflowProgressSnapshot(locationId, viewDate);
+
   const summaries = useMemo(() => {
     const results = [];
-    const serviceMetrics = computeServiceMetrics(data, viewDate);
-    if (serviceMetrics.bathsTotal > 0) {
-      results.push({
-        label: "Bathing",
-        typeSub: "bathing",
-        route: "ops-bathing",
-        progress: 0,
-        countLabel: `${serviceMetrics.bathsTotal} scheduled`,
-      });
-    }
     const categories = [
       ...OPERATIONS_CATALOG
         .filter((item) => item.frequency === "daily" && item.typeSub && item.id !== "eod")
@@ -307,26 +300,44 @@ function OpsProgressSummary({ data, viewDate, nav }) {
       const countLabel = getOpsCountLabel(data, item, viewDate);
       results.push({ ...cat, progress, countLabel });
     });
-    // Room cleaning enrichment
-    const rs = getRoomCleaningStats(data, viewDate);
-    if (rs.totalNeeded > 0) {
-      const idx = results.findIndex(r => r.typeSub === "room_cleaning");
+
+    workflowRows.forEach((row) => {
+      const typeSub = SNAPSHOT_TO_TYPE_SUB[row.workflow_id];
+      if (!typeSub || row.total <= 0) return;
+      const idx = results.findIndex((result) => result.typeSub === typeSub);
+      const progress = row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0;
+      const countLabel = formatWorkflowCountLabel(row);
+
       if (idx >= 0) {
-        results[idx].progress = Math.round((rs.totalDone / rs.totalNeeded) * 100);
-        results[idx].countLabel = `${rs.totalDone}/${rs.totalNeeded} rooms`;
+        results[idx].progress = progress;
+        results[idx].countLabel = countLabel;
+      } else {
+        const item = OPERATIONS_CATALOG.find((candidate) => candidate.typeSub === typeSub);
+        if (item?.routeTo) {
+          results.push({
+            label: item.label.replace("Checklist", "").trim(),
+            typeSub,
+            route: item.routeTo,
+            progress,
+            countLabel,
+          });
+        }
       }
+    });
+
+    const bathingRow = workflowRowMap.bathing;
+    if (bathingRow && bathingRow.total > 0 && !results.some((result) => result.typeSub === "bathing")) {
+      results.unshift({
+        label: "Bathing",
+        typeSub: "bathing",
+        route: "ops-bathing",
+        progress: bathingRow.total > 0 ? Math.round((bathingRow.completed / bathingRow.total) * 100) : 0,
+        countLabel: formatWorkflowCountLabel(bathingRow),
+      });
     }
-    // PP enrichment
-    const pp = getPPStats(data, viewDate);
-    if (pp.requiredSessions > 0) {
-      const idx = results.findIndex(r => r.typeSub === "pp");
-      if (idx >= 0) {
-        results[idx].progress = Math.round((pp.completedSessions / pp.requiredSessions) * 100);
-        results[idx].countLabel = `${pp.completedSessions}/${pp.requiredSessions} sessions`;
-      }
-    }
+
     return results.filter((item) => item.route && item.label);
-  }, [data, viewDate]);
+  }, [data, viewDate, workflowRows, workflowRowMap]);
 
   if (summaries.length === 0) return null;
 
@@ -367,7 +378,7 @@ function OpsProgressSummary({ data, viewDate, nav }) {
 
 
 // ─── Staff Home (PCT / CSR) ──────────────────────────────────────────────────
-function StaffHome({ data, nav, profile, roleCode }) {
+function StaffHome({ data, nav, profile, roleCode, locationId }) {
   const td = todayStr();
   const now = new Date();
   const hour = now.getHours();
@@ -377,18 +388,65 @@ function StaffHome({ data, nav, profile, roleCode }) {
 
   // Load today's task progress
   const [taskStats, setTaskStats] = useState({ total: 0, done: 0 });
-  useEffect(() => {
-    const locationId = profile?.location_id;
-    if (!locationId) return;
+  const loadTaskStats = useCallback(() => {
+    const taskLocationId = profile?.location_id || locationId;
+    if (!taskLocationId) return;
     Promise.all([
-      supabase.from("role_page_config").select("task_id").eq("location_id", locationId).eq("role", roleCode || "pct").eq("is_active", true),
-      supabase.from("role_page_task_state").select("task_id, completed").eq("location_id", locationId).eq("role", roleCode || "pct").eq("task_date", td),
+      supabase.from("role_page_config").select("task_id").eq("location_id", taskLocationId).eq("role", roleCode || "pct").eq("is_active", true),
+      supabase.from("role_page_task_state").select("task_id, completed").eq("location_id", taskLocationId).eq("role", roleCode || "pct").eq("task_date", td),
     ]).then(([configRes, stateRes]) => {
       const total = configRes.data?.length || 0;
       const done = (stateRes.data || []).filter(r => r.completed).length;
       setTaskStats({ total, done });
     });
-  }, [profile?.location_id, roleCode, td]);
+  }, [locationId, profile?.location_id, roleCode, td]);
+
+  useEffect(() => {
+    loadTaskStats();
+  }, [loadTaskStats]);
+
+  useEffect(() => {
+    const taskLocationId = profile?.location_id || locationId;
+    if (!taskLocationId) return undefined;
+
+    const channel = supabase
+      .channel(`home-task-stats-${taskLocationId}-${roleCode || "pct"}-${td}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "role_page_task_state",
+          filter: `location_id=eq.${taskLocationId}`,
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old;
+          if (row?.role === (roleCode || "pct") && row?.task_date === td) {
+            loadTaskStats();
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "role_page_config",
+          filter: `location_id=eq.${taskLocationId}`,
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old;
+          if (String(row?.role || "").toLowerCase() === String(roleCode || "pct").toLowerCase()) {
+            loadTaskStats();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadTaskStats, locationId, profile?.location_id, roleCode, td]);
 
   const pct = taskStats.total > 0 ? Math.round((taskStats.done / taskStats.total) * 100) : 0;
 
@@ -440,14 +498,14 @@ function StaffHome({ data, nav, profile, roleCode }) {
       </div>
 
       {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} />
+      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
     </div>
   );
 }
 
 
 // ─── Manager Home (MOD / Supervisor) ─────────────────────────────────────────
-function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary }) {
+function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary, locationId }) {
   const td = todayStr();
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Manager";
   const occupancy = useMemo(() => computeOccupancyMetrics(data, td), [data, td]);
@@ -482,14 +540,14 @@ function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary }
       </div>
 
       {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} />
+      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
     </div>
   );
 }
 
 
 // ─── Admin/Owner Home ────────────────────────────────────────────────────────
-function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inventorySummary }) {
+function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inventorySummary, locationId }) {
   const td = todayStr();
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Admin";
   const occupancy = useMemo(() => computeOccupancyMetrics(data, td), [data, td]);
@@ -539,7 +597,7 @@ function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inven
       </div>
 
       {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} />
+      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
     </div>
   );
 }
@@ -705,12 +763,12 @@ function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analytic
   }), [briefingStats, data, today]);
 
   if (tier === "staff") {
-    return <StaffHome data={data} nav={nav} profile={profile} roleCode={roleCode} />;
+    return <StaffHome data={data} nav={nav} profile={profile} roleCode={roleCode} locationId={profile?.location_id || currentLocation} />;
   }
   if (tier === "manager") {
-    return <ManagerHome data={data} nav={nav} profile={profile} briefingSentences={briefingSentences} inventorySummary={inventorySummary} />;
+    return <ManagerHome data={data} nav={nav} profile={profile} briefingSentences={briefingSentences} inventorySummary={inventorySummary} locationId={profile?.location_id || currentLocation} />;
   }
-  return <AdminHome data={data} nav={nav} profile={profile} analyticsMode={analyticsMode} briefingSentences={briefingSentences} inventorySummary={inventorySummary} />;
+  return <AdminHome data={data} nav={nav} profile={profile} analyticsMode={analyticsMode} briefingSentences={briefingSentences} inventorySummary={inventorySummary} locationId={profile?.location_id || currentLocation} />;
 }
 
 export default HomePage;
