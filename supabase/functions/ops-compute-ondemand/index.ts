@@ -25,6 +25,13 @@ import {
   normalizeRollCallSession,
 } from "../_shared/roll-call-logic.ts";
 import { fetchPlaygroupAssignments } from "../_shared/playgroup-assignments.ts";
+import {
+  buildRoomOccupancyComputedItems,
+  buildRoomOccupancyLookup,
+  fetchRoomOccupancySnapshotForDate,
+  resolveRoomOccupancyLookupEntry,
+  type RoomOccupancyLookup,
+} from "../_shared/room-occupancy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,6 +39,67 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+function resolveCanonicalRoomEntry(
+  roomLookup: RoomOccupancyLookup | null | undefined,
+  input: {
+    reservationId?: string | null;
+    animalId?: string | null;
+    animalName?: string | null;
+    ownerFirstName?: string | null;
+    ownerLastName?: string | null;
+    ownerName?: string | null;
+  },
+) {
+  if (!roomLookup) return null;
+  return resolveRoomOccupancyLookupEntry(roomLookup, input);
+}
+
+function resolveCanonicalRoomLabel(
+  roomLookup: RoomOccupancyLookup | null | undefined,
+  input: Parameters<typeof resolveCanonicalRoomEntry>[1],
+  fallbackLabel?: string | null,
+): string {
+  const entry = resolveCanonicalRoomEntry(roomLookup, input);
+  return entry?.room_label || String(fallbackLabel || "").trim();
+}
+
+function normalizeTransferText(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildTransferOccupancyKey(input: {
+  animalId?: string | null;
+  animalName?: string | null;
+  ownerName?: string | null;
+  ownerFirstName?: string | null;
+  ownerLastName?: string | null;
+}): string {
+  const animalId = String(input.animalId || "").trim();
+  if (animalId) return `animal:${animalId}`;
+  const animalName = normalizeTransferText(input.animalName);
+  const ownerName = normalizeTransferText(
+    input.ownerName ||
+      [input.ownerFirstName || "", input.ownerLastName || ""].filter(Boolean).join(" "),
+  );
+  if (!animalName) return "";
+  return `name:${animalName}::${ownerName}`;
+}
+
+function buildTransferAssignmentMap(snapshot: any): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const assignment of snapshot?.assignments || []) {
+    if (!assignment?.room_label) continue;
+    const key = buildTransferOccupancyKey({
+      animalId: assignment.animal_id,
+      animalName: assignment.animal_name,
+      ownerName: assignment.owner_name,
+    });
+    if (!key) continue;
+    result[key] = assignment;
+  }
+  return result;
+}
 
 // ─── Date helpers ──────────────────────────────────────────────────────────
 
@@ -135,9 +203,10 @@ async function fetchReservationsForDate(
   supabase: any,
   locationId: string,
   targetDate: string,
+  roomLookup?: RoomOccupancyLookup | null,
 ): Promise<Record<string, any>> {
   const nextDay = addDays(targetDate, 1);
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services";
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services, room_assignment";
 
   const [{ data: activeRes }, { data: pendingRes }, { data: completedRes }] = await Promise.all([
     supabase.from("gingr_reservations").select(resSelect)
@@ -162,17 +231,36 @@ async function fetchReservationsForDate(
     if (seen.has(id)) continue;
     seen.add(id);
     const rd = r.raw_data || {};
+    const animalId = String(r.animal_gingr_id || rd.animal?.id || "");
+    const animalName = r.animal_name || rd.animal?.name || "";
+    const ownerFirstName = r.owner_first_name || rd.owner?.first_name || "";
+    const ownerLastName = r.owner_last_name || rd.owner?.last_name || "";
     result[id] = {
+      gingrReservationId: id,
       animal: {
-        id: r.animal_gingr_id || rd.animal?.id || "",
-        name: r.animal_name || rd.animal?.name || "",
+        id: animalId,
+        name: animalName,
       },
       owner: {
-        first_name: r.owner_first_name || rd.owner?.first_name || "",
-        last_name: r.owner_last_name || rd.owner?.last_name || "",
+        first_name: ownerFirstName,
+        last_name: ownerLastName,
       },
       reservation_type: rd.reservation_type || { type: r.reservation_type_name || "" },
       services: Array.isArray(r.services) ? r.services : (rd.services || []),
+      roomLabel: resolveCanonicalRoomLabel(
+        roomLookup,
+        {
+          reservationId: id,
+          animalId,
+          animalName,
+          ownerFirstName,
+          ownerLastName,
+        },
+        r.room_assignment || rd.run?.name || rd.room?.name || "",
+      ),
+      animalGingrId: animalId,
+      startDate: r.start_date || "",
+      checkInDate: r.check_in_date || null,
     };
   }
   return result;
@@ -357,7 +445,12 @@ async function getAvgCheckoutTimes(
 
 // ─── Compute bathing report (no Gingr web auth) ──────────────────────────
 
-async function computeBathingReport(supabase: any, locationId: string, targetDate: string): Promise<any> {
+async function computeBathingReport(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+  roomLookup?: RoomOccupancyLookup | null,
+): Promise<any> {
   const nextDay = addDays(targetDate, 1);
   const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
 
@@ -415,7 +508,17 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
           animalName: r.animal_name || rd.animal?.name || "Unknown",
           ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
           breed: rd.animal?.breed || "",
-          roomLabel: r.room_assignment || rd.run?.name || "",
+          roomLabel: resolveCanonicalRoomLabel(
+            roomLookup,
+            {
+              reservationId: String(r.gingr_id || ""),
+              animalId: animalGingrId,
+              animalName: r.animal_name || rd.animal?.name || "",
+              ownerFirstName: r.owner_first_name || rd.owner?.first_name || "",
+              ownerLastName: r.owner_last_name || rd.owner?.last_name || "",
+            },
+            r.room_assignment || rd.run?.name || "",
+          ),
           suiteType: resTypeName,
           reservationType: resTypeName,
           reservationCategory: classifyReservationCategory(resTypeName),
@@ -443,7 +546,17 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
 
     const svcsForAddons = rawSvcs.length > 0 ? rawSvcs : topSvcs;
     const { addonType, modifiers } = parseBathAddonsFromServices(svcsForAddons);
-    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const roomLabel = resolveCanonicalRoomLabel(
+      roomLookup,
+      {
+        reservationId: resId,
+        animalId: animalGingrId,
+        animalName: r.animal_name || rd.animal?.name || "",
+        ownerFirstName: r.owner_first_name || rd.owner?.first_name || "",
+        ownerLastName: r.owner_last_name || rd.owner?.last_name || "",
+      },
+      r.room_assignment || rd.run?.name || "",
+    );
 
     const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
       .filter(Boolean)
@@ -520,7 +633,17 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     if (animalGingrId) animalIds.push(animalGingrId);
 
     const resType = rd.reservation_type || {};
-    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const roomLabel = resolveCanonicalRoomLabel(
+      roomLookup,
+      {
+        reservationId: resId,
+        animalId: animalGingrId,
+        animalName: r.animal_name || rd.animal?.name || "",
+        ownerFirstName: r.owner_first_name || rd.owner?.first_name || "",
+        ownerLastName: r.owner_last_name || rd.owner?.last_name || "",
+      },
+      r.room_assignment || rd.run?.name || "",
+    );
     const fullResTypeName = resType.type || r.reservation_type_name || "";
 
     suggestedDogs.push({
@@ -572,13 +695,23 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     const endDate = rd.end_date || r.end_date || "";
     const resType = rd.reservation_type || {};
     const resTypeName = resType.type || r.reservation_type_name || "";
-    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const animalGingrId = String(override.animal_gingr_id || r.animal_gingr_id || rd.animal?.id || "").trim();
+    const roomLabel = resolveCanonicalRoomLabel(
+      roomLookup,
+      {
+        reservationId: String(r.gingr_id || ""),
+        animalId: animalGingrId,
+        animalName: r.animal_name || rd.animal?.name || "",
+        ownerFirstName: r.owner_first_name || rd.owner?.first_name || "",
+        ownerLastName: r.owner_last_name || rd.owner?.last_name || "",
+      },
+      r.room_assignment || rd.run?.name || "",
+    );
     const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
       .filter(Boolean)
       .map((n: string) => n.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())
       .filter(Boolean);
     const reservationNotes = notesParts.join(" | ");
-    const animalGingrId = String(override.animal_gingr_id || r.animal_gingr_id || rd.animal?.id || "").trim();
     const manualBathType = extractBathTypeFromName(String(override.bath_type || "")) || String(override.bath_type || "Standard");
     const manualBathModifiers = Array.isArray(override.bath_modifiers) ? override.bath_modifiers.filter(Boolean) : [];
 
@@ -657,45 +790,6 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     });
   }
 
-  // ─── Room occupancy: sibling/roommate grouping ─────────────────────────
-  const { data: roomOcc } = await supabase
-    .from("gingr_room_occupancy")
-    .select("run_name, animal_names")
-    .eq("location_id", locationId)
-    .eq("occupancy_date", targetDate)
-    .eq("occupied", true);
-
-  // Build map: dogName (lowercased) → { runName, ownerName, animals: [{name, owner}] }
-  const roomByDogName: Record<string, { runName: string; ownerName: string; allOccupants: Array<{ name: string; owner: string }> }> = {};
-  for (const row of (roomOcc || [])) {
-    if (!row.animal_names || !row.run_name) continue;
-    const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
-    const occupants: Array<{ name: string; owner: string }> = [];
-    for (const entry of entries) {
-      const parenGroups: string[] = [];
-      const parenRe = /\(([^)]+)\)/g;
-      let m;
-      while ((m = parenRe.exec(entry)) !== null) parenGroups.push(m[1].trim());
-      let dogName: string;
-      let ownerName = "";
-      if (parenGroups.length >= 1) {
-        ownerName = parenGroups[parenGroups.length - 1];
-        const lastIdx = entry.lastIndexOf(`(${ownerName})`);
-        dogName = entry.substring(0, lastIdx).trim();
-      } else {
-        dogName = entry.trim();
-      }
-      if (dogName) occupants.push({ name: dogName, owner: ownerName });
-    }
-    for (const occ of occupants) {
-      roomByDogName[occ.name.toLowerCase()] = {
-        runName: row.run_name,
-        ownerName: occ.owner,
-        allOccupants: occupants,
-      };
-    }
-  }
-
   // ─── Avg checkout time from cache ──────────────────────────────────────
   const allDogEntries = [...bathDogs, ...manualDogs, ...suggestedDogs];
   const uniqueAnimalIds = [...new Set(allDogEntries.map(d => d.animalGingrId).filter(Boolean))];
@@ -727,16 +821,25 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
 
     // Room/sibling/roommate grouping
-    const roomInfo = roomByDogName[d.animalName.toLowerCase()];
-    const roomName = roomInfo?.runName || d.roomLabel || "";
+    const roomEntry = resolveCanonicalRoomEntry(
+      roomLookup,
+      {
+        reservationId: d.gingrReservationId,
+        animalId: d.animalGingrId,
+        animalName: d.animalName,
+        ownerName: d.ownerName,
+      },
+    );
+    const roomName = roomEntry?.room_label || d.roomLabel || "";
     let roommates: string[] = [];
     let siblingGroup = "";
-    if (roomInfo && roomInfo.allOccupants.length > 1) {
-      siblingGroup = roomInfo.runName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-      const myOwner = roomInfo.ownerName;
-      for (const occ of roomInfo.allOccupants) {
-        if (occ.name.toLowerCase() === d.animalName.toLowerCase()) continue;
-        const label = occ.owner === myOwner ? `${occ.name} (sibling)` : `${occ.name} (${occ.owner})`;
+    if (roomEntry && roomEntry.occupants_today.length > 1) {
+      siblingGroup = (roomEntry.room_label || "")
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+      for (const occ of roomEntry.roommates) {
+        const label = occ.is_sibling ? `${occ.animal_name} (sibling)` : `${occ.animal_name} (${occ.owner_name})`;
         roommates.push(label);
       }
     }
@@ -877,6 +980,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
 function computeServiceReport(
   reservations: Record<string, any>,
   filterKeyword: string,
+  roomLookup?: RoomOccupancyLookup | null,
 ): any {
   const dogs: any[] = [];
   const seen = new Set<string>();
@@ -910,7 +1014,17 @@ function computeServiceReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${res.owner?.first_name || ""} ${res.owner?.last_name || ""}`.trim(),
-      roomLabel: res.roomLabel || res.room?.name || "",
+      roomLabel: resolveCanonicalRoomLabel(
+        roomLookup,
+        {
+          reservationId: String(res.gingrReservationId || res.gingr_id || ""),
+          animalId,
+          animalName: res.animal?.name || "",
+          ownerFirstName: res.owner?.first_name || "",
+          ownerLastName: res.owner?.last_name || "",
+        },
+        res.roomLabel || res.room?.name || "",
+      ),
       reservationType,
       services: matched.length > 0
         ? matched.map((s: any) => s.name || s.service_name || filterKeyword)
@@ -929,6 +1043,7 @@ async function computeEnrichmentReport(
   locationId: string,
   targetDate: string,
   localReservations: Record<string, any>,
+  roomLookup?: RoomOccupancyLookup | null,
 ): Promise<any> {
   const scheduled: any[] = [];
   const suggested: any[] = [];
@@ -969,7 +1084,17 @@ async function computeEnrichmentReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
-      roomLabel: res.roomLabel || res.room?.name || "",
+      roomLabel: resolveCanonicalRoomLabel(
+        roomLookup,
+        {
+          reservationId: String(res.gingrReservationId || res.gingr_id || ""),
+          animalId,
+          animalName: res.animal?.name || "",
+          ownerFirstName: ownerFirst,
+          ownerLastName: ownerLast,
+        },
+        res.roomLabel || res.room?.name || "",
+      ),
       services: enrichmentServices.map((s: any) => s.name || s.service_name || "enrichment"),
       status: scheduledForToday ? "scheduled" : "suggested",
       reservationType: resType,
@@ -1035,7 +1160,16 @@ async function computeEnrichmentReport(
           animalId,
           animalName: row?.animal_name || "",
           ownerName: `${row?.owner_first_name || ""} ${row?.owner_last_name || ""}`.trim(),
-          roomLabel: (row.raw_data as any)?.run?.name || "",
+          roomLabel: resolveCanonicalRoomLabel(
+            roomLookup,
+            {
+              animalId,
+              animalName: row?.animal_name || "",
+              ownerFirstName: row?.owner_first_name || "",
+              ownerLastName: row?.owner_last_name || "",
+            },
+            (row.raw_data as any)?.run?.name || "",
+          ),
           services: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment"),
           status: "scheduled",
           reservationType: row?.reservation_type_name || "",
@@ -1067,6 +1201,7 @@ async function computePrivatePlay(
   targetDate: string,
   reservations: Record<string, any>,
   privatePlayAnimalIds: Set<string>,
+  roomLookup?: RoomOccupancyLookup | null,
 ): Promise<any> {
   const dogs: any[] = [];
   const seenAnimalIds = new Set<string>();
@@ -1103,6 +1238,17 @@ async function computePrivatePlay(
           : hasCanonicalPrivatePlay
             ? "private_play_icon"
             : "private_play_service",
+        roomLabel: resolveCanonicalRoomLabel(
+          roomLookup,
+          {
+            reservationId: gingrReservationId,
+            animalId,
+            animalName,
+            ownerFirstName: res.owner?.first_name || "",
+            ownerLastName: res.owner?.last_name || "",
+          },
+          res.roomLabel || res.room?.name || "",
+        ),
       });
     }
   }
@@ -1134,7 +1280,17 @@ async function computePrivatePlay(
       reservationType: reservation.reservation_type?.type || "",
       requiredSessions: 3,
       source: "manual_override",
-      roomLabel: String(override.room_label_override || "").trim() || reservation.roomLabel || reservation.room?.name || "",
+      roomLabel: String(override.room_label_override || "").trim() || resolveCanonicalRoomLabel(
+        roomLookup,
+        {
+          reservationId: gingrReservationId,
+          animalId,
+          animalName: reservation.animal?.name || "",
+          ownerFirstName: reservation.owner?.first_name || "",
+          ownerLastName: reservation.owner?.last_name || "",
+        },
+        reservation.roomLabel || reservation.room?.name || "",
+      ),
     });
   }
 
@@ -1156,9 +1312,10 @@ function classifyRoomType(roomName: string): string {
   return "";
 }
 
-// ─── Compute lodging transfers (occupancy comparison) ─────────────────────
-// Compares gingr_room_occupancy between targetDate - 1 and targetDate.
-// An animal whose run_name changed between the two days is a transfer.
+// ─── Compute lodging transfers (canonical room occupancy comparison) ──────
+// Compares canonical room-occupancy snapshots between targetDate - 1 and
+// targetDate. An animal whose resolved room changed between the two days is a
+// transfer.
 
 async function computeLodgingTransfers(
   supabase: any,
@@ -1166,102 +1323,40 @@ async function computeLodgingTransfers(
   targetDate: string,
 ): Promise<any> {
   const prevDate = addDays(targetDate, -1);
-
-  // Fetch occupancy for both days in parallel
-  const [{ data: prevOcc }, { data: currOcc }] = await Promise.all([
-    supabase
-      .from("gingr_room_occupancy")
-      .select("run_name, animal_names, gingr_run_id")
-      .eq("location_id", locationId)
-      .eq("occupancy_date", prevDate)
-      .eq("occupied", true),
-    supabase
-      .from("gingr_room_occupancy")
-      .select("run_name, animal_names, gingr_run_id")
-      .eq("location_id", locationId)
-      .eq("occupancy_date", targetDate)
-      .eq("occupied", true),
+  const [prevSnapshot, currSnapshot] = await Promise.all([
+    fetchRoomOccupancySnapshotForDate({
+      supabase,
+      locationId,
+      date: prevDate,
+      includeCategories: ["boarding"],
+    }),
+    fetchRoomOccupancySnapshotForDate({
+      supabase,
+      locationId,
+      date: targetDate,
+      includeCategories: ["boarding"],
+    }),
   ]);
 
-  // Parse animal_names into { animalName -> { runName, ownerName } }
-  function parseOccupancy(rows: any[]): Record<string, { runName: string; ownerName: string }> {
-    const map: Record<string, { runName: string; ownerName: string }> = {};
-    for (const row of rows || []) {
-      if (!row.animal_names || !row.run_name) continue;
-      const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
-      for (const entry of entries) {
-        // Handle names like "Oslo Teddy (Ozzy) (Samantha  Schramak)"
-        // Owner name is always the LAST parenthesized group
-        const parenGroups: string[] = [];
-        const parenRe = /\(([^)]+)\)/g;
-        let m;
-        while ((m = parenRe.exec(entry)) !== null) {
-          parenGroups.push(m[1].trim());
-        }
-        let dogName: string;
-        let ownerName = "";
-        if (parenGroups.length >= 1) {
-          ownerName = parenGroups[parenGroups.length - 1];
-          // Dog name is everything before the last paren group
-          const lastParenIdx = entry.lastIndexOf(`(${ownerName})`);
-          dogName = entry.substring(0, lastParenIdx).trim();
-          // Remove trailing paren content that's part of the dog name's own parens
-          // e.g., "Oslo Teddy (Ozzy)" stays as-is
-        } else {
-          dogName = entry.trim();
-        }
-        if (dogName) {
-          map[dogName.toLowerCase()] = { runName: row.run_name, ownerName };
-        }
-      }
-    }
-    return map;
-  }
-
-  const prevMap = parseOccupancy(prevOcc);
-  const currMap = parseOccupancy(currOcc);
+  const prevMap = buildTransferAssignmentMap(prevSnapshot);
+  const currMap = buildTransferAssignmentMap(currSnapshot);
 
   const transfers: any[] = [];
 
   // Find animals present on BOTH days whose room changed
-  for (const [nameKey, curr] of Object.entries(currMap)) {
-    const prev = prevMap[nameKey];
+  for (const [assignmentKey, curr] of Object.entries(currMap)) {
+    const prev = prevMap[assignmentKey];
     if (!prev) continue; // new arrival, not a transfer
-    if (prev.runName === curr.runName) continue; // same room
+    if (prev.room_label === curr.room_label) continue; // same room
 
-    const previousRoom = prev.runName;
-    const currentRoom = curr.runName;
+    const previousRoom = String(prev.room_label || "");
+    const currentRoom = String(curr.room_label || "");
+    if (!previousRoom || !currentRoom) continue;
     const prevType = classifyRoomType(previousRoom);
     const currType = classifyRoomType(currentRoom);
     const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
 
-    // Reconstruct display name from the key (use current day entry for casing)
-    // Find the original-cased name from currOcc
-    let displayName = nameKey;
-    for (const row of currOcc || []) {
-      if (!row.animal_names) continue;
-      const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
-      for (const entry of entries) {
-        if (entry.toLowerCase().startsWith(nameKey)) {
-          // Extract just the dog name portion (before owner paren)
-          const parenGroups: string[] = [];
-          const parenRe = /\(([^)]+)\)/g;
-          let m;
-          while ((m = parenRe.exec(entry)) !== null) {
-            parenGroups.push(m[1].trim());
-          }
-          if (parenGroups.length >= 1) {
-            const ownerParen = parenGroups[parenGroups.length - 1];
-            const lastIdx = entry.lastIndexOf(`(${ownerParen})`);
-            displayName = entry.substring(0, lastIdx).trim();
-          } else {
-            displayName = entry.trim();
-          }
-          break;
-        }
-      }
-      if (displayName !== nameKey) break;
-    }
+    const displayName = String(curr.animal_name || prev.animal_name || "Unknown");
 
     const actionItems: string[] = [
       `Move belongings from ${previousRoom} to ${currentRoom}`,
@@ -1274,8 +1369,8 @@ async function computeLodgingTransfers(
 
     transfers.push({
       animalName: displayName || "Unknown",
-      animalGingrId: "",
-      ownerName: curr.ownerName || prev.ownerName || "",
+      animalGingrId: String(curr.animal_id || prev.animal_id || ""),
+      ownerName: String(curr.owner_name || prev.owner_name || ""),
       breed: "",
       weight: null,
       sizeCategory: null,
@@ -1385,8 +1480,22 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const roomOccupancySnapshot = await fetchRoomOccupancySnapshotForDate({
+      supabase: sb,
+      locationId,
+      date,
+      includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+    });
+    const roomOccupancyLookup = buildRoomOccupancyLookup(roomOccupancySnapshot);
+    const roomOccupancyComputed = buildRoomOccupancyComputedItems(roomOccupancySnapshot);
+
     // Compute all service reports in parallel
-    const reservations = await fetchReservationsForDate(sb, locationId, date);
+    const reservations = await fetchReservationsForDate(
+      sb,
+      locationId,
+      date,
+      roomOccupancyLookup,
+    );
     const ppAnimalIds = [...new Set(
       Object.values(reservations)
         .map((res: any) => String(res?.animal?.id || "").trim())
@@ -1407,9 +1516,9 @@ Deno.serve(async (req: Request) => {
     );
 
     const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
-      computeBathingReport(sb, locationId, date),
-      Promise.resolve(computeServiceReport(reservations, "pamper")),
-      computeEnrichmentReport(sb, locationId, date, reservations),
+      computeBathingReport(sb, locationId, date, roomOccupancyLookup),
+      Promise.resolve(computeServiceReport(reservations, "pamper", roomOccupancyLookup)),
+      computeEnrichmentReport(sb, locationId, date, reservations, roomOccupancyLookup),
       computeLodgingTransfers(sb, locationId, date),
     ]);
     const privatePlay = await computePrivatePlay(
@@ -1418,10 +1527,12 @@ Deno.serve(async (req: Request) => {
       date,
       reservations,
       privatePlayAnimalIds,
+      roomOccupancyLookup,
     );
 
     // Upsert results into lite_daily_ops so subsequent requests are cached
     await Promise.allSettled([
+      upsertComputedItems(sb, `ops_room_occupancy_${date}`, locationId, "room_occupancy", "room_occupancy", date, roomOccupancyComputed),
       upsertComputedItems(sb, `ops_bathing_${date}`, locationId, "bathing", "bathing", date, bathing),
       upsertComputedItems(sb, `ops_pp_${date}`, locationId, "pp", "pp", date, privatePlay),
       upsertComputedItems(sb, `ops_pamper_${date}`, locationId, "pamper", "pamper", date, pamper),
@@ -1437,6 +1548,7 @@ Deno.serve(async (req: Request) => {
         date,
         location_id: locationId,
         duration_ms: duration,
+        room_occupancy: roomOccupancyComputed,
         bathing,
         pamper,
         enrichment,
