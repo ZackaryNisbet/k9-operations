@@ -176,6 +176,7 @@ export function groupTrainingNotes(notes = []) {
   const generalNotes = [];
 
   notes.forEach((note) => {
+    if (!note || typeof note !== "object") return;
     if (note.template_item_id) {
       if (!itemNotes[note.template_item_id]) itemNotes[note.template_item_id] = [];
       itemNotes[note.template_item_id].push(note);
@@ -196,6 +197,7 @@ export function groupTrainingNotes(notes = []) {
 
 export function groupLaborEmployeeNotes(notes = []) {
   return notes.reduce((acc, note) => {
+    if (!note || typeof note !== "object") return acc;
     const key = note.labor_employee_id || "__unlinked__";
     if (!acc[key]) acc[key] = [];
     acc[key].push(note);
@@ -217,17 +219,20 @@ function toDateOnly(value) {
 export function buildLaborDashboardMetrics({ rosterSnapshot = [], employeeNotes = [], attendanceIncidents = [] }) {
   const now = new Date();
   const dayMs = 24 * 60 * 60 * 1000;
-  const activeRows = rosterSnapshot.filter((row) => isLaborEmployeeActive(row));
+  const cleanRosterSnapshot = rosterSnapshot.filter((row) => row && typeof row === "object");
+  const cleanEmployeeNotes = employeeNotes.filter((note) => note && typeof note === "object");
+  const cleanAttendanceIncidents = attendanceIncidents.filter((incident) => incident && typeof incident === "object");
+  const activeRows = cleanRosterSnapshot.filter((row) => isLaborEmployeeActive(row));
   const activeEmployeeIds = new Set(
     activeRows
       .map((row) => row.labor_employee_id || row.id)
       .filter(Boolean)
   );
-  const noteCount30d = employeeNotes.filter((note) => {
+  const noteCount30d = cleanEmployeeNotes.filter((note) => {
     const createdAt = note?.created_at ? new Date(note.created_at) : null;
     return createdAt && !Number.isNaN(createdAt.getTime()) && now - createdAt <= 30 * dayMs;
   }).length;
-  const attendanceMarkCount30d = attendanceIncidents.filter((incident) => {
+  const attendanceMarkCount30d = cleanAttendanceIncidents.filter((incident) => {
     if (activeEmployeeIds.size > 0 && !activeEmployeeIds.has(incident?.labor_employee_id)) return false;
     const incidentDate = toDateOnly(incident?.incident_date);
     return incidentDate && now - incidentDate <= 30 * dayMs;
@@ -236,7 +241,7 @@ export function buildLaborDashboardMetrics({ rosterSnapshot = [], employeeNotes 
     const startDate = toDateOnly(row.start_date);
     return startDate && now - startDate <= 30 * dayMs;
   }).length;
-  const terminationCount30d = rosterSnapshot.filter((row) => {
+  const terminationCount30d = cleanRosterSnapshot.filter((row) => {
     const endDate = toDateOnly(row.end_date);
     return endDate && now - endDate <= 30 * dayMs;
   }).length;

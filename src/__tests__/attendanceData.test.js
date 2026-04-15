@@ -65,8 +65,9 @@ describe("attendanceData helpers", () => {
       },
     });
 
-    expect(feed.map((entry) => entry.id)).toEqual(["action:action-1", "incident:incident-1"]);
+    expect(feed.map((entry) => entry.id)).toEqual(["action:action-1", "mark:incident-1"]);
     expect(feed[0].typeLabel).toBe("Written Warning");
+    expect(feed[1].kind).toBe("mark");
     expect(feed[1].typeLabel).toBe("Tardy");
   });
 

@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, todayStr, fmtDate, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
+import { C, todayStr, fmtDate, fmtDateFull, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
@@ -25,6 +25,7 @@ import {
   normalizeOptionalUuid,
   resolveTrainingLocationId,
 } from "../trainingData";
+import AttendanceTrackerPage from "./AttendancePage";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ const TABS = [
   { id: "home", label: "Home" },
   { id: "training", label: "Training" },
   { id: "templates", label: "Templates" },
+  { id: "attendance", label: "Attendance" },
   { id: "notes", label: "Notes" },
 ];
 
@@ -75,6 +77,27 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Reviews", key: "review60", label: "60-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
   { section: "Reviews", key: "review90", label: "90-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
 ];
+
+function normalizePositionTitle(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function getDefaultPositionWeight(value = "") {
+  const title = normalizePositionTitle(value);
+  if (!title) return -1;
+  if (/(director|regional)/.test(title)) return 100;
+  if (/(general manager|\bgm\b)/.test(title)) return 90;
+  if (/(assistant manager|\bagm\b)/.test(title)) return 80;
+  if (/manager/.test(title)) return 70;
+  if (/(supervisor|lead)/.test(title)) return 60;
+  if (/(customer service representative|\bcsr\b)/.test(title)) return 40;
+  if (/(pet care technician|\bpct\b|technician)/.test(title)) return 30;
+  return 0;
+}
+
+function formatLaborDate(value) {
+  return value ? fmtDateFull(value) : "—";
+}
 
 function normalizeLaborContactEmail(value) {
   const trimmed = String(value || "").trim();
@@ -154,6 +177,10 @@ function splitEmployeeName(fullName = "") {
   };
 }
 
+function isObjectRow(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function slugifyTemplateName(value = "") {
   return String(value || "")
     .toLowerCase()
@@ -204,16 +231,16 @@ function getReviewStatusPresentation(row, reviewKey) {
   const doneStatuses = new Set(["completed", "complete", "current"]);
 
   if (doneStatuses.has(status)) {
-    return { label: fmtDate(dueDate), tone: C.suc, background: C.sucLt };
+    return { label: formatLaborDate(dueDate), tone: C.suc, background: C.sucLt };
   }
   if (diffDays < 0) {
-    return { label: fmtDate(dueDate), tone: C.dan, background: C.danLt };
+    return { label: formatLaborDate(dueDate), tone: C.dan, background: C.danLt };
   }
   if (diffDays <= REVIEW_WARNING_WINDOW_DAYS) {
-    return { label: fmtDate(dueDate), tone: C.warn, background: C.warnLt };
+    return { label: formatLaborDate(dueDate), tone: C.warn, background: C.warnLt };
   }
 
-  return { label: fmtDate(dueDate), tone: C.suc, background: C.sucLt };
+  return { label: formatLaborDate(dueDate), tone: C.suc, background: C.sucLt };
 }
 
 function getDueSoonLabel(value) {
@@ -300,6 +327,11 @@ function applyLaborRosterFilters(rows, filters) {
 export default function TrainingPage({ data, save, nav, profile, addGlobalToast }) {
   const [tab, setTab] = useState("home");
   const [loading, setLoading] = useState(true);
+  const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
+  const [trainingBundleLoading, setTrainingBundleLoading] = useState(false);
+  const [supportBundleLoaded, setSupportBundleLoaded] = useState(false);
+  const [supportBundleLoading, setSupportBundleLoading] = useState(false);
+  const [attendanceView, setAttendanceView] = useState("input");
 
   // Data state
   const [templates, setTemplates] = useState([]);
@@ -327,6 +359,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [allTrainingNotes, setAllTrainingNotes] = useState([]);
   const [serverDashboardMetrics, setServerDashboardMetrics] = useState(null);
   const [resolvedLaborLocationId, setResolvedLaborLocationId] = useState("");
+  const [positionHierarchy, setPositionHierarchy] = useState([]);
+  const [hierarchyPersistenceAvailable, setHierarchyPersistenceAvailable] = useState(true);
 
   // UI state
   const [showNewRecord, setShowNewRecord] = useState(false);
@@ -409,7 +443,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [noteFilterType, setNoteFilterType] = useState("all");
   const [noteFilterDateRange, setNoteFilterDateRange] = useState("all");
   const [showInactiveRoster, setShowInactiveRoster] = useState(false);
-  const [rosterSort, setRosterSort] = useState({ key: "last_name", direction: "asc" });
+  const [rosterSort, setRosterSort] = useState({ key: "hierarchy", direction: "asc" });
+  const [showHierarchyManager, setShowHierarchyManager] = useState(false);
+  const [savingHierarchy, setSavingHierarchy] = useState(false);
+  const [hierarchyDraft, setHierarchyDraft] = useState([]);
+  const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
   const [rosterFilters, setRosterFilters] = useState({});
   const [rosterDraftFilters, setRosterDraftFilters] = useState({});
   const [savedRosterViews, setSavedRosterViews] = useState([]);
@@ -472,54 +510,51 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     prevRosterFilterOpen.current = showRosterFilterPanel;
   }, [rosterFilters, showRosterFilterPanel]);
 
-  // ── Load data ──
-  const loadData = useCallback(async () => {
+  const loadCoreData = useCallback(async () => {
     setLoading(true);
+    setTrainingBundleLoaded(false);
+    setTrainingBundleLoading(false);
+    setSupportBundleLoaded(false);
+    setSupportBundleLoading(false);
+    setTemplates([]);
+    setTemplateVersions([]);
+    setAllTemplateVersions([]);
+    setReviewTemplates([]);
+    setReviewTemplateVersions([]);
+    setAllReviewTemplateVersions([]);
+    setSections([]);
+    setItems([]);
+    setReviewSections([]);
+    setReviewItems([]);
+    setLaborEmployeeNotes([]);
+    setLaborEmployeeDocuments([]);
+    setLaborAttendanceIncidents([]);
+    setReviewInstances([]);
+    setReviewResponses([]);
+    setEmployeeCertifications([]);
+    setAllTrainingNotes([]);
     try {
       const resolvedLocationId = await resolveTrainingLocationId(supabase, locationRef, actorUserId);
       if (!resolvedLocationId) {
         setResolvedLaborLocationId("");
-        setTemplates([]);
-        setTemplateVersions([]);
-        setAllTemplateVersions([]);
-        setReviewTemplates([]);
-        setReviewTemplateVersions([]);
-        setAllReviewTemplateVersions([]);
         setRecords([]);
         setLaborEmployees([]);
         setRosterSnapshot([]);
-        setSections([]);
-        setItems([]);
-        setReviewSections([]);
-        setReviewItems([]);
-        setLaborEmployeeNotes([]);
-        setLaborEmployeeDocuments([]);
-        setReviewInstances([]);
-        setReviewResponses([]);
-        setEmployeeCertifications([]);
-        setAllTrainingNotes([]);
         setServerDashboardMetrics(null);
+        setPositionHierarchy([]);
+        setHierarchyPersistenceAvailable(true);
         setLoading(false);
-        return;
+        return {
+          resolvedLocationId: "",
+          records: [],
+          laborEmployees: [],
+          rosterSnapshot: [],
+          positionHierarchy: [],
+        };
       }
       setResolvedLaborLocationId(resolvedLocationId);
 
-      const [
-        templateRes,
-        reviewTemplateRes,
-        recordRes,
-        employeeRes,
-      ] = await Promise.all([
-        supabase
-          .from("training_templates")
-          .select("*")
-          .or(buildTrainingTemplateScopeClause(resolvedLocationId))
-          .order("name"),
-        supabase
-          .from("review_templates")
-          .select("*")
-          .or(buildTrainingTemplateScopeClause(resolvedLocationId))
-          .order("name"),
+      const [recordRes, employeeRes] = await Promise.all([
         supabase
           .from("training_records")
           .select("*")
@@ -532,68 +567,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           .order("full_name"),
       ]);
 
-      if (templateRes.error) throw templateRes.error;
-      if (reviewTemplateRes.error) throw reviewTemplateRes.error;
       if (recordRes.error) throw recordRes.error;
       if (employeeRes.error) throw employeeRes.error;
 
-      const templateRows = templateRes.data || [];
-      const reviewTemplateRows = reviewTemplateRes.data || [];
-      const recordRows = recordRes.data || [];
-      const employeeRows = employeeRes.data || [];
-      const recordIds = recordRows.map((record) => record.id);
+      let hierarchyRows = [];
+      const hierarchyRes = await supabase
+        .from("labor_position_hierarchy")
+        .select("*")
+        .eq("location_id", resolvedLocationId)
+        .order("sort_order", { ascending: true });
 
-      const [trainingVersionRes, reviewVersionRes] = await Promise.all([
-        templateRows.length > 0
-          ? supabase
-              .from("training_template_versions")
-              .select("*")
-              .in("template_id", templateRows.map((template) => template.id))
-              .order("template_id")
-              .order("version_no", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-        reviewTemplateRows.length > 0
-          ? supabase
-              .from("review_template_versions")
-              .select("*")
-              .in("template_id", reviewTemplateRows.map((template) => template.id))
-              .order("template_id")
-              .order("version_no", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-
-      if (trainingVersionRes.error) throw trainingVersionRes.error;
-      if (reviewVersionRes.error) throw reviewVersionRes.error;
-
-      const allVersionRows = trainingVersionRes.data || [];
-      const currentVersionRows = allVersionRows.filter((version) => version.is_current && version.status === "published");
-      const allReviewVersionRows = reviewVersionRes.data || [];
-      const currentReviewVersionRows = allReviewVersionRows.filter((version) => version.is_current && version.status === "published");
-
-      const [
-        sectionRes,
-        itemRes,
-        reviewSectionRes,
-        reviewItemRes,
-      ] = await Promise.all([
-        allVersionRows.length > 0
-          ? supabase.from("training_template_sections").select("*").in("template_version_id", allVersionRows.map((version) => version.id)).order("sequence_order")
-          : Promise.resolve({ data: [], error: null }),
-        allVersionRows.length > 0
-          ? supabase.from("training_template_items").select("*").in("template_version_id", allVersionRows.map((version) => version.id)).order("sequence_order")
-          : Promise.resolve({ data: [], error: null }),
-        allReviewVersionRows.length > 0
-          ? supabase.from("review_sections").select("*").in("template_version_id", allReviewVersionRows.map((version) => version.id)).order("sequence_order")
-          : Promise.resolve({ data: [], error: null }),
-        allReviewVersionRows.length > 0
-          ? supabase.from("review_items").select("*").in("template_version_id", allReviewVersionRows.map((version) => version.id)).order("sequence_order")
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-
-      if (sectionRes.error) throw sectionRes.error;
-      if (itemRes.error) throw itemRes.error;
-      if (reviewSectionRes.error) throw reviewSectionRes.error;
-      if (reviewItemRes.error) throw reviewItemRes.error;
+      if (hierarchyRes.error) {
+        const missingHierarchyTable = hierarchyRes.error.code === "PGRST205"
+          || hierarchyRes.error.code === "42P01"
+          || /labor_position_hierarchy/i.test(hierarchyRes.error.message || "");
+        if (!missingHierarchyTable) throw hierarchyRes.error;
+        setHierarchyPersistenceAvailable(false);
+      } else {
+        hierarchyRows = hierarchyRes.data || [];
+        setHierarchyPersistenceAvailable(true);
+      }
 
       let rosterRows = [];
       let metricsFromServer = null;
@@ -618,7 +611,128 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         }
       }
 
-      const employeeIds = employeeRows.map((employee) => employee.id);
+      const nextRecords = recordRes.data || [];
+      const nextLaborEmployees = employeeRes.data || [];
+      const nextHierarchy = hierarchyRows;
+
+      setRecords(nextRecords);
+      setLaborEmployees(nextLaborEmployees);
+      setRosterSnapshot(rosterRows);
+      setServerDashboardMetrics(metricsFromServer);
+      setPositionHierarchy(nextHierarchy);
+      setLoading(false);
+      return {
+        resolvedLocationId,
+        records: nextRecords,
+        laborEmployees: nextLaborEmployees,
+        rosterSnapshot: rosterRows,
+        positionHierarchy: nextHierarchy,
+      };
+    } catch (err) {
+      console.error("Labor core load error:", err);
+      addGlobalToast("Failed to load labor data", "error");
+    }
+    setLoading(false);
+    return null;
+  }, [actorUserId, addGlobalToast, locationRef]);
+
+  const loadTrainingBundle = useCallback(async (force = false, locationOverride = null) => {
+    const locationIdForBundle = locationOverride || resolvedLaborLocationId;
+    if (!locationIdForBundle || (!force && (trainingBundleLoaded || trainingBundleLoading))) return;
+    setTrainingBundleLoading(true);
+    try {
+      const [templateRes, reviewTemplateRes] = await Promise.all([
+        supabase
+          .from("training_templates")
+          .select("*")
+          .or(buildTrainingTemplateScopeClause(locationIdForBundle))
+          .order("name"),
+        supabase
+          .from("review_templates")
+          .select("*")
+          .or(buildTrainingTemplateScopeClause(locationIdForBundle))
+          .order("name"),
+      ]);
+
+      if (templateRes.error) throw templateRes.error;
+      if (reviewTemplateRes.error) throw reviewTemplateRes.error;
+
+      const templateRows = templateRes.data || [];
+      const reviewTemplateRows = reviewTemplateRes.data || [];
+
+      const [trainingVersionRes, reviewVersionRes] = await Promise.all([
+        templateRows.length > 0
+          ? supabase
+              .from("training_template_versions")
+              .select("*")
+              .in("template_id", templateRows.map((template) => template.id))
+              .order("template_id")
+              .order("version_no", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        reviewTemplateRows.length > 0
+          ? supabase
+              .from("review_template_versions")
+              .select("*")
+              .in("template_id", reviewTemplateRows.map((template) => template.id))
+              .order("template_id")
+              .order("version_no", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (trainingVersionRes.error) throw trainingVersionRes.error;
+      if (reviewVersionRes.error) throw reviewVersionRes.error;
+
+      const allVersionRows = trainingVersionRes.data || [];
+      const allReviewVersionRows = reviewVersionRes.data || [];
+
+      const [sectionRes, itemRes, reviewSectionRes, reviewItemRes] = await Promise.all([
+        allVersionRows.length > 0
+          ? supabase.from("training_template_sections").select("*").in("template_version_id", allVersionRows.map((version) => version.id)).order("sequence_order")
+          : Promise.resolve({ data: [], error: null }),
+        allVersionRows.length > 0
+          ? supabase.from("training_template_items").select("*").in("template_version_id", allVersionRows.map((version) => version.id)).order("sequence_order")
+          : Promise.resolve({ data: [], error: null }),
+        allReviewVersionRows.length > 0
+          ? supabase.from("review_sections").select("*").in("template_version_id", allReviewVersionRows.map((version) => version.id)).order("sequence_order")
+          : Promise.resolve({ data: [], error: null }),
+        allReviewVersionRows.length > 0
+          ? supabase.from("review_items").select("*").in("template_version_id", allReviewVersionRows.map((version) => version.id)).order("sequence_order")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (sectionRes.error) throw sectionRes.error;
+      if (itemRes.error) throw itemRes.error;
+      if (reviewSectionRes.error) throw reviewSectionRes.error;
+      if (reviewItemRes.error) throw reviewItemRes.error;
+
+      setTemplates(templateRows);
+      setTemplateVersions(allVersionRows.filter((version) => version.is_current && version.status === "published"));
+      setAllTemplateVersions(allVersionRows);
+      setReviewTemplates(reviewTemplateRows);
+      setReviewTemplateVersions(allReviewVersionRows.filter((version) => version.is_current && version.status === "published"));
+      setAllReviewTemplateVersions(allReviewVersionRows);
+      setSections(sectionRes.data || []);
+      setItems(itemRes.data || []);
+      setReviewSections(reviewSectionRes.data || []);
+      setReviewItems(reviewItemRes.data || []);
+      setTrainingBundleLoaded(true);
+    } catch (err) {
+      console.error("Labor training bundle load error:", err);
+      addGlobalToast("Failed to load training data", "error");
+    }
+    setTrainingBundleLoading(false);
+  }, [addGlobalToast, resolvedLaborLocationId, trainingBundleLoaded, trainingBundleLoading]);
+
+  const loadSupportBundle = useCallback(async (force = false, seedData = null) => {
+    const locationIdForBundle = seedData?.resolvedLocationId || resolvedLaborLocationId;
+    if (!locationIdForBundle || (!force && (supportBundleLoaded || supportBundleLoading))) return;
+    setSupportBundleLoading(true);
+    try {
+      const employeeSource = Array.isArray(seedData?.laborEmployees) ? seedData.laborEmployees : laborEmployees;
+      const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
+      const employeeIds = employeeSource.map((employee) => employee.id);
+      const recordIds = recordSource.map((record) => record.id);
+
       const [noteRes, documentRes, attendanceIncidentRes, reviewInstanceRes, certificationRes] = await Promise.all([
         employeeIds.length > 0
           ? supabase.from("labor_employee_notes").select("*").in("labor_employee_id", employeeIds).order("created_at", { ascending: false })
@@ -664,19 +778,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       if (responseRes.error) throw responseRes.error;
       if (trainingNoteRes.error) throw trainingNoteRes.error;
 
-      setTemplates(templateRows);
-      setTemplateVersions(currentVersionRows);
-      setAllTemplateVersions(allVersionRows);
-      setReviewTemplates(reviewTemplateRows);
-      setReviewTemplateVersions(currentReviewVersionRows);
-      setAllReviewTemplateVersions(allReviewVersionRows);
-      setRecords(recordRows);
-      setLaborEmployees(employeeRows);
-      setRosterSnapshot(rosterRows);
-      setSections(sectionRes.data || []);
-      setItems(itemRes.data || []);
-      setReviewSections(reviewSectionRes.data || []);
-      setReviewItems(reviewItemRes.data || []);
       setLaborEmployeeNotes(noteRes.data || []);
       setLaborEmployeeDocuments(documentRes.data || []);
       setLaborAttendanceIncidents(attendanceIncidentRes.data || []);
@@ -684,15 +785,37 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       setReviewResponses(responseRes.data || []);
       setEmployeeCertifications(certificationRes.data || []);
       setAllTrainingNotes(trainingNoteRes.data || []);
-      setServerDashboardMetrics(metricsFromServer);
+      setSupportBundleLoaded(true);
     } catch (err) {
-      console.error("Labor data load error:", err);
-      addGlobalToast("Failed to load labor data", "error");
+      console.error("Labor support bundle load error:", err);
+      addGlobalToast("Failed to load labor notes and reviews", "error");
     }
-    setLoading(false);
-  }, [actorUserId, addGlobalToast, locationRef]);
+    setSupportBundleLoading(false);
+  }, [addGlobalToast, laborEmployees, records, resolvedLaborLocationId, supportBundleLoaded, supportBundleLoading]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  const refreshLaborData = useCallback(async ({ includeTraining = true, includeSupport = true } = {}) => {
+    const coreData = await loadCoreData();
+    if (includeTraining) {
+      await loadTrainingBundle(true, coreData?.resolvedLocationId || null);
+    }
+    if (includeSupport) {
+      await loadSupportBundle(true, coreData);
+    }
+  }, [loadCoreData, loadSupportBundle, loadTrainingBundle]);
+
+  useEffect(() => { loadCoreData(); }, [loadCoreData]);
+
+  useEffect(() => {
+    if (tab === "training" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
+      loadTrainingBundle();
+    }
+  }, [loadTrainingBundle, previewTemplateId, selectedRecordId, selectedReviewInstanceId, showNewRecord, tab]);
+
+  useEffect(() => {
+    if (tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
+      loadSupportBundle();
+    }
+  }, [loadSupportBundle, selectedLaborEmployeeId, selectedReviewInstanceId, tab]);
 
   // Load record detail data when a record is selected
   useEffect(() => {
@@ -787,19 +910,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const groupedNotes = useMemo(() => groupTrainingNotes(notes), [notes]);
   const selectedEmployeeNotes = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return laborNotesByEmployee[selectedLaborEmployeeView.id] || [];
+    return (laborNotesByEmployee[selectedLaborEmployeeView.id] || []).filter(isObjectRow);
   }, [laborNotesByEmployee, selectedLaborEmployeeView]);
   const selectedEmployeeDocuments = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return laborEmployeeDocuments.filter((document) => document.labor_employee_id === selectedLaborEmployeeView.id);
+    return laborEmployeeDocuments.filter((document) => isObjectRow(document) && document.labor_employee_id === selectedLaborEmployeeView.id);
   }, [laborEmployeeDocuments, selectedLaborEmployeeView]);
   const selectedEmployeeReviewInstances = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return reviewInstances.filter((instance) => instance.labor_employee_id === selectedLaborEmployeeView.id);
+    return reviewInstances.filter((instance) => isObjectRow(instance) && instance.labor_employee_id === selectedLaborEmployeeView.id);
   }, [reviewInstances, selectedLaborEmployeeView]);
   const selectedEmployeeCertifications = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return employeeCertifications.filter((row) => row.labor_employee_id === selectedLaborEmployeeView.id);
+    return employeeCertifications.filter((row) => isObjectRow(row) && row.labor_employee_id === selectedLaborEmployeeView.id);
   }, [employeeCertifications, selectedLaborEmployeeView]);
   const selectedEmployeeNotes30d = useMemo(() => {
     const now = Date.now();
@@ -812,6 +935,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     if (!selectedLaborEmployeeView?.id) return [];
     const now = Date.now();
     return laborAttendanceIncidents.filter((incident) => {
+      if (!isObjectRow(incident)) return false;
       if (incident.labor_employee_id !== selectedLaborEmployeeView.id) return false;
       const incidentDate = incident?.incident_date ? new Date(`${incident.incident_date}T12:00:00`).getTime() : NaN;
       return Number.isFinite(incidentDate) && now - incidentDate <= 30 * 24 * 60 * 60 * 1000;
@@ -1109,7 +1233,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Training record created for ${newEmployeeName.trim()}`, "success");
       setShowNewRecord(false);
       resetNewRecordForm();
-      await loadData();
+      await refreshLaborData();
       setSelectedRecordId(record.id);
       setTab("training");
     } catch (err) {
@@ -1117,7 +1241,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to create record: " + (err.message || "Unknown error"), "error");
     }
     setCreating(false);
-  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, loadData, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId]);
+  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId, refreshLaborData]);
 
   const resetNewRecordForm = () => {
     setNewLaborEmployeeId("");
@@ -1398,11 +1522,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Employee added to labor roster", "success");
     }
 
-    await loadData();
+    await refreshLaborData();
     setSavingLaborEmployee(false);
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
-  }, [actorName, actorUserId, addGlobalToast, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, loadData, persistLaborEmployeeContact, resetLaborEmployeeEditor]);
+  }, [actorName, actorUserId, addGlobalToast, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
 
   const handleCreateLaborEmployeeInline = useCallback(async () => {
     const fullName = `${newRosterEmployeeFirstName} ${newRosterEmployeeLastName}`.replace(/\s+/g, " ").trim();
@@ -1441,7 +1565,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         return;
       }
     }
-    await loadData();
+    await refreshLaborData();
     setSavingInlineLaborEmployee(false);
     setJustCreatedLaborEmployeeId(createdEmployee?.id || null);
     closeInlineLaborEmployeeComposer();
@@ -1452,7 +1576,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     addGlobalToast,
     closeInlineLaborEmployeeComposer,
     laborLocationRef,
-    loadData,
+    refreshLaborData,
     newRosterEmployeeEndDate,
     newRosterEmployeeEmail,
     newRosterEmployeeFirstName,
@@ -1488,13 +1612,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const draftVersion = Array.isArray(data) ? data[0] : data;
-    await loadData();
+    await refreshLaborData();
     if (draftVersion?.id) {
       setPreviewTemplateVersionId(draftVersion.id);
     }
     addGlobalToast("Template draft created", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, loadData, previewTemplate, previewTemplateId, previewTemplateKind]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshLaborData]);
 
   const resetCreateTemplateModal = useCallback(() => {
     setShowCreateTemplateModal(false);
@@ -1585,7 +1709,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     }
 
     const createdDraft = Array.isArray(draftData) ? draftData[0] : draftData;
-    await loadData();
+    await refreshLaborData();
     setPreviewTemplateKind(isReview ? "review" : "training");
     setPreviewTemplateId(insertedTemplate.id);
     setPreviewTemplateVersionId(createdDraft?.id || null);
@@ -1601,7 +1725,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     createTemplateName,
     createTemplateRoleScopesText,
     laborLocationRef,
-    loadData,
+    refreshLaborData,
     resetCreateTemplateModal,
     reviewTemplates,
     templates,
@@ -1623,13 +1747,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const publishedVersion = Array.isArray(data) ? data[0] : data;
-    await loadData();
+    await refreshLaborData();
     if (publishedVersion?.id) {
       setPreviewTemplateVersionId(publishedVersion.id);
     }
     addGlobalToast("Template version published", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, loadData, previewTemplate, previewTemplateKind]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshLaborData]);
 
   const handleRestoreTemplateVersion = useCallback(async () => {
     if (!previewTemplateId || !previewTemplate?.version?.id) return;
@@ -1647,13 +1771,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const restoredVersion = Array.isArray(data) ? data[0] : data;
-    await loadData();
+    await refreshLaborData();
     if (restoredVersion?.id) {
       setPreviewTemplateVersionId(restoredVersion.id);
     }
     addGlobalToast("Historical version restored into a new draft", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, loadData, previewTemplate, previewTemplateId, previewTemplateKind]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshLaborData]);
 
   const handleUpdateTemplateName = useCallback(async (value) => {
     if (!previewTemplateId) return;
@@ -1674,9 +1798,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to update template name", "error");
       return;
     }
-    await loadData();
+    await refreshLaborData();
     addGlobalToast("Template name updated", "success");
-  }, [actorUserId, addGlobalToast, loadData, previewTemplateId, previewTemplateKind, reviewTemplates, templates]);
+  }, [actorUserId, addGlobalToast, previewTemplateId, previewTemplateKind, reviewTemplates, templates, refreshLaborData]);
 
   const handleUpdateTemplateSection = useCallback(async (sectionId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
@@ -1688,9 +1812,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to update section", "error");
       return false;
     }
-    await loadData();
+    await refreshLaborData();
     return true;
-  }, [addGlobalToast, loadData, previewTemplateKind]);
+  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
 
   const handleUpdateTemplateItem = useCallback(async (itemId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
@@ -1702,9 +1826,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return false;
     }
-    await loadData();
+    await refreshLaborData();
     return true;
-  }, [addGlobalToast, loadData, previewTemplateKind]);
+  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
 
   const handleAddTemplateSection = useCallback(async (parentSectionId = null) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -1742,9 +1866,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to add section", "error");
       return;
     }
-    await loadData();
+    await refreshLaborData();
     addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
-  }, [addGlobalToast, loadData, previewTemplate, previewTemplateKind, reviewSections, sections]);
+  }, [addGlobalToast, previewTemplate, previewTemplateKind, reviewSections, sections, refreshLaborData]);
 
   const handleAddTemplateItem = useCallback(async (sectionId) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -1781,9 +1905,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return;
     }
-    await loadData();
+    await refreshLaborData();
     addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
-  }, [addGlobalToast, items, loadData, previewTemplate, previewTemplateKind, reviewItems]);
+  }, [addGlobalToast, items, previewTemplate, previewTemplateKind, reviewItems, refreshLaborData]);
 
   const handleDeleteTemplateItem = useCallback(async (itemId) => {
     const { error } = await supabase
@@ -1794,9 +1918,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return;
     }
-    await loadData();
+    await refreshLaborData();
     addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
-  }, [addGlobalToast, loadData, previewTemplateKind]);
+  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
 
   const handleDeleteTemplateSection = useCallback(async (sectionId) => {
     if (previewTemplateKind === "review") {
@@ -1819,7 +1943,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         addGlobalToast("Failed to delete review section", "error");
         return;
       }
-      await loadData();
+      await refreshLaborData();
       addGlobalToast("Review section deleted", "success");
       return;
     }
@@ -1867,13 +1991,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to delete section", "error");
       return;
     }
-    await loadData();
+    await refreshLaborData();
     addGlobalToast("Section deleted", "success");
-  }, [addGlobalToast, items, loadData, previewTemplateKind, reviewItems, sections]);
+  }, [addGlobalToast, items, previewTemplateKind, reviewItems, sections, refreshLaborData]);
 
   const openLaborEmployeeProfile = useCallback((employeeId) => {
+    setSelectedRecordId(null);
     setSelectedLaborEmployeeId(employeeId);
     setSelectedReviewInstanceId(null);
+    setShowNewRecord(false);
+    setShowRecordConfig(false);
+    setPreviewTemplateId(null);
+    setPreviewTemplateVersionId(null);
   }, []);
 
   const handleAddEmployeeNote = useCallback(async () => {
@@ -1891,10 +2020,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     }
     setEmployeeNoteText("");
     setEmployeeNoteType("general");
-    await loadData();
+    await refreshLaborData();
     setSavingEmployeeNote(false);
     addGlobalToast("Employee note added", "success");
-  }, [addGlobalToast, appendEmployeeNote, employeeNoteText, employeeNoteType, loadData, selectedLaborEmployeeView]);
+  }, [addGlobalToast, appendEmployeeNote, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData]);
 
   const handleAddGlobalEmployeeNote = useCallback(async () => {
     if (!globalNoteEmployeeId || !globalNoteText.trim()) {
@@ -1916,10 +2045,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setGlobalNoteType("general");
     setGlobalNoteText("");
     setShowGlobalNoteModal(false);
-    await loadData();
+    await refreshLaborData();
     setSavingGlobalNote(false);
     addGlobalToast("Employee note added", "success");
-  }, [addGlobalToast, appendEmployeeNote, globalNoteEmployeeId, globalNoteText, globalNoteType, loadData]);
+  }, [addGlobalToast, appendEmployeeNote, globalNoteEmployeeId, globalNoteText, globalNoteType, refreshLaborData]);
 
   const openCprEditor = useCallback(() => {
     const currentCertification = selectedEmployeeCertifications[0];
@@ -1963,11 +2092,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       setSavingCpr(false);
       return;
     }
-    await loadData();
+    await refreshLaborData();
     setSavingCpr(false);
     setShowCprEditor(false);
     addGlobalToast("CPR certification updated", "success");
-  }, [actorUserId, addGlobalToast, cprCompletedOn, cprDocumentUrl, cprExpiresOn, cprSourceNote, loadData, selectedEmployeeCertifications, selectedLaborEmployeeView]);
+  }, [actorUserId, addGlobalToast, cprCompletedOn, cprDocumentUrl, cprExpiresOn, cprSourceNote, selectedEmployeeCertifications, selectedLaborEmployeeView, refreshLaborData]);
 
   const handleCreateReviewInstance = useCallback(async (reviewCycle) => {
     if (!selectedLaborEmployeeView?.id) return;
@@ -1993,10 +2122,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const createdInstance = Array.isArray(data) ? data[0] : data;
-    await loadData();
+    await refreshLaborData();
     if (createdInstance?.id) setSelectedReviewInstanceId(createdInstance.id);
     addGlobalToast("Review instance created", "success");
-  }, [actorName, actorUserId, addGlobalToast, loadData, reviewTemplates, selectedLaborEmployeeView]);
+  }, [actorName, actorUserId, addGlobalToast, reviewTemplates, selectedLaborEmployeeView, refreshLaborData]);
 
   const getReviewResponse = useCallback((reviewItemId) => {
     if (!selectedReviewInstanceId) return null;
@@ -2032,10 +2161,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       setSavingReviewItemId(null);
       return;
     }
-    await loadData();
+    await refreshLaborData();
     setSavingReviewItemId(null);
     addGlobalToast("Review response saved", "success");
-  }, [actorUserId, addGlobalToast, getReviewResponse, loadData, reviewDrafts, selectedReviewInstanceId]);
+  }, [actorUserId, addGlobalToast, getReviewResponse, reviewDrafts, selectedReviewInstanceId, refreshLaborData]);
 
   const handleCompleteReviewInstance = useCallback(async () => {
     if (!selectedReviewInstanceId) return;
@@ -2050,10 +2179,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       setCompletingReview(false);
       return;
     }
-    await loadData();
+    await refreshLaborData();
     setCompletingReview(false);
     addGlobalToast("Review completed", "success");
-  }, [actorName, actorUserId, addGlobalToast, loadData, selectedReviewInstanceId]);
+  }, [actorName, actorUserId, addGlobalToast, selectedReviewInstanceId, refreshLaborData]);
 
   // ── Section toggle ──
   const toggleSection = useCallback((sectionId) => {
@@ -2134,10 +2263,64 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const visibleRosterRows = useMemo(() => {
     return filteredRosterRows.filter((row) => showInactiveRoster || row.is_active);
   }, [filteredRosterRows, showInactiveRoster]);
+  const positionHierarchyRows = useMemo(() => {
+    const savedByTitle = Object.fromEntries(
+      positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
+    );
+    const merged = [];
+    const seen = new Set();
+
+    preparedRosterRows.forEach((row) => {
+      const normalizedTitle = normalizePositionTitle(row.position_title);
+      const title = String(row.position_title || "").trim();
+      if (!normalizedTitle || seen.has(normalizedTitle)) return;
+      const saved = savedByTitle[normalizedTitle] || null;
+      seen.add(normalizedTitle);
+      merged.push({
+        id: saved?.id || null,
+        position_title: saved?.position_title || title,
+        normalized_title: normalizedTitle,
+        sort_order: saved?.sort_order ?? null,
+      });
+    });
+
+    positionHierarchy.forEach((row) => {
+      const normalizedTitle = normalizePositionTitle(row.position_title);
+      if (!normalizedTitle || seen.has(normalizedTitle)) return;
+      seen.add(normalizedTitle);
+      merged.push({
+        id: row.id,
+        position_title: row.position_title,
+        normalized_title: normalizedTitle,
+        sort_order: row.sort_order ?? null,
+      });
+    });
+
+    return merged.sort((left, right) => {
+      const leftRanked = Number.isFinite(left.sort_order);
+      const rightRanked = Number.isFinite(right.sort_order);
+      if (leftRanked && rightRanked) return left.sort_order - right.sort_order;
+      if (leftRanked !== rightRanked) return leftRanked ? -1 : 1;
+      const weightDelta = getDefaultPositionWeight(right.position_title) - getDefaultPositionWeight(left.position_title);
+      if (weightDelta !== 0) return weightDelta;
+      return left.position_title.localeCompare(right.position_title, undefined, { sensitivity: "base" });
+    });
+  }, [positionHierarchy, preparedRosterRows]);
+  const positionHierarchyIndex = useMemo(() => {
+    return Object.fromEntries(positionHierarchyRows.map((row, index) => [row.normalized_title, index]));
+  }, [positionHierarchyRows]);
+
+  useEffect(() => {
+    if (showHierarchyManager) {
+      setHierarchyDraft(positionHierarchyRows.map((row) => ({ ...row })));
+    }
+  }, [positionHierarchyRows, showHierarchyManager]);
   const sortedRosterRows = useMemo(() => {
     const direction = rosterSort.direction === "desc" ? -1 : 1;
     const getSortValue = (row) => {
       switch (rosterSort.key) {
+        case "hierarchy":
+          return positionHierarchyIndex[normalizePositionTitle(row.position_title)] ?? Number.MAX_SAFE_INTEGER;
         case "first_name":
           return String(row.first_name || "");
         case "last_name":
@@ -2167,11 +2350,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
       if (!showInactiveRoster && activeDelta !== 0) return activeDelta;
 
+      if (rosterSort.key === "hierarchy") {
+        const leftIndex = getSortValue(a);
+        const rightIndex = getSortValue(b);
+        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+        return String(a.last_name || a.full_name || "").localeCompare(String(b.last_name || b.full_name || ""), undefined, { numeric: true, sensitivity: "base" });
+      }
+
       const left = getSortValue(a);
       const right = getSortValue(b);
       return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) * direction;
     });
-  }, [rosterSort, showInactiveRoster, visibleRosterRows]);
+  }, [positionHierarchyIndex, rosterSort, showInactiveRoster, visibleRosterRows]);
   const hasRosterEmployeesInGraceWindow = useMemo(() => {
     return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
   }, [visibleRosterRows]);
@@ -2501,9 +2691,35 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // EMPLOYEE DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
 
+  if (selectedLaborEmployeeId && !selectedLaborEmployeeView) {
+    return (
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
+        <button
+          onClick={() => {
+            setSelectedLaborEmployeeId(null);
+            setSelectedReviewInstanceId(null);
+          }}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}
+        >
+          <I.Back /> Back to Labor
+        </button>
+        <Card style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+            {loading ? "Loading employee record..." : "Employee record unavailable"}
+          </div>
+          <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6 }}>
+            {loading
+              ? "Labor is still loading the selected employee details."
+              : "The selected employee record could not be assembled from the current roster and training data."}
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (selectedLaborEmployeeId && selectedLaborEmployeeView) {
     const employeeTrainingRecords = records
-      .filter((record) => record.labor_employee_id === selectedLaborEmployeeView.id)
+      .filter((record) => isObjectRow(record) && record.labor_employee_id === selectedLaborEmployeeView.id)
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const currentCprCertification = selectedEmployeeCertifications[0] || null;
     const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
@@ -2514,21 +2730,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         label: "30 Day Review",
         dueDate: selectedLaborEmployeeSnapshot?.review_30_due_date || null,
         status: selectedLaborEmployeeSnapshot?.review_30_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance.review_cycle === "30_day") || null,
+        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "30_day") || null,
       },
       {
         id: "60_day",
         label: "60 Day Review",
         dueDate: selectedLaborEmployeeSnapshot?.review_60_due_date || null,
         status: selectedLaborEmployeeSnapshot?.review_60_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance.review_cycle === "60_day") || null,
+        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "60_day") || null,
       },
       {
         id: "90_day",
         label: "90 Day Review",
         dueDate: selectedLaborEmployeeSnapshot?.review_90_due_date || null,
         status: selectedLaborEmployeeSnapshot?.review_90_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance.review_cycle === "90_day") || null,
+        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "90_day") || null,
       },
     ];
 
@@ -2571,7 +2787,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Badge color={reviewStatusColor}>{String(selectedReviewInstance.status).replace(/_/g, " ")}</Badge>
-              {selectedReviewInstance.due_date && <Badge color="default">Due {fmtDate(selectedReviewInstance.due_date)}</Badge>}
+              {selectedReviewInstance.due_date && <Badge color="default">Due {formatLaborDate(selectedReviewInstance.due_date)}</Badge>}
               {selectedReviewInstance.completed_at && <Badge color="success">Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</Badge>}
             </div>
           </div>
@@ -2590,7 +2806,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
               <div style={{ fontSize: 12, color: C.textSec }}>{selectedLaborEmployeeView.position_title || "—"}</div>
               {selectedLaborEmployeeView.start_date && (
-                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>Started {fmtDate(selectedLaborEmployeeView.start_date)}</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>Started {formatLaborDate(selectedLaborEmployeeView.start_date)}</div>
               )}
             </Card>
             <Card style={{ padding: 16 }}>
@@ -2599,7 +2815,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 {String(selectedReviewInstance.status).replace(/_/g, " ")}
               </div>
               <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>
-                {selectedReviewInstance.due_date ? `Due ${fmtDate(selectedReviewInstance.due_date)}` : "Due date not set"}
+                {selectedReviewInstance.due_date ? `Due ${formatLaborDate(selectedReviewInstance.due_date)}` : "Due date not set"}
               </div>
             </Card>
           </div>
@@ -2749,8 +2965,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 </Badge>
               </div>
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
-                {selectedLaborEmployeeView.start_date && <span>Start: {fmtDate(selectedLaborEmployeeView.start_date)}</span>}
-                {selectedLaborEmployeeView.end_date && <span>End: {fmtDate(selectedLaborEmployeeView.end_date)}</span>}
+                {selectedLaborEmployeeView.start_date && <span>Start: {formatLaborDate(selectedLaborEmployeeView.start_date)}</span>}
+                {selectedLaborEmployeeView.end_date && <span>End: {formatLaborDate(selectedLaborEmployeeView.end_date)}</span>}
                 {employeePhone && <span>{fmtPhoneInput(employeePhone)}</span>}
                 {employeeEmail && <span>{employeeEmail}</span>}
                 <span>{selectedEmployeeNotes.length} employee note{selectedEmployeeNotes.length !== 1 ? "s" : ""}</span>
@@ -2798,7 +3014,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               {String(selectedLaborEmployeeSnapshot?.cpr_status || "not_started").replace(/_/g, " ")}
             </div>
             {currentCprCertification?.expires_on && (
-              <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>Expires {fmtDate(currentCprCertification.expires_on)}</div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>Expires {formatLaborDate(currentCprCertification.expires_on)}</div>
             )}
           </Card>
           <Card style={{ padding: 16 }}>
@@ -2866,10 +3082,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           {currentCprCertification ? (
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-                Completed {fmtDate(currentCprCertification.completed_on)}
+                Completed {formatLaborDate(currentCprCertification.completed_on)}
               </div>
               {currentCprCertification.expires_on && (
-                <div style={{ fontSize: 12, color: C.textMut, marginBottom: 6 }}>Expires {fmtDate(currentCprCertification.expires_on)}</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginBottom: 6 }}>Expires {formatLaborDate(currentCprCertification.expires_on)}</div>
               )}
               {currentCprCertification.external_document_url && (
                 <a href={currentCprCertification.external_document_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>
@@ -2891,7 +3107,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             <Card key={cycle.id} style={{ padding: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>{cycle.label}</div>
               <div style={{ fontSize: 12, color: C.textMut, marginBottom: 8 }}>
-                Due {cycle.dueDate ? fmtDate(cycle.dueDate) : "—"}
+                Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}
               </div>
               <Badge color={cycle.status === "completed" ? "success" : cycle.status === "overdue" ? "danger" : "warning"}>
                 {String(cycle.status).replace(/_/g, " ")}
@@ -2929,7 +3145,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
                     <td style={{ padding: "10px 12px" }}><StatusBadge status={record.overall_status} /></td>
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{Math.round(record.progress_percent || 0)}%</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? fmtDate(record.target_end_date) : "—"}</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? formatLaborDate(record.target_end_date) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3005,9 +3221,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 )}
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut, alignItems: "center" }}>
-                {selectedRecord.hire_date && <span>Hire: {fmtDate(selectedRecord.hire_date)}</span>}
-                {selectedRecord.training_start_date && <span>Start: {fmtDate(selectedRecord.training_start_date)}</span>}
-                {selectedRecord.target_end_date && <span>Target: {fmtDate(selectedRecord.target_end_date)}</span>}
+                {selectedRecord.hire_date && <span>Hire: {formatLaborDate(selectedRecord.hire_date)}</span>}
+                {selectedRecord.training_start_date && <span>Start: {formatLaborDate(selectedRecord.training_start_date)}</span>}
+                {selectedRecord.target_end_date && <span>Target: {formatLaborDate(selectedRecord.target_end_date)}</span>}
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
@@ -3182,11 +3398,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         </div>
       </td>
       <td style={{ padding: "10px 12px" }}><StatusBadge status={rec.overall_status} /></td>
-      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{rec.target_end_date ? fmtDate(rec.target_end_date) : "—"}</td>
+      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{rec.target_end_date ? formatLaborDate(rec.target_end_date) : "—"}</td>
     </tr>
   );
 
-  const tableHeaderStyle = { padding: "8px 12px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: `2px solid ${C.border}`, textAlign: "left" };
+  const tableHeaderStyle = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: `2px solid ${C.border}`, textAlign: "left" };
   const rosterUsedKeys = Object.keys(rosterDraftFilters);
   const rosterAvailableFields = LABOR_ROSTER_FILTER_FIELDS.filter((field) => !rosterUsedKeys.includes(field.key));
   const rosterFilterSections = [...new Set(LABOR_ROSTER_FILTER_FIELDS.map((field) => field.section))];
@@ -3259,6 +3475,82 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setConfiguringRosterKey(null);
     setShowRosterFilterPicker(false);
   };
+  const handleHierarchyDrop = async (targetTitle) => {
+    if (!draggingHierarchyTitle || draggingHierarchyTitle === targetTitle) return;
+    const reordered = [...hierarchyDraft];
+    const fromIndex = reordered.findIndex((row) => row.normalized_title === draggingHierarchyTitle);
+    const toIndex = reordered.findIndex((row) => row.normalized_title === targetTitle);
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggingHierarchyTitle("");
+      return;
+    }
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    setHierarchyDraft(reordered);
+    setDraggingHierarchyTitle("");
+  };
+  const saveHierarchy = useCallback(async () => {
+    if (!resolvedLaborLocationId || hierarchyDraft.length === 0) {
+      setShowHierarchyManager(false);
+      return;
+    }
+    if (!hierarchyPersistenceAvailable) {
+      addGlobalToast("Hierarchy saving requires the labor hierarchy database migration", "warning");
+      setShowHierarchyManager(false);
+      return;
+    }
+    setSavingHierarchy(true);
+    try {
+      const existingByTitle = Object.fromEntries(
+        positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
+      );
+      const updates = hierarchyDraft.map((row, index) => ({
+        existing: existingByTitle[row.normalized_title] || null,
+        position_title: row.position_title,
+        sort_order: (index + 1) * 10,
+      }));
+
+      const mutationResults = await Promise.all(updates.map((entry) => {
+        if (entry.existing?.id) {
+          return supabase
+            .from("labor_position_hierarchy")
+            .update({
+              position_title: entry.position_title,
+              sort_order: entry.sort_order,
+              updated_by_user_id: actorUserId,
+              updated_by_name: actorName,
+            })
+            .eq("id", entry.existing.id);
+        }
+        return supabase.from("labor_position_hierarchy").insert({
+          location_id: resolvedLaborLocationId,
+          position_title: entry.position_title,
+          sort_order: entry.sort_order,
+          created_by_user_id: actorUserId,
+          created_by_name: actorName,
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+        });
+      }));
+      const failedMutation = mutationResults.find((result) => result.error);
+      if (failedMutation?.error) throw failedMutation.error;
+
+      const { data: hierarchyRes, error } = await supabase
+        .from("labor_position_hierarchy")
+        .select("*")
+        .eq("location_id", resolvedLaborLocationId)
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      setPositionHierarchy(hierarchyRes || []);
+      setRosterSort({ key: "hierarchy", direction: "asc" });
+      setShowHierarchyManager(false);
+      addGlobalToast("Roster hierarchy updated", "success");
+    } catch (error) {
+      console.error("Failed to save labor position hierarchy", error);
+      addGlobalToast(error.message || "Failed to save roster hierarchy", "error");
+    }
+    setSavingHierarchy(false);
+  }, [actorName, actorUserId, addGlobalToast, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
   const rosterSectionIcons = {
     "Employee Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
     Employment: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M16 20V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16"/><rect x="6" y="6" width="4" height="4"/><path d="M18 7h4v13h-4"/><path d="M6 14h4"/><path d="M6 18h4"/></svg>,
@@ -3276,7 +3568,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       );
     }
     if (tab === "training") {
-      return <Btn variant="primary" onClick={() => setShowNewRecord(true)}>New Training Record</Btn>;
+      return <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowNewRecord(true); }}>New Training Record</Btn>;
     }
     if (tab === "templates" && canManageTemplates) {
       if (previewTemplateId) {
@@ -3286,7 +3578,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           </Btn>
         );
       }
-      return <Btn variant="primary" onClick={() => setShowCreateTemplateModal(true)}>Add Template</Btn>;
+      return <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowCreateTemplateModal(true); }}>Add Template</Btn>;
+    }
+    if (tab === "attendance") {
+      return null;
     }
     if (tab === "notes") {
       return <Btn variant="primary" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>;
@@ -3295,7 +3590,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   })();
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
+    <div style={{ maxWidth: 1340, margin: "0 auto", padding: "20px 10px" }}>
       <style>{`
         @keyframes laborRosterComposerIn {
           0% { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(4px); }
@@ -3642,6 +3937,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           <SectionHeader title="Roster" count={sortedRosterRows.length}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Btn
+                variant={rosterSort.key === "hierarchy" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setRosterSort({ key: "hierarchy", direction: "asc" })}
+              >
+                Hierarchy
+              </Btn>
+              <Btn variant="ghost" size="sm" onClick={() => setShowHierarchyManager(true)}>
+                Manage Hierarchy
+              </Btn>
+              <Btn
                 variant={showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => setShowRosterFilterPanel((current) => !current)}
@@ -3673,7 +3978,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
-            <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
+            <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr>
                   {[
@@ -3771,7 +4076,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             </div>
                             <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
                           </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(112px, 1fr)) auto", gap: 10, alignItems: "end" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "minmax(132px, 1fr) minmax(132px, 1fr) minmax(148px, 1fr) minmax(210px, 1.4fr) minmax(190px, 1.25fr) minmax(168px, 1fr) minmax(168px, 1fr) auto", gap: 10, alignItems: "end" }}>
                             <label style={{ display: "grid", gap: 6 }}>
                               <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Name</span>
                               <input
@@ -3915,22 +4220,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                           animation: row.labor_employee_id === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
                         }}
                       >
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, fontWeight: 600 }}>{row.first_name || "—"}</td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{row.last_name || "—"}</td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>
-                          {row.start_date ? fmtDate(row.start_date) : "—"}
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.text }}>{row.first_name || "—"}</td>
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.text }}>{row.last_name || "—"}</td>
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.textSec, whiteSpace: "nowrap" }}>
+                          {formatLaborDate(row.start_date)}
                           {!row.is_active && row.end_date ? (
-                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Inactive since {fmtDate(row.end_date)}</div>
+                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap" }}>Inactive since {formatLaborDate(row.end_date)}</div>
                           ) : null}
                         </td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: row.contact_email ? C.textSec : C.textMut }}>
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: row.contact_email ? C.textSec : C.textMut, whiteSpace: "normal", wordBreak: "break-word", minWidth: 168 }}>
                           {row.contact_email || "—"}
                         </td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: row.contact_phone ? C.textSec : C.textMut }}>
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: row.contact_phone ? C.textSec : C.textMut, whiteSpace: "nowrap", minWidth: 118 }}>
                           {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
                         </td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.position_title || "—"}</td>
-                        <td style={{ padding: "10px 12px" }}>
+                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.textSec, minWidth: 152 }}>{row.position_title || "—"}</td>
+                        <td style={{ padding: "9px 8px" }}>
                           <div style={{ display: "grid", gap: 4 }}>
                             <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
                             <div style={{ fontSize: 11, color: C.textMut }}>
@@ -3939,14 +4244,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                           </div>
                         </td>
                         {["review30", "review60", "review90"].map((reviewKey) => (
-                          <td key={reviewKey} style={{ padding: "10px 12px" }}>
+                          <td key={reviewKey} style={{ padding: "9px 8px" }}>
                             <div
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                minWidth: 88,
-                                padding: "6px 10px",
+                                minWidth: 76,
+                                padding: "6px 9px",
                                 borderRadius: 999,
                                 background: row[reviewKey].background,
                                 color: row[reviewKey].tone,
@@ -3958,7 +4263,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             </div>
                           </td>
                         ))}
-                        <td style={{ padding: "10px 12px" }}>
+                        <td style={{ padding: "9px 8px" }}>
                           <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(row.labor_employee_id)}>View Record</Btn>
                         </td>
                       </tr>
@@ -3978,8 +4283,54 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         </div>
       )}
 
+      {!loading && tab === "attendance" && (
+        <div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+            {[
+              { id: "input", label: "Attendance Input", subtitle: "Attendance marks and policy actions" },
+              { id: "summary", label: "Attendance Summary", subtitle: "Summary, history, and reference guidance" },
+            ].map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setAttendanceView(option.id)}
+                style={{
+                  flex: "1 1 260px",
+                  minWidth: 220,
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  border: `1.5px solid ${attendanceView === option.id ? C.pri : C.border}`,
+                  background: attendanceView === option.id ? C.priLt : C.surface,
+                  color: attendanceView === option.id ? C.pri : C.text,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
+              </button>
+            ))}
+          </div>
+
+          <AttendanceTrackerPage
+            data={data}
+            save={save}
+            nav={nav}
+            profile={profile}
+            addGlobalToast={addGlobalToast}
+            params={{ tab: attendanceView === "input" ? "log" : "summary" }}
+            embedded
+            tabPreset={attendanceView}
+          />
+        </div>
+      )}
+
       {!loading && tab === "training" && (
         <div>
+          {trainingBundleLoading && !trainingBundleLoaded ? (
+            <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading training records…</Card>
+          ) : null}
           <SectionHeader title="Active Training Records" count={activeRecords.length} />
           {activeRecords.length === 0 ? (
             <EmptyState icon="GraduationCap" title="No active records" subtitle="Create a new training record to get started" />
@@ -4354,6 +4705,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
       {!loading && tab === "notes" && (
         <div>
+          {supportBundleLoading && !supportBundleLoaded ? (
+            <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading employee notes…</Card>
+          ) : null}
           <SectionHeader title="Global Notes Feed" count={filteredGlobalNotes.length}>
             <Btn variant="secondary" size="sm" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>
           </SectionHeader>
@@ -4438,6 +4792,59 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
           )}
         </div>
+      )}
+
+      {showHierarchyManager && (
+        <Modal title="Manage Hierarchy" onClose={() => setShowHierarchyManager(false)}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
+              Drag the current resort's position titles into seniority order. This becomes the default roster view, and the <strong>Hierarchy</strong> button restores it after any other sort.
+            </div>
+            {hierarchyDraft.length === 0 ? (
+              <EmptyState icon="Users" title="No positions found" subtitle="Add employees to the roster before configuring hierarchy." />
+            ) : (
+              <div style={{ display: "grid", gap: 10, maxHeight: "56vh", overflowY: "auto", paddingRight: 4 }}>
+                {hierarchyDraft.map((row, index) => (
+                  <div
+                    key={row.normalized_title}
+                    draggable
+                    onDragStart={() => setDraggingHierarchyTitle(row.normalized_title)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => handleHierarchyDrop(row.normalized_title)}
+                    onDragEnd={() => setDraggingHierarchyTitle("")}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto auto minmax(0, 1fr)",
+                      gap: 12,
+                      alignItems: "center",
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      border: `1px solid ${draggingHierarchyTitle === row.normalized_title ? C.pri : C.border}`,
+                      background: draggingHierarchyTitle === row.normalized_title ? C.priLt : "#fff",
+                    }}
+                  >
+                    <div style={{ minWidth: 24, fontSize: 11, fontWeight: 800, color: C.textMut }}>{index + 1}</div>
+                    <span style={{ display: "inline-flex", color: C.textMut, cursor: "grab" }} title="Drag to reorder">
+                      <I.GripVertical />
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{row.position_title}</div>
+                      {!Number.isFinite(row.sort_order) ? (
+                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>Unranked title. Saving this modal will pin it into the default resort hierarchy.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn variant="ghost" onClick={() => setShowHierarchyManager(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={saveHierarchy} disabled={savingHierarchy}>
+                {savingHierarchy ? "Saving…" : "Save Hierarchy"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {showNewRecord && (
