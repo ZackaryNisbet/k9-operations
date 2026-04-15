@@ -50,6 +50,7 @@ import RolePage from "./pages/RolePage";
 import RoleLayoutPage from "./pages/RoleLayoutPage";
 import RollCallSessionsPage from "./pages/RollCallSessionsPage";
 import HomePage from "./pages/HomePage";
+import DashboardPage from "./pages/DashboardPage";
 import TrainingPage from "./pages/TrainingPage";
 import SchedulingPage from "./pages/SchedulingPage";
 import ClientManagementPage from "./pages/ClientManagementPage";
@@ -64,6 +65,7 @@ import { BrandedErrorBoundary } from "../shared/AppCrashScreen";
 const LITE_BASE = "";
 const LITE_PAGE_SLUGS = {
   "home": "home",
+  "dashboard": "dashboard",
   "lifecycle": "lifecycle",
   "client-detail": "client",
   "dog-detail": "dog",
@@ -192,7 +194,7 @@ function parseLiteUrl(pathname, dataRef) {
 // ─── Navigation Config ───────────────────────────────────────────────────
 // Role-aware navigation aligned to mobile product model.
 // Home is the universal landing; My Work is the staff execution surface;
-// Ops Overview is demoted to managers+ only; analytics mode now layers onto Home.
+// Ops Overview is demoted to managers+ only; analytics mode preserves the old dashboard.
 // Staff roles: Home, My Work, Inventory, Photos, TV, Settings
 // Manager roles: Home, My Work, Ops Overview, Inventory, Cash Tips, Photos, Settings
 // Admin/owner roles: Home, Ops Overview, Inventory, Cash Tips, Photos, Settings
@@ -239,6 +241,7 @@ const LEAN_NAV_ITEMS = [
 // Full nav when ?mode=analytics is active (K9 Operations + Analytics)
 const ANALYTICS_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
@@ -267,7 +270,7 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
 // Cherry Hill is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/home?mode=analytics" },
+  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/dashboard?mode=analytics" },
   { id: "demo-pos", name: "K9 Operations POS", slug: "pos-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
 
@@ -345,8 +348,8 @@ function LeanAppInner() {
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
   const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
 
-  // Live BOH poll — runs every 10s, shared across Home + Checkout TV surfaces
-  const bohEnabled = page === "home" || page === "checkout-tv";
+  // Live BOH poll — runs every 10s, shared across Home + Analytics Dashboard + Checkout TV surfaces
+  const bohEnabled = page === "home" || page === "dashboard" || page === "checkout-tv";
   const boh = useBackOfHouse(currentLocation, bohEnabled);
   const bohStats = boh.stats;  // { total, boardingCount, daycareCount, expectedCount, pendingCount, pendingDaycare, pendingBoarding, goingHomeCount }
   const bohLastFetch = boh.lastFetch;
@@ -658,7 +661,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -673,6 +676,7 @@ function LeanAppInner() {
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
       case "home": return "Home";
+      case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
       case "client-management": return "Incidents";
       case "resources": return "Resources";
@@ -807,6 +811,7 @@ function LeanAppInner() {
   const renderPage = () => {
     // Permission area mapping: page id → LEAN_PERMISSION_AREAS key
     const PAGE_PERM_MAP = {
+      "dashboard": null,
       "lifecycle": "Customer Lifecycle",
       "client-detail": "Customer Lifecycle",
       "dog-detail": null,
@@ -839,6 +844,25 @@ function LeanAppInner() {
     switch (page) {
       case "home":
         return <HomePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} bohStats={bohStats} analyticsMode={IS_ANALYTICS_MODE} userLocationRoles={userLocationRoles} currentLocation={currentLocation} />;
+      case "dashboard": {
+        const analyticsMode = IS_ANALYTICS_MODE;
+        const hasFinancial = analyticsMode || hasLeanPermission(profile, "Financial Reporting");
+        const hasOpsHub = analyticsMode || hasLeanPermission(profile, "Operations Hub");
+        const dashboardPermissions = {
+          showSnapshot: true,
+          showRevenue: hasFinancial,
+          showFunnel: hasFinancial,
+          showLTV: hasFinancial,
+          showRevenueComposition: hasFinancial,
+          showRevenueByCategory: hasFinancial,
+          showDiscountAnalysis: hasFinancial,
+          showTopClients: hasFinancial,
+          showOps: hasOpsHub,
+          showFunnelMetrics: hasFinancial,
+          showHeroKPIs: hasFinancial,
+        };
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} analyticsMode={analyticsMode} {...dashboardPermissions} />;
+      }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
           <ClientsPage
