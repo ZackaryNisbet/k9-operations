@@ -17,6 +17,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
   const today = todayStr();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [liveRefreshAvailable, setLiveRefreshAvailable] = useState(true);
   const [entries, setEntries] = useState([]);
   const [refreshedAt, setRefreshedAt] = useState("");
 
@@ -47,6 +48,10 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       setLoading(false);
       return;
     }
+    if (!liveRefreshAvailable) {
+      setLoading(false);
+      return;
+    }
     setRefreshing(true);
     try {
       const { data, error } = await supabase.functions.invoke("gingr-today-notes", {
@@ -58,26 +63,35 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       setRefreshedAt(data?.refreshed_at || new Date().toISOString());
     } catch (error) {
       console.error("Failed to refresh Gingr notes", error);
-      addGlobalToast(error.message || "Failed to refresh Gingr notes", "error");
+      const unavailable = error?.name === "FunctionsHttpError"
+        || /Edge Function/i.test(error?.message || "")
+        || /non-2xx/i.test(error?.message || "");
+      if (unavailable) {
+        setLiveRefreshAvailable(false);
+      } else {
+        addGlobalToast(error.message || "Failed to refresh Gingr notes", "error");
+      }
     }
     setRefreshing(false);
     setLoading(false);
-  }, [addGlobalToast, locationId, today]);
+  }, [addGlobalToast, liveRefreshAvailable, locationId, today]);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       await loadCached();
-      if (mounted) await refreshLive();
+      if (mounted && liveRefreshAvailable) await refreshLive();
     })();
-    const interval = window.setInterval(() => {
-      refreshLive();
-    }, 60000);
+    const interval = liveRefreshAvailable
+      ? window.setInterval(() => {
+          refreshLive();
+        }, 60000)
+      : null;
     return () => {
       mounted = false;
-      window.clearInterval(interval);
+      if (interval) window.clearInterval(interval);
     };
-  }, [loadCached, refreshLive]);
+  }, [liveRefreshAvailable, loadCached, refreshLive]);
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", paddingBottom: 28 }}>
@@ -102,14 +116,16 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text }}>Today's Gingr Notes</h1>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text }}>Today's Notes</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.textMut }}>
-            {fmtDate(today)} · polling Gingr every 60 seconds for owner and dog notes.
+            {fmtDate(today)} · {liveRefreshAvailable ? "polling Gingr every 60 seconds for owner and dog notes." : "showing cached notes because live sync is unavailable in this environment."}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="secondary" onClick={loadCached}>Load Cached</Btn>
-          <Btn variant="primary" onClick={refreshLive} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh Now"}</Btn>
+          <Btn variant="primary" onClick={refreshLive} disabled={refreshing || !liveRefreshAvailable}>
+            {liveRefreshAvailable ? (refreshing ? "Refreshing…" : "Refresh Now") : "Cached Only"}
+          </Btn>
         </div>
       </div>
 

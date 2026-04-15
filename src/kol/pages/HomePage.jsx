@@ -1,121 +1,236 @@
 // K9 Operations — HomePage
 // Role-aware landing page. Staff roles see a clean "My Shift" summary
 // directing them into My Work; managers/admins see an oversight dashboard
-// with exception-first cards and shortcuts to key areas.
-// Aligned to the mobile product's role-based mental model.
+// aligned to the shared mobile dashboard snapshot contract.
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, todayStr, OPERATIONS_CATALOG } from "../../shared/theme";
+import { C, todayStr } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge } from "../../shared/ui";
-import { getOpsProgress, getOpsCountLabel, getRoomCleaningStats, getPPStats } from "../../shared/opsHelpers";
-import { computeOccupancyMetrics, computeServiceMetrics } from "../../shared/metricsHelpers";
 import { DEFAULT_INVENTORY_SCHEDULE, getInventoryCycleStart, getInventoryOverdueInfo, normalizeInventorySchedule } from "./inventorySchedule";
-import useWorkflowProgressSnapshot, { SNAPSHOT_TO_TYPE_SUB, formatWorkflowCountLabel } from "../../hooks/useWorkflowProgressSnapshot";
 
-// ─── Role classification helper ──────────────────────────────────────────────
 const STAFF_ROLES = new Set(["pct", "csr"]);
 const MANAGER_ROLES = new Set(["supervisor", "manager", "mod"]);
 const ADMIN_ROLES = new Set(["location_admin", "multi_location_admin", "enterprise_admin", "owner", "developer"]);
+
+const WORKFLOW_ROUTE_MAP = {
+  bathing: { page: "ops-bathing" },
+  pamper: { page: "ops-pamper" },
+  enrichment: { page: "ops-svc" },
+  ice_cream: { page: "ops-svc" },
+  rooms: { page: "ops-rooms" },
+  play: { page: "ops-pp" },
+  "weekly-maintenance": { page: "ops-weekly-maintenance" },
+  belongings: { page: "ops-belongings" },
+  collars: { page: "ops-collars" },
+  "lodging-transfer": { page: "ops-lodging-transfers" },
+  "roll-call-opening": { page: "ops-roll-call-opening" },
+  "roll-call-closing": { page: "ops-roll-call-closing" },
+};
 
 function classifyRole(roleCode, profileRole) {
   if (STAFF_ROLES.has(roleCode)) return "staff";
   if (MANAGER_ROLES.has(roleCode)) return "manager";
   if (ADMIN_ROLES.has(profileRole) || ADMIN_ROLES.has(roleCode)) return "admin";
-  return "admin"; // default admin for owner/developer mock profiles
+  return "admin";
 }
 
-// ─── Shared header strip ─────────────────────────────────────────────────────
 function HomeHeader({ greeting, subtitle }) {
   return (
     <div style={{ marginBottom: 28 }}>
-      <h1 style={{
-        fontSize: 28, fontWeight: 800, color: C.text, margin: 0,
-        letterSpacing: "-0.03em", lineHeight: 1.2,
-      }}>
+      <h1
+        style={{
+          fontSize: 28,
+          fontWeight: 800,
+          color: C.text,
+          margin: 0,
+          letterSpacing: "-0.03em",
+          lineHeight: 1.2,
+        }}
+      >
         {greeting}
       </h1>
-      {subtitle && (
+      {subtitle ? (
         <p style={{ fontSize: 14, color: C.textMut, marginTop: 6, fontWeight: 500 }}>
           {subtitle}
         </p>
-      )}
+      ) : null}
     </div>
   );
 }
 
-function startOfWeek(dateStr) {
-  const date = new Date(`${dateStr}T12:00:00`);
-  const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + diff);
-  return date.toISOString().slice(0, 10);
+function QuickCard({ label, desc, icon, onClick, accent, badge }) {
+  const IconComp = I[icon];
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "20px 22px",
+        borderRadius: 14,
+        cursor: "pointer",
+        background: C.surface,
+        border: `1.5px solid ${C.border}`,
+        transition: "all 0.2s",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        minHeight: 110,
+      }}
+      onMouseEnter={(event) => {
+        event.currentTarget.style.borderColor = `${accent || C.pri}50`;
+        event.currentTarget.style.boxShadow = "0 6px 20px rgba(0,0,0,0.06)";
+        event.currentTarget.style.transform = "translateY(-2px)";
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.borderColor = C.border;
+        event.currentTarget.style.boxShadow = "none";
+        event.currentTarget.style.transform = "none";
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            background: `${accent || C.pri}12`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {IconComp ? <IconComp style={{ width: 18, height: 18, color: accent || C.pri }} /> : null}
+        </div>
+        {badge ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "3px 10px",
+              borderRadius: 20,
+              background: badge.bg || C.warnLt,
+              color: badge.color || C.warn,
+            }}
+          >
+            {badge.label}
+          </span>
+        ) : null}
+      </div>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{label}</div>
+        {desc ? <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{desc}</div> : null}
+      </div>
+    </div>
+  );
 }
 
-function addDaysToDate(dateStr, days) {
-  const date = new Date(`${dateStr}T12:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+function MetricCard({ label, value, subtext, color, live }) {
+  return (
+    <div
+      style={{
+        padding: "16px 20px",
+        borderRadius: 12,
+        background: C.surface,
+        border: `1.5px solid ${C.border}`,
+        position: "relative",
+      }}
+    >
+      {live ? (
+        <span style={{ position: "absolute", top: 14, right: 14, width: 8, height: 8, borderRadius: "50%", background: C.suc }} />
+      ) : null}
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: C.textMut,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 800, color: color || C.text, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </div>
+      {subtext ? <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>{subtext}</div> : null}
+    </div>
+  );
 }
 
-function countReservationDays(reservations = [], startDate, endDate, predicate = () => true) {
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
-  return reservations.reduce((sum, reservation) => {
-    if (reservation?.status === "cancelled" || !predicate(reservation)) return sum;
-    const reservationStart = new Date(`${reservation.checkIn}T00:00:00`);
-    const reservationEnd = new Date(`${reservation.checkOut}T00:00:00`);
-    const overlapStart = Math.max(start.getTime(), reservationStart.getTime());
-    const overlapEnd = Math.min(end.getTime(), reservationEnd.getTime());
-    if (overlapEnd < overlapStart) return sum;
-    return sum + Math.floor((overlapEnd - overlapStart) / (24 * 60 * 60 * 1000)) + 1;
-  }, 0);
+function getWorkflowNavTarget(workflowId, title) {
+  const target = WORKFLOW_ROUTE_MAP[workflowId];
+  if (!target) return null;
+  if (workflowId === "enrichment" || workflowId === "ice_cream") {
+    return { page: target.page, params: { svcName: title } };
+  }
+  return target;
 }
 
-function countReservationCheckIns(reservations = [], startDate, endDate, predicate = () => true) {
-  return reservations.filter((reservation) => {
-    if (reservation?.status === "cancelled" || !predicate(reservation)) return false;
-    return reservation.checkIn >= startDate && reservation.checkIn <= endDate;
-  }).length;
-}
+function WorkflowProgressPanel({ rows, nav }) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
 
-function buildWeekVolumeSummary(reservations = [], weekStart) {
-  const weekEnd = addDaysToDate(weekStart, 6);
-  const boardingDogDays = countReservationDays(
-    reservations,
-    weekStart,
-    weekEnd,
-    (reservation) => reservation.type === "boarding"
+  return (
+    <div
+      style={{
+        padding: "18px 22px",
+        borderRadius: 14,
+        background: C.surface,
+        border: `1.5px solid ${C.border}`,
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Workflow Progress</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {rows.map((row) => {
+          const pct = row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0;
+          const isComplete = row.total > 0 && row.completed >= row.total;
+          const navTarget = getWorkflowNavTarget(row.id, row.title);
+          return (
+            <button
+              key={row.id}
+              type="button"
+              disabled={!navTarget}
+              onClick={() => {
+                if (!navTarget) return;
+                nav(navTarget.page, navTarget.params || {});
+              }}
+              style={{
+                cursor: navTarget ? "pointer" : "default",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "none",
+                border: "none",
+                padding: 0,
+                fontFamily: "inherit",
+                textAlign: "left",
+                opacity: navTarget ? 1 : 0.7,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.title}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: isComplete ? C.suc : C.textMut }}>
+                    {row.completed}/{row.total}
+                  </span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+                  <div
+                    style={{
+                      width: `${pct}%`,
+                      height: "100%",
+                      borderRadius: 3,
+                      background: isComplete ? C.suc : `linear-gradient(90deg, ${C.pri}, ${C.acc})`,
+                      transition: "width 0.3s",
+                    }}
+                  />
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
-  const daycareDogDays = countReservationDays(
-    reservations,
-    weekStart,
-    weekEnd,
-    (reservation) => reservation.type === "daycare" || reservation.type === "dayboarding"
-  );
-  const evals = countReservationCheckIns(
-    reservations,
-    weekStart,
-    weekEnd,
-    (reservation) => reservation.type === "evaluation" || String(reservation._resTypeName || "").toLowerCase().includes("eval")
-  );
-  const tours = countReservationCheckIns(
-    reservations,
-    weekStart,
-    weekEnd,
-    (reservation) => reservation.type === "tour"
-  );
-
-  return {
-    boardingDogDays,
-    daycareDogDays,
-    totalDogDays: boardingDogDays + daycareDogDays,
-    avgBoardingPerNight: Math.round(boardingDogDays / 7),
-    avgDaycarePerDay: Math.round(daycareDogDays / 7),
-    evals,
-    tours,
-  };
 }
 
 function buildInventoryQuickAccessState(snapshot, overdueInfo) {
@@ -144,250 +259,82 @@ function buildInventoryQuickAccessState(snapshot, overdueInfo) {
   };
 }
 
-function getDueSoonLabel(value) {
-  const normalized = String(value || "").replace(/_/g, " ").trim();
-  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Not started";
-}
+function useHomeDashboardSnapshot(locationId, userRole) {
+  const [snapshot, setSnapshot] = useState({
+    metrics: null,
+    liveSnapshot: null,
+    workflowProgress: [],
+    loading: true,
+  });
 
-function buildBriefingSentences({ data, today, laborSummary, incidentSummary, grassrootsSummary }) {
-  const occupancy = computeOccupancyMetrics(data, today);
-  const services = computeServiceMetrics(data, today);
-  const ppStats = getPPStats(data, today);
-  const recommendedPcts = Math.max(
-    1,
-    Math.ceil((occupancy.boardingInHouse || 0) / 15),
-    Math.ceil((services.bathsTotal || 0) / 6)
-  );
-  const currentWeek = buildWeekVolumeSummary(data.reservations || [], startOfWeek(today));
-  const nextWeek = buildWeekVolumeSummary(data.reservations || [], addDaysToDate(startOfWeek(today), 7));
-  const trendDirection = nextWeek.totalDogDays === currentWeek.totalDogDays
-    ? "flat"
-    : nextWeek.totalDogDays > currentWeek.totalDogDays
-      ? "busier"
-      : "slower";
-
-  return [
-    `Opening crew is walking ${occupancy.boardingInHouse || 0} boarding dogs, covering ${ppStats.totalDogs || 0} private-play dogs, and handling ${services.bathsTotal || 0} baths today. ${recommendedPcts} dedicated PCT${recommendedPcts === 1 ? " is" : "s are"} recommended for opening demand.`,
-    `Confirmed volume this week is ${currentWeek.totalDogDays} dog-days, comprising ${currentWeek.boardingDogDays} boarding and ${currentWeek.daycareDogDays} daycare, with ${currentWeek.evals} eval${currentWeek.evals === 1 ? "" : "s"} and ${currentWeek.tours} tour${currentWeek.tours === 1 ? "" : "s"}. Next week is currently tracking ${trendDirection} at ${nextWeek.totalDogDays} dog-days, with ${nextWeek.boardingDogDays} boarding and ${nextWeek.daycareDogDays} daycare already on the books.`,
-    `${laborSummary.newHiresThisWeek} new hire${laborSummary.newHiresThisWeek === 1 ? "" : "s"} started this week, ${laborSummary.terminationsThisWeek} termination${laborSummary.terminationsThisWeek === 1 ? "" : "s"} hit the roster, ${laborSummary.attendanceMarks7d} attendance mark${laborSummary.attendanceMarks7d === 1 ? "" : "s"} were logged in the last 7 days, and ${incidentSummary.incidents7d} incident case${incidentSummary.incidents7d === 1 ? "" : "s"} were filed in the same window.`,
-    grassrootsSummary.isConfigured
-      ? `Grassroots tracking shows ${grassrootsSummary.eventsThisWeek} event${grassrootsSummary.eventsThisWeek === 1 ? "" : "s"} this week and ${grassrootsSummary.eventsNextWeek} event${grassrootsSummary.eventsNextWeek === 1 ? "" : "s"} next week.`
-      : "Grassroots tracking is not configured for this resort yet.",
-  ];
-}
-
-function BriefingCard({ sentences }) {
-  if (!sentences.length) return null;
-
-  return (
-    <div
-      style={{
-        padding: "18px 22px",
-        borderRadius: 16,
-        marginBottom: 24,
-        background: "linear-gradient(135deg, rgba(20,83,45,0.08), rgba(132,204,22,0.10))",
-        border: `1.5px solid ${C.pri}18`,
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-        5 a.m. Briefing
-      </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {sentences.map((sentence, index) => (
-          <div key={index} style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6 }}>
-            {sentence}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function countGrassrootsEventsFromTracker(trackerValue, startDate, endDate) {
-  const rows = Array.isArray(trackerValue?.events) ? trackerValue.events : [];
-  return rows.filter((row) => {
-    const eventDate = row?.startDate || row?.eventDate || "";
-    return eventDate && eventDate >= startDate && eventDate <= endDate;
-  }).length;
-}
-
-// ─── Quick-link card (used across all role variants) ─────────────────────────
-function QuickCard({ label, desc, icon, onClick, accent, badge }) {
-  const IconComp = I[icon];
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "20px 22px", borderRadius: 14, cursor: "pointer",
-        background: C.surface, border: `1.5px solid ${C.border}`,
-        transition: "all 0.2s", display: "flex", flexDirection: "column", gap: 8,
-        minHeight: 110,
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = (accent || C.pri) + "50";
-        e.currentTarget.style.boxShadow = "0 6px 20px rgba(0,0,0,0.06)";
-        e.currentTarget.style.transform = "translateY(-2px)";
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = C.border;
-        e.currentTarget.style.boxShadow = "none";
-        e.currentTarget.style.transform = "none";
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10,
-          background: (accent || C.pri) + "12",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          {IconComp && <IconComp style={{ width: 18, height: 18, color: accent || C.pri }} />}
-        </div>
-        {badge && (
-          <span style={{
-            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
-            background: badge.bg || C.warnLt, color: badge.color || C.warn,
-          }}>
-            {badge.label}
-          </span>
-        )}
-      </div>
-      <div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{label}</div>
-        {desc && <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{desc}</div>}
-      </div>
-    </div>
-  );
-}
-
-// ─── Metric card (for oversight summaries) ───────────────────────────────────
-function MetricCard({ label, value, subtext, color }) {
-  return (
-    <div style={{
-      padding: "16px 20px", borderRadius: 12,
-      background: C.surface, border: `1.5px solid ${C.border}`,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: color || C.text, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
-        {value}
-      </div>
-      {subtext && <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>{subtext}</div>}
-    </div>
-  );
-}
-
-// ─── Operations progress summary ─────────────────────────────────────────────
-function OpsProgressSummary({ data, viewDate, nav, locationId }) {
-  const { rows: workflowRows, rowMap: workflowRowMap } = useWorkflowProgressSnapshot(locationId, viewDate);
-
-  const summaries = useMemo(() => {
-    const results = [];
-    const categories = [
-      ...OPERATIONS_CATALOG
-        .filter((item) => item.frequency === "daily" && item.typeSub && item.id !== "eod")
-        .map((item) => ({
-          label: item.label.replace("Checklist", "").trim(),
-          typeSub: item.typeSub,
-          route: item.routeTo,
-        })),
-    ].filter((item, index, items) => items.findIndex((candidate) => candidate.typeSub === item.typeSub) === index);
-
-    categories.forEach(cat => {
-      const item = OPERATIONS_CATALOG.find(c => c.typeSub === cat.typeSub || c.routeTo === cat.route);
-      if (!item) return;
-      const progress = getOpsProgress(data, item, viewDate);
-      const countLabel = getOpsCountLabel(data, item, viewDate);
-      results.push({ ...cat, progress, countLabel });
-    });
-
-    workflowRows.forEach((row) => {
-      const typeSub = SNAPSHOT_TO_TYPE_SUB[row.workflow_id];
-      if (!typeSub || row.total <= 0) return;
-      const idx = results.findIndex((result) => result.typeSub === typeSub);
-      const progress = row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0;
-      const countLabel = formatWorkflowCountLabel(row);
-
-      if (idx >= 0) {
-        results[idx].progress = progress;
-        results[idx].countLabel = countLabel;
-      } else {
-        const item = OPERATIONS_CATALOG.find((candidate) => candidate.typeSub === typeSub);
-        if (item?.routeTo) {
-          results.push({
-            label: item.label.replace("Checklist", "").trim(),
-            typeSub,
-            route: item.routeTo,
-            progress,
-            countLabel,
-          });
-        }
-      }
-    });
-
-    const bathingRow = workflowRowMap.bathing;
-    if (bathingRow && bathingRow.total > 0 && !results.some((result) => result.typeSub === "bathing")) {
-      results.unshift({
-        label: "Bathing",
-        typeSub: "bathing",
-        route: "ops-bathing",
-        progress: bathingRow.total > 0 ? Math.round((bathingRow.completed / bathingRow.total) * 100) : 0,
-        countLabel: formatWorkflowCountLabel(bathingRow),
-      });
+  const loadSnapshot = useCallback(async () => {
+    if (!locationId) {
+      setSnapshot({ metrics: null, liveSnapshot: null, workflowProgress: [], loading: false });
+      return;
     }
 
-    return results.filter((item) => item.route && item.label);
-  }, [data, viewDate, workflowRows, workflowRowMap]);
+    const { data, error } = await supabase.rpc("dashboard_mobile_snapshot", {
+      p_location_id: locationId,
+      p_view_date: todayStr(),
+      p_user_role: userRole || "employee",
+    });
 
-  if (summaries.length === 0) return null;
+    if (error) {
+      console.error("dashboard_mobile_snapshot failed:", error);
+      setSnapshot((current) => ({ ...current, loading: false }));
+      return;
+    }
 
-  return (
-    <div style={{
-      padding: "18px 22px", borderRadius: 14,
-      background: C.surface, border: `1.5px solid ${C.border}`,
-    }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Operations Progress</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {summaries.map(s => (
-          <div
-            key={s.typeSub}
-            onClick={() => nav(s.route)}
-            style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{s.label}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: s.progress === 100 ? C.suc : C.textMut }}>
-                  {s.countLabel || `${s.progress}%`}
-                </span>
-              </div>
-              <div style={{ height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-                <div style={{
-                  width: `${s.progress || 0}%`, height: "100%", borderRadius: 3,
-                  background: s.progress === 100 ? C.suc : `linear-gradient(90deg, ${C.pri}, ${C.acc})`,
-                  transition: "width 0.3s",
-                }} />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+    const payload = data || {};
+    setSnapshot({
+      metrics: payload.metrics && Object.keys(payload.metrics).length > 0 ? payload.metrics : null,
+      liveSnapshot: payload.liveSnapshot || null,
+      workflowProgress: Array.isArray(payload.workflowProgress) ? payload.workflowProgress : [],
+      loading: false,
+    });
+  }, [locationId, userRole]);
+
+  useEffect(() => {
+    if (!locationId) return undefined;
+    let cancelled = false;
+
+    const triggerSync = async () => {
+      if (cancelled) return;
+      try {
+        await supabase.functions.invoke("gingr-sync", {
+          body: { location_id: locationId, sync_type: "tv-poll" },
+        });
+      } catch {
+        // Non-fatal. Snapshot reads still work with the latest persisted data.
+      }
+    };
+
+    triggerSync();
+    const interval = setInterval(triggerSync, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [locationId]);
+
+  useEffect(() => {
+    loadSnapshot();
+    const interval = setInterval(loadSnapshot, 10_000);
+    return () => clearInterval(interval);
+  }, [loadSnapshot]);
+
+  return snapshot;
 }
 
-
-// ─── Staff Home (PCT / CSR) ──────────────────────────────────────────────────
-function StaffHome({ data, nav, profile, roleCode, locationId }) {
+function StaffHome({ nav, profile, roleCode, locationId, workflowProgress }) {
   const td = todayStr();
   const now = new Date();
   const hour = now.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Team";
   const roleName = roleCode === "csr" ? "CSR" : "PCT";
-
-  // Load today's task progress
   const [taskStats, setTaskStats] = useState({ total: 0, done: 0 });
+
   const loadTaskStats = useCallback(() => {
     const taskLocationId = profile?.location_id || locationId;
     if (!taskLocationId) return;
@@ -396,7 +343,7 @@ function StaffHome({ data, nav, profile, roleCode, locationId }) {
       supabase.from("role_page_task_state").select("task_id, completed").eq("location_id", taskLocationId).eq("role", roleCode || "pct").eq("task_date", td),
     ]).then(([configRes, stateRes]) => {
       const total = configRes.data?.length || 0;
-      const done = (stateRes.data || []).filter(r => r.completed).length;
+      const done = (stateRes.data || []).filter((row) => row.completed).length;
       setTaskStats({ total, done });
     });
   }, [locationId, profile?.location_id, roleCode, td]);
@@ -413,12 +360,7 @@ function StaffHome({ data, nav, profile, roleCode, locationId }) {
       .channel(`home-task-stats-${taskLocationId}-${roleCode || "pct"}-${td}`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "role_page_task_state",
-          filter: `location_id=eq.${taskLocationId}`,
-        },
+        { event: "*", schema: "public", table: "role_page_task_state", filter: `location_id=eq.${taskLocationId}` },
         (payload) => {
           const row = payload?.new || payload?.old;
           if (row?.role === (roleCode || "pct") && row?.task_date === td) {
@@ -428,12 +370,7 @@ function StaffHome({ data, nav, profile, roleCode, locationId }) {
       )
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "role_page_config",
-          filter: `location_id=eq.${taskLocationId}`,
-        },
+        { event: "*", schema: "public", table: "role_page_config", filter: `location_id=eq.${taskLocationId}` },
         (payload) => {
           const row = payload?.new || payload?.old;
           if (String(row?.role || "").toLowerCase() === String(roleCode || "pct").toLowerCase()) {
@@ -454,15 +391,18 @@ function StaffHome({ data, nav, profile, roleCode, locationId }) {
     <div style={{ maxWidth: 880, margin: "0 auto" }}>
       <HomeHeader
         greeting={`${greeting}, ${name}`}
-        subtitle={`${roleName} shift \u2014 ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}`}
+        subtitle={`${roleName} shift — ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}`}
       />
 
-      {/* Today's progress summary */}
-      <div style={{
-        padding: "20px 24px", borderRadius: 16, marginBottom: 24,
-        background: `linear-gradient(135deg, ${C.pri}08, ${C.acc}12)`,
-        border: `1.5px solid ${C.pri}20`,
-      }}>
+      <div
+        style={{
+          padding: "20px 24px",
+          borderRadius: 16,
+          marginBottom: 24,
+          background: `linear-gradient(135deg, ${C.pri}08, ${C.acc}12)`,
+          border: `1.5px solid ${C.pri}20`,
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Today's Progress</span>
           <span style={{ fontSize: 14, fontWeight: 800, color: pct === 100 ? C.suc : C.pri }}>
@@ -470,45 +410,57 @@ function StaffHome({ data, nav, profile, roleCode, locationId }) {
           </span>
         </div>
         <div style={{ height: 10, borderRadius: 5, background: C.borderLight, overflow: "hidden" }}>
-          <div style={{
-            width: `${pct}%`, height: "100%", borderRadius: 5,
-            background: pct === 100 ? C.suc : `linear-gradient(90deg, ${C.pri}, ${C.acc})`,
-            transition: "width 0.4s ease",
-          }} />
+          <div
+            style={{
+              width: `${pct}%`,
+              height: "100%",
+              borderRadius: 5,
+              background: pct === 100 ? C.suc : `linear-gradient(90deg, ${C.pri}, ${C.acc})`,
+              transition: "width 0.4s ease",
+            }}
+          />
         </div>
         <button
           onClick={() => nav("role-page")}
           style={{
-            marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none",
-            background: C.pri, color: "#fff", fontSize: 14, fontWeight: 700,
-            cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+            marginTop: 14,
+            padding: "10px 24px",
+            borderRadius: 10,
+            border: "none",
+            background: C.pri,
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            transition: "all 0.15s",
           }}
-          onMouseEnter={e => e.currentTarget.style.background = C.priL}
-          onMouseLeave={e => e.currentTarget.style.background = C.pri}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = C.priL;
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = C.pri;
+          }}
         >
-          {taskStats.done === 0 ? "Start My Shift" : pct === 100 ? "Review Completed Work" : "Continue My Work"} \u2192
+          {taskStats.done === 0 ? "Start My Shift" : pct === 100 ? "Review Completed Work" : "Continue My Work"} →
         </button>
       </div>
 
-      {/* Quick links */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
         <QuickCard label="My Work" desc="View and complete today's tasks" icon="Clipboard" onClick={() => nav("role-page")} accent={C.pri} />
         <QuickCard label="Bathing" desc="Bath schedule and progress" icon="Droplet" onClick={() => nav("ops-bathing")} accent="#3B82F6" />
         <QuickCard label="Room Cleaning" desc="Room status and assignments" icon="Home" onClick={() => nav("ops-rooms")} accent="#8B5CF6" />
       </div>
 
-      {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
+      <WorkflowProgressPanel rows={workflowProgress} nav={nav} />
     </div>
   );
 }
 
-
-// ─── Manager Home (MOD / Supervisor) ─────────────────────────────────────────
-function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary, locationId }) {
-  const td = todayStr();
+function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot }) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Manager";
-  const occupancy = useMemo(() => computeOccupancyMetrics(data, td), [data, td]);
+  const live = snapshot.liveSnapshot || {};
+  const metrics = snapshot.metrics || {};
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto" }}>
@@ -517,20 +469,29 @@ function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary, 
         subtitle={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
       />
 
-      <BriefingCard sentences={briefingSentences} />
-
-      {/* KPI strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 28 }}>
-        <MetricCard label="In House" value={occupancy.dogsInHouse} subtext="current guests" color={C.pri} />
-        <MetricCard label="Arrivals" value={occupancy.arriving} subtext="expected today" color="#3B82F6" />
-        <MetricCard label="Departures" value={occupancy.goingHome} subtext="going home" color="#8B5CF6" />
-        <MetricCard label="Occupancy" value={`${occupancy.occupancyPct}%`} subtext={`${occupancy.totalRoomCount || 0} rooms in inventory`} color={C.warn} />
+        <MetricCard
+          label="In House"
+          value={live.in_house ?? metrics.dogs_in_house ?? "—"}
+          subtext={`${live.boarding ?? metrics.boarding_in_house ?? 0}B · ${live.daycare ?? metrics.daycare_in_house ?? 0}D`}
+          color={C.pri}
+          live={!!snapshot.liveSnapshot}
+        />
+        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext="expected today" color="#3B82F6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext="going home today" color="#8B5CF6" live={!!snapshot.liveSnapshot} />
+        <MetricCard
+          label="Occupancy"
+          value={`${live.occupancy_pct ?? metrics.occupancy_pct ?? 0}%`}
+          subtext={`${metrics.total_room_count || 0} rooms in inventory`}
+          color={C.warn}
+          live={!!snapshot.liveSnapshot}
+        />
       </div>
 
-      {/* Primary action cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14, marginBottom: 28 }}>
         <QuickCard label="My Work" desc="Your personal task list" icon="Clipboard" onClick={() => nav("role-page")} accent="#3B82F6" />
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
+        <QuickCard label="Today's Notes" desc="Owner and dog notes from Gingr" icon="Clipboard" onClick={() => nav("checkout-notes")} accent="#0EA5E9" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
         <QuickCard label="Scheduling" desc="Demand matrix and labor plan" icon="Calendar" onClick={() => nav("scheduling")} accent="#059669" />
         <QuickCard label="Labor" desc="Roster, training, and compliance" icon="GraduationCap" onClick={() => nav("training")} accent="#2563EB" />
@@ -539,18 +500,15 @@ function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary, 
         <QuickCard label="Grassroots" desc="Events, drops, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
       </div>
 
-      {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
+      <WorkflowProgressPanel rows={snapshot.workflowProgress} nav={nav} />
     </div>
   );
 }
 
-
-// ─── Admin/Owner Home ────────────────────────────────────────────────────────
-function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inventorySummary, locationId }) {
-  const td = todayStr();
+function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot }) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Admin";
-  const occupancy = useMemo(() => computeOccupancyMetrics(data, td), [data, td]);
+  const live = snapshot.liveSnapshot || {};
+  const metrics = snapshot.metrics || {};
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto" }}>
@@ -559,25 +517,40 @@ function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inven
         subtitle={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
       />
 
-      <BriefingCard sentences={briefingSentences} />
-
-      {/* KPI strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 14, marginBottom: 28 }}>
-        <MetricCard label="In House" value={occupancy.dogsInHouse} subtext="current guests" color={C.pri} />
-        <MetricCard label="Arrivals" value={occupancy.arriving} subtext="expected today" color="#3B82F6" />
-        <MetricCard label="Departures" value={occupancy.goingHome} subtext="going home" color="#8B5CF6" />
-        <MetricCard label="Occupancy" value={`${occupancy.occupancyPct}%`} subtext={`${occupancy.totalRoomCount || 0} rooms in inventory`} color={C.warn} />
+        <MetricCard
+          label="In House"
+          value={live.in_house ?? metrics.dogs_in_house ?? "—"}
+          subtext={`${live.boarding ?? metrics.boarding_in_house ?? 0}B · ${live.daycare ?? metrics.daycare_in_house ?? 0}D`}
+          color={C.pri}
+          live={!!snapshot.liveSnapshot}
+        />
+        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext="expected today" color="#3B82F6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext="going home today" color="#8B5CF6" live={!!snapshot.liveSnapshot} />
+        <MetricCard
+          label="Occupancy"
+          value={`${live.occupancy_pct ?? metrics.occupancy_pct ?? 0}%`}
+          subtext={`${metrics.total_room_count || 0} rooms in inventory`}
+          color={C.warn}
+          live={!!snapshot.liveSnapshot}
+        />
       </div>
 
-      {/* Primary shortcuts */}
-      <div style={{
-        fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase",
-        letterSpacing: "0.04em", marginBottom: 14,
-      }}>
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 700,
+          color: C.textMut,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          marginBottom: 14,
+        }}
+      >
         Quick Access
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 28 }}>
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
+        <QuickCard label="Today's Notes" desc="Owner and dog notes from Gingr" icon="Clipboard" onClick={() => nav("checkout-notes")} accent="#0EA5E9" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
         <QuickCard label="Scheduling" desc="Demand matrix and labor plan" icon="Calendar" onClick={() => nav("scheduling")} accent="#059669" />
         <QuickCard label="Labor" desc="Roster, training, and compliance" icon="GraduationCap" onClick={() => nav("training")} accent="#2563EB" />
@@ -587,45 +560,25 @@ function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inven
         <QuickCard label="Settings" desc="Configuration and integrations" icon="Settings" onClick={() => nav("settings")} accent="#6B7280" />
       </div>
 
-      {/* Secondary shortcuts */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 28 }}>
         <QuickCard label="Photos" desc="Customer photo gallery" icon="Image" onClick={() => nav("photos")} accent="#EC4899" />
         <QuickCard label="Cash Tips" desc="Tip tracking" icon="DollarSign" onClick={() => nav("cash-tips")} accent="#F59E0B" />
-        {analyticsMode && (
+        {analyticsMode ? (
           <QuickCard label="Customer Lifecycle" desc="Leads, active, lapsed clients" icon="Users" onClick={() => nav("lifecycle")} accent="#3B82F6" />
-        )}
+        ) : null}
       </div>
 
-      {/* Ops progress */}
-      <OpsProgressSummary data={data} viewDate={td} nav={nav} locationId={locationId} />
+      <WorkflowProgressPanel rows={snapshot.workflowProgress} nav={nav} />
     </div>
   );
 }
 
-
-// ─── Main export ─────────────────────────────────────────────────────────────
-function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analyticsMode, userLocationRoles, currentLocation }) {
-  // Determine role classification.
-  // userLocationRoles are role *definitions* (not per-user assignments) in
-  // the production schema, so derive the code from profile.role instead.
+function HomePage({ nav, profile, analyticsMode, currentLocation }) {
   const roleCode = profile?.role;
   const tier = classifyRole(roleCode, profile?.role);
   const today = todayStr();
-  const [briefingStats, setBriefingStats] = useState({
-    laborSummary: {
-      newHiresThisWeek: 0,
-      terminationsThisWeek: 0,
-      attendanceMarks7d: 0,
-    },
-    incidentSummary: {
-      incidents7d: 0,
-    },
-    grassrootsSummary: {
-      isConfigured: false,
-      eventsThisWeek: 0,
-      eventsNextWeek: 0,
-    },
-  });
+  const locationId = profile?.location_id || currentLocation;
+  const snapshot = useHomeDashboardSnapshot(locationId, roleCode);
   const [inventorySummary, setInventorySummary] = useState({
     desc: "Current cycle in progress",
     badge: { label: "On track", bg: C.priLt, color: C.pri },
@@ -634,94 +587,7 @@ function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analytic
   useEffect(() => {
     let cancelled = false;
 
-    async function loadBriefingStats() {
-      const locationId = profile?.location_id || currentLocation;
-      if (!locationId) return;
-
-      const thisWeekStart = startOfWeek(today);
-      const thisWeekEnd = addDaysToDate(thisWeekStart, 6);
-      const nextWeekStart = addDaysToDate(thisWeekStart, 7);
-      const nextWeekEnd = addDaysToDate(nextWeekStart, 6);
-      const sevenDaysAgo = addDaysToDate(today, -6);
-
-      const [
-        laborRes,
-        attendanceRes,
-        incidentsRes,
-        grassrootsThisWeekRes,
-        grassrootsNextWeekRes,
-        grassrootsTrackerRes,
-      ] = await Promise.all([
-        supabase
-          .from("labor_roster_snapshot")
-          .select("start_date,end_date")
-          .eq("location_id", locationId),
-        supabase
-          .from("labor_attendance_incidents")
-          .select("id,incident_date")
-          .eq("location_id", locationId)
-          .gte("incident_date", sevenDaysAgo)
-          .lte("incident_date", today),
-        supabase
-          .from("client_incident_cases")
-          .select("id,incident_date")
-          .eq("location_id", locationId)
-          .gte("incident_date", sevenDaysAgo)
-          .lte("incident_date", today),
-        supabase
-          .from("grassroots_events")
-          .select("id,event_date")
-          .eq("location_id", locationId)
-          .gte("event_date", thisWeekStart)
-          .lte("event_date", thisWeekEnd),
-        supabase
-          .from("grassroots_events")
-          .select("id,event_date")
-          .eq("location_id", locationId)
-          .gte("event_date", nextWeekStart)
-          .lte("event_date", nextWeekEnd),
-        supabase
-          .from("lite_settings")
-          .select("setting_value")
-          .eq("location_id", locationId)
-          .eq("setting_key", "grassroots_tracker")
-          .maybeSingle(),
-      ]);
-
-      if (cancelled) return;
-
-      const laborRows = laborRes.error ? [] : (laborRes.data || []);
-      const laborSummary = {
-        newHiresThisWeek: laborRows.filter((row) => row.start_date && row.start_date >= thisWeekStart && row.start_date <= thisWeekEnd).length,
-        terminationsThisWeek: laborRows.filter((row) => row.end_date && row.end_date >= thisWeekStart && row.end_date <= thisWeekEnd).length,
-        attendanceMarks7d: attendanceRes.error ? 0 : ((attendanceRes.data || []).length),
-      };
-      const incidentSummary = {
-        incidents7d: incidentsRes.error ? 0 : ((incidentsRes.data || []).length),
-      };
-      const trackerValue = grassrootsTrackerRes?.data?.setting_value || {};
-      const fallbackThisWeek = countGrassrootsEventsFromTracker(trackerValue, thisWeekStart, thisWeekEnd);
-      const fallbackNextWeek = countGrassrootsEventsFromTracker(trackerValue, nextWeekStart, nextWeekEnd);
-      const grassrootsSummary = {
-        isConfigured: (!grassrootsThisWeekRes.error && !grassrootsNextWeekRes.error) || fallbackThisWeek > 0 || fallbackNextWeek > 0,
-        eventsThisWeek: grassrootsThisWeekRes.error ? fallbackThisWeek : ((grassrootsThisWeekRes.data || []).length),
-        eventsNextWeek: grassrootsNextWeekRes.error ? fallbackNextWeek : ((grassrootsNextWeekRes.data || []).length),
-      };
-
-      setBriefingStats({ laborSummary, incidentSummary, grassrootsSummary });
-    }
-
-    loadBriefingStats();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentLocation, profile?.location_id, today]);
-
-  useEffect(() => {
-    let cancelled = false;
-
     async function loadInventorySummary() {
-      const locationId = profile?.location_id || currentLocation;
       if (!locationId) return;
 
       const { data: scheduleRow } = await supabase
@@ -735,7 +601,7 @@ function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analytic
 
       const schedule = normalizeInventorySchedule(scheduleRow?.setting_value || DEFAULT_INVENTORY_SCHEDULE, today);
       const cycleStart = getInventoryCycleStart(today, schedule);
-      const { data: snapshot } = await supabase
+      const { data: snapshotRow } = await supabase
         .from("inventory_snapshots")
         .select("status,completed_at")
         .eq("location_id", locationId)
@@ -744,31 +610,49 @@ function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analytic
 
       if (cancelled) return;
 
-      const overdueInfo = getInventoryOverdueInfo(today, schedule, !!snapshot?.completed_at || snapshot?.status === "completed");
-      setInventorySummary(buildInventoryQuickAccessState(snapshot, overdueInfo));
+      const overdueInfo = getInventoryOverdueInfo(today, schedule, !!snapshotRow?.completed_at || snapshotRow?.status === "completed");
+      setInventorySummary(buildInventoryQuickAccessState(snapshotRow, overdueInfo));
     }
 
     loadInventorySummary();
     return () => {
       cancelled = true;
     };
-  }, [currentLocation, profile?.location_id, today]);
-
-  const briefingSentences = useMemo(() => buildBriefingSentences({
-    data,
-    today,
-    laborSummary: briefingStats.laborSummary,
-    incidentSummary: briefingStats.incidentSummary,
-    grassrootsSummary: briefingStats.grassrootsSummary,
-  }), [briefingStats, data, today]);
+  }, [locationId, today]);
 
   if (tier === "staff") {
-    return <StaffHome data={data} nav={nav} profile={profile} roleCode={roleCode} locationId={profile?.location_id || currentLocation} />;
+    return (
+      <StaffHome
+        nav={nav}
+        profile={profile}
+        roleCode={roleCode}
+        locationId={locationId}
+        workflowProgress={snapshot.workflowProgress}
+      />
+    );
   }
+
   if (tier === "manager") {
-    return <ManagerHome data={data} nav={nav} profile={profile} briefingSentences={briefingSentences} inventorySummary={inventorySummary} locationId={profile?.location_id || currentLocation} />;
+    return (
+      <ManagerHome
+        nav={nav}
+        profile={profile}
+        inventorySummary={inventorySummary}
+        locationId={locationId}
+        snapshot={snapshot}
+      />
+    );
   }
-  return <AdminHome data={data} nav={nav} profile={profile} analyticsMode={analyticsMode} briefingSentences={briefingSentences} inventorySummary={inventorySummary} locationId={profile?.location_id || currentLocation} />;
+
+  return (
+    <AdminHome
+      nav={nav}
+      profile={profile}
+      analyticsMode={analyticsMode}
+      inventorySummary={inventorySummary}
+      snapshot={snapshot}
+    />
+  );
 }
 
 export default HomePage;

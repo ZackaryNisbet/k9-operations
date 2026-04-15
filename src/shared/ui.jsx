@@ -1,7 +1,7 @@
 // K9 Operations — Shared UI Components
 // DO NOT MODIFY — stable API consumed by all page files.
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from "react";
 import ReactDOM from "react-dom";
 import { C, K9_LOGO_SRC, K9_LOGO_PNG, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, fmtPhoneInput } from "./theme";
 import { I } from "./icons";
@@ -48,16 +48,177 @@ function Btn({children,variant="primary",size="md",onClick,disabled,style={},ico
 }
 
 
-function CustomSelect({ value, onChange, options, placeholder, disabled, style: extraStyle, small }) {
+function CustomSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  disabled,
+  style: extraStyle,
+  small,
+  searchable = false,
+  searchPlaceholder = "Search options",
+}) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [menuStyle, setMenuStyle] = useState(null);
   const ref = useRef(null);
   const listRef = useRef(null);
-  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
-  // Scroll to selected item when opening
-  useEffect(() => { if (open && listRef.current && value) { const el = listRef.current.querySelector(`[data-val="${CSS.escape ? CSS.escape(value) : value}"]`); if (el) el.scrollIntoView({ block: "nearest" }); } }, [open]);
-  const opts = (options || []).map(o => typeof o === "string" ? { value: o, label: o } : o);
+  const searchRef = useRef(null);
+  const opts = useMemo(
+    () => (options || []).map(o => typeof o === "string" ? { value: o, label: o } : o),
+    [options],
+  );
   const selected = opts.find(o => o.value === value);
+  const filteredOpts = useMemo(() => {
+    if (!searchable) return opts;
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    if (!normalizedQuery) return opts;
+    return opts.filter((option) => {
+      const optionLabel = String(option?.label || "").toLowerCase();
+      const optionValue = String(option?.value || "").toLowerCase();
+      return optionLabel.includes(normalizedQuery) || optionValue.includes(normalizedQuery);
+    });
+  }, [opts, query, searchable]);
   const sz = small ? { padding: "6px 10px", fontSize: 12, borderRadius: 8 } : { padding: "10px 14px", fontSize: 14, borderRadius: 10 };
+  const updateMenuPosition = useCallback(() => {
+    if (!open || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const viewportPadding = 12;
+    const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2);
+    const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding));
+    const estimatedRowHeight = small ? 34 : 40;
+    const estimatedSearchHeight = searchable ? 56 : 0;
+    const estimatedHeight = Math.min(
+      320,
+      estimatedSearchHeight + 12 + Math.max(1, filteredOpts.length + 1) * estimatedRowHeight,
+    );
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const openUpward = spaceBelow < Math.min(estimatedHeight, 220) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(320, openUpward ? spaceAbove - 8 : spaceBelow - 8));
+    const menuHeight = listRef.current?.offsetHeight || Math.min(estimatedHeight, maxHeight);
+    const top = openUpward
+      ? Math.max(viewportPadding, rect.top - menuHeight - 4)
+      : rect.bottom + 4;
+    setMenuStyle({
+      position: "fixed",
+      top,
+      left,
+      width,
+      zIndex: 9999,
+      maxHeight,
+      transformOrigin: openUpward ? "bottom" : "top",
+    });
+  }, [filteredOpts.length, open, searchable, small]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (ref.current?.contains(event.target) || listRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleReposition = () => updateMenuPosition();
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [open, updateMenuPosition]);
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateMenuPosition();
+  }, [filteredOpts.length, open, updateMenuPosition]);
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      updateMenuPosition();
+      if (searchable) searchRef.current?.focus();
+      if (listRef.current && value !== undefined && value !== null) {
+        const targetValue = String(value);
+        const selectorValue = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(targetValue) : targetValue;
+        const el = listRef.current.querySelector(`[data-val="${selectorValue}"]`);
+        if (el) el.scrollIntoView({ block: "nearest" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, searchable, updateMenuPosition, value]);
+  const menu = open ? ReactDOM.createPortal(
+    <div
+      ref={listRef}
+      onClick={e => e.stopPropagation()}
+      style={{
+        ...(menuStyle || {}),
+        background: C.surface,
+        border: `1.5px solid ${C.border}`,
+        borderRadius: 12,
+        boxShadow: "0 16px 40px rgba(0,0,0,0.16)",
+        overflowY: "auto",
+        padding: "4px 0",
+      }}
+    >
+      {searchable && (
+        <div style={{ position: "sticky", top: 0, zIndex: 1, padding: 8, background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+            style={{
+              width: "100%",
+              padding: small ? "7px 10px" : "9px 12px",
+              borderRadius: 10,
+              border: `1.5px solid ${C.border}`,
+              background: "#fff",
+              color: C.text,
+              fontSize: small ? 12 : 13,
+              fontFamily: "inherit",
+              boxSizing: "border-box",
+              outline: "none",
+            }}
+          />
+        </div>
+      )}
+      <button
+        type="button"
+        data-val=""
+        onClick={() => { onChange(""); setOpen(false); }}
+        style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: value === "" ? C.priLt : "transparent", color: C.textMut, fontSize: small ? 12 : 13, fontWeight: 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
+        onMouseEnter={e => { if (value !== "") e.currentTarget.style.background = C.bg; }}
+        onMouseLeave={e => { if (value !== "") e.currentTarget.style.background = "transparent"; }}
+      >
+        <span style={{ color: C.textMut, fontStyle: "italic" }}>{placeholder || "Select..."}</span>
+      </button>
+      {filteredOpts.filter(o => o.value !== "").map(o => {
+        const isSel = o.value === value;
+        return (
+          <button
+            type="button"
+            key={o.value}
+            data-val={String(o.value)}
+            onClick={() => { onChange(o.value); setOpen(false); }}
+            style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: isSel ? C.priLt : "transparent", color: isSel ? C.pri : C.text, fontSize: small ? 12 : 13, fontWeight: isSel ? 700 : 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
+            onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = C.bg; }}
+            onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
+          >
+            {isSel && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12"/></svg>}
+            <span>{o.label}</span>
+          </button>
+        );
+      })}
+      {filteredOpts.filter(o => o.value !== "").length === 0 && (
+        <div style={{ padding: "12px 16px", fontSize: 12, color: C.textMut, fontStyle: "italic" }}>
+          {query ? "No matching options" : "No options available"}
+        </div>
+      )}
+    </div>,
+    document.body,
+  ) : null;
   return (
     <div ref={ref} style={{ position: "relative", width: "100%", ...extraStyle }}>
       <button type="button" onClick={() => { if (!disabled) setOpen(!open); }}
@@ -65,30 +226,7 @@ function CustomSelect({ value, onChange, options, placeholder, disabled, style: 
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{selected ? selected.label : (placeholder || "Select...")}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      {open && (
-        <div ref={listRef} onClick={e => e.stopPropagation()} style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto", padding: "4px 0" }}>
-          {/* Empty option */}
-          <button type="button" data-val="" onClick={() => { onChange(""); setOpen(false); }}
-            style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: value === "" ? C.priLt : "transparent", color: C.textMut, fontSize: small ? 12 : 13, fontWeight: 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
-            onMouseEnter={e => { if (value !== "") e.currentTarget.style.background = C.bg; }}
-            onMouseLeave={e => { if (value !== "") e.currentTarget.style.background = "transparent"; }}>
-            <span style={{ color: C.textMut, fontStyle: "italic" }}>{placeholder || "Select..."}</span>
-          </button>
-          {opts.filter(o => o.value !== "").map(o => {
-            const isSel = o.value === value;
-            return (
-              <button type="button" key={o.value} data-val={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
-                style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: isSel ? C.priLt : "transparent", color: isSel ? C.pri : C.text, fontSize: small ? 12 : 13, fontWeight: isSel ? 700 : 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
-                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = C.bg; }}
-                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = "transparent"; }}>
-                {isSel && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12"/></svg>}
-                <span>{o.label}</span>
-              </button>
-            );
-          })}
-          {opts.length === 0 && <div style={{ padding: "12px 16px", fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No options available</div>}
-        </div>
-      )}
+      {menu}
     </div>
   );
 }

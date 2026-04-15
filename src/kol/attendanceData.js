@@ -55,7 +55,7 @@ function daysAgoDate(asOf, days) {
 }
 
 export function getAttendanceIncidentLabel(value) {
-  return INCIDENT_LABEL_BY_VALUE[value] || value || "Incident";
+  return INCIDENT_LABEL_BY_VALUE[value] || value || "Mark";
 }
 
 export function getAttendanceActionLabel(value) {
@@ -64,10 +64,12 @@ export function getAttendanceActionLabel(value) {
 
 export function summarizeAttendanceIncidents({ laborEmployees = [], incidents = [], asOf = new Date() }) {
   const thresholdDate = daysAgoDate(asOf, 30);
-  const rows = laborEmployees
+  const cleanEmployees = laborEmployees.filter((employee) => employee && typeof employee === "object");
+  const cleanIncidents = incidents.filter((incident) => incident && typeof incident === "object");
+  const rows = cleanEmployees
     .filter((employee) => isActiveEmployee(employee))
     .map((employee) => {
-      const employeeIncidents = incidents.filter(
+      const employeeIncidents = cleanIncidents.filter(
         (incident) => incident.labor_employee_id === employee.id,
       );
 
@@ -126,9 +128,11 @@ export function buildAttendanceActivityFeed({
   policyActions = [],
   employeeMap = {},
 }) {
-  const incidentFeed = incidents.map((incident) => ({
-    id: `incident:${incident.id}`,
-    kind: "incident",
+  const incidentFeed = incidents
+    .filter((incident) => incident && typeof incident === "object")
+    .map((incident) => ({
+    id: `mark:${incident.id}`,
+    kind: "mark",
     laborEmployeeId: incident.labor_employee_id,
     employeeName: employeeMap[incident.labor_employee_id]?.full_name || "Unknown Employee",
     typeLabel: getAttendanceIncidentLabel(incident.incident_type),
@@ -139,7 +143,9 @@ export function buildAttendanceActivityFeed({
     metadata: incident.metadata || {},
   }));
 
-  const actionFeed = policyActions.map((action) => ({
+  const actionFeed = policyActions
+    .filter((action) => action && typeof action === "object")
+    .map((action) => ({
     id: `action:${action.id}`,
     kind: "policy_action",
     laborEmployeeId: action.labor_employee_id,
