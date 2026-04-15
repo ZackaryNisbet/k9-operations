@@ -29,6 +29,7 @@ import {
   buildRoomOccupancyComputedItems,
   buildRoomOccupancyLookup,
   fetchRoomOccupancySnapshotForDate,
+  ROOM_OCCUPANCY_LODGING_CATEGORIES,
   resolveRoomOccupancyLookupEntry,
   type RoomOccupancyLookup,
 } from "../_shared/room-occupancy.ts";
@@ -1485,7 +1486,7 @@ Deno.serve(async (req: Request) => {
       supabase: sb,
       locationId,
       date,
-      includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+      includeCategories: ROOM_OCCUPANCY_LODGING_CATEGORIES,
     });
     const roomOccupancyLookup = buildRoomOccupancyLookup(roomOccupancySnapshot);
     const roomOccupancyComputed = buildRoomOccupancyComputedItems(roomOccupancySnapshot);

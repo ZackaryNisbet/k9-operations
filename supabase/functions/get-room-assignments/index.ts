@@ -7,6 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   buildRoomOccupancyLookup,
   fetchRoomOccupancySnapshotForDate,
+  ROOM_OCCUPANCY_LODGING_CATEGORIES,
 } from "../_shared/room-occupancy.ts";
 
 const corsHeaders = {
@@ -48,7 +49,7 @@ serve(async (req) => {
         supabase,
         locationId,
         date,
-        includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+        includeCategories: ROOM_OCCUPANCY_LODGING_CATEGORIES,
       });
       const lookup = buildRoomOccupancyLookup(snapshot);
       const rooms: Record<string, string> = {};

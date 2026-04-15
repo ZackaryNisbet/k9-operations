@@ -55,6 +55,58 @@ function makeOccupancyRow(
 }
 
 describe("room occupancy logic", () => {
+  it("defaults the canonical occupancy model to lodging-only reservations", () => {
+    const payload = buildRoomOccupancySnapshot({
+      date: TARGET_DATE,
+      runs: [makeRun("Executive - 205")],
+      occupancy_rows: [
+        makeOccupancyRow({
+          gingr_run_id: "run-205",
+          run_name: "Executive - 205",
+          animal_names: "Hazel (Jane Doe)",
+          end_date: "2026-04-18T12:30:00-04:00",
+        }),
+      ],
+      reservations: [
+        makeReservation({
+          reservation_id: "boarding-1",
+          animal_id: "animal-boarding-1",
+          animal_name: "Hazel",
+          owner_first_name: "Jane",
+          owner_last_name: "Doe",
+          reservation_type_name: "Boarding | Executive Room (All Inclusive)",
+          start_date: TARGET_DATE,
+          end_date: "2026-04-18",
+        }),
+        makeReservation({
+          reservation_id: "daycare-1",
+          animal_id: "animal-daycare-1",
+          animal_name: "Willa",
+          owner_first_name: "Zach",
+          owner_last_name: "Goldberg",
+          reservation_type_name: "Daycare",
+          start_date: TARGET_DATE,
+          end_date: TARGET_DATE,
+          check_in_date: `${TARGET_DATE}T11:54:27-04:00`,
+        }),
+        makeReservation({
+          reservation_id: "eval-1",
+          animal_id: "animal-eval-1",
+          animal_name: "Skylar",
+          owner_first_name: "Josh",
+          owner_last_name: "Varon",
+          reservation_type_name: "Evaluation",
+          start_date: TARGET_DATE,
+          end_date: TARGET_DATE,
+          check_in_date: `${TARGET_DATE}T13:25:38-04:00`,
+        }),
+      ],
+    });
+
+    expect(payload.assignments.map((assignment) => assignment.reservation_id)).toEqual(["boarding-1"]);
+    expect(payload.unresolved_assignments).toHaveLength(0);
+  });
+
   it("dedupes shadow reservations and prefers the checked-in row", () => {
     const payload = buildRoomOccupancySnapshot({
       date: TARGET_DATE,
