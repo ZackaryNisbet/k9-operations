@@ -2255,6 +2255,85 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // ── Today-sync: refresh the current room day model without a full sync ──
+    // This runs on the 5-minute cron cadence and must keep today's reservations
+    // plus yesterday/today/tomorrow room occupancy fresh for downstream
+    // room-cleaning, roll call, and room-based operational reports.
+    if (sync_type === "today-sync") {
+      const startTime = Date.now();
+      const results: Record<string, any> = {};
+
+      await updateSyncState(supabase, location_id, "reservations", {
+        status: "syncing",
+        last_sync_at: new Date().toISOString(),
+      });
+
+      try {
+        const reservationStart = Date.now();
+        results.reservations_today = await syncTodayReservations(
+          supabase,
+          subdomain,
+          api_key,
+          location_id,
+        );
+        await updateSyncState(supabase, location_id, "reservations", {
+          status: "idle",
+          last_sync_at: new Date().toISOString(),
+          records_synced: results.reservations_today.synced || 0,
+          sync_duration_ms: Date.now() - reservationStart,
+          error_message: null,
+        });
+      } catch (reservationErr: any) {
+        await updateSyncState(supabase, location_id, "reservations", {
+          status: "error",
+          last_sync_at: new Date().toISOString(),
+          error_message: reservationErr.message,
+        });
+        throw reservationErr;
+      }
+
+      await updateSyncState(supabase, location_id, "runs_and_occupancy", {
+        status: "syncing",
+        last_sync_at: new Date().toISOString(),
+      });
+
+      try {
+        const occupancyStart = Date.now();
+        results.runs_and_occupancy = await syncRunsAndOccupancy(
+          supabase,
+          subdomain,
+          api_key,
+          gingr_location_id || "1",
+          location_id,
+        );
+        await updateSyncState(supabase, location_id, "runs_and_occupancy", {
+          status: "idle",
+          last_sync_at: new Date().toISOString(),
+          records_synced: results.runs_and_occupancy.occupancy || 0,
+          sync_duration_ms: Date.now() - occupancyStart,
+          error_message: null,
+        });
+      } catch (occupancyErr: any) {
+        await updateSyncState(supabase, location_id, "runs_and_occupancy", {
+          status: "error",
+          last_sync_at: new Date().toISOString(),
+          error_message: occupancyErr.message,
+        });
+        throw occupancyErr;
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sync_type: "today-sync",
+          location_id,
+          duration_ms: Date.now() - startTime,
+          results,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     // ── TV-007: Lightweight tv-poll mode ────────────────────────────────────
     // Only fetches checked_in: "true" from Gingr and reconciles checkouts.
     // Called every 60s from the TV page for near-real-time checkout detection.
