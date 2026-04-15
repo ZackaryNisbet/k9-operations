@@ -24,11 +24,13 @@ import PermissionsTab from "../settings/PermissionsTab";
 import RequiredFieldsTab from "../settings/RequiredFieldsTab";
 import ChecklistTemplatesTab from "../settings/ChecklistTemplatesTab";
 import RetentionThresholdsTab from "../settings/RetentionThresholdsTab";
+import EmergencyContactsSettingsTab from "../settings/EmergencyContactsSettingsTab";
 import IgniteSettingsTab from "../settings/IgniteSettingsTab";
 import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
+import GingrIconsTab from "../settings/GingrIconsTab";
 import RoleLayoutPage from "./RoleLayoutPage";
 
 // ── Subscription Management Tab ────────────────────────────────────────────
@@ -198,6 +200,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Integrations",
       cards: [
         { id: "gingr", label: "Gingr Integration", desc: "Connect and configure Gingr POS" },
+        { id: "gingr-icons", label: "Gingr Icons", desc: "Review synced icon inventory and map icons to canonical operational capabilities" },
         { id: "api-overview", label: "API Overview", desc: "View all Gingr API call types, frequencies, projected daily usage, and sync state" },
         { id: "api-dashboard", label: "API Dashboard", desc: "All Gingr API endpoints, frequencies, configurable polling, and daily call projections" },
       ],
@@ -223,6 +226,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
+        { id: "emergency-contacts", label: "Emergency Contacts", desc: "Configure repeat-verification thresholds for emergency contact prompts" },
         { id: "role-layout", label: "Role Layout", desc: "Matrix view: configure tasks and workflows across PCT, CSR, and MOD for all time-of-day sections" },
       ],
     },
@@ -266,6 +270,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <DashboardRefreshTab />;
       case "gingr":
         return <GingrIntegrationTab />;
+      case "gingr-icons":
+        return <GingrIconsTab />;
       case "team":
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
@@ -290,6 +296,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "room-cleaning":
         return <RoomCleaningSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
+      case "emergency-contacts":
+        return <EmergencyContactsSettingsTab />;
       default:
         return null;
     }

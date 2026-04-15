@@ -12,8 +12,13 @@ import {
   extractBathLikeServices,
   getBathSchedulingForDate,
   isBoardingReservation,
-  normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
+import {
+  fetchLocationIconMappings,
+  resolveBathDisplayFromIconRows,
+  type GingrAnimalIconRow,
+  type GingrIconMappingRow,
+} from "../_shared/gingr-icon-mappings.ts";
 import { loadRollCallSessionRow } from "../_shared/roll-call-logic.ts";
 import {
   buildPlaygroupAssignmentMap,
@@ -31,6 +36,7 @@ const corsHeaders = {
 
 // Module-level playgroup map — populated in serve handler before reports run
 let _globalPlaygroupMap: Record<string, string> = {};
+let _globalGingrIconMappings: GingrIconMappingRow[] = [];
 
 // Get size category from Gingr playgroup icons ONLY — no weight fallback
 function getSizeCategory(animalGingrId: string, _weight: number | null): string | null {
@@ -513,11 +519,101 @@ interface RoomEntry {
   needsDisinfect: boolean;
   needsRefresh: boolean;
   needsSetup: boolean;
+  needsSanitize?: boolean;
   setupReason: string | null;
   suggestedBowlSize: string | null;
   dogWeight: number | null;
+  photoUrl?: string | null;
   isCheckedOut: boolean;
   dogs: DogDetail[];
+}
+
+interface RoomCleaningTaskInstance {
+  task_id: string;
+  task_type: "room_refresh" | "full_disinfect" | "setup" | "sanitize";
+  room: string;
+  room_key: string;
+  room_type: string;
+  area_name: string;
+  reservation_id: string;
+  animal_id: string;
+  animal_name: string;
+  owner_last_name: string;
+  photo_url: string | null;
+  blocked_by_task_id: string | null;
+  classification_bucket: string;
+  rationale: string;
+  supporting_data: Record<string, any>;
+  setup_reason: string | null;
+  suggested_bowl_size: string | null;
+  dog_weight: number | null;
+  display_priority: number;
+}
+
+interface RoomCleaningReservationContext {
+  reservationId: string;
+  animalId: string;
+  animalName: string;
+  ownerLastName: string;
+  reservationType: string;
+  room: string;
+  roomKey: string;
+  roomType: string;
+  areaName: string;
+  startDate: string;
+  endDate: string;
+  checkOutDate: string;
+  totalNights: number;
+  dayNumber: number;
+  isDayBoarding: boolean;
+  isCheckedOut: boolean;
+  photoUrl: string | null;
+  dogWeight: number | null;
+  suggestedBowlSize: string | null;
+  setupReason: string | null;
+}
+
+const ROOM_CLEANING_BUCKETS = [
+  "room_refresh",
+  "full_disinfect",
+  "setup",
+  "sanitize_and_setup",
+  "full_disinfect_then_setup",
+  "full_disinfect_then_setup_and_sanitize",
+] as const;
+
+function sanitizeRoomKey(name: string): string {
+  return (name || "")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .toLowerCase();
+}
+
+function makeRoomCleaningTaskId(
+  taskType: RoomCleaningTaskInstance["task_type"],
+  ctx: Pick<RoomCleaningReservationContext, "roomKey" | "reservationId" | "animalId">,
+): string {
+  return [taskType, ctx.roomKey || "room", ctx.reservationId || "reservation", ctx.animalId || "animal"].join("__");
+}
+
+function buildRoomCleaningRationale(
+  taskType: RoomCleaningTaskInstance["task_type"],
+  ctx: RoomCleaningReservationContext,
+  blockedByTaskId: string | null,
+): string {
+  if (taskType === "room_refresh") {
+    return `Room refreshes are required every day for each guest on a multi-night reservation after arrival day. ${ctx.animalName} checked in ${ctx.startDate} and checks out ${ctx.endDate}.`;
+  }
+  if (taskType === "full_disinfect") {
+    return `A full disinfect is required after a multi-night stay checks out. ${ctx.animalName} is departing from ${ctx.room} on ${ctx.endDate}.`;
+  }
+  if (taskType === "setup") {
+    if (blockedByTaskId) {
+      return `This setup is blocked until the same-room full disinfect is complete. ${ctx.animalName} arrives on ${ctx.startDate} and the room must be disinfected first.`;
+    }
+    return `Setups prepare the room with water before arrival. ${ctx.animalName} arrives on ${ctx.startDate} for ${ctx.setupReason || "today's stay"}.`;
+  }
+  return `Sanitize is required after a same-day / single-day stay. ${ctx.animalName} arrives and departs on ${ctx.endDate}, so the room needs post-stay cleaning.`;
 }
 
 function suggestBowlSize(weight: number | null): string {
@@ -689,196 +785,234 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
   ]);
   const allReservations = [...(activeReservations || []), ...(checkedOutToday || [])];
 
-  const rooms: RoomEntry[] = [];
-  const seenAnimals = new Set<string>();
-
-  // ─── Step 2b: Pre-compute placeholder room names for unassigned dogs ──
-  // Check occupancy map (from gingr_room_occupancy) before falling back to "(unlinked)".
-  const unassignedRoomNames: Record<string, string> = {}; // gingr_id → room name
-  {
-    const typeCounters: Record<string, number> = {};
-    for (const res of allReservations) {
-      const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
-      const bohInfo = animalId ? bohRoomMap[animalId] : null;
-      const resNameLower = (res.animal_name || "").trim().toLowerCase();
-      const occInfo = resNameLower ? occupancyRoomMap[resNameLower] : null;
-      const hasRoom = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name;
-      if (hasRoom) continue;
-      const typeName = res.reservation_type_name || "";
-      const tLower = typeName.toLowerCase();
-      if (tLower.startsWith("daycare") || tLower.startsWith("day care") || tLower.includes("resort tour")) continue;
-      const roomType = parseRoomType(typeName);
-      typeCounters[roomType] = (typeCounters[roomType] || 0) + 1;
-      unassignedRoomNames[res.gingr_id] = `${roomType} (unlinked) #${typeCounters[roomType]}`;
-    }
-  }
-
-  // ─── Step 3: Process all active reservations + today's checkouts ────
-  for (const res of allReservations) {
-    const typeName = res.reservation_type_name || "";
-    const tLower = typeName.toLowerCase();
-
-    // Skip non-boarding reservation types (no room needed)
-    if (tLower.startsWith("daycare") || tLower.startsWith("day care") || tLower.includes("resort tour")) continue;
-
-    const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
-    if (animalId && seenAnimals.has(animalId)) continue;
-    if (animalId) seenAnimals.add(animalId);
-
-    const isDayBoarding = tLower.includes("day boarding");
-    const isCheckedOut = !!res.check_out_date;
-
-    // Get dates — Supabase stores as TIMESTAMPTZ
-    const startDate = res.start_date ? res.start_date.split("T")[0] : today;
-    const endDate = res.end_date ? res.end_date.split("T")[0] : today;
-
-    // Room name: room_assignment (server-side) → BOH lookup → occupancy lookup → raw_data → generate from type
-    const bohInfo = animalId ? bohRoomMap[animalId] : null;
-    const dogNameLower = (res.animal_name || "").trim().toLowerCase();
-    const occInfo = dogNameLower ? occupancyRoomMap[dogNameLower] : null;
-    const runName = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name || "";
-    const areaName = bohInfo?.areaName || occInfo?.areaName || res.raw_data?.area_name || "";
-    // Use physical room type when room is known, fall back to reservation type
-    const roomType = (runName && roomNameToType[runName]) || parseRoomType(typeName);
-
-    // Determine cleaning type
-    let cleaningType = "refresh";
-    let needsDisinfect = false;
-    let needsRefresh = false;
-
-    if (isCheckedOut || isDayBoarding) {
-      // Checked out today or day boarding → full disinfect
-      cleaningType = "disinfect";
-      needsDisinfect = true;
-    } else if (endDate === today) {
-      // Last day — full disinfect needed
-      cleaningType = "disinfect";
-      needsDisinfect = true;
-    } else if (startDate === today) {
-      // First day — room is already fresh from setup, no refresh needed
-      cleaningType = "none";
-      needsRefresh = false;
-    } else {
-      // Middle of stay — refresh
-      cleaningType = "refresh";
-      needsRefresh = true;
-    }
-
-    // Calculate day number and total nights
-    const startD = new Date(startDate + "T12:00:00");
-    const todayD = new Date(today + "T12:00:00");
-    const endD = new Date(endDate + "T12:00:00");
-    const dayNumber = Math.max(1, Math.round((todayD.getTime() - startD.getTime()) / 86400000) + 1);
-    const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
-
-    rooms.push({
-      room: runName || unassignedRoomNames[res.gingr_id] || roomType,
-      roomType,
-      areaName,
-      dogName: res.animal_name || "",
-      dogNames: res.animal_name ? [res.animal_name] : [],
-      ownerLastName: res.owner_last_name || "",
-      reservationType: typeName,
-      checkIn: startDate,
-      checkOut: endDate,
-      dayNumber,
-      totalNights,
-      cleaningType,
-      needsDisinfect,
-      needsRefresh,
-      needsSetup: false,
-      setupReason: null,
-      suggestedBowlSize: null,
-      dogWeight: null,
-      isCheckedOut,
-      dogs: res.animal_name ? [{ name: res.animal_name, ownerLastName: res.owner_last_name || "", weight: null, suggestedBowlSize: null, setupReason: null, needsSetup: false }] : [],
-    });
-  }
-
-  // ─── Step 4: Also add BOH checking_out dogs not already in Supabase ──
-  // (edge case: BOH might have dogs that haven't synced to Supabase yet)
-  for (const dog of checkingOut) {
-    const animalId = String(dog.animal_id || dog.id || "");
-    if (animalId && seenAnimals.has(animalId)) continue;
-    if (animalId) seenAnimals.add(animalId);
-
-    const typeName = dog.type || "";
-    if (typeName.toLowerCase().startsWith("daycare")) continue;
-
-    const isDayBoarding = typeName.toLowerCase().startsWith("day boarding");
-    const runName = dog.run_name || "";
-    const roomType = (runName && roomNameToType[runName]) || parseRoomType(typeName);
-    const startDate = (dog.start_date || "").split(" ")[0];
-    const endDate = (dog.end_date || "").split(" ")[0];
-
-    let cleaningType = "refresh";
-    let needsDisinfect = false;
-    let needsRefresh = false;
-
-    if (isDayBoarding) { cleaningType = "disinfect"; needsDisinfect = true; }
-    else if (endDate === today) { cleaningType = "disinfect"; needsDisinfect = true; }
-    else if (startDate === today) { cleaningType = "none"; needsRefresh = false; }
-    else { cleaningType = "refresh"; needsRefresh = true; }
-
-    const startD = new Date(startDate + "T12:00:00");
-    const todayD = new Date(today + "T12:00:00");
-    const endD = new Date(endDate + "T12:00:00");
-    const dayNumber = Math.max(1, Math.round((todayD.getTime() - startD.getTime()) / 86400000) + 1);
-    const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
-
-    rooms.push({
-      room: runName || roomType,
-      roomType,
-      areaName: dog.area_name || "",
-      dogName: dog.a_first || "",
-      dogNames: dog.a_first ? [dog.a_first] : [],
-      ownerLastName: dog.o_last || "",
-      reservationType: typeName,
-      checkIn: startDate,
-      checkOut: endDate,
-      dayNumber,
-      totalNights,
-      cleaningType,
-      needsDisinfect,
-      needsRefresh,
-      needsSetup: false,
-      setupReason: null,
-      suggestedBowlSize: null,
-      dogWeight: null,
-      isCheckedOut: false,
-      dogs: dog.a_first ? [{ name: dog.a_first, ownerLastName: dog.o_last || "", weight: null, suggestedBowlSize: null, setupReason: null, needsSetup: false }] : [],
-    });
-  }
-
-  // ─── Step 5: Setup detection ─────────────────────────────────────────
-  // Query today's reservations from Supabase for evaluation, dayboarding, and first-time daycare
   const { data: todayReservations } = await supabase
     .from("gingr_reservations")
-    .select("gingr_id, animal_gingr_id, animal_name, owner_last_name, reservation_type_name, start_date, raw_data")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_last_name, reservation_type_name, start_date, end_date, raw_data")
     .eq("location_id", locationId)
     .gte("start_date", today)
     .lt("start_date", addDays(today, 1))
     .is("cancelled_date", null);
 
-  const setupDogs: Array<{
-    animalGingrId: string;
-    dogName: string;
-    ownerLastName: string;
-    reason: string;
-    room: string | null;
-  }> = [];
+  const allAnimalIds = [...new Set([
+    ...(allReservations || []).map((res: any) => String(res.animal_gingr_id || "")).filter(Boolean),
+    ...(todayReservations || []).map((res: any) => String(res.animal_gingr_id || "")).filter(Boolean),
+    ...checkingOut.map((dog: any) => String(dog.animal_id || dog.id || "")).filter(Boolean),
+  ])];
+
+  const animalMetaMap: Record<string, { weight: number | null; photoUrl: string | null }> = {};
+  if (allAnimalIds.length > 0) {
+    const { data: animals } = await supabase
+      .from("gingr_animals")
+      .select("gingr_id, weight, image_url")
+      .in("gingr_id", allAnimalIds);
+
+    for (const animal of animals || []) {
+      const weight = animal.weight ? parseFloat(animal.weight) : null;
+      animalMetaMap[String(animal.gingr_id)] = {
+        weight: (weight && !isNaN(weight)) ? weight : null,
+        photoUrl: animal.image_url || null,
+      };
+    }
+  }
+
+  const reservationContexts: RoomCleaningReservationContext[] = [];
+  const seenAnimals = new Set<string>();
+  const unassignedRoomNames: Record<string, string> = {};
+  const typeCounters: Record<string, number> = {};
+
+  for (const res of allReservations) {
+    const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
+    const bohInfo = animalId ? bohRoomMap[animalId] : null;
+    const resNameLower = (res.animal_name || "").trim().toLowerCase();
+    const occInfo = resNameLower ? occupancyRoomMap[resNameLower] : null;
+    const hasRoom = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name;
+    if (!hasRoom) {
+      const roomType = parseRoomType(res.reservation_type_name || "");
+      typeCounters[roomType] = (typeCounters[roomType] || 0) + 1;
+      unassignedRoomNames[res.gingr_id] = `${roomType} (unlinked) #${typeCounters[roomType]}`;
+    }
+  }
+
+  const toReservationContext = (res: any, source: "db" | "boh"): RoomCleaningReservationContext | null => {
+    const typeName = source === "db" ? (res.reservation_type_name || "") : (res.type || "");
+    const typeLower = typeName.toLowerCase();
+    if (typeLower.startsWith("daycare") || typeLower.startsWith("day care") || typeLower.includes("resort tour")) {
+      return null;
+    }
+
+    const animalId = source === "db"
+      ? String(res.animal_gingr_id || "")
+      : String(res.animal_id || res.id || "");
+    const startDate = source === "db"
+      ? String(res.start_date || "").split("T")[0]
+      : String(res.start_date || "").split(" ")[0];
+    const endDate = source === "db"
+      ? String(res.end_date || "").split("T")[0]
+      : String(res.end_date || "").split(" ")[0];
+    const checkOutDate = source === "db"
+      ? String(res.check_out_date || "").split("T")[0]
+      : "";
+    const dogName = source === "db" ? (res.animal_name || "") : (res.a_first || "");
+    const dedupeKey = animalId || `${source}:${dogName}:${startDate}:${endDate}`;
+    if (seenAnimals.has(dedupeKey)) {
+      return null;
+    }
+    seenAnimals.add(dedupeKey);
+    const ownerLastName = source === "db" ? (res.owner_last_name || "") : (res.o_last || "");
+    const bohInfo = animalId ? bohRoomMap[animalId] : null;
+    const occInfo = dogName ? occupancyRoomMap[dogName.trim().toLowerCase()] : null;
+    const room = source === "db"
+      ? (res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name || unassignedRoomNames[res.gingr_id] || parseRoomType(typeName))
+      : (res.run_name || parseRoomType(typeName));
+    const areaName = source === "db"
+      ? (bohInfo?.areaName || occInfo?.areaName || res.raw_data?.area_name || "")
+      : (res.area_name || "");
+    const roomType = (room && roomNameToType[room]) || parseRoomType(typeName);
+    const startMs = new Date(`${startDate || today}T12:00:00`).getTime();
+    const endMs = new Date(`${endDate || today}T12:00:00`).getTime();
+    const totalNights = Math.max(0, Math.round((endMs - startMs) / 86400000));
+    const todayMs = new Date(`${today}T12:00:00`).getTime();
+    const dayNumber = Math.max(1, Math.round((todayMs - startMs) / 86400000) + 1);
+    const meta = animalMetaMap[animalId] || { weight: null, photoUrl: null };
+
+    return {
+      reservationId: String(source === "db" ? res.gingr_id : `boh_${animalId || room}`),
+      animalId,
+      animalName: dogName,
+      ownerLastName,
+      reservationType: typeName,
+      room,
+      roomKey: sanitizeRoomKey(room),
+      roomType,
+      areaName,
+      startDate: startDate || today,
+      endDate: endDate || today,
+      checkOutDate,
+      totalNights,
+      dayNumber,
+      isDayBoarding: typeLower.includes("day boarding"),
+      isCheckedOut: source === "db" ? !!res.check_out_date : false,
+      photoUrl: meta.photoUrl,
+      dogWeight: meta.weight,
+      suggestedBowlSize: suggestBowlSize(meta.weight),
+      setupReason: null,
+    };
+  };
+
+  for (const res of allReservations) {
+    const ctx = toReservationContext(res, "db");
+    if (ctx) reservationContexts.push(ctx);
+  }
+
+  for (const dog of checkingOut || []) {
+    const ctx = toReservationContext(dog, "boh");
+    if (ctx) reservationContexts.push(ctx);
+  }
+
+  const tasks: RoomCleaningTaskInstance[] = [];
+  const fullDisinfectTaskByRoom: Record<string, string> = {};
+  const classificationSummary = ROOM_CLEANING_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket] = 0;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const roomGroups = new Map<string, RoomCleaningReservationContext[]>();
+  for (const ctx of reservationContexts) {
+    if (!roomGroups.has(ctx.roomKey)) roomGroups.set(ctx.roomKey, []);
+    roomGroups.get(ctx.roomKey)!.push(ctx);
+  }
+
+  const incrementBucket = (bucket: string) => {
+    classificationSummary[bucket] = (classificationSummary[bucket] || 0) + 1;
+  };
+
+  const buildTask = (
+    taskType: RoomCleaningTaskInstance["task_type"],
+    ctx: RoomCleaningReservationContext,
+    classificationBucket: string,
+    blockedByTaskId: string | null,
+  ): RoomCleaningTaskInstance => ({
+    task_id: makeRoomCleaningTaskId(taskType, ctx),
+    task_type: taskType,
+    room: ctx.room,
+    room_key: ctx.roomKey,
+    room_type: ctx.roomType,
+    area_name: ctx.areaName,
+    reservation_id: ctx.reservationId,
+    animal_id: ctx.animalId,
+    animal_name: ctx.animalName,
+    owner_last_name: ctx.ownerLastName,
+    photo_url: ctx.photoUrl,
+    blocked_by_task_id: blockedByTaskId,
+    classification_bucket: classificationBucket,
+    rationale: buildRoomCleaningRationale(taskType, ctx, blockedByTaskId),
+    supporting_data: {
+      start_date: ctx.startDate,
+      end_date: ctx.endDate,
+      check_out_date: ctx.checkOutDate || null,
+      reservation_type: ctx.reservationType,
+      reservation_status: ctx.isCheckedOut
+        ? "checked_out_today"
+        : ctx.endDate === today
+          ? "departing_today"
+          : ctx.startDate === today
+            ? "arriving_today"
+            : "in_house",
+      day_number: ctx.dayNumber,
+      total_nights: ctx.totalNights,
+      room_type: ctx.roomType,
+      area_name: ctx.areaName,
+      setup_reason: ctx.setupReason,
+      blocked_reason: blockedByTaskId ? "Blocked by full disinfect" : null,
+    },
+    setup_reason: ctx.setupReason,
+    suggested_bowl_size: ctx.suggestedBowlSize,
+    dog_weight: ctx.dogWeight,
+    display_priority: taskType === "full_disinfect" ? 0 : taskType === "setup" ? 1 : taskType === "room_refresh" ? 2 : 3,
+  });
+
+  for (const contexts of roomGroups.values()) {
+    const sorted = [...contexts].sort((a, b) => a.animalName.localeCompare(b.animalName));
+
+    const refreshContext = sorted.find((ctx) =>
+      !ctx.isDayBoarding &&
+      !ctx.isCheckedOut &&
+      ctx.totalNights >= 1 &&
+      ctx.startDate < today &&
+      ctx.endDate > today
+    );
+    if (refreshContext) {
+      incrementBucket("room_refresh");
+      tasks.push(buildTask("room_refresh", refreshContext, "room_refresh", null));
+    }
+
+    const disinfectContext = sorted.find((ctx) =>
+      !ctx.isDayBoarding &&
+      ctx.totalNights >= 1 &&
+      (
+        ctx.isCheckedOut ||
+        ctx.checkOutDate === today ||
+        ctx.endDate === today
+      )
+    );
+    if (disinfectContext) {
+      incrementBucket("full_disinfect");
+      const disinfectTask = buildTask("full_disinfect", disinfectContext, "full_disinfect", null);
+      fullDisinfectTaskByRoom[disinfectContext.roomKey] = disinfectTask.task_id;
+      tasks.push(disinfectTask);
+    }
+  }
 
   for (const res of todayReservations || []) {
     const typeName = res.reservation_type_name || "";
-    const t = typeName.toLowerCase();
+    const typeLower = typeName.toLowerCase();
     let reason: string | null = null;
 
-    if (t.includes("evaluation") || t.includes("eval")) {
+    if (typeLower.includes("evaluation") || typeLower.includes("eval")) {
       reason = "Evaluation";
-    } else if (t.includes("day boarding") || t === "day boarding") {
+    } else if (typeLower.includes("day boarding") || typeLower === "day boarding") {
       reason = "Day Boarding";
-    } else if (t.includes("daycare") || t.includes("day care")) {
-      // Check if this is the dog's first daycare reservation ever
+    } else if (typeLower.includes("daycare") || typeLower.includes("day care")) {
       const { count } = await supabase
         .from("gingr_reservations")
         .select("gingr_id", { count: "exact", head: true })
@@ -887,115 +1021,80 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         .ilike("reservation_type_name", "%daycare%")
         .lt("start_date", today)
         .is("cancelled_date", null);
-      if (count === 0) {
-        reason = "First Daycare";
-      }
-    } else if (!t.includes("resort tour")) {
-      // All other boarding check-ins get a setup
+      if (count === 0) reason = "First Daycare";
+    } else if (!typeLower.includes("resort tour")) {
       reason = "Check-In";
     }
 
-    if (reason) {
-      const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
-      const bohInfo = animalId ? bohRoomMap[animalId] : null;
-      const setupDogNameLower = (res.animal_name || "").trim().toLowerCase();
-      const setupOccInfo = setupDogNameLower ? occupancyRoomMap[setupDogNameLower] : null;
-      const runName = bohInfo?.runName || setupOccInfo?.runName || res.raw_data?.run_name || null;
-      setupDogs.push({
-        animalGingrId: res.animal_gingr_id,
-        dogName: res.animal_name || "",
-        ownerLastName: res.owner_last_name || "",
-        reason,
-        room: runName,
-      });
+    if (!reason) continue;
+
+    const animalId = String(res.animal_gingr_id || "");
+    const meta = animalMetaMap[animalId] || { weight: null, photoUrl: null };
+    const dogName = res.animal_name || "";
+    const room = res.raw_data?.run_name
+      || bohRoomMap[animalId]?.runName
+      || occupancyRoomMap[dogName.trim().toLowerCase()]?.runName
+      || "Unassigned";
+    const roomKey = sanitizeRoomKey(room);
+    const roomType = (room && roomNameToType[room]) || parseRoomType(typeName);
+    const startDate = String(res.start_date || "").split("T")[0] || today;
+    const endDate = String(res.end_date || "").split("T")[0] || today;
+    const totalNights = Math.max(0, Math.round((
+      new Date(`${endDate}T12:00:00`).getTime() -
+      new Date(`${startDate}T12:00:00`).getTime()
+    ) / 86400000));
+    const isSingleDayStay = reason === "Day Boarding" || totalNights === 0;
+    const blockedByTaskId = fullDisinfectTaskByRoom[roomKey] || null;
+    const classificationBucket = isSingleDayStay
+      ? (blockedByTaskId ? "full_disinfect_then_setup_and_sanitize" : "sanitize_and_setup")
+      : (blockedByTaskId ? "full_disinfect_then_setup" : "setup");
+
+    incrementBucket(classificationBucket);
+
+    const ctx: RoomCleaningReservationContext = {
+      reservationId: String(res.gingr_id || ""),
+      animalId,
+      animalName: dogName,
+      ownerLastName: res.owner_last_name || "",
+      reservationType: typeName,
+      room,
+      roomKey,
+      roomType,
+      areaName: bohRoomMap[animalId]?.areaName || occupancyRoomMap[dogName.trim().toLowerCase()]?.areaName || "",
+      startDate,
+      endDate,
+      checkOutDate: "",
+      totalNights,
+      dayNumber: 1,
+      isDayBoarding: reason === "Day Boarding",
+      isCheckedOut: false,
+      photoUrl: meta.photoUrl,
+      dogWeight: meta.weight,
+      suggestedBowlSize: suggestBowlSize(meta.weight),
+      setupReason: reason,
+    };
+
+    tasks.push(buildTask("setup", ctx, classificationBucket, blockedByTaskId));
+    if (isSingleDayStay) {
+      tasks.push(buildTask("sanitize", ctx, classificationBucket, null));
     }
   }
 
-  // Fetch weights for all setup dogs
-  const setupAnimalIds = setupDogs.map((d) => d.animalGingrId).filter(Boolean);
-  let weightMap: Record<string, number | null> = {};
-  if (setupAnimalIds.length > 0) {
-    const { data: animals } = await supabase
-      .from("gingr_animals")
-      .select("gingr_id, weight")
-      .in("gingr_id", setupAnimalIds);
-    for (const a of animals || []) {
-      const w = a.weight ? parseFloat(a.weight) : null;
-      weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
-    }
-  }
-
-  // Match setup dogs to rooms (by dog name)
-  const dogNameRoomMap = new Map<string, number>();
-  rooms.forEach((r, i) => {
-    if (r.dogName) dogNameRoomMap.set(r.dogName.toLowerCase(), i);
+  tasks.sort((a, b) => {
+    if (a.room_type !== b.room_type) return a.room_type.localeCompare(b.room_type);
+    if (a.room !== b.room) return a.room.localeCompare(b.room, undefined, { numeric: true });
+    if (a.display_priority !== b.display_priority) return a.display_priority - b.display_priority;
+    if (a.owner_last_name !== b.owner_last_name) return a.owner_last_name.localeCompare(b.owner_last_name);
+    return a.animal_name.localeCompare(b.animal_name);
   });
 
-  const unmatchedSetups: typeof setupDogs = [];
-  for (const sd of setupDogs) {
-    const weight = weightMap[sd.animalGingrId] ?? null;
-    const bowlSize = suggestBowlSize(weight);
-
-    let matched = false;
-    const nameKey = sd.dogName.toLowerCase();
-    if (dogNameRoomMap.has(nameKey)) {
-      const idx = dogNameRoomMap.get(nameKey)!;
-      rooms[idx].needsSetup = true;
-      rooms[idx].setupReason = sd.reason;
-      rooms[idx].suggestedBowlSize = bowlSize;
-      rooms[idx].dogWeight = weight;
-      // Update per-dog detail in dogs array
-      const dogDetail = rooms[idx].dogs?.find(d => d.name.toLowerCase() === nameKey);
-      if (dogDetail) {
-        dogDetail.weight = weight;
-        dogDetail.suggestedBowlSize = bowlSize;
-        dogDetail.setupReason = sd.reason;
-        dogDetail.needsSetup = true;
-      }
-      matched = true;
-    }
-
-    if (!matched) {
-      unmatchedSetups.push(sd);
-    }
-  }
-
-  // Add unmatched setup dogs as new room entries
-  for (const sd of unmatchedSetups) {
-    const weight = weightMap[sd.animalGingrId] ?? null;
-    rooms.push({
-      room: sd.room || "Unassigned",
-      roomType: "",
-      areaName: "",
-      dogName: sd.dogName,
-      dogNames: sd.dogName ? [sd.dogName] : [],
-      ownerLastName: sd.ownerLastName,
-      reservationType: sd.reason,
-      checkIn: today,
-      checkOut: today,
-      dayNumber: 1,
-      totalNights: 0,
-      cleaningType: "none",
-      needsDisinfect: false,
-      needsRefresh: false,
-      needsSetup: true,
-      setupReason: sd.reason,
-      suggestedBowlSize: suggestBowlSize(weight),
-      dogWeight: weight,
-      isCheckedOut: false,
-      dogs: sd.dogName ? [{ name: sd.dogName, ownerLastName: sd.ownerLastName, weight, suggestedBowlSize: suggestBowlSize(weight), setupReason: sd.reason, needsSetup: true }] : [],
-    });
-  }
-
-  // ─── Step 6: Merge in ALL known rooms (vacant ones too) ─────────────
-  // Build a set of room names already in the list (occupied)
-  const occupiedRoomNames = new Set(rooms.map((r) => r.room));
-  for (const rn of allRoomNames) {
-    if (occupiedRoomNames.has(rn.runName)) continue;
-    rooms.push({
-      room: rn.runName,
-      roomType: rn.runType || rn.areaName,
-      areaName: rn.areaName,
+  const roomMap: Record<string, RoomEntry> = {};
+  const ensureRoomEntry = (ctx: Partial<RoomCleaningReservationContext> & { room: string; roomKey: string; roomType?: string; areaName?: string }) => {
+    if (roomMap[ctx.roomKey]) return roomMap[ctx.roomKey];
+    roomMap[ctx.roomKey] = {
+      room: ctx.room,
+      roomType: ctx.roomType || "",
+      areaName: ctx.areaName || "",
       dogName: "",
       dogNames: [],
       ownerLastName: "",
@@ -1008,72 +1107,115 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       needsDisinfect: false,
       needsRefresh: false,
       needsSetup: false,
+      needsSanitize: false,
       setupReason: null,
       suggestedBowlSize: null,
       dogWeight: null,
+      photoUrl: null,
       isCheckedOut: false,
       dogs: [],
+    };
+    return roomMap[ctx.roomKey];
+  };
+
+  for (const task of tasks) {
+    const roomEntry = ensureRoomEntry({
+      room: task.room,
+      roomKey: task.room_key,
+      roomType: task.room_type,
+      areaName: task.area_name,
+    });
+
+    if (task.animal_name && !roomEntry.dogNames.includes(task.animal_name)) {
+      roomEntry.dogNames.push(task.animal_name);
+    }
+    if (task.owner_last_name && !roomEntry.ownerLastName) roomEntry.ownerLastName = task.owner_last_name;
+    if (task.supporting_data?.reservation_type && !roomEntry.reservationType) roomEntry.reservationType = task.supporting_data.reservation_type;
+    if (task.supporting_data?.start_date && (!roomEntry.checkIn || task.supporting_data.start_date < roomEntry.checkIn)) {
+      roomEntry.checkIn = task.supporting_data.start_date;
+    }
+    if (task.supporting_data?.end_date && (!roomEntry.checkOut || task.supporting_data.end_date > roomEntry.checkOut)) {
+      roomEntry.checkOut = task.supporting_data.end_date;
+    }
+    if ((task.supporting_data?.day_number || 0) > roomEntry.dayNumber) roomEntry.dayNumber = task.supporting_data.day_number || 0;
+    if ((task.supporting_data?.total_nights || 0) > roomEntry.totalNights) roomEntry.totalNights = task.supporting_data.total_nights || 0;
+    if (task.suggested_bowl_size) roomEntry.suggestedBowlSize = task.suggested_bowl_size;
+    if (task.dog_weight != null) roomEntry.dogWeight = task.dog_weight;
+    if (task.photo_url) roomEntry.photoUrl = task.photo_url;
+
+    if (!roomEntry.dogs.some((dog) => dog.name === task.animal_name)) {
+      roomEntry.dogs.push({
+        name: task.animal_name,
+        ownerLastName: task.owner_last_name,
+        weight: task.dog_weight,
+        suggestedBowlSize: task.suggested_bowl_size,
+        setupReason: task.setup_reason,
+        needsSetup: task.task_type === "setup",
+      });
+    }
+
+    if (task.task_type === "room_refresh") {
+      roomEntry.needsRefresh = true;
+      roomEntry.cleaningType = "refresh";
+    } else if (task.task_type === "full_disinfect") {
+      roomEntry.needsDisinfect = true;
+      roomEntry.cleaningType = "disinfect";
+      roomEntry.isCheckedOut = task.supporting_data?.reservation_status === "checked_out_today";
+    } else if (task.task_type === "setup") {
+      roomEntry.needsSetup = true;
+      roomEntry.setupReason = task.setup_reason;
+      if (roomEntry.cleaningType === "none") roomEntry.cleaningType = "setup";
+    } else if (task.task_type === "sanitize") {
+      roomEntry.needsSanitize = true;
+    }
+  }
+
+  for (const rn of allRoomNames) {
+    const roomKey = sanitizeRoomKey(rn.runName);
+    ensureRoomEntry({
+      room: rn.runName,
+      roomKey,
+      roomType: rn.runType || rn.areaName || "",
+      areaName: rn.areaName || "",
     });
   }
 
-  // ─── Step 7: Merge entries sharing the same room into one row ─────────
-  // Multiple dogs in the same physical room should be one checklist row.
-  const mergedMap: Record<string, RoomEntry> = {};
-  for (const r of rooms) {
-    if (mergedMap[r.room]) {
-      const m = mergedMap[r.room];
-      // Merge dog names
-      for (const name of r.dogNames) {
-        if (name && !m.dogNames.includes(name)) m.dogNames.push(name);
-      }
-      // Merge per-dog detail arrays
-      for (const dog of (r.dogs || [])) {
-        if (dog.name && !m.dogs.some(d => d.name === dog.name)) m.dogs.push(dog);
-      }
-      // Escalate cleaning needs — disinfect supersedes refresh
-      if (r.needsDisinfect) { m.needsDisinfect = true; m.needsRefresh = false; m.cleaningType = "disinfect"; }
-      else if (r.needsRefresh && !m.needsDisinfect) m.needsRefresh = true;
-      if (r.needsSetup) { m.needsSetup = true; m.setupReason = r.setupReason || m.setupReason; }
-      if (r.suggestedBowlSize) m.suggestedBowlSize = r.suggestedBowlSize;
-      if (r.dogWeight) m.dogWeight = r.dogWeight;
-      if (r.isCheckedOut) m.isCheckedOut = true;
-      // Use the longest stay for day/night display
-      if (r.totalNights > m.totalNights) {
-        m.dayNumber = r.dayNumber;
-        m.totalNights = r.totalNights;
-        m.checkIn = r.checkIn;
-        m.checkOut = r.checkOut;
-      }
-    } else {
-      mergedMap[r.room] = { ...r, dogs: [...(r.dogs || [])] };
-    }
-  }
-  // Update dogName to joined string for backward compat
-  const mergedRooms = Object.values(mergedMap);
-  for (const r of mergedRooms) {
-    r.dogName = r.dogNames.join(", ");
-  }
-
-  // Sort by room type, then owner (so siblings are adjacent), then room name
-  mergedRooms.sort((a, b) => {
+  const mergedRooms = Object.values(roomMap).sort((a, b) => {
     if (a.roomType !== b.roomType) return a.roomType.localeCompare(b.roomType);
     if (a.ownerLastName !== b.ownerLastName) return a.ownerLastName.localeCompare(b.ownerLastName);
     return a.room.localeCompare(b.room, undefined, { numeric: true });
   });
+  for (const room of mergedRooms) {
+    room.dogName = room.dogNames.join(", ");
+  }
 
-  const totalRefresh = mergedRooms.filter((r) => r.needsRefresh).length;
-  const totalDisinfect = mergedRooms.filter((r) => r.needsDisinfect).length;
-  const totalSetups = mergedRooms.filter((r) => r.needsSetup).length;
-  const totalRooms = mergedRooms.length;
+  const taskSummary = {
+    total_tasks: tasks.length,
+    room_refresh: tasks.filter((task) => task.task_type === "room_refresh").length,
+    full_disinfect: tasks.filter((task) => task.task_type === "full_disinfect").length,
+    setup: tasks.filter((task) => task.task_type === "setup").length,
+    sanitize: tasks.filter((task) => task.task_type === "sanitize").length,
+    blocked_setup: tasks.filter((task) => task.task_type === "setup" && !!task.blocked_by_task_id).length,
+  };
+
+  const totalRefresh = mergedRooms.filter((room) => room.needsRefresh).length;
+  const totalDisinfect = mergedRooms.filter((room) => room.needsDisinfect).length;
+  const totalSetups = taskSummary.setup;
+  const totalSanitize = taskSummary.sanitize;
 
   return {
     rooms: mergedRooms,
+    task_instances: tasks,
+    classification_summary: classificationSummary,
+    task_summary: taskSummary,
     summary: {
-      totalOccupied: mergedRooms.filter((r) => r.cleaningType !== "none").length,
-      totalRooms,
+      totalOccupied: mergedRooms.filter((room) => room.cleaningType !== "none").length,
+      totalRooms: mergedRooms.length,
       totalRefresh,
       totalDisinfect,
       totalSetups,
+      totalSanitize,
+      totalTasks: taskSummary.total_tasks,
     },
   };
 }
@@ -1081,6 +1223,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
 // ─── 2. Private Play ──────────────────────────────────────────────────────
 
 interface PPDog {
+  gingrReservationId: string;
   animalId: string;
   animalName: string;
   ownerName: string;
@@ -1097,11 +1240,22 @@ interface PPDog {
   breed: string;
 }
 
-function computePrivatePlay(reservations: Record<string, any>, weightMap: Record<string, number | null>, breedMap: Record<string, string>): any {
+async function computePrivatePlay(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+  reservations: Record<string, any>,
+  weightMap: Record<string, number | null>,
+  breedMap: Record<string, string>,
+): Promise<any> {
   const dogs: PPDog[] = [];
-  const seen = new Set<string>();
+  const seenAnimalIds = new Set<string>();
+  const seenReservationIds = new Set<string>();
 
-  for (const res of Object.values(reservations)) {
+  for (const [reservationKey, res] of Object.entries(reservations)) {
+    const gingrReservationId = String(
+      res.gingrReservationId || res.gingr_id || reservationKey || "",
+    ).trim();
     const animalId = String(res.animal?.id || "");
     const animalGingrId = String(res.animalGingrId || res.animal?.id || "");
     const animalName = res.animal?.name || "";
@@ -1112,15 +1266,18 @@ function computePrivatePlay(reservations: Record<string, any>, weightMap: Record
 
     // Day boarding dogs get PP
     const isDayBoarding = resType.toLowerCase().startsWith("day boarding");
+    const hasCanonicalPrivatePlay = _globalPlaygroupMap[animalGingrId] === "private_play";
 
-    // Check for Private Play service
+    // Legacy fallback: keep service-name matching only when no canonical icon mapping exists yet.
     const services = res.services || [];
-    const hasPP = services.some((s: any) =>
+    const hasPPService = services.some((s: any) =>
       (s.name || s.service_name || "").toLowerCase().includes("private play"),
     );
+    const hasPP = hasCanonicalPrivatePlay || hasPPService;
 
-    if ((isDayBoarding || hasPP) && animalId && !seen.has(animalId)) {
-      seen.add(animalId);
+    if ((isDayBoarding || hasPP) && animalId && !seenAnimalIds.has(animalId)) {
+      seenAnimalIds.add(animalId);
+      if (gingrReservationId) seenReservationIds.add(gingrReservationId);
       // Support both Gingr API format and DB-mapped format
       const isCheckedIn = (res.checkInDate != null) || (res.check_in_date != null);
       const startDate = res.startDate || res.start_date || "";
@@ -1131,12 +1288,17 @@ function computePrivatePlay(reservations: Record<string, any>, weightMap: Record
       const breed = breedMap[animalGingrId] || res.breed || res.animal?.breed || "";
 
       dogs.push({
+        gingrReservationId,
         animalId,
         animalName,
         ownerName,
         reservationType: resType,
         requiredSessions: 3,
-        source: isDayBoarding ? "day_boarding" : "private_play_service",
+        source: isDayBoarding
+          ? "day_boarding"
+          : hasCanonicalPrivatePlay
+            ? "private_play_icon"
+            : "private_play_service",
         isCheckedIn,
         startDate,
         startTime,
@@ -1147,6 +1309,60 @@ function computePrivatePlay(reservations: Record<string, any>, weightMap: Record
         breed,
       });
     }
+  }
+
+  const { data: manualOverrideRows } = await supabase
+    .from("ops_private_play_manual_overrides")
+    .select("gingr_reservation_id, animal_gingr_id, room_label_override")
+    .eq("location_id", locationId)
+    .eq("override_date", targetDate)
+    .is("removed_at", null);
+
+  for (const override of (manualOverrideRows || [])) {
+    const gingrReservationId = String(override.gingr_reservation_id || "").trim();
+    if (!gingrReservationId || seenReservationIds.has(gingrReservationId)) continue;
+
+    const reservation = reservations[gingrReservationId];
+    if (!reservation) continue;
+
+    const animalId = String(reservation.animal?.id || "").trim();
+    const animalGingrId = String(
+      override.animal_gingr_id || reservation.animalGingrId || reservation.animal?.id || "",
+    ).trim();
+    if (!animalId || seenAnimalIds.has(animalId)) continue;
+
+    const ownerFirst = reservation.owner?.first_name || "";
+    const ownerLast = reservation.owner?.last_name || "";
+    const ownerName = `${ownerFirst} ${ownerLast}`.trim();
+    const startDate = reservation.startDate || reservation.start_date || "";
+    const startTime = formatTimeHuman(startDate);
+    const roomLabel = String(override.room_label_override || "").trim()
+      || reservation.roomLabel
+      || reservation.room?.name
+      || "";
+    const weight = weightMap[animalGingrId] ?? null;
+    const sizeCategory = getSizeCategory(animalGingrId, weight);
+    const breed = breedMap[animalGingrId] || reservation.breed || reservation.animal?.breed || "";
+
+    seenAnimalIds.add(animalId);
+    seenReservationIds.add(gingrReservationId);
+    dogs.push({
+      gingrReservationId,
+      animalId,
+      animalName: reservation.animal?.name || "",
+      ownerName,
+      reservationType: reservation.reservation_type?.type || "",
+      requiredSessions: 3,
+      source: "manual_override",
+      isCheckedIn: (reservation.checkInDate != null) || (reservation.check_in_date != null),
+      startDate,
+      startTime,
+      roomLabel,
+      weight,
+      sizeCategory,
+      animalGingrId,
+      breed,
+    });
   }
 
   // Sort by name
@@ -1596,14 +1812,14 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
 
   // Fetch bath icons, play icons, and weights for all dogs
   // iconMap stores ALL bath icons per dog (not just the first) to support multiple bath types
-  let iconMap: Record<string, Array<{ title: string; comment: string }>> = {};
+  let iconMap: Record<string, GingrAnimalIconRow[]> = {};
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
     const [{ data: icons }, playAssignments, { data: animals }] = await Promise.all([
       supabase
         .from("gingr_animal_icons_live")
-        .select("animal_gingr_id, icon_title, icon_comment")
+        .select("animal_gingr_id, icon_title, icon_comment, icon_template_id, icon_identity_key, icon_group, icon_color, icon_class")
         .eq("location_id", locationId)
         .eq("icon_group", "Bath")
         .in("animal_gingr_id", animalIds),
@@ -1621,7 +1837,16 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     (icons || []).forEach((r: any) => {
       const id = r.animal_gingr_id;
       if (!iconMap[id]) iconMap[id] = [];
-      iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
+      iconMap[id].push({
+        animal_gingr_id: r.animal_gingr_id,
+        icon_title: r.icon_title || "",
+        icon_comment: r.icon_comment || "",
+        icon_template_id: r.icon_template_id || "",
+        icon_identity_key: r.icon_identity_key || "",
+        icon_group: r.icon_group || "",
+        icon_color: r.icon_color || "",
+        icon_class: r.icon_class || "",
+      });
     });
     (playAssignments || []).forEach((assignment: any) => {
       if (assignment?.hasPrivatePlay) {
@@ -1837,10 +2062,10 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   // Collect ALL bath icons per dog (e.g. "Hypo - NO Spray" AND "NO DRYER")
   function buildDogOutput(d: any, idx: number): any {
     const icons = iconMap[d.animalGingrId] || [];
-    const iconTitles = icons.map((i: any) => i.title).filter(Boolean);
-    const iconComments = icons.map((i: any) => i.comment).filter(Boolean);
-    const normalizedBath = normalizeBathDisplay({
-      iconTitles,
+    const iconComments = icons.map((i: any) => i.icon_comment).filter(Boolean);
+    const normalizedBath = resolveBathDisplayFromIconRows({
+      iconRows: icons,
+      mappings: _globalGingrIconMappings,
       addonType: d.addonType,
       serviceName: d.bathServiceName,
       rawModifiers: d.bathModifiers,
@@ -2710,7 +2935,22 @@ interface ServiceDog {
   animalId: string;
   animalName: string;
   ownerName: string;
+  roomLabel: string;
+  reservationType: string;
   services: string[];
+}
+
+function normalizeAddonStatus(value: any): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+}
+
+function isOperationalAddonStatus(value: any): boolean {
+  const normalized = normalizeAddonStatus(value);
+  if (!normalized) return true;
+  return ["scheduled", "confirmed", "checked-in", "completed"].includes(normalized);
 }
 
 function computeServiceReport(
@@ -2723,12 +2963,18 @@ function computeServiceReport(
   for (const res of Object.values(reservations)) {
     const services = res.services || [];
     const matched = services.filter((s: any) =>
+      isOperationalAddonStatus(
+        s?.status || s?.service_status || s?.reservation_status || s?.booking_status,
+      ) &&
       (s.name || s.service_name || "")
         .toLowerCase()
         .includes(filterKeyword.toLowerCase()),
     );
+    const reservationType = res.reservation_type?.type || res.reservationType || "";
+    const isLuxurySuite = filterKeyword.toLowerCase() === "pamper" &&
+      reservationType.toLowerCase().includes("luxury suite");
 
-    if (matched.length === 0) continue;
+    if (matched.length === 0 && !isLuxurySuite) continue;
 
     const animalId = String(res.animal?.id || "");
     if (!animalId || seen.has(animalId)) continue;
@@ -2741,9 +2987,11 @@ function computeServiceReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
-      services: matched.map(
-        (s: any) => s.name || s.service_name || filterKeyword,
-      ),
+      roomLabel: res.roomLabel || res.room?.name || "",
+      reservationType,
+      services: matched.length > 0
+        ? matched.map((s: any) => s.name || s.service_name || filterKeyword)
+        : ["Luxury Suite"],
     });
   }
 
@@ -2779,6 +3027,9 @@ function computeEnrichmentReport(
     if (!animalId || seen.has(animalId)) continue;
 
     const enrichmentServices = services.filter((s: any) =>
+      isOperationalAddonStatus(
+        s?.status || s?.service_status || s?.reservation_status || s?.booking_status,
+      ) &&
       (s.name || s.service_name || "")
         .toLowerCase()
         .includes("enrichment"),
@@ -2805,6 +3056,7 @@ function computeEnrichmentReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
+      roomLabel: res.roomLabel || res.room?.name || "",
       services: svcNames,
       status: scheduledForToday ? "scheduled" : "suggested",
       reservationType: resType,
@@ -2966,6 +3218,7 @@ Deno.serve(async (req: Request) => {
       locationId,
       columns: "animal_gingr_id, primary_display_playgroup, scheduling_playgroup, has_evaluation",
     });
+    _globalGingrIconMappings = await fetchLocationIconMappings({ supabase, locationId });
 
     _globalPlaygroupMap = {};
     for (const assignment of liveAssignments || []) {
@@ -3017,7 +3270,14 @@ Deno.serve(async (req: Request) => {
         ppBreedMap[a.gingr_id] = a.breed_name || "";
       }
     }
-    const privatePlay = computePrivatePlay(reservations, ppWeightMap, ppBreedMap);
+    const privatePlay = await computePrivatePlay(
+      supabase,
+      locationId,
+      today,
+      reservations,
+      ppWeightMap,
+      ppBreedMap,
+    );
 
     // 3. Opening Checklist
     const openingItems = filterByDayOfWeek(openingTemplate, today);
@@ -3122,7 +3382,14 @@ Deno.serve(async (req: Request) => {
           futureBreedMap[a.gingr_id] = a.breed_name || "";
         }
       }
-      const privatePlayFuture = computePrivatePlay(reservationsFuture, futureWeightMap, futureBreedMap);
+      const privatePlayFuture = await computePrivatePlay(
+        supabase,
+        locationId,
+        futureDate,
+        reservationsFuture,
+        futureWeightMap,
+        futureBreedMap,
+      );
       const pamperFuture = computeServiceReport(reservationsFuture, "pamper");
       const enrichmentFuture = computeEnrichmentReport(reservationsFuture, reservationsFuture, futureDate);
 

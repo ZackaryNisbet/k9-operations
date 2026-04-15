@@ -1,3 +1,8 @@
+import {
+  getCapabilitiesForIcon,
+  type GingrIconMappingRow,
+} from "./gingr-icon-mappings.ts";
+
 type SupabaseClient = any;
 
 export type PlaygroupSizeGroup = "large" | "small" | null;
@@ -38,6 +43,7 @@ export interface PlaygroupAssignment {
 interface RawPlaygroupIconRow {
   animal_gingr_id?: string | null;
   icon_template_id?: string | number | null;
+  icon_identity_key?: string | null;
   icon_title?: string | null;
   icon_comment?: string | null;
   icon_group?: string | null;
@@ -99,21 +105,30 @@ function normalizeSizeGroup(value: unknown): PlaygroupSizeGroup {
   return null;
 }
 
-function normalizePlaygroupTagFromIcon(row: RawPlaygroupIconRow): string | null {
-  const title = String(row?.icon_title || "").trim().toLowerCase();
-  const group = String(row?.icon_group || "").trim().toLowerCase();
+function normalizePlaygroupTagFromIcon(
+  row: RawPlaygroupIconRow,
+  mappings: GingrIconMappingRow[] = [],
+): string | null {
+  const capabilities = getCapabilitiesForIcon({
+    animal_gingr_id: row?.animal_gingr_id || null,
+    icon_template_id: row?.icon_template_id == null ? null : String(row.icon_template_id),
+    icon_identity_key: row?.icon_identity_key || null,
+    icon_title: row?.icon_title || null,
+    icon_group: row?.icon_group || null,
+    icon_comment: row?.icon_comment || null,
+  }, mappings);
 
-  // Gingr template ids are not stable enough to classify playgroups.
-  // Only trust icons that are explicitly in the Play group.
-  if (group !== "play") return null;
-  if (title === "private play") return "private_play";
-  if (title === "large dog playgroup") return "large";
-  if (title === "small dog playgroup") return "small";
-  if (title === "evaluation") return "evaluation";
+  if (capabilities.includes("play.private_play")) return "private_play";
+  if (capabilities.includes("play.large_daycare")) return "large";
+  if (capabilities.includes("play.small_daycare")) return "small";
+  if (capabilities.includes("play.evaluation")) return "evaluation";
   return null;
 }
 
-export function derivePlaygroupAssignmentsFromIcons(iconRows: RawPlaygroupIconRow[] = []): PlaygroupAssignment[] {
+export function derivePlaygroupAssignmentsFromIcons(
+  iconRows: RawPlaygroupIconRow[] = [],
+  mappings: GingrIconMappingRow[] = [],
+): PlaygroupAssignment[] {
   const grouped = new Map<string, {
     hasPrivatePlay: boolean;
     hasEvaluation: boolean;
@@ -127,7 +142,7 @@ export function derivePlaygroupAssignmentsFromIcons(iconRows: RawPlaygroupIconRo
 
   for (const row of iconRows) {
     const animalGingrId = String(row?.animal_gingr_id || "").trim();
-    const playgroupTag = normalizePlaygroupTagFromIcon(row);
+    const playgroupTag = normalizePlaygroupTagFromIcon(row, mappings);
     if (!animalGingrId || !playgroupTag) continue;
 
     const title = String(row?.icon_title || "").trim();

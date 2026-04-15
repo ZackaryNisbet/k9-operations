@@ -11,6 +11,7 @@ import {
   buildPlaygroupAssignmentMap,
   derivePlaygroupAssignmentsFromIcons,
 } from "../_shared/playgroup-assignments.ts";
+import { fetchLocationIconMappings } from "../_shared/gingr-icon-mappings.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -261,10 +262,14 @@ async function fetchGingrReservationsForAudit({
 }
 
 async function fetchLivePlaygroupAssignments({
+  supabase,
+  locationId,
   subdomain,
   apiKey,
   reservations,
 }: {
+  supabase: any;
+  locationId: string;
   subdomain: string;
   apiKey: string;
   reservations: any[];
@@ -316,7 +321,8 @@ async function fetchLivePlaygroupAssignments({
     }
   }
 
-  return buildPlaygroupAssignmentMap(derivePlaygroupAssignmentsFromIcons(iconRows));
+  const iconMappings = await fetchLocationIconMappings({ supabase, locationId });
+  return buildPlaygroupAssignmentMap(derivePlaygroupAssignmentsFromIcons(iconRows, iconMappings));
 }
 
 function getNestedValue(obj: any, key: string) {
@@ -404,6 +410,8 @@ Deno.serve(async (req: Request) => {
       dateTo,
     });
     const playgroupMap = await fetchLivePlaygroupAssignments({
+      supabase: serviceClient,
+      locationId,
       subdomain: gingrConfig.subdomain,
       apiKey: gingrConfig.api_key,
       reservations: directReservations,
