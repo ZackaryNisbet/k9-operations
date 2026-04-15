@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
+      "commit": "50d46b68fdc4ac1f666792207397d20b5be4dacb",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "mobile finish release",
-      "updatedAt": "2026-04-15T14:54:49.229Z"
+      "note": "room occupancy centralization release",
+      "updatedAt": "2026-04-15T17:24:30.609Z"
     },
     "ops-compute-ondemand": {
-      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
+      "commit": "50d46b68fdc4ac1f666792207397d20b5be4dacb",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "mobile finish release",
-      "updatedAt": "2026-04-15T14:54:49.229Z"
+      "note": "room occupancy centralization release",
+      "updatedAt": "2026-04-15T17:24:30.609Z"
     },
     "scheduling-audit": {
       "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
