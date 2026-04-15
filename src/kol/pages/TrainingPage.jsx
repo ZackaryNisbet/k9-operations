@@ -4026,7 +4026,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             <div key={group.key} style={{ marginBottom: 24 }}>
               <SectionHeader title={group.label} count={group.rows.length} />
               {group.rows.length === 0 ? (
-                <EmptyState icon="FileText" title={`No ${group.label.toLowerCase()} yet`} subtitle="Seeded templates will appear here." />
+                <EmptyState icon="FileText" title={`No ${group.label.toLowerCase()} yet`} subtitle="Templates will appear here." />
               ) : (
                 <Card style={{ padding: 0, overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -4165,11 +4165,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             ? `Published ${formatTrainingTimestamp(version.published_at)}`
                             : `Created ${formatTrainingTimestamp(version.created_at)}`}
                         </div>
-                        {version.changelog && (
-                          <div style={{ fontSize: 11, color: C.textSec, marginTop: 4, lineHeight: 1.45 }}>
-                            {version.changelog}
-                          </div>
-                        )}
                       </div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: version.status === "published" ? C.suc : version.status === "draft" ? C.warn : C.textMut }}>
                         {version.status}
