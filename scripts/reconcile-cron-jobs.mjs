@@ -25,7 +25,29 @@ function authHeadersSql() {
   ].join(" ");
 }
 
+function validateJob(job) {
+  if (!job || typeof job !== "object") {
+    throw new Error("Cron manifest entry is missing or invalid.");
+  }
+  if (!job.jobname || !job.schedule || !job.function) {
+    throw new Error(`Cron job is missing required fields: ${JSON.stringify(job)}`);
+  }
+  if (job.payloadMode === "current_week") {
+    return;
+  }
+  if (job.payloadMode === "single_day") {
+    if (!Number.isInteger(job.dayOffset)) {
+      throw new Error(`Cron job ${job.jobname} requires an integer dayOffset for payloadMode=single_day.`);
+    }
+    return;
+  }
+  if (!job.payload || typeof job.payload !== "object") {
+    throw new Error(`Cron job ${job.jobname} must define a payload when payloadMode is omitted.`);
+  }
+}
+
 function buildCommand(job) {
+  validateJob(job);
   const headers = authHeadersSql();
   if (job.payloadMode === "current_week") {
     return [
