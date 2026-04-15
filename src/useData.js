@@ -1591,6 +1591,7 @@ export function useData(profile) {
       'outbound_links', 'vets', 'online_bookings',
     ];
     const settingsTables = [
+      'lite_settings', 'role_page_task_state',
       'location_roles', 'location_pricing', 'location_room_types', 'location_room_units',
       'location_dog_tags', 'location_required_vaccines', 'location_closed_dates',
       'location_policies', 'location_message_templates', 'location_eod_sections',
