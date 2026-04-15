@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, todayStr, fmtDate, fmtPhoneInput } from "../../shared/theme";
+import { C, todayStr, fmtDate, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
@@ -58,6 +58,23 @@ const TABS = [
 ];
 
 const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
+const TRAINING_GRACE_PERIOD_DAYS = 14;
+const REVIEW_WARNING_WINDOW_DAYS = 7;
+const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
+
+const LABOR_ROSTER_FILTER_FIELDS = [
+  { section: "Employee Info", key: "first_name", label: "First Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Employee Info", key: "last_name", label: "Last Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Employee Info", key: "email", label: "Email", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Employee Info", key: "phone", label: "Phone", type: "text", ops: ["contains", "equals", "empty", "notEmpty"] },
+  { section: "Employment", key: "position", label: "Position", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive"] },
+  { section: "Employment", key: "start_date", label: "Start Date", type: "date", ops: ["after", "before", "inLastDays"] },
+  { section: "Compliance", key: "training", label: "Training", type: "select", ops: ["is", "isNot"], options: ["Compliant", "In Progress", "Non-Compliant"] },
+  { section: "Reviews", key: "review30", label: "30-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+  { section: "Reviews", key: "review60", label: "60-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+  { section: "Reviews", key: "review90", label: "90-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+];
 
 function normalizeLaborContactEmail(value) {
   const trimmed = String(value || "").trim();
@@ -127,6 +144,157 @@ function SectionHeader({ title, count, children }) {
   );
 }
 
+function splitEmployeeName(fullName = "") {
+  const tokens = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { firstName: "", lastName: "" };
+  if (tokens.length === 1) return { firstName: tokens[0], lastName: "" };
+  return {
+    firstName: tokens.slice(0, -1).join(" "),
+    lastName: tokens[tokens.length - 1],
+  };
+}
+
+function slugifyTemplateName(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 72);
+}
+
+function getDaysSince(dateValue) {
+  if (!dateValue) return null;
+  const start = new Date(`${dateValue}T12:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const today = new Date(`${todayStr()}T12:00:00`);
+  return Math.floor((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function getTrainingComplianceState(row) {
+  const cprCompliant = ["current", "due_soon"].includes(String(row?.cpr_status || ""));
+  const completedTraining = Number(row?.completed_training_record_count || 0) > 0
+    || ["complete", "completed", "passed"].includes(String(row?.active_training_status || "").toLowerCase());
+  const inTraining = Boolean(row?.active_training_record_id)
+    || ["in_progress", "not_started"].includes(String(row?.active_training_status || "").toLowerCase());
+  const daysSinceStart = getDaysSince(row?.start_date);
+  const withinGraceWindow = daysSinceStart != null && daysSinceStart < TRAINING_GRACE_PERIOD_DAYS;
+
+  if (completedTraining && cprCompliant) {
+    return { label: "Compliant", color: "success", inProgress: false };
+  }
+
+  if (withinGraceWindow && (inTraining || !cprCompliant || !completedTraining)) {
+    return { label: "In Progress", color: "warning", inProgress: true };
+  }
+
+  return { label: "Non-Compliant", color: "danger", inProgress: false };
+}
+
+function getReviewStatusPresentation(row, reviewKey) {
+  const dueDate = row?.[`${reviewKey}_due_date`] || null;
+  const status = String(row?.[`${reviewKey}_status`] || "not_started");
+  if (!dueDate) {
+    return { label: "—", tone: C.textMut, background: "transparent" };
+  }
+
+  const due = new Date(`${dueDate}T12:00:00`);
+  const today = new Date(`${todayStr()}T12:00:00`);
+  const diffDays = Math.ceil((due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  const doneStatuses = new Set(["completed", "complete", "current"]);
+
+  if (doneStatuses.has(status)) {
+    return { label: fmtDate(dueDate), tone: C.suc, background: C.sucLt };
+  }
+  if (diffDays < 0) {
+    return { label: fmtDate(dueDate), tone: C.dan, background: C.danLt };
+  }
+  if (diffDays <= REVIEW_WARNING_WINDOW_DAYS) {
+    return { label: fmtDate(dueDate), tone: C.warn, background: C.warnLt };
+  }
+
+  return { label: fmtDate(dueDate), tone: C.suc, background: C.sucLt };
+}
+
+function getDueSoonLabel(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "current") return "Current";
+  if (normalized === "due_soon") return "Due Soon";
+  if (normalized === "expired") return "Expired";
+  if (normalized === "not_started") return "Not Started";
+  return normalized ? normalized.replace(/_/g, " ") : "Unknown";
+}
+
+function applyLaborRosterFilters(rows, filters) {
+  const keys = Object.keys(filters || {});
+  if (keys.length === 0) return rows;
+  const today = todayStr();
+  const needsValue = (op) => !["empty", "notEmpty", "has", "missing", "overdue", "today", "thisWeek", "hasDate", "noDate"].includes(op);
+  const parseDate = (value) => {
+    const text = String(value || "");
+    if (!text) return "";
+    return text.includes("T") ? text.split("T")[0] : text;
+  };
+  const matchText = (source, op, value, { digitsOnly = false } = {}) => {
+    const left = digitsOnly ? String(source || "").replace(/\D/g, "") : String(source || "").toLowerCase();
+    const right = digitsOnly ? String(value || "").replace(/\D/g, "") : String(value || "").toLowerCase();
+    if (op === "contains") return left.includes(right);
+    if (op === "equals") return left === right;
+    if (op === "starts") return left.startsWith(right);
+    if (op === "empty") return !left;
+    if (op === "notEmpty") return !!left;
+    return true;
+  };
+
+  return rows.filter((row) => keys.every((key) => {
+    const filter = filters[key];
+    if (!filter) return true;
+    const op = filter.op;
+    const val = filter.val;
+    if (needsValue(op) && val === "") return true;
+
+    if (key === "first_name") return matchText(row.first_name, op, val);
+    if (key === "last_name") return matchText(row.last_name, op, val);
+    if (key === "email") return matchText(row.contact_email, op, val);
+    if (key === "phone") return matchText(row.contact_phone, op, val, { digitsOnly: true });
+    if (key === "position") return matchText(row.position_title, op, val);
+    if (key === "employment_status") {
+      const status = row.is_active ? "active" : "inactive";
+      if (op === "is") return status === val;
+      if (op === "isNot") return status !== val;
+      return true;
+    }
+    if (key === "training") {
+      const status = String(row.training_compliance?.label || "");
+      if (op === "is") return status === val;
+      if (op === "isNot") return status !== val;
+      return true;
+    }
+
+    const dateValue = (() => {
+      if (key === "start_date") return parseDate(row.start_date);
+      if (key === "review30") return parseDate(row.review_30_due_date);
+      if (key === "review60") return parseDate(row.review_60_due_date);
+      if (key === "review90") return parseDate(row.review_90_due_date);
+      return "";
+    })();
+
+    if (key === "start_date" || key === "review30" || key === "review60" || key === "review90") {
+      if (op === "hasDate") return !!dateValue;
+      if (op === "noDate") return !dateValue;
+      if (!dateValue) return false;
+      if (op === "after") return dateValue > val;
+      if (op === "before") return dateValue < val;
+      if (op === "inLastDays") {
+        const diff = Math.floor((new Date(`${today}T12:00:00`) - new Date(`${dateValue}T12:00:00`)) / 86400000);
+        return diff <= parseInt(val, 10);
+      }
+    }
+
+    return true;
+  }));
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function TrainingPage({ data, save, nav, profile, addGlobalToast }) {
@@ -156,7 +324,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [reviewInstances, setReviewInstances] = useState([]);
   const [reviewResponses, setReviewResponses] = useState([]);
   const [employeeCertifications, setEmployeeCertifications] = useState([]);
-  const [sourceCatalog, setSourceCatalog] = useState([]);
   const [allTrainingNotes, setAllTrainingNotes] = useState([]);
   const [serverDashboardMetrics, setServerDashboardMetrics] = useState(null);
   const [resolvedLaborLocationId, setResolvedLaborLocationId] = useState("");
@@ -173,6 +340,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const [previewTemplateVersionId, setPreviewTemplateVersionId] = useState(null);
   const [savingTemplateAction, setSavingTemplateAction] = useState("");
+  const [showCreateTemplateModal, setShowCreateTemplateModal] = useState(false);
+  const [createTemplateKind, setCreateTemplateKind] = useState("training");
+  const [createTemplateName, setCreateTemplateName] = useState("");
+  const [createTemplateClass, setCreateTemplateClass] = useState("training_plan");
+  const [createTemplateRoleScopesText, setCreateTemplateRoleScopesText] = useState("");
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
 
   // New record form
   const [newLaborEmployeeId, setNewLaborEmployeeId] = useState("");
@@ -235,7 +408,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [noteFilterSource, setNoteFilterSource] = useState("all");
   const [noteFilterType, setNoteFilterType] = useState("all");
   const [noteFilterDateRange, setNoteFilterDateRange] = useState("all");
+  const [showInactiveRoster, setShowInactiveRoster] = useState(false);
+  const [rosterSort, setRosterSort] = useState({ key: "last_name", direction: "asc" });
+  const [rosterFilters, setRosterFilters] = useState({});
+  const [rosterDraftFilters, setRosterDraftFilters] = useState({});
+  const [savedRosterViews, setSavedRosterViews] = useState([]);
+  const [activeRosterViewId, setActiveRosterViewId] = useState(null);
+  const [showRosterFilterPanel, setShowRosterFilterPanel] = useState(false);
+  const [showRosterFilterPicker, setShowRosterFilterPicker] = useState(false);
+  const [rosterFilterPickerReady, setRosterFilterPickerReady] = useState(false);
+  const [configuringRosterKey, setConfiguringRosterKey] = useState(null);
+  const [showSaveRosterView, setShowSaveRosterView] = useState(false);
+  const [rosterViewName, setRosterViewName] = useState("");
   const firstRosterNameInputRef = useRef(null);
+  const prevRosterFilterOpen = useRef(false);
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -248,6 +434,43 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const canManageTemplates = hasLeanPermission(profile, "Checklist Templates");
+
+  useEffect(() => {
+    if (!laborLocationRef) return;
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", laborLocationRef)
+      .eq("setting_key", LABOR_ROSTER_VIEWS_SETTING_KEY)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (Array.isArray(row?.setting_value)) setSavedRosterViews(row.setting_value);
+      });
+  }, [laborLocationRef]);
+
+  const persistRosterViews = useCallback(async (views) => {
+    if (!laborLocationRef) return;
+    setSavedRosterViews(views);
+    await supabase
+      .from("lite_settings")
+      .upsert(
+        {
+          location_id: laborLocationRef,
+          setting_key: LABOR_ROSTER_VIEWS_SETTING_KEY,
+          setting_value: views,
+        },
+        { onConflict: "location_id,setting_key" },
+      );
+  }, [laborLocationRef]);
+
+  useEffect(() => {
+    if (showRosterFilterPanel && !prevRosterFilterOpen.current) {
+      setRosterDraftFilters({ ...rosterFilters });
+      setShowRosterFilterPicker(false);
+      setConfiguringRosterKey(null);
+    }
+    prevRosterFilterOpen.current = showRosterFilterPanel;
+  }, [rosterFilters, showRosterFilterPanel]);
 
   // ── Load data ──
   const loadData = useCallback(async () => {
@@ -274,7 +497,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         setReviewInstances([]);
         setReviewResponses([]);
         setEmployeeCertifications([]);
-        setSourceCatalog([]);
         setAllTrainingNotes([]);
         setServerDashboardMetrics(null);
         setLoading(false);
@@ -287,7 +509,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         reviewTemplateRes,
         recordRes,
         employeeRes,
-        sourceCatalogRes,
       ] = await Promise.all([
         supabase
           .from("training_templates")
@@ -309,18 +530,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           .select("*")
           .eq("location_id", resolvedLocationId)
           .order("full_name"),
-        supabase
-          .from("labor_source_document_catalog")
-          .select("*")
-          .order("document_family")
-          .order("role_scope"),
       ]);
 
       if (templateRes.error) throw templateRes.error;
       if (reviewTemplateRes.error) throw reviewTemplateRes.error;
       if (recordRes.error) throw recordRes.error;
       if (employeeRes.error) throw employeeRes.error;
-      if (sourceCatalogRes.error) throw sourceCatalogRes.error;
 
       const templateRows = templateRes.data || [];
       const reviewTemplateRows = reviewTemplateRes.data || [];
@@ -468,7 +683,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       setReviewInstances(reviewInstanceRes.data || []);
       setReviewResponses(responseRes.data || []);
       setEmployeeCertifications(certificationRes.data || []);
-      setSourceCatalog(sourceCatalogRes.data || []);
       setAllTrainingNotes(trainingNoteRes.data || []);
       setServerDashboardMetrics(metricsFromServer);
     } catch (err) {
@@ -787,11 +1001,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     });
     return { ...template, kind: "training", version, sections: sectionData };
   }, [allReviewTemplateVersions, allTemplateVersions, items, previewTemplateId, previewTemplateKind, previewTemplateVersionId, reviewItems, reviewSections, reviewTemplates, sections, templates]);
-  const previewTemplateSources = useMemo(() => {
-    if (!previewTemplate?.slug) return [];
-    const targetPrefix = `${previewTemplate.kind === "review" ? "review_templates" : "training_templates"}:${previewTemplate.slug}`;
-    return sourceCatalog.filter((row) => String(row.normalized_target || "").includes(targetPrefix));
-  }, [previewTemplate, sourceCatalog]);
   const globalNotesFeed = useMemo(() => {
     const employeeNotesFeed = laborEmployeeNotes.map((note) => {
       const employee = laborEmployeeMap[note.labor_employee_id];
@@ -1286,6 +1495,117 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     addGlobalToast("Template draft created", "success");
     setSavingTemplateAction("");
   }, [actorName, actorUserId, addGlobalToast, loadData, previewTemplate, previewTemplateId, previewTemplateKind]);
+
+  const resetCreateTemplateModal = useCallback(() => {
+    setShowCreateTemplateModal(false);
+    setCreateTemplateKind("training");
+    setCreateTemplateName("");
+    setCreateTemplateClass("training_plan");
+    setCreateTemplateRoleScopesText("");
+    setCreatingTemplate(false);
+  }, []);
+
+  const handleCreateTemplateShell = useCallback(async () => {
+    const nextName = String(createTemplateName || "").trim();
+    if (!nextName) {
+      addGlobalToast("Template name is required", "error");
+      return;
+    }
+
+    const requestedSlug = slugifyTemplateName(nextName);
+    if (!requestedSlug) {
+      addGlobalToast("Template name must contain letters or numbers", "error");
+      return;
+    }
+
+    const scopeList = Array.from(new Set(
+      String(createTemplateRoleScopesText || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ));
+    const existingSlugs = new Set(
+      (createTemplateKind === "review" ? reviewTemplates : templates)
+        .map((template) => String(template.slug || "").trim())
+        .filter(Boolean)
+    );
+    const nextSlug = existingSlugs.has(requestedSlug)
+      ? `${requestedSlug}_${String(Date.now()).slice(-6)}`
+      : requestedSlug;
+
+    setCreatingTemplate(true);
+    const isReview = createTemplateKind === "review";
+    const tableName = isReview ? "review_templates" : "training_templates";
+    const rpcName = isReview ? "create_review_template_draft" : "create_training_template_draft";
+    const insertPayload = isReview
+      ? {
+          slug: nextSlug,
+          name: nextName,
+          role_scopes: scopeList,
+          location_id: laborLocationRef || null,
+          is_active: true,
+          created_by_user_id: actorUserId,
+          updated_by_user_id: actorUserId,
+        }
+      : {
+          slug: nextSlug,
+          name: nextName,
+          template_class: createTemplateClass,
+          role_scopes: scopeList,
+          location_id: laborLocationRef || null,
+          is_active: true,
+          created_by_user_id: actorUserId,
+          updated_by_user_id: actorUserId,
+        };
+
+    const { data: insertedTemplate, error: insertError } = await supabase
+      .from(tableName)
+      .insert(insertPayload)
+      .select("id")
+      .single();
+
+    if (insertError || !insertedTemplate?.id) {
+      addGlobalToast(insertError?.message || "Failed to create template shell", "error");
+      setCreatingTemplate(false);
+      return;
+    }
+
+    const { data: draftData, error: draftError } = await supabase.rpc(rpcName, {
+      p_template_id: insertedTemplate.id,
+      p_from_version_id: null,
+      p_actor_user_id: actorUserId,
+      p_actor_name: actorName,
+      p_changelog: "Initial draft",
+    });
+
+    if (draftError) {
+      addGlobalToast(draftError.message || "Failed to create template draft", "error");
+      setCreatingTemplate(false);
+      return;
+    }
+
+    const createdDraft = Array.isArray(draftData) ? draftData[0] : draftData;
+    await loadData();
+    setPreviewTemplateKind(isReview ? "review" : "training");
+    setPreviewTemplateId(insertedTemplate.id);
+    setPreviewTemplateVersionId(createdDraft?.id || null);
+    setExpandedSections({});
+    resetCreateTemplateModal();
+    addGlobalToast("Template created", "success");
+  }, [
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    createTemplateClass,
+    createTemplateKind,
+    createTemplateName,
+    createTemplateRoleScopesText,
+    laborLocationRef,
+    loadData,
+    resetCreateTemplateModal,
+    reviewTemplates,
+    templates,
+  ]);
 
   const handlePublishTemplateVersion = useCallback(async () => {
     if (!previewTemplate?.version?.id) return;
@@ -1789,13 +2109,72 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       active_training_progress_percent: 0,
     }));
   }, [laborEmployees, rosterSnapshot]);
-  const sortedRosterRows = useMemo(() => {
-    return [...rosterRows].sort((a, b) => {
-      const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
-      if (activeDelta !== 0) return activeDelta;
-      return String(a.full_name || "").localeCompare(String(b.full_name || ""));
+  const preparedRosterRows = useMemo(() => {
+    return rosterRows.map((row) => {
+      const contactEmployee = laborEmployeeMap[row.labor_employee_id] || null;
+      const contactEmail = readLaborEmployeeContact(contactEmployee, "contact_email");
+      const contactPhone = readLaborEmployeeContact(contactEmployee, "contact_phone");
+      const { firstName, lastName } = splitEmployeeName(row.full_name);
+      return {
+        ...row,
+        first_name: firstName,
+        last_name: lastName,
+        contact_email: contactEmail,
+        contact_phone: contactPhone,
+        training_compliance: getTrainingComplianceState(row),
+        review30: getReviewStatusPresentation(row, "review_30"),
+        review60: getReviewStatusPresentation(row, "review_60"),
+        review90: getReviewStatusPresentation(row, "review_90"),
+      };
     });
-  }, [rosterRows]);
+  }, [laborEmployeeMap, rosterRows]);
+  const filteredRosterRows = useMemo(() => {
+    return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
+  }, [preparedRosterRows, rosterFilters]);
+  const visibleRosterRows = useMemo(() => {
+    return filteredRosterRows.filter((row) => showInactiveRoster || row.is_active);
+  }, [filteredRosterRows, showInactiveRoster]);
+  const sortedRosterRows = useMemo(() => {
+    const direction = rosterSort.direction === "desc" ? -1 : 1;
+    const getSortValue = (row) => {
+      switch (rosterSort.key) {
+        case "first_name":
+          return String(row.first_name || "");
+        case "last_name":
+          return String(row.last_name || row.full_name || "");
+        case "start_date":
+          return String(row.start_date || "");
+        case "email":
+          return String(row.contact_email || "");
+        case "phone":
+          return String(row.contact_phone || "");
+        case "position":
+          return String(row.position_title || "");
+        case "training":
+          return String(row.training_compliance?.label || "");
+        case "review30":
+          return String(row.review_30_due_date || "");
+        case "review60":
+          return String(row.review_60_due_date || "");
+        case "review90":
+          return String(row.review_90_due_date || "");
+        default:
+          return String(row.last_name || row.full_name || "");
+      }
+    };
+
+    return [...visibleRosterRows].sort((a, b) => {
+      const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
+      if (!showInactiveRoster && activeDelta !== 0) return activeDelta;
+
+      const left = getSortValue(a);
+      const right = getSortValue(b);
+      return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) * direction;
+    });
+  }, [rosterSort, showInactiveRoster, visibleRosterRows]);
+  const hasRosterEmployeesInGraceWindow = useMemo(() => {
+    return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
+  }, [visibleRosterRows]);
   const globalNoteEmployeeOptions = useMemo(() => laborEmployees.map((employee) => ({
     value: employee.id,
     label: `${employee.full_name} (${employee.position_title})`,
@@ -2153,6 +2532,194 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       },
     ];
 
+    if (selectedReviewInstance) {
+      const reviewItemTotal = selectedReviewSections.reduce((sum, section) => sum + section.items.length, 0);
+      const answeredReviewItems = selectedReviewSections.reduce((sum, section) => (
+        sum + section.items.filter((item) => {
+          const response = getReviewResponse(item.id);
+          const draft = reviewDrafts[item.id] || {};
+          const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
+          const responseText = draft.response_text ?? response?.response_text ?? "";
+          return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+        }).length
+      ), 0);
+      const reviewPercent = reviewItemTotal > 0 ? Math.round((answeredReviewItems / reviewItemTotal) * 100) : 0;
+      const reviewCycleLabel = String(selectedReviewInstance.review_cycle || "").replace(/_/g, " ");
+      const reviewStatusColor = selectedReviewInstance.status === "completed"
+        ? "success"
+        : selectedReviewInstance.status === "overdue"
+          ? "danger"
+          : "warning";
+
+      return (
+        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 16px 40px" }}>
+          <button
+            onClick={() => setSelectedReviewInstanceId(null)}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18, fontFamily: "inherit", padding: 0 }}
+          >
+            <I.Back /> Back to Employee
+          </button>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: "-0.02em", marginBottom: 4 }}>
+                {selectedReviewTemplate?.name || "Performance Review"}
+              </div>
+              <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
+                {selectedLaborEmployeeView.full_name} · {selectedLaborEmployeeView.position_title || "Employee"} · {reviewCycleLabel}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Badge color={reviewStatusColor}>{String(selectedReviewInstance.status).replace(/_/g, " ")}</Badge>
+              {selectedReviewInstance.due_date && <Badge color="default">Due {fmtDate(selectedReviewInstance.due_date)}</Badge>}
+              {selectedReviewInstance.completed_at && <Badge color="success">Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</Badge>}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 20 }}>
+            <Card style={{ padding: 16 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Progress</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.text }}>{reviewPercent}%</div>
+                <div style={{ fontSize: 12, color: C.textMut }}>{answeredReviewItems}/{reviewItemTotal} prompts answered</div>
+              </div>
+              <ProgressBar percent={reviewPercent} height={8} />
+            </Card>
+            <Card style={{ padding: 16 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Employee</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
+              <div style={{ fontSize: 12, color: C.textSec }}>{selectedLaborEmployeeView.position_title || "—"}</div>
+              {selectedLaborEmployeeView.start_date && (
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>Started {fmtDate(selectedLaborEmployeeView.start_date)}</div>
+              )}
+            </Card>
+            <Card style={{ padding: 16 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Cycle Status</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: reviewStatusColor === "success" ? C.suc : reviewStatusColor === "danger" ? C.dan : C.warn }}>
+                {String(selectedReviewInstance.status).replace(/_/g, " ")}
+              </div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>
+                {selectedReviewInstance.due_date ? `Due ${fmtDate(selectedReviewInstance.due_date)}` : "Due date not set"}
+              </div>
+            </Card>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 20, alignItems: "start" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {selectedReviewSections.map((section) => {
+                const sectionAnswered = section.items.filter((item) => {
+                  const response = getReviewResponse(item.id);
+                  const draft = reviewDrafts[item.id] || {};
+                  const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
+                  const responseText = draft.response_text ?? response?.response_text ?? "";
+                  return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+                }).length;
+
+                return (
+                  <Card key={section.id} style={{ padding: 20 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>{section.title}</div>
+                        {section.instructions && (
+                          <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, maxWidth: 900 }}>{section.instructions}</div>
+                        )}
+                      </div>
+                      <Badge color={sectionAnswered === section.items.length && section.items.length > 0 ? "success" : "warning"}>
+                        {sectionAnswered}/{section.items.length} answered
+                      </Badge>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      {section.items.map((item) => {
+                        const response = getReviewResponse(item.id);
+                        const draft = reviewDrafts[item.id] || {};
+                        const ratingOptions = Array.isArray(item.options)
+                          ? item.options.map((option) => ({ value: option, label: option }))
+                          : [
+                              { value: "Meets Expectations", label: "Meets Expectations" },
+                              { value: "Needs Improvement", label: "Needs Improvement" },
+                              { value: "Exceeds Expectations", label: "Exceeds Expectations" },
+                            ];
+
+                        return (
+                          <div key={item.id} style={{ border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, background: "#fff" }}>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, lineHeight: 1.5, marginBottom: 12 }}>{item.prompt}</div>
+                            {item.item_type === "rating" ? (
+                              <CustomSelect
+                                value={draft.rating_value ?? response?.rating_value ?? ""}
+                                onChange={(value) => handleReviewDraftChange(item.id, "rating_value", value)}
+                                options={ratingOptions}
+                                placeholder="Select rating"
+                              />
+                            ) : (
+                              <Inp
+                                type={item.item_type === "short_text" ? "text" : "textarea"}
+                                rows={item.item_type === "short_text" ? 1 : 4}
+                                value={draft.response_text ?? response?.response_text ?? ""}
+                                onChange={(value) => handleReviewDraftChange(item.id, "response_text", value)}
+                                placeholder="Enter response"
+                              />
+                            )}
+
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+                              <div style={{ fontSize: 11, color: C.textMut }}>
+                                {response?.created_at ? `Last saved ${formatTrainingTimestamp(response.created_at)}` : "Unsaved changes stay on this review page until you save"}
+                              </div>
+                              <Btn variant="secondary" size="sm" onClick={() => handleSaveReviewResponse(item)} disabled={savingReviewItemId === item.id}>
+                                {savingReviewItemId === item.id ? "Saving..." : "Save Response"}
+                              </Btn>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <div style={{ position: "sticky", top: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+              <Card style={{ padding: 18 }}>
+                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Review Actions</div>
+                <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 14 }}>
+                  Use this page to complete the full {reviewCycleLabel} review without the cramped modal layout.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview}>
+                    {completingReview ? "Completing..." : "Complete Review"}
+                  </Btn>
+                  <Btn variant="ghost" onClick={() => setSelectedReviewInstanceId(null)}>Back to Employee</Btn>
+                </div>
+              </Card>
+
+              <Card style={{ padding: 18 }}>
+                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Sections</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {selectedReviewSections.map((section) => {
+                    const answered = section.items.filter((item) => {
+                      const response = getReviewResponse(item.id);
+                      const draft = reviewDrafts[item.id] || {};
+                      const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
+                      const responseText = draft.response_text ?? response?.response_text ?? "";
+                      return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+                    }).length;
+                    return (
+                      <div key={section.id} style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{section.title}</div>
+                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>{answered}/{section.items.length} answered</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
+          </div>
+
+          {laborEmployeeEditorModal}
+        </div>
+      );
+    }
+
     return (
       <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
         <button
@@ -2406,75 +2973,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           </Modal>
         )}
 
-        {selectedReviewInstance && (
-          <Modal
-            title={`${selectedReviewTemplate?.name || "Performance Review"} — ${String(selectedReviewInstance.review_cycle).replace(/_/g, " ")}`}
-            onClose={() => setSelectedReviewInstanceId(null)}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, maxHeight: "70vh", overflowY: "auto", paddingRight: 4 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Badge color={selectedReviewInstance.status === "completed" ? "success" : selectedReviewInstance.status === "overdue" ? "danger" : "warning"}>
-                  {String(selectedReviewInstance.status).replace(/_/g, " ")}
-                </Badge>
-                {selectedReviewInstance.due_date && <span style={{ fontSize: 12, color: C.textMut }}>Due {fmtDate(selectedReviewInstance.due_date)}</span>}
-                {selectedReviewInstance.completed_at && <span style={{ fontSize: 12, color: C.textMut }}>Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</span>}
-              </div>
-              {selectedReviewSections.map((section) => (
-                <Card key={section.id} style={{ padding: 14 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>{section.title}</div>
-                  {section.instructions && (
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5, marginBottom: 10 }}>{section.instructions}</div>
-                  )}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {section.items.map((item) => {
-                      const response = getReviewResponse(item.id);
-                      const draft = reviewDrafts[item.id] || {};
-                      const ratingOptions = Array.isArray(item.options)
-                        ? item.options.map((option) => ({ value: option, label: option }))
-                        : [
-                            { value: "Meets Expectations", label: "Meets Expectations" },
-                            { value: "Needs Improvement", label: "Needs Improvement" },
-                            { value: "Exceeds Expectations", label: "Exceeds Expectations" },
-                          ];
-                      return (
-                        <div key={item.id} style={{ paddingTop: 8, borderTop: `1px solid ${C.borderLight}` }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>{item.prompt}</div>
-                          {item.item_type === "rating" ? (
-                            <Inp
-                              type="select"
-                              value={draft.rating_value ?? response?.rating_value ?? ""}
-                              onChange={(value) => handleReviewDraftChange(item.id, "rating_value", value)}
-                              options={ratingOptions}
-                              placeholder="Select rating"
-                            />
-                          ) : (
-                            <Inp
-                              type={item.item_type === "short_text" ? "text" : "textarea"}
-                              rows={item.item_type === "short_text" ? 1 : 3}
-                              value={draft.response_text ?? response?.response_text ?? ""}
-                              onChange={(value) => handleReviewDraftChange(item.id, "response_text", value)}
-                              placeholder="Enter response"
-                            />
-                          )}
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                            <Btn variant="secondary" size="sm" onClick={() => handleSaveReviewResponse(item)} disabled={savingReviewItemId === item.id}>
-                              {savingReviewItemId === item.id ? "Saving..." : "Save Response"}
-                            </Btn>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-              ))}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview}>
-                  {completingReview ? "Completing..." : "Complete Review"}
-                </Btn>
-              </div>
-            </div>
-          </Modal>
-        )}
         {laborEmployeeEditorModal}
       </div>
     );
@@ -2689,6 +3187,86 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   );
 
   const tableHeaderStyle = { padding: "8px 12px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: `2px solid ${C.border}`, textAlign: "left" };
+  const rosterUsedKeys = Object.keys(rosterDraftFilters);
+  const rosterAvailableFields = LABOR_ROSTER_FILTER_FIELDS.filter((field) => !rosterUsedKeys.includes(field.key));
+  const rosterFilterSections = [...new Set(LABOR_ROSTER_FILTER_FIELDS.map((field) => field.section))];
+  const isRosterFilterAdmin = profile?.role === "owner" || profile?.role === "enterprise_admin";
+  const rosterNeedsValue = (op) => !["empty", "notEmpty", "has", "missing", "overdue", "today", "thisWeek", "hasDate", "noDate"].includes(op);
+  const removeRosterFilter = (key) => {
+    setRosterDraftFilters((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (configuringRosterKey === key) setConfiguringRosterKey(null);
+  };
+  const updateRosterFilter = (key, field, value) => {
+    setRosterDraftFilters((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+  };
+  const applyRosterFilters = () => {
+    setRosterFilters(rosterDraftFilters);
+    setShowRosterFilterPanel(false);
+    setShowRosterFilterPicker(false);
+    setConfiguringRosterKey(null);
+  };
+  const clearRosterFilters = () => {
+    setRosterDraftFilters({});
+    setRosterFilters({});
+    setActiveRosterViewId(null);
+    setConfiguringRosterKey(null);
+    setShowRosterFilterPicker(false);
+  };
+  const saveRosterView = async () => {
+    if (!rosterViewName.trim()) return;
+    const newView = {
+      id: Date.now().toString(36),
+      name: rosterViewName.trim(),
+      filters: { ...rosterDraftFilters },
+      createdBy: profile?.id || "unknown",
+      createdAt: new Date().toISOString(),
+    };
+    await persistRosterViews([...(savedRosterViews || []), newView]);
+    setActiveRosterViewId(newView.id);
+    setRosterViewName("");
+    setShowSaveRosterView(false);
+    addGlobalToast?.(`View "${newView.name}" saved`, "success");
+  };
+  const deleteRosterView = async (viewId) => {
+    await persistRosterViews((savedRosterViews || []).filter((view) => view.id !== viewId));
+    if (activeRosterViewId === viewId) setActiveRosterViewId(null);
+    addGlobalToast?.("View deleted");
+  };
+  const loadRosterView = (view) => {
+    setRosterDraftFilters({ ...view.filters });
+    setRosterFilters({ ...view.filters });
+    setActiveRosterViewId(view.id);
+    setShowRosterFilterPicker(false);
+    setConfiguringRosterKey(null);
+  };
+  const selectRosterField = (key) => {
+    const field = LABOR_ROSTER_FILTER_FIELDS.find((candidate) => candidate.key === key);
+    if (!field) return;
+    if (field.ops.length === 1 && !rosterNeedsValue(field.ops[0])) {
+      setRosterDraftFilters((prev) => ({ ...prev, [key]: { op: field.ops[0], val: "" } }));
+      setShowRosterFilterPicker(false);
+      setConfiguringRosterKey(null);
+      return;
+    }
+    setRosterDraftFilters((prev) => ({ ...prev, [key]: { op: field.ops[0], val: "" } }));
+    setConfiguringRosterKey(key);
+  };
+  const confirmRosterConfig = () => {
+    setConfiguringRosterKey(null);
+    setShowRosterFilterPicker(false);
+  };
+  const rosterSectionIcons = {
+    "Employee Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+    Employment: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M16 20V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16"/><rect x="6" y="6" width="4" height="4"/><path d="M18 7h4v13h-4"/><path d="M6 14h4"/><path d="M6 18h4"/></svg>,
+    Compliance: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 12 2 2 4-4"/><path d="M12 3l8 4v5c0 5-3.5 9-8 10-4.5-1-8-5-8-10V7l8-4z"/></svg>,
+    Reviews: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></svg>,
+  };
+  const configuringRosterField = configuringRosterKey ? LABOR_ROSTER_FILTER_FIELDS.find((field) => field.key === configuringRosterKey) : null;
+  const configuringRosterValue = configuringRosterKey ? rosterDraftFilters[configuringRosterKey] : null;
   const headerAction = (() => {
     if (tab === "home") {
       return showInlineLaborEmployeeComposer ? (
@@ -2700,12 +3278,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     if (tab === "training") {
       return <Btn variant="primary" onClick={() => setShowNewRecord(true)}>New Training Record</Btn>;
     }
-    if (tab === "templates" && previewTemplateId && canManageTemplates) {
-      return (
-        <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
-          {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-        </Btn>
-      );
+    if (tab === "templates" && canManageTemplates) {
+      if (previewTemplateId) {
+        return (
+          <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
+            {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
+          </Btn>
+        );
+      }
+      return <Btn variant="primary" onClick={() => setShowCreateTemplateModal(true)}>Add Template</Btn>;
     }
     if (tab === "notes") {
       return <Btn variant="primary" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>;
@@ -2733,6 +3314,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
           0% { background: rgba(132, 204, 22, 0.22); }
           100% { background: transparent; }
         }
+        @keyframes filterSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
+        @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
+        @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
       `}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2772,32 +3357,371 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             />
           </div>
 
+          {savedRosterViews.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, marginBottom: 12, flexWrap: "wrap", animation: "filterSlideIn 0.2s ease-out" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <span style={{ fontSize: 10, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Saved Views</span>
+              <div style={{ width: 1, height: 16, background: C.border, margin: "0 2px" }} />
+              {savedRosterViews.map((view, index) => (
+                <div key={view.id} style={{ display: "inline-flex", alignItems: "center", gap: 2, animation: `filterChipIn 0.25s ease-out ${index * 0.05}s both` }}>
+                  <button
+                    onClick={() => loadRosterView(view)}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${activeRosterViewId === view.id ? C.pri : C.borderLight}`,
+                      background: activeRosterViewId === view.id ? C.pri : "#fff",
+                      color: activeRosterViewId === view.id ? "#fff" : C.text,
+                      fontSize: 11,
+                      fontWeight: activeRosterViewId === view.id ? 700 : 500,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all 0.2s cubic-bezier(0.2,0.8,0.2,1)",
+                      boxShadow: activeRosterViewId === view.id ? "0 2px 8px rgba(20,83,45,0.2)" : "0 1px 3px rgba(0,0,0,0.04)",
+                    }}
+                  >
+                    {view.name}
+                    {activeRosterViewId === view.id && <span style={{ marginLeft: 4, fontSize: 9 }}>({Object.keys(view.filters || {}).length})</span>}
+                  </button>
+                  {isRosterFilterAdmin && (
+                    <button onClick={() => deleteRosterView(view.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "2px", display: "flex" }} title="Delete view">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+              {activeRosterViewId && (
+                <button
+                  onClick={() => {
+                    setActiveRosterViewId(null);
+                    setRosterDraftFilters({});
+                    setRosterFilters({});
+                  }}
+                  style={{ fontSize: 10, fontWeight: 600, color: C.dan, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", marginLeft: 4, opacity: 0.7 }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
+          {showRosterFilterPanel && (
+            <div style={{ marginBottom: 16, borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.bg, boxShadow: "0 8px 40px rgba(0,0,0,0.08)", overflow: "hidden" }}>
+              <div style={{ padding: "14px 18px", minHeight: 48 }}>
+                {rosterUsedKeys.length === 0 && !showRosterFilterPicker && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", animation: "filterFadeIn 0.2s ease-out" }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="1.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    <span style={{ fontSize: 13, color: C.textMut, fontWeight: 500 }}>No filters active</span>
+                  </div>
+                )}
+
+                {rosterUsedKeys.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: showRosterFilterPicker ? 12 : 0 }}>
+                    {rosterUsedKeys.map((key, index) => {
+                      const field = LABOR_ROSTER_FILTER_FIELDS.find((candidate) => candidate.key === key);
+                      if (!field) return null;
+                      const filter = rosterDraftFilters[key];
+                      const isConfiguring = configuringRosterKey === key;
+                      return (
+                        <div key={key} style={{ animation: `filterChipIn 0.2s ease-out ${index * 0.04}s both` }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 0, borderRadius: 10, border: `1.5px solid ${isConfiguring ? C.pri : C.border}`, background: isConfiguring ? `${C.pri}06` : "#fff", boxShadow: isConfiguring ? "0 0 0 3px rgba(20,83,45,0.06)" : "0 1px 3px rgba(0,0,0,0.04)", transition: "all 0.25s cubic-bezier(0.2,0.8,0.2,1)", overflow: "hidden" }}>
+                            <button
+                              onClick={() => {
+                                setConfiguringRosterKey(isConfiguring ? null : key);
+                                setShowRosterFilterPicker(false);
+                              }}
+                              style={{ padding: "6px 10px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: C.pri, whiteSpace: "nowrap" }}
+                            >
+                              {field.label}
+                            </button>
+                            <div style={{ padding: "6px 0", display: "flex", alignItems: "center" }}>
+                              <span style={{ padding: "2px 8px", borderRadius: 6, background: `${C.pri}12`, fontSize: 10, fontWeight: 700, color: C.pri, whiteSpace: "nowrap" }}>
+                                {LC_OP_LABELS[filter.op] || filter.op}
+                              </span>
+                            </div>
+                            {rosterNeedsValue(filter.op) && filter.val !== "" && (
+                              <span style={{ padding: "6px 8px 6px 4px", fontSize: 11, fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{filter.val}</span>
+                            )}
+                            {rosterNeedsValue(filter.op) && filter.val === "" && (
+                              <span style={{ padding: "6px 8px 6px 4px", fontSize: 11, fontWeight: 500, color: C.dan, fontStyle: "italic", whiteSpace: "nowrap" }}>set value</span>
+                            )}
+                            <button onClick={() => removeRosterFilter(key)} style={{ padding: "6px 8px 6px 2px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", color: C.textMut }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          </div>
+
+                          {isConfiguring && (
+                            <div style={{ marginTop: 6, padding: "10px 14px", borderRadius: 10, background: "#fff", border: `1.5px solid ${C.pri}30`, boxShadow: "0 6px 24px rgba(20,83,45,0.1)", animation: "configSlide 0.25s ease-out", overflow: "hidden" }}>
+                              <div style={{ marginBottom: rosterNeedsValue(filter.op) ? 10 : 0 }}>
+                                <div style={{ fontSize: 9, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Condition</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                  {field.ops.map((op, opIndex) => (
+                                    <button
+                                      key={op}
+                                      onClick={() => {
+                                        updateRosterFilter(key, "op", op);
+                                        if (!rosterNeedsValue(op)) updateRosterFilter(key, "val", "");
+                                      }}
+                                      style={{
+                                        padding: "5px 12px",
+                                        borderRadius: 8,
+                                        border: `1.5px solid ${filter.op === op ? C.pri : C.borderLight}`,
+                                        background: filter.op === op ? C.pri : "#fff",
+                                        color: filter.op === op ? "#fff" : C.text,
+                                        fontSize: 11,
+                                        fontWeight: filter.op === op ? 700 : 500,
+                                        cursor: "pointer",
+                                        fontFamily: "inherit",
+                                        transition: "all 0.2s cubic-bezier(0.2,0.8,0.2,1)",
+                                        animation: `filterFadeIn 0.2s ease-out ${opIndex * 0.03}s both`,
+                                      }}
+                                    >
+                                      {LC_OP_LABELS[op] || op}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              {rosterNeedsValue(filter.op) && (
+                                <div style={{ animation: "filterFadeIn 0.2s ease-out 0.1s both" }}>
+                                  <div style={{ fontSize: 9, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Value</div>
+                                  {field.type === "select" ? (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                      {(field.options || []).map((option, optionIndex) => (
+                                        <button
+                                          key={option}
+                                          onClick={() => updateRosterFilter(key, "val", option)}
+                                          style={{
+                                            padding: "5px 12px",
+                                            borderRadius: 8,
+                                            border: `1.5px solid ${filter.val === option ? C.pri : C.borderLight}`,
+                                            background: filter.val === option ? C.pri : "#fff",
+                                            color: filter.val === option ? "#fff" : C.text,
+                                            fontSize: 11,
+                                            fontWeight: filter.val === option ? 700 : 500,
+                                            cursor: "pointer",
+                                            fontFamily: "inherit",
+                                            animation: `filterFadeIn 0.15s ease-out ${optionIndex * 0.03}s both`,
+                                          }}
+                                        >
+                                          {option || "(none)"}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                      <input
+                                        type={field.type === "date" ? (filter.op === "inLastDays" ? "number" : "date") : "text"}
+                                        value={filter.val}
+                                        onChange={(event) => updateRosterFilter(key, "val", event.target.value)}
+                                        onKeyDown={(event) => { if (event.key === "Enter") confirmRosterConfig(); }}
+                                        placeholder={filter.op === "inLastDays" ? "Number of days" : field.type === "date" ? "YYYY-MM-DD" : "Type a value..."}
+                                        autoFocus
+                                        style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "#fff", color: C.text, width: "100%", maxWidth: 220, outline: "none" }}
+                                      />
+                                      <button onClick={confirmRosterConfig} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Done</button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {!rosterNeedsValue(filter.op) && (
+                                <button onClick={confirmRosterConfig} style={{ marginTop: 8, padding: "6px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", animation: "filterFadeIn 0.2s ease-out" }}>Done</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!showRosterFilterPicker ? (
+                  <div style={{ marginTop: rosterUsedKeys.length > 0 ? 8 : 0, animation: "filterFadeIn 0.2s ease-out" }}>
+                    <button
+                      onClick={() => {
+                        setShowRosterFilterPicker(true);
+                        setRosterFilterPickerReady(false);
+                        setConfiguringRosterKey(null);
+                        setTimeout(() => setRosterFilterPickerReady(true), 10);
+                      }}
+                      disabled={rosterAvailableFields.length === 0}
+                      style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px dashed ${rosterAvailableFields.length > 0 ? C.pri : C.border}`, background: "transparent", color: rosterAvailableFields.length > 0 ? C.pri : C.textMut, fontSize: 12, fontWeight: 700, cursor: rosterAvailableFields.length > 0 ? "pointer" : "default", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add Filter
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: rosterUsedKeys.length > 0 ? 8 : 0, borderRadius: 12, border: `1.5px solid ${C.borderLight}`, background: "#fff", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", overflow: "hidden", animation: "filterSlideIn 0.25s ease-out" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: `1px solid ${C.borderLight}`, background: C.surface }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Choose a filter</span>
+                      <button onClick={() => setShowRosterFilterPicker(false)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                    <div style={{ padding: "6px 0" }}>
+                      {rosterFilterSections.map((section, sectionIndex) => {
+                        const sectionFields = rosterAvailableFields.filter((field) => field.section === section);
+                        if (sectionFields.length === 0) return null;
+                        return (
+                          <div key={section}>
+                            <div style={{ padding: "8px 16px 4px", fontSize: 9, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.1em", display: "flex", alignItems: "center", gap: 6, animation: rosterFilterPickerReady ? `filterFadeIn 0.2s ease-out ${sectionIndex * 0.06}s both` : "none" }}>
+                              {rosterSectionIcons[section] || null} {section}
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "4px 16px 8px" }}>
+                              {sectionFields.map((field, fieldIndex) => {
+                                const delay = sectionIndex * 0.06 + fieldIndex * 0.03 + 0.05;
+                                return (
+                                  <button
+                                    key={field.key}
+                                    onClick={() => {
+                                      selectRosterField(field.key);
+                                      setShowRosterFilterPicker(false);
+                                    }}
+                                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.borderLight}`, background: "#fff", color: C.text, fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s cubic-bezier(0.2,0.8,0.2,1)", boxShadow: "0 1px 3px rgba(0,0,0,0.03)", animation: rosterFilterPickerReady ? `filterChipIn 0.25s ease-out ${delay}s both` : "none" }}
+                                  >
+                                    {field.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 18px", borderTop: `1px solid ${C.borderLight}`, background: C.surface }}>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={applyRosterFilters} style={{ padding: "8px 20px", borderRadius: 10, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 2px 12px rgba(20,83,45,0.2)" }}>
+                    Apply{rosterUsedKeys.length > 0 ? ` (${rosterUsedKeys.length})` : ""}
+                  </button>
+                  {rosterUsedKeys.length > 0 && (
+                    <button onClick={clearRosterFilters} style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      Clear All
+                    </button>
+                  )}
+                  <button onClick={() => { setShowRosterFilterPanel(false); setShowRosterFilterPicker(false); setConfiguringRosterKey(null); }} style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.borderLight}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
+                    Close
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {isRosterFilterAdmin && !showSaveRosterView && rosterUsedKeys.length > 0 && (
+                    <button onClick={() => setShowSaveRosterView(true)} style={{ padding: "7px 14px", borderRadius: 10, border: `1.5px solid ${C.borderLight}`, background: "#fff", color: C.text, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5, boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                      Save as View
+                    </button>
+                  )}
+                  {showSaveRosterView && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, animation: "filterFadeIn 0.2s ease-out" }}>
+                      <input
+                        value={rosterViewName}
+                        onChange={(event) => setRosterViewName(event.target.value)}
+                        placeholder="View name..."
+                        autoFocus
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") saveRosterView();
+                          if (event.key === "Escape") setShowSaveRosterView(false);
+                        }}
+                        style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", width: 160, background: "#fff", color: C.text, outline: "none" }}
+                      />
+                      <button onClick={saveRosterView} disabled={!rosterViewName.trim()} style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: rosterViewName.trim() ? C.suc : C.textMut, color: "#fff", fontSize: 11, fontWeight: 700, cursor: rosterViewName.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                        Save
+                      </button>
+                      <button onClick={() => setShowSaveRosterView(false)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <SectionHeader title="Roster" count={sortedRosterRows.length}>
-            {showInlineLaborEmployeeComposer ? (
-              <Btn variant="ghost" size="sm" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
-            ) : (
-              <Btn variant="secondary" size="sm" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
-            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn
+                variant={showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setShowRosterFilterPanel((current) => !current)}
+              >
+                Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}
+              </Btn>
+              <Btn
+                variant={showInactiveRoster ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setShowInactiveRoster((current) => !current)}
+              >
+                {showInactiveRoster ? "Hide Inactive" : "Show Inactive"}
+              </Btn>
+              {showInlineLaborEmployeeComposer ? (
+                <Btn variant="ghost" size="sm" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
+              ) : (
+                <Btn variant="secondary" size="sm" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
+              )}
+            </div>
           </SectionHeader>
+          {hasRosterEmployeesInGraceWindow && (
+            <Card style={{ padding: "12px 14px", marginBottom: 12, background: C.warnLt, border: `1px solid ${C.warn}33` }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.warn, marginBottom: 4 }}>Training grace period active</div>
+              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55 }}>
+                Employees hired within the last {TRAINING_GRACE_PERIOD_DAYS} days show as <strong>In Progress</strong> while training and CPR requirements are being completed.
+              </div>
+            </Card>
+          )}
           {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
             <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr>
-                  <th style={tableHeaderStyle}>Employee</th>
-                  <th style={tableHeaderStyle}>Contact</th>
-                  <th style={tableHeaderStyle}>Position</th>
-                  <th style={tableHeaderStyle}>Employment</th>
-                  <th style={tableHeaderStyle}>Training</th>
-                  <th style={tableHeaderStyle}>CPR</th>
-                  <th style={tableHeaderStyle}>30 / 60 / 90</th>
-                  <th style={tableHeaderStyle}>Actions</th>
+                  {[
+                    { key: "first_name", label: "First Name" },
+                    { key: "last_name", label: "Last Name" },
+                    { key: "start_date", label: "Start Date" },
+                    { key: "email", label: "Email" },
+                    { key: "phone", label: "Phone" },
+                    { key: "position", label: "Position" },
+                    { key: "training", label: "Training" },
+                    { key: "review30", label: "30-Day" },
+                    { key: "review60", label: "60-Day" },
+                    { key: "review90", label: "90-Day" },
+                  ].map((column) => (
+                    <th key={column.key} style={tableHeaderStyle}>
+                      <button
+                        type="button"
+                        onClick={() => setRosterSort((current) => ({
+                          key: column.key,
+                          direction: current.key === column.key && current.direction === "asc" ? "desc" : "asc",
+                        }))}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          fontFamily: "inherit",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: C.textMut,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span>{column.label}</span>
+                        <span style={{ color: rosterSort.key === column.key ? C.pri : C.textMut }}>
+                          {rosterSort.key === column.key ? (rosterSort.direction === "asc" ? "↑" : "↓") : "↕"}
+                        </span>
+                      </button>
+                    </th>
+                  ))}
+                  <th style={tableHeaderStyle}>Record</th>
                 </tr></thead>
                 <tbody>
                   {showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={8} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
+                      <td colSpan={11} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
                         <form
                           onSubmit={(event) => {
                             event.preventDefault();
@@ -2983,10 +3907,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                     </tr>
                   )}
                   {sortedRosterRows.map((row) => {
-                    const contactEmployee = laborEmployeeMap[row.labor_employee_id] || null;
-                    const contactEmail = readLaborEmployeeContact(contactEmployee, "contact_email");
-                    const contactPhone = readLaborEmployeeContact(contactEmployee, "contact_phone");
-
                     return (
                       <tr
                         key={row.labor_employee_id}
@@ -2995,93 +3915,58 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                           animation: row.labor_employee_id === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
                         }}
                       >
-                        <td style={{ padding: "10px 12px" }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{row.full_name}</div>
-                          <div style={{ fontSize: 11, color: C.textMut }}>
-                            Start {row.start_date ? fmtDate(row.start_date) : "—"}
-                            {row.end_date ? ` · End ${fmtDate(row.end_date)}` : ""}
-                          </div>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, fontWeight: 600 }}>{row.first_name || "—"}</td>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{row.last_name || "—"}</td>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>
+                          {row.start_date ? fmtDate(row.start_date) : "—"}
+                          {!row.is_active && row.end_date ? (
+                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Inactive since {fmtDate(row.end_date)}</div>
+                          ) : null}
                         </td>
-                        <td style={{ padding: "10px 12px", fontSize: 11, color: C.textMut, lineHeight: 1.55 }}>
-                          <div style={{ color: contactPhone ? C.textSec : C.textMut, fontWeight: contactPhone ? 600 : 500 }}>
-                            {contactPhone ? fmtPhoneInput(contactPhone) : "No phone on file"}
-                          </div>
-                          <div style={{ color: contactEmail ? C.textSec : C.textMut, overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {contactEmail || "No email on file"}
-                          </div>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: row.contact_email ? C.textSec : C.textMut }}>
+                          {row.contact_email || "—"}
+                        </td>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: row.contact_phone ? C.textSec : C.textMut }}>
+                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
                         </td>
                         <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.position_title || "—"}</td>
                         <td style={{ padding: "10px 12px" }}>
-                          <Badge color={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
-                        </td>
-                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>
-                          {row.active_training_record_id ? (
-                            <div>
-                              <div style={{ fontWeight: 700, color: C.pri }}>{String(row.active_training_status || "in_progress").replace(/_/g, " ")}</div>
-                              <div style={{ fontSize: 11, color: C.textMut }}>{Math.round(row.active_training_progress_percent || 0)}%</div>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
+                            <div style={{ fontSize: 11, color: C.textMut }}>
+                              CPR: {getDueSoonLabel(row.cpr_status)}
                             </div>
-                          ) : row.completed_training_record_count > 0 ? (
-                            <div>
-                              <div style={{ fontWeight: 700, color: C.suc }}>Completed</div>
-                              <div style={{ fontSize: 11, color: C.textMut }}>{row.completed_training_record_count} record(s)</div>
-                            </div>
-                          ) : "Not started"}
+                          </div>
                         </td>
-                        <td style={{ padding: "10px 12px" }}>
-                          <Badge color={row.cpr_status === "current" ? "success" : row.cpr_status === "due_soon" ? "warning" : row.cpr_status === "expired" ? "danger" : "default"}>
-                            {String(row.cpr_status || "not_started").replace(/_/g, " ")}
-                          </Badge>
-                        </td>
-                        <td style={{ padding: "10px 12px", fontSize: 11, color: C.textMut }}>
-                          <div>30: {String(row.review_30_status || "not_started").replace(/_/g, " ")}</div>
-                          <div>60: {String(row.review_60_status || "not_started").replace(/_/g, " ")}</div>
-                          <div>90: {String(row.review_90_status || "not_started").replace(/_/g, " ")}</div>
-                        </td>
-                        <td style={{ padding: "10px 12px" }}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(row.labor_employee_id)}>Open Employee</Btn>
-                            <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: row.labor_employee_id, tab: "history" })}>Attendance</Btn>
-                            {row.active_training_record_id ? (
-                              <Btn variant="ghost" size="sm" onClick={() => setSelectedRecordId(row.active_training_record_id)}>Open Training</Btn>
-                            ) : (
-                              <Btn
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  const employee = laborEmployees.find((entry) => entry.id === row.labor_employee_id);
-                                  if (!employee) return;
-                                  setNewLaborEmployeeId(employee.id);
-                                  setNewEmployeeName(employee.full_name || "");
-                                  setNewTargetRole(employee.position_title || "");
-                                  setNewHireDate(employee.start_date || "");
-                                  const match = templateOptions.find((template) =>
-                                    template.roleScopes.some((scope) => scope.toUpperCase() === String(employee.position_title || "").toUpperCase())
-                                  );
-                                  if (match) setNewTemplateId(match.value);
-                                  setShowNewRecord(true);
-                                }}
-                              >
-                                New Training
-                              </Btn>
-                            )}
-                            <Btn
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setNoteFilterEmployeeId(row.labor_employee_id);
-                                setTab("notes");
+                        {["review30", "review60", "review90"].map((reviewKey) => (
+                          <td key={reviewKey} style={{ padding: "10px 12px" }}>
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                minWidth: 88,
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                background: row[reviewKey].background,
+                                color: row[reviewKey].tone,
+                                fontSize: 11,
+                                fontWeight: 700,
                               }}
                             >
-                              View Notes
-                            </Btn>
-                          </div>
+                              {row[reviewKey].label}
+                            </div>
+                          </td>
+                        ))}
+                        <td style={{ padding: "10px 12px" }}>
+                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(row.labor_employee_id)}>View Record</Btn>
                         </td>
                       </tr>
                     );
                   })}
                   {sortedRosterRows.length === 0 && showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={8} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
+                      <td colSpan={11} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
                         Your first employee will land directly in the roster the moment you save this row.
                       </td>
                     </tr>
@@ -3152,13 +4037,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                       <th style={tableHeaderStyle}>Sections</th>
                       <th style={tableHeaderStyle}>Items</th>
                       <th style={tableHeaderStyle}>Version</th>
-                      <th style={tableHeaderStyle}>Source</th>
                     </tr></thead>
                     <tbody>
                       {group.rows.map((row) => {
-                        const sourceMatches = sourceCatalog.filter((entry) =>
-                          String(entry.normalized_target || "").includes(`${row.kind === "review" ? "review_templates" : "training_templates"}:${row.slug}`)
-                        );
                         return (
                           <tr
                             key={`${row.kind}_${row.id}`}
@@ -3173,11 +4054,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{row.stats.sectionCount || 0}</td>
                             <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{row.stats.itemCount || 0}</td>
                             <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.version ? `v${row.version.version_no}` : "—"}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 11, color: C.textMut }}>
-                              {sourceMatches.length === 0
-                                ? "No source map"
-                                : sourceMatches.map((entry) => `${entry.source_file_name}${entry.page_range ? ` (${entry.page_range})` : ""}`).join(", ")}
-                            </td>
                           </tr>
                         );
                       })}
@@ -3187,32 +4063,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               )}
             </div>
           ))}
-
-          <SectionHeader title="Source Material QA Matrix" count={sourceCatalog.length} />
-          <Card style={{ padding: 0, overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr>
-                <th style={tableHeaderStyle}>Source File</th>
-                <th style={tableHeaderStyle}>Family</th>
-                <th style={tableHeaderStyle}>Role</th>
-                <th style={tableHeaderStyle}>Page Range</th>
-                <th style={tableHeaderStyle}>Status</th>
-                <th style={tableHeaderStyle}>Normalized Target</th>
-              </tr></thead>
-              <tbody>
-                {sourceCatalog.map((row) => (
-                  <tr key={row.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{row.source_file_name}</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.document_family}</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.role_scope || "All"}</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{row.page_range || "—"}</td>
-                    <td style={{ padding: "10px 12px" }}><Badge color="default">{row.extraction_status}</Badge></td>
-                    <td style={{ padding: "10px 12px", fontSize: 11, color: C.textMut }}>{row.normalized_target || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
         </div>
       )}
 
@@ -3242,7 +4092,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                     <span>Version {previewTemplate.version.version_no}</span>
                     <span>Status: {previewTemplate.version.status}</span>
                     {previewTemplate.version.is_current && <span>Current live version</span>}
-                    <span>Source: {previewTemplate.version.source_document_name || previewTemplate.version.source_packet || "—"}</span>
                     {previewTemplate.version.published_at && <span>Published: {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
                   </div>
                 )}
@@ -3286,23 +4135,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
           </Card>
 
-          {previewTemplateSources.length > 0 && (
-            <Card style={{ padding: 16, marginBottom: 16 }}>
-              <SectionHeader title="Source Metadata" count={previewTemplateSources.length} />
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {previewTemplateSources.map((source) => (
-                  <div key={source.id} style={{ paddingBottom: 10, borderBottom: `1px solid ${C.borderLight}` }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{source.source_file_name}</div>
-                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>
-                      {source.document_family} · {source.role_scope || "All"} · {source.page_range || "page range pending"}
-                    </div>
-                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{source.extraction_status}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
           <Card style={{ padding: 16, marginBottom: 16 }}>
             <SectionHeader title="Version History" count={previewTemplateVersionHistory.length} />
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3333,9 +4165,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             ? `Published ${formatTrainingTimestamp(version.published_at)}`
                             : `Created ${formatTrainingTimestamp(version.created_at)}`}
                         </div>
-                        {(version.changelog || version.source_document_name) && (
+                        {version.changelog && (
                           <div style={{ fontSize: 11, color: C.textSec, marginTop: 4, lineHeight: 1.45 }}>
-                            {version.changelog || version.source_document_name}
+                            {version.changelog}
                           </div>
                         )}
                       </div>
@@ -3348,15 +4180,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               })}
             </div>
           </Card>
-
-          {previewTemplate.version?.metadata?.qa_flags?.length > 0 && (
-            <Card style={{ padding: 14, marginBottom: 16, background: "#FEF3C7", border: "1.5px solid #F59E0B40" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#D97706", marginBottom: 4 }}>QA Flags</div>
-              {previewTemplate.version.metadata.qa_flags.map((f, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#92400E", marginTop: 4 }}>{f}</div>
-              ))}
-            </Card>
-          )}
 
           <SectionHeader title={previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"} count={previewTemplate.sections.length}>
             {canManageTemplates && previewTemplate.version?.status === "draft" && (
@@ -3716,6 +4539,63 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               <Btn variant="ghost" onClick={() => setShowGlobalNoteModal(false)}>Cancel</Btn>
               <Btn variant="primary" onClick={handleAddGlobalEmployeeNote} disabled={savingGlobalNote}>
                 {savingGlobalNote ? "Saving..." : "Add Note"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showCreateTemplateModal && (
+        <Modal title="Create Template" onClose={resetCreateTemplateModal}>
+          <div style={{ display: "grid", gap: 14, minWidth: 560, maxWidth: 620 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Template Type</div>
+                <CustomSelect
+                  value={createTemplateKind}
+                  onChange={(value) => setCreateTemplateKind(value || "training")}
+                  options={[
+                    { value: "training", label: "Training Template" },
+                    { value: "review", label: "30 / 60 / 90 Review Template" },
+                  ]}
+                />
+              </div>
+              {createTemplateKind === "training" ? (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Template Class</div>
+                  <CustomSelect
+                    value={createTemplateClass}
+                    onChange={(value) => setCreateTemplateClass(value || "training_plan")}
+                    options={[
+                      { value: "training_plan", label: "Training Plan" },
+                      { value: "written_certification", label: "Written Certification" },
+                      { value: "live_evaluation", label: "Live Evaluation" },
+                      { value: "competency_guide", label: "Competency Guide" },
+                      { value: "master_dependency_checklist", label: "Master Dependency Checklist" },
+                    ]}
+                  />
+                </div>
+              ) : (
+                <div style={{ paddingTop: 24, fontSize: 12, color: C.textMut }}>
+                  Review templates open directly into the full-page 30 / 60 / 90 workflow.
+                </div>
+              )}
+            </div>
+            <Inp label="Template Name" value={createTemplateName} onChange={setCreateTemplateName} placeholder={createTemplateKind === "review" ? "Assistant Manager 30 / 60 / 90 Day Review" : "Bathing Certification"} />
+            <Inp
+              label="Role Scopes"
+              value={createTemplateRoleScopesText}
+              onChange={setCreateTemplateRoleScopesText}
+              placeholder="PCT, CSR, Supervisor"
+              help="Comma-separated roles. Leave blank to make the template available to all roles."
+            />
+            <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5 }}>
+              The template will open as a draft immediately so you can rename sections, add modules, and publish when it is ready.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="ghost" onClick={resetCreateTemplateModal}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleCreateTemplateShell} disabled={creatingTemplate}>
+                {creatingTemplate ? "Creating..." : "Create Template"}
               </Btn>
             </div>
           </div>

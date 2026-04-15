@@ -77,6 +77,18 @@ function formatDate(value: string): string {
   return datePart;
 }
 
+function isBoardingReservationType(typeName: string): boolean {
+  const value = String(typeName || "").toLowerCase();
+  return value.includes("boarding")
+    || value.includes("suite")
+    || value.includes("villa")
+    || value.includes("executive")
+    || value.includes("compartment")
+    || value.includes("overnight")
+    || value.includes("lodge")
+    || value.includes("kennel");
+}
+
 function roomKey(areaName: string, roomName: string): string {
   return `${areaName}__${roomName}`;
 }
@@ -190,8 +202,6 @@ export async function buildRollCallSnapshot(
           "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, room_assignment, raw_data",
         )
         .eq("location_id", locationId)
-        .not("check_in_date", "is", null)
-        .is("check_out_date", null)
         .is("cancelled_date", null)
         .lte("start_date", `${targetDate}T23:59:59`)
         .gte("end_date", `${targetDate}T00:00:00`),
@@ -280,6 +290,17 @@ export async function buildRollCallSnapshot(
   const bestDogByKey = new Map<string, any>();
 
   for (const reservation of reservations || []) {
+    const reservationTypeName = safeText(
+      reservation.reservation_type_name || reservation.raw_data?.reservation_type?.type,
+    );
+    if (!isBoardingReservationType(reservationTypeName)) continue;
+
+    const startDate = formatDate(safeText(reservation.start_date || reservation.raw_data?.start_date));
+    const endDate = formatDate(safeText(reservation.end_date || reservation.raw_data?.end_date));
+    const isOpeningDog = startDate < targetDate;
+    const isClosingDog = endDate > targetDate;
+    if (session === "opening" ? !isOpeningDog : !isClosingDog) continue;
+
     const candidateRoom = chooseCandidateRoom(
       reservation,
       occupancyByDogOwner,
@@ -317,11 +338,9 @@ export async function buildRollCallSnapshot(
       dogName: animalName,
       ownerName,
       breed: safeText(reservation.raw_data?.animal?.breed),
-      reservationTypeName: safeText(
-        reservation.reservation_type_name || reservation.raw_data?.reservation_type?.type,
-      ),
-      startDate: formatDate(safeText(reservation.start_date || reservation.raw_data?.start_date)),
-      endDate: formatDate(safeText(reservation.end_date || reservation.raw_data?.end_date)),
+      reservationTypeName,
+      startDate,
+      endDate,
       checkInDate: safeText(reservation.check_in_date),
       roomName,
       areaName,
