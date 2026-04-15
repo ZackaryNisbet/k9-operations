@@ -4,6 +4,7 @@ import {
   getCanonicalPlaygroupTags,
   humanizePlaygroupTag,
 } from "./playgroup-assignments.ts";
+import { fetchRoomOccupancySnapshotForDate } from "./room-occupancy.ts";
 
 export type RollCallSession = "opening" | "closing";
 
@@ -194,75 +195,47 @@ export async function buildRollCallSnapshot(
   targetDate: string,
   session: RollCallSession,
 ): Promise<RollCallComputedItems> {
-  const [{ data: reservations, error: reservationError }, { data: runs }, { data: occupancy }] =
-    await Promise.all([
-      supabase
-        .from("gingr_reservations")
-        .select(
-          "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, room_assignment, raw_data",
-        )
-        .eq("location_id", locationId)
-        .is("cancelled_date", null)
-        .lte("start_date", `${targetDate}T23:59:59`)
-        .gte("end_date", `${targetDate}T00:00:00`),
-      supabase
-        .from("gingr_runs")
-        .select("run_name, area_name, run_type")
-        .eq("location_id", locationId)
-        .order("area_name")
-        .order("run_name"),
-      supabase
-        .from("gingr_room_occupancy")
-        .select("run_name, area_name, animal_names")
-        .eq("location_id", locationId)
-        .eq("occupancy_date", targetDate)
-        .eq("occupied", true),
-    ]);
+  const { data: reservations, error: reservationError } = await supabase
+    .from("gingr_reservations")
+    .select(
+      "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, room_assignment, raw_data",
+    )
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${targetDate}T23:59:59`)
+    .gte("end_date", `${targetDate}T00:00:00`);
 
   if (reservationError) {
     throw new Error(`Roll call reservation query failed: ${reservationError.message}`);
   }
 
-  const runMetaByName: Record<string, { runName: string; areaName: string; runType: string }> = {};
+  const reservationById = new Map<string, any>();
+  for (const reservation of reservations || []) {
+    reservationById.set(safeText(reservation.gingr_id), reservation);
+  }
+
   const areaOrder = new Map<string, number>();
   const roomOrder = new Map<string, number>();
-  for (const [index, run] of (runs || []).entries()) {
-    const runName = safeText(run.run_name);
-    const areaName = safeText(run.area_name) || "Other";
-    const normalized = normalizeRoomName(runName);
-    runMetaByName[normalized] = {
-      runName,
-      areaName,
-      runType: safeText(run.run_type),
-    };
+  const occupancyModel = await fetchRoomOccupancySnapshotForDate({
+    supabase,
+    locationId,
+    date: targetDate,
+    reservations: reservations || [],
+    includeCategories: ["boarding"],
+  });
+
+  for (const [index, roomGroup] of (occupancyModel.room_groups || []).entries()) {
+    const runName = safeText(roomGroup.room_name);
+    const areaName = safeText(roomGroup.area_name) || "Other";
     if (!areaOrder.has(areaName)) {
       areaOrder.set(areaName, areaOrder.size);
     }
     roomOrder.set(`${areaName}::${runName}`, index);
   }
 
-  const occupancyByDogOwner: Record<string, { roomName: string; areaName: string }> = {};
-  const occupancyByDog: Record<string, { roomName: string; areaName: string }> = {};
-  for (const row of occupancy || []) {
-    const roomName = safeText(row.run_name);
-    const areaName = safeText(row.area_name) || runMetaByName[normalizeRoomName(roomName)]?.areaName || "Other";
-    for (const dog of parseAnimalNames(safeText(row.animal_names))) {
-      occupancyByDogOwner[`${normalizeName(dog.dogName)}::${normalizeName(dog.ownerName)}`] = {
-        roomName,
-        areaName,
-      };
-      if (!occupancyByDog[normalizeName(dog.dogName)]) {
-        occupancyByDog[normalizeName(dog.dogName)] = {
-          roomName,
-          areaName,
-        };
-      }
-    }
-  }
-
   const animalIds = [...new Set(
-    (reservations || [])
-      .map((reservation: any) => safeText(reservation.animal_gingr_id || reservation.raw_data?.animal?.id))
+    occupancyModel.assignments
+      .map((assignment) => safeText(assignment.animal_id))
       .filter(Boolean),
   )];
 
@@ -287,78 +260,45 @@ export async function buildRollCallSnapshot(
 
   const assignmentsByAnimalId = buildPlaygroupAssignmentMap(assignmentRows || []);
 
-  const bestDogByKey = new Map<string, any>();
-
-  for (const reservation of reservations || []) {
-    const reservationTypeName = safeText(
-      reservation.reservation_type_name || reservation.raw_data?.reservation_type?.type,
-    );
-    if (!isBoardingReservationType(reservationTypeName)) continue;
-
-    const startDate = formatDate(safeText(reservation.start_date || reservation.raw_data?.start_date));
-    const endDate = formatDate(safeText(reservation.end_date || reservation.raw_data?.end_date));
+  const roomMap = new Map<string, RollCallRoom>();
+  for (const assignment of occupancyModel.assignments) {
+    const startDate = formatDate(assignment.start_day);
+    const endDate = formatDate(assignment.end_day);
     const isOpeningDog = startDate < targetDate;
     const isClosingDog = endDate > targetDate;
     if (session === "opening" ? !isOpeningDog : !isClosingDog) continue;
+    if (!assignment.assigned_room_name) continue;
 
-    const candidateRoom = chooseCandidateRoom(
-      reservation,
-      occupancyByDogOwner,
-      occupancyByDog,
-    );
-    if (!candidateRoom?.roomName) continue;
-
-    const resolvedRunMeta = runMetaByName[normalizeRoomName(candidateRoom.roomName)];
-    const roomName = resolvedRunMeta?.runName || normalizeWhitespace(candidateRoom.roomName);
-    const areaName = resolvedRunMeta?.areaName || candidateRoom.areaName || "Other";
-    const animalGingrId = safeText(
-      reservation.animal_gingr_id || reservation.raw_data?.animal?.id,
-    );
-    const animalName = safeText(reservation.animal_name || reservation.raw_data?.animal?.name);
-    const ownerName = [
-      safeText(reservation.owner_first_name || reservation.raw_data?.owner?.first_name),
-      safeText(reservation.owner_last_name || reservation.raw_data?.owner?.last_name),
-    ].filter(Boolean).join(" ");
-    const dedupeKey = animalGingrId || `${normalizeName(animalName)}::${normalizeName(ownerName)}`;
-    if (!dedupeKey) continue;
-
-    const assignment = animalGingrId ? (assignmentsByAnimalId.get(animalGingrId) || null) : null;
-    const playgroup = humanizePlaygroupTag(assignment?.primaryDisplayPlaygroup)
-      || humanizePlaygroupTag(assignment?.schedulingPlaygroup)
+    const animalGingrId = safeText(assignment.animal_id);
+    const playgroupAssignment = animalGingrId
+      ? (assignmentsByAnimalId.get(animalGingrId) || null)
+      : null;
+    const playgroup = humanizePlaygroupTag(playgroupAssignment?.primaryDisplayPlaygroup)
+      || humanizePlaygroupTag(playgroupAssignment?.schedulingPlaygroup)
       || null;
-    const tags = assignment?.sourceIconTitles?.length
-      ? assignment.sourceIconTitles
-      : getCanonicalPlaygroupTags(assignment, { includeHalfAndHalf: true })
+    const tags = playgroupAssignment?.sourceIconTitles?.length
+      ? playgroupAssignment.sourceIconTitles
+      : getCanonicalPlaygroupTags(playgroupAssignment, { includeHalfAndHalf: true })
           .map((tag) => humanizePlaygroupTag(tag))
           .filter(Boolean) as string[];
 
-    const candidate = {
+    const dog = {
       animalGingrId,
-      reservationGingrId: safeText(reservation.gingr_id),
-      dogName: animalName,
-      ownerName,
-      breed: safeText(reservation.raw_data?.animal?.breed),
-      reservationTypeName,
+      reservationGingrId: safeText(assignment.reservation_id),
+      dogName: assignment.animal_name,
+      ownerName: assignment.owner_name,
+      breed: safeText(
+        reservationById.get(safeText(assignment.reservation_id))?.raw_data?.animal?.breed,
+      ),
+      reservationTypeName: assignment.reservation_type_name,
       startDate,
       endDate,
-      checkInDate: safeText(reservation.check_in_date),
-      roomName,
-      areaName,
-      roomScore: candidateRoom.score,
-      photoUrl: animalGingrId ? (photoByAnimalId[animalGingrId] || null) : null,
+      roomName: normalizeWhitespace(assignment.assigned_room_name),
+      areaName: normalizeWhitespace(assignment.assigned_area_name || "Other"),
+      photoUrl: animalGingrId ? (photoByAnimalId[animalGingrId] || assignment.photo_url || null) : assignment.photo_url || null,
       playgroup,
       tags,
     };
-
-    const existing = bestDogByKey.get(dedupeKey);
-    if (isBetterReservationCandidate(candidate, existing)) {
-      bestDogByKey.set(dedupeKey, candidate);
-    }
-  }
-
-  const roomMap = new Map<string, RollCallRoom>();
-
-  for (const dog of bestDogByKey.values()) {
     const key = roomKey(dog.areaName, dog.roomName);
     if (!roomMap.has(key)) {
       roomMap.set(key, {

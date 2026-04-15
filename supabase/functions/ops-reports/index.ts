@@ -14,6 +14,11 @@ import {
   fetchPlaygroupAssignments,
   getCanonicalPlaygroupTags,
 } from "../_shared/playgroup-assignments.ts";
+import {
+  buildRoomOccupancyLookup,
+  fetchRoomOccupancySnapshotForDate,
+  resolveRoomOccupancyLookupEntry,
+} from "../_shared/room-occupancy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -201,22 +206,13 @@ async function modDeparting(
   const bohData = bohResult?.data || bohResult;
   const checkingOut = bohData?.checking_out || [];
 
-  // Get room occupancy for room assignments
-  const { data: roomOccupancy } = await supabase
-    .from("gingr_room_occupancy")
-    .select("run_name, area_name, animal_names, occupied")
-    .eq("location_id", locationId)
-    .eq("occupancy_date", date)
-    .eq("occupied", true);
-
-  // Build room lookup by dog name (lowercase)
-  const roomByDog: Record<string, { runName: string; areaName: string }> = {};
-  for (const occ of roomOccupancy || []) {
-    const dogs = parseAnimalNames(occ.animal_names);
-    for (const d of dogs) {
-      roomByDog[d.dogName.toLowerCase()] = { runName: occ.run_name, areaName: occ.area_name || "" };
-    }
-  }
+  const roomOccupancySnapshot = await fetchRoomOccupancySnapshotForDate({
+    supabase,
+    locationId,
+    date,
+    includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+  });
+  const roomLookup = buildRoomOccupancyLookup(roomOccupancySnapshot);
 
   // Get bathing data from lite_daily_ops
   const bathingId = `ops_bathing_${date}`;
@@ -316,9 +312,16 @@ async function modDeparting(
     // Use room from BOH first, fall back to occupancy lookup
     const bohRoom = dog.run_name || "";
     const bohArea = dog.area_name || "";
-    const roomInfo = bohRoom
-      ? { runName: bohRoom, areaName: bohArea }
-      : (roomByDog[dogName.toLowerCase()] || { runName: "", areaName: "" });
+    const roomEntry = resolveRoomOccupancyLookupEntry(roomLookup, {
+      animalId,
+      animalName: dogName,
+      ownerLastName: ownerLast,
+    });
+    const roomInfo = roomEntry?.room_label
+      ? { runName: roomEntry.room_label, areaName: roomEntry.area_name || "" }
+      : bohRoom
+        ? { runName: bohRoom, areaName: bohArea }
+        : { runName: "", areaName: "" };
     const bathStatus = bathStatusMap[dogName.toLowerCase()] || "none";
 
     // Convert unix timestamps to readable dates
