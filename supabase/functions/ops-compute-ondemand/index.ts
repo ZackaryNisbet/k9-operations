@@ -541,6 +541,7 @@ async function computeBathingReport(
       continue;
     }
 
+    const resId = String(r.gingr_id || "");
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
     if (animalGingrId) animalIds.push(animalGingrId);
 
