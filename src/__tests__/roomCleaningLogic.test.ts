@@ -27,6 +27,7 @@ function makeReservation(overrides: Record<string, unknown> = {}) {
     reservation_id: reservationId,
     animal_id: animalId,
     animal_name: String(overrides.animal_name || `Dog ${animalId}`),
+    owner_first_name: String(overrides.owner_first_name || "Owner"),
     owner_last_name: String(overrides.owner_last_name || "Owner"),
     reservation_type_name: String(overrides.reservation_type_name || "Boarding | Standard"),
     start_date: String(overrides.start_date || TARGET_DATE),
@@ -398,6 +399,81 @@ describe("room cleaning logic", () => {
     expect(payload.room_classifications[0].room_code).toBe("305");
     expect(payload.room_classifications[0].room).toBe("Executive - 305 Private Play");
     expect(payload.classification_summary.setup).toBe(1);
+  });
+
+  it("resolves setup rooms from next-day occupancy when the reservation starts today", () => {
+    const payload = buildRoomCleaningPayload({
+      date: TARGET_DATE,
+      runs: [makeRun("Executive - 205", { area_name: "Executive Rooms", run_type: "Executive Room" })],
+      occupancyRows: [
+        {
+          gingr_run_id: "run-205",
+          run_name: "Executive - 205",
+          area_name: "Executive Rooms",
+          occupancy_date: NEXT_DATE,
+          animal_names: "Hazel (Jane Doe)",
+          occupied: true,
+          end_date: "2026-04-18T12:30:00-04:00",
+        },
+      ],
+      bohDogs: [],
+      reservations: [
+        makeReservation({
+          reservation_id: "future-room",
+          animal_id: "dog-15",
+          animal_name: "Hazel",
+          owner_first_name: "Jane",
+          owner_last_name: "Doe",
+          start_date: TARGET_DATE,
+          end_date: "2026-04-18",
+          raw_data: {},
+          room_assignment: null,
+        }),
+      ],
+    });
+
+    expect(payload.classification_summary.setup).toBe(1);
+    expect(payload.data_issues).toHaveLength(0);
+    expect(payload.room_classifications[0].room_code).toBe("205");
+    expect(payload.room_classifications[0].room).toBe("Executive - 205");
+  });
+
+  it("resolves checkout-day disinfect rooms from previous-day occupancy when the room is absent today", () => {
+    const payload = buildRoomCleaningPayload({
+      date: TARGET_DATE,
+      runs: [makeRun("Executive - 402", { area_name: "Executive Rooms", run_type: "Executive Room" })],
+      occupancyRows: [
+        {
+          gingr_run_id: "run-402",
+          run_name: "Executive - 402",
+          area_name: "Executive Rooms",
+          occupancy_date: PREV_DATE,
+          animal_names: "Tomato (Dana Cavello)",
+          occupied: true,
+          end_date: `${TARGET_DATE}T12:30:00-04:00`,
+        },
+      ],
+      bohDogs: [],
+      reservations: [
+        makeReservation({
+          reservation_id: "checkout-room",
+          animal_id: "dog-16",
+          animal_name: "Tomato",
+          owner_first_name: "Dana",
+          owner_last_name: "Cavello",
+          start_date: PREV_DATE,
+          end_date: TARGET_DATE,
+          check_out_date: `${TARGET_DATE}T09:00:00`,
+          raw_data: {},
+          room_assignment: null,
+        }),
+      ],
+    });
+
+    expect(payload.classification_summary.full_disinfect).toBe(1);
+    expect(payload.data_issues).toHaveLength(0);
+    expect(payload.room_classifications[0].room_code).toBe("402");
+    expect(payload.room_classifications[0].room).toBe("Executive - 402");
   });
 
   it("records an explicit data issue when a room cannot be resolved in Gingr", () => {
