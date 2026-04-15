@@ -61,6 +61,70 @@ const LEGACY_SOURCES = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function cellKey(role, section) { return `${role}::${section}`; }
 
+function createEmptyLayout() {
+  const items = {};
+  ROLES.forEach(r => SECTIONS.forEach(s => { items[cellKey(r.id, s.id)] = []; }));
+  return items;
+}
+
+function buildDefaultWorkflowLayout() {
+  const items = createEmptyLayout();
+  ROLES.forEach(r => {
+    const roleMap = WORKFLOW_SECTION_MAP[r.id] || {};
+    Object.entries(roleMap).forEach(([wfId, sectionId]) => {
+      const key = cellKey(r.id, sectionId);
+      const wfDef = WORKFLOW_DEFS.find(w => w.id === wfId);
+      if (!wfDef || !items[key]) return;
+      items[key].push({
+        task_id: `wf_${wfId}`,
+        task_label: wfDef.label,
+        item_type: "workflow",
+        workflow_id: wfId,
+        section: sectionId,
+        role: r.id,
+        sort_order: items[key].length,
+        source: "workflow",
+      });
+    });
+  });
+  return items;
+}
+
+export function sanitizeLayoutState(items) {
+  const next = createEmptyLayout();
+  let duplicateCount = 0;
+
+  Object.entries(items || {}).forEach(([key, value]) => {
+    const rawList = Array.isArray(value) ? value : [];
+    const [role = "", section = ""] = String(key).split("::");
+    const seen = new Set();
+
+    rawList.forEach((item) => {
+      const taskId = String(item?.task_id || "").trim();
+      if (!taskId) return;
+      if (seen.has(taskId)) {
+        duplicateCount += 1;
+        return;
+      }
+      seen.add(taskId);
+      if (!next[key]) next[key] = [];
+      next[key].push({
+        ...item,
+        role: item?.role || role,
+        section: item?.section || section,
+        sort_order: next[key].length,
+      });
+    });
+  });
+
+  return { items: next, duplicateCount };
+}
+
+function isMissingReplaceRoleLayoutRpc(error) {
+  const msg = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return error?.code === "PGRST202" || msg.includes("replace_role_page_config") || msg.includes("could not find the function");
+}
+
 // ─── Workflow Summary Helpers (exported for testing) ──────────────────────────
 export function buildWorkflowSummary(cellItems, roles, sections, workflowDefs) {
   // Map each workflow to the set of roles that include it
@@ -206,6 +270,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   const [cellItems, setCellItems] = useState({});
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
+  const [hasPersistedRows, setHasPersistedRows] = useState(false);
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef(null);
   const saveInFlightRef = useRef(false); // guard against concurrent saves
@@ -230,8 +295,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   // ─── Load all role configs ──────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
-    const items = {};
-    ROLES.forEach(r => SECTIONS.forEach(s => { items[cellKey(r.id, s.id)] = []; }));
+    const items = createEmptyLayout();
 
     const { data: rows } = await supabase
       .from("role_page_config")
@@ -255,42 +319,17 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       }
     });
 
-    // Add workflow references from WORKFLOW_SECTION_MAP only for roles that
-    // have NO persisted rows at all (i.e. the role is unconfigured).  Once a
-    // role has any DB rows the persisted state is authoritative — this prevents
-    // deleted workflows from being silently re-injected on every load.
     ROLES.forEach(r => {
-      const roleHasRows = SECTIONS.some(s => (items[cellKey(r.id, s.id)] || []).length > 0);
-      if (!roleHasRows) {
-        const roleMap = WORKFLOW_SECTION_MAP[r.id] || {};
-        Object.entries(roleMap).forEach(([wfId, sectionId]) => {
-          const key = cellKey(r.id, sectionId);
-          if (!items[key]) return;
-          const wfDef = WORKFLOW_DEFS.find(w => w.id === wfId);
-          if (wfDef) {
-            items[key].push({
-              task_id: `wf_${wfId}`,
-              task_label: wfDef.label,
-              item_type: "workflow",
-              workflow_id: wfId,
-              section: sectionId,
-              role: r.id,
-              sort_order: 9000 + WORKFLOW_DEFS.indexOf(wfDef),
-              source: "workflow",
-              _isDefault: true,
-            });
-          }
-        });
-      }
-      // Sort each cell by sort_order
       SECTIONS.forEach(s => {
         const key = cellKey(r.id, s.id);
         items[key].sort((a, b) => a.sort_order - b.sort_order);
       });
     });
 
-    setCellItems(items);
-    lastSavedRef.current = JSON.stringify(items);
+    const sanitized = sanitizeLayoutState(items);
+    setHasPersistedRows((rows || []).length > 0);
+    setCellItems(sanitized.items);
+    lastSavedRef.current = JSON.stringify(sanitized.items);
     setLoading(false);
   }, [locationId]);
 
@@ -309,48 +348,64 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     saveInFlightRef.current = true;
     setSaveState("saving");
     try {
+      const sanitized = sanitizeLayoutState(items);
+      if (sanitized.duplicateCount > 0) {
+        addGlobalToast?.(`Removed ${sanitized.duplicateCount} duplicate layout item${sanitized.duplicateCount === 1 ? "" : "s"} before saving.`, "info");
+      }
+
       // Collect ALL items — including workflow references so their presence
       // (or absence after deletion) is persisted authoritatively in the DB.
       const rows = [];
-      let globalIdx = 0;
       ROLES.forEach(r => {
         SECTIONS.forEach(s => {
           const key = cellKey(r.id, s.id);
-          (items[key] || []).forEach((item) => {
+          (sanitized.items[key] || []).forEach((item, idx) => {
             rows.push({
-              location_id: locationId,
               role: r.id,
               section: s.id,
               task_id: item.task_id,
               task_label: item.task_label,
               task_time: item.task_time || null,
               task_description: item.task_description || null,
-              sort_order: globalIdx++,
+              sort_order: idx,
               source: item.source || "custom",
               day_of_week: item.day_of_week ?? null,
               is_active: true,
-              updated_at: new Date().toISOString(),
             });
           });
         });
       });
 
-      // Delete all existing rows for these roles, then re-insert.
-      // This ensures removed items are gone and sort_order is authoritative.
-      const roleIds = ROLES.map(r => r.id);
-      const { error: delErr } = await supabase.from("role_page_config")
-        .delete()
-        .eq("location_id", locationId)
-        .in("role", roleIds);
-      if (delErr) throw delErr;
+      const { error: rpcErr } = await supabase.rpc("replace_role_page_config", {
+        p_location_id: locationId,
+        p_roles: ROLES.map(r => r.id),
+        p_rows: rows,
+      });
+      if (rpcErr) {
+        if (!isMissingReplaceRoleLayoutRpc(rpcErr)) throw rpcErr;
 
-      if (rows.length > 0) {
-        const { error: insErr } = await supabase.from("role_page_config")
-          .insert(rows);
-        if (insErr) throw insErr;
+        const roleIds = ROLES.map(r => r.id);
+        const { error: delErr } = await supabase.from("role_page_config")
+          .delete()
+          .eq("location_id", locationId)
+          .in("role", roleIds);
+        if (delErr) throw delErr;
+
+        if (rows.length > 0) {
+          const { error: insErr } = await supabase.from("role_page_config").insert(
+            rows.map(row => ({
+              location_id: locationId,
+              ...row,
+              updated_at: new Date().toISOString(),
+            })),
+          );
+          if (insErr) throw insErr;
+        }
       }
 
-      lastSavedRef.current = JSON.stringify(items);
+      setCellItems(sanitized.items);
+      setHasPersistedRows(true);
+      lastSavedRef.current = JSON.stringify(sanitized.items);
       setSaveState("saved");
       setTimeout(() => setSaveState(prev => prev === "saved" ? "idle" : prev), 2000);
     } catch (err) {
@@ -375,11 +430,15 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
 
   const updateCellItems = useCallback((updater) => {
     setCellItems(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      scheduleSave(next);
-      return next;
+      const nextRaw = typeof updater === "function" ? updater(prev) : updater;
+      const sanitized = sanitizeLayoutState(nextRaw);
+      if (sanitized.duplicateCount > 0) {
+        addGlobalToast?.(`Removed ${sanitized.duplicateCount} duplicate layout item${sanitized.duplicateCount === 1 ? "" : "s"}.`, "info");
+      }
+      scheduleSave(sanitized.items);
+      return sanitized.items;
     });
-  }, [scheduleSave]);
+  }, [scheduleSave, addGlobalToast]);
 
   // ─── Drag-and-Drop Handlers ─────────────────────────────────────────────
   const handleDragStart = useCallback((e, role, section, index, item) => {
@@ -390,12 +449,14 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
 
   const handleDragOver = useCallback((e, role, section, index) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     setDragOver({ role, section, index });
   }, []);
 
   const handleDragOverCell = useCallback((e, role, section) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     const key = cellKey(role, section);
     // Only set dragOver if the cell is empty or we're not already over an item
@@ -407,6 +468,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
 
   const handleDrop = useCallback((e, targetRole, targetSection, targetIndex) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!dragItem) return;
 
     const { role: srcRole, section: srcSection, index: srcIndex, item } = dragItem;
@@ -417,6 +479,11 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       const next = { ...prev };
       const srcList = [...(next[srcKey] || [])];
       const tgtList = srcKey === tgtKey ? srcList : [...(next[tgtKey] || [])];
+
+      if (srcKey !== tgtKey && tgtList.some(existing => existing.task_id === item.task_id)) {
+        addGlobalToast?.(`${item.task_label} is already in ${ROLES.find(r => r.id === targetRole)?.label || targetRole} ${SECTIONS.find(s => s.id === targetSection)?.label || targetSection}.`, "info");
+        return prev;
+      }
 
       // Remove from source
       srcList.splice(srcIndex, 1);
@@ -556,6 +623,13 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     persistChanges(cellItems);
   }, [cellItems, persistChanges]);
 
+  const seedDefaults = useCallback(() => {
+    const defaults = buildDefaultWorkflowLayout();
+    setHasPersistedRows(false);
+    updateCellItems(defaults);
+    addGlobalToast?.("Loaded default workflow layout.", "info");
+  }, [updateCellItems, addGlobalToast]);
+
   // Count items per role
   const roleCounts = useMemo(() => {
     const counts = {};
@@ -622,6 +696,30 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       </div>
 
       {/* ─── Matrix Grid ──────────────────────────────────────────────────── */}
+      {!hasPersistedRows && (
+        <div style={{
+          marginBottom: 14,
+          padding: "12px 14px",
+          borderRadius: 12,
+          border: `1.5px solid ${C.warn}35`,
+          background: `${C.warn}08`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+              No persisted role layout was found for this location.
+            </div>
+            <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>
+              The editor is showing an empty state so a bad fallback cannot overwrite your live layout again.
+            </div>
+          </div>
+          <Btn onClick={seedDefaults}>Load Default Workflows</Btn>
+        </div>
+      )}
       <div style={{
         display: "grid",
         gridTemplateColumns: "100px 1fr 1fr 1fr",
