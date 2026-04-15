@@ -138,7 +138,7 @@ setting_rows AS (
 bathing_progress AS (
   SELECT
     'bathing'::TEXT AS id,
-    COALESCE(JSONB_ARRAY_LENGTH(COALESCE(ob.computed_items->'dogs', '[]'::JSONB)), 0) AS total,
+    COALESCE((SELECT JSONB_ARRAY_LENGTH(COALESCE(ob.computed_items->'dogs', '[]'::JSONB))), 0) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_ARRAY_ELEMENTS(COALESCE(ob.computed_items->'dogs', '[]'::JSONB)) dog
@@ -146,7 +146,12 @@ bathing_progress AS (
         ON sr.setting_key = 'ops_bathing_' || (SELECT view_date FROM params)
       WHERE COALESCE(sr.setting_value, '{}'::JSONB) ? ('g' || COALESCE(dog->>'gingrReservationId', ''))
     ), 0) AS completed,
-    GREATEST(MAX(ob.computed_at), MAX(ob.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(ob.computed_at, ob.updated_at, sr.updated_at),
+      ob.updated_at,
+      ob.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_bathing ob ON TRUE
   LEFT JOIN setting_rows sr
@@ -155,12 +160,17 @@ bathing_progress AS (
 pamper_progress AS (
   SELECT
     'pamper'::TEXT AS id,
-    COALESCE(JSONB_ARRAY_LENGTH(COALESCE(op.computed_items->'dogs', '[]'::JSONB)), 0) AS total,
+    COALESCE((SELECT JSONB_ARRAY_LENGTH(COALESCE(op.computed_items->'dogs', '[]'::JSONB))), 0) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_OBJECT_KEYS(COALESCE(sr.setting_value, '{}'::JSONB))
     ), 0) AS completed,
-    GREATEST(MAX(op.computed_at), MAX(op.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(op.computed_at, op.updated_at, sr.updated_at),
+      op.updated_at,
+      op.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_pamper op ON TRUE
   LEFT JOIN setting_rows sr
@@ -170,7 +180,7 @@ enrichment_progress AS (
   SELECT
     'enrichment'::TEXT AS id,
     COALESCE(
-      JSONB_ARRAY_LENGTH(COALESCE(oe.computed_items->'dogs', '[]'::JSONB)),
+      (SELECT JSONB_ARRAY_LENGTH(COALESCE(oe.computed_items->'dogs', '[]'::JSONB))),
       (COALESCE((oe.computed_items->>'scheduledCount')::INT, 0) + COALESCE((oe.computed_items->>'suggestedCount')::INT, 0)),
       0
     ) AS total,
@@ -178,7 +188,12 @@ enrichment_progress AS (
       SELECT COUNT(*)
       FROM JSONB_OBJECT_KEYS(COALESCE(sr.setting_value, '{}'::JSONB))
     ), 0) AS completed,
-    GREATEST(MAX(oe.computed_at), MAX(oe.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(oe.computed_at, oe.updated_at, sr.updated_at),
+      oe.updated_at,
+      oe.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_enrichment oe ON TRUE
   LEFT JOIN setting_rows sr
@@ -222,7 +237,7 @@ ice_cream_progress AS (
       SELECT COUNT(*)
       FROM JSONB_OBJECT_KEYS(COALESCE(sr.setting_value, '{}'::JSONB))
     ), 0) AS completed,
-    MAX(sr.updated_at) AS updated_at
+    sr.updated_at AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN setting_rows sr
     ON sr.setting_key = 'ops_svc_Ice_Cream_' || (SELECT view_date FROM params)
@@ -276,7 +291,11 @@ play_progress AS (
       )
       FROM JSONB_EACH(COALESCE(op.items, '{}'::JSONB))
     ), 0) AS completed,
-    GREATEST(MAX(op.computed_at), MAX(op.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(op.computed_at, op.updated_at),
+      op.updated_at,
+      op.computed_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_play op ON TRUE
 ),
@@ -284,7 +303,7 @@ weekly_maintenance_progress AS (
   SELECT
     'weekly-maintenance'::TEXT AS id,
     COALESCE(
-      JSONB_ARRAY_LENGTH(COALESCE(owm.computed_items->'tasks', '[]'::JSONB)),
+      (SELECT JSONB_ARRAY_LENGTH(COALESCE(owm.computed_items->'tasks', '[]'::JSONB))),
       CASE
         WHEN JSONB_TYPEOF(owm.computed_items) = 'array' THEN JSONB_ARRAY_LENGTH(owm.computed_items)
         ELSE 0
@@ -296,19 +315,28 @@ weekly_maintenance_progress AS (
       FROM JSONB_EACH(COALESCE(owm.items, '{}'::JSONB))
       WHERE COALESCE((value->>'checked')::BOOLEAN, FALSE)
     ), 0) AS completed,
-    GREATEST(MAX(owm.computed_at), MAX(owm.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(owm.computed_at, owm.updated_at),
+      owm.updated_at,
+      owm.computed_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_weekly_maintenance owm ON TRUE
 ),
 belongings_progress AS (
   SELECT
     'belongings'::TEXT AS id,
-    COALESCE(JSONB_ARRAY_LENGTH(COALESCE(ob.computed_items->'dogs', '[]'::JSONB)), 0) AS total,
+    COALESCE((SELECT JSONB_ARRAY_LENGTH(COALESCE(ob.computed_items->'dogs', '[]'::JSONB))), 0) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_OBJECT_KEYS(COALESCE(sr.setting_value, '{}'::JSONB))
     ), 0) AS completed,
-    GREATEST(MAX(ob.computed_at), MAX(ob.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(ob.computed_at, ob.updated_at, sr.updated_at),
+      ob.updated_at,
+      ob.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_belongings ob ON TRUE
   LEFT JOIN setting_rows sr
@@ -317,12 +345,17 @@ belongings_progress AS (
 collars_progress AS (
   SELECT
     'collars'::TEXT AS id,
-    COALESCE(JSONB_ARRAY_LENGTH(COALESCE(oc.computed_items->'dogs', '[]'::JSONB)), 0) AS total,
+    COALESCE((SELECT JSONB_ARRAY_LENGTH(COALESCE(oc.computed_items->'dogs', '[]'::JSONB))), 0) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_OBJECT_KEYS(COALESCE(sr.setting_value, '{}'::JSONB))
     ), 0) AS completed,
-    GREATEST(MAX(oc.computed_at), MAX(oc.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(oc.computed_at, oc.updated_at, sr.updated_at),
+      oc.updated_at,
+      oc.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_collars oc ON TRUE
   LEFT JOIN setting_rows sr
@@ -331,13 +364,18 @@ collars_progress AS (
 lodging_transfer_progress AS (
   SELECT
     'lodging-transfer'::TEXT AS id,
-    COALESCE(JSONB_ARRAY_LENGTH(COALESCE(olt.computed_items->'transfers', '[]'::JSONB)), 0) AS total,
+    COALESCE((SELECT JSONB_ARRAY_LENGTH(COALESCE(olt.computed_items->'transfers', '[]'::JSONB))), 0) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_EACH(COALESCE(sr.setting_value, '{}'::JSONB))
       WHERE COALESCE((value->>'allDone')::BOOLEAN, FALSE)
     ), 0) AS completed,
-    GREATEST(MAX(olt.computed_at), MAX(olt.updated_at), MAX(sr.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(olt.computed_at, olt.updated_at, sr.updated_at),
+      olt.updated_at,
+      olt.computed_at,
+      sr.updated_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_lodging_transfer olt ON TRUE
   LEFT JOIN setting_rows sr
@@ -346,26 +384,42 @@ lodging_transfer_progress AS (
 roll_call_opening_progress AS (
   SELECT
     'roll-call-opening'::TEXT AS id,
-    COALESCE((oro.computed_items->'summary'->>'totalRooms')::INT, JSONB_ARRAY_LENGTH(COALESCE(oro.computed_items->'rooms', '[]'::JSONB)), 0) AS total,
+    COALESCE(
+      (oro.computed_items->'summary'->>'totalRooms')::INT,
+      (SELECT JSONB_ARRAY_LENGTH(COALESCE(oro.computed_items->'rooms', '[]'::JSONB))),
+      0
+    ) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_EACH(COALESCE(oro.items, '{}'::JSONB))
       WHERE COALESCE((value->>'verified')::BOOLEAN, FALSE)
     ), 0) AS completed,
-    GREATEST(MAX(oro.computed_at), MAX(oro.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(oro.computed_at, oro.updated_at),
+      oro.updated_at,
+      oro.computed_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_roll_call_opening oro ON TRUE
 ),
 roll_call_closing_progress AS (
   SELECT
     'roll-call-closing'::TEXT AS id,
-    COALESCE((orc.computed_items->'summary'->>'totalRooms')::INT, JSONB_ARRAY_LENGTH(COALESCE(orc.computed_items->'rooms', '[]'::JSONB)), 0) AS total,
+    COALESCE(
+      (orc.computed_items->'summary'->>'totalRooms')::INT,
+      (SELECT JSONB_ARRAY_LENGTH(COALESCE(orc.computed_items->'rooms', '[]'::JSONB))),
+      0
+    ) AS total,
     COALESCE((
       SELECT COUNT(*)
       FROM JSONB_EACH(COALESCE(orc.items, '{}'::JSONB))
       WHERE COALESCE((value->>'verified')::BOOLEAN, FALSE)
     ), 0) AS completed,
-    GREATEST(MAX(orc.computed_at), MAX(orc.updated_at)) AS updated_at
+    COALESCE(
+      GREATEST(orc.computed_at, orc.updated_at),
+      orc.updated_at,
+      orc.computed_at
+    ) AS updated_at
   FROM (SELECT 1) base
   LEFT JOIN ops_roll_call_closing orc ON TRUE
 ),
