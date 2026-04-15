@@ -1,0 +1,340 @@
+{
+  "date": "2026-04-15",
+  "locationSlug": "cherry-hill",
+  "rooms": {
+    "101": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "102": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "103": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "104": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "105": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "106": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "107": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "108": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "1A": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "1B": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "1C": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "201": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "202": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "203": {
+      "rationale": "Last day of multi-day stay, therefore full disinfect required",
+      "type": "Full Disinfect"
+    },
+    "204": {
+      "rationale": "Last day of multi-day stay, therefore full disinfect required",
+      "type": "Full Disinfect"
+    },
+    "205": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "206": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "207": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "208": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "209": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "210": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "211": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "212": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "2A": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "2B": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required.",
+      "type": "Room Refresh"
+    },
+    "2C": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "301": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "302": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "303": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "304": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "305": {
+      "rationale": "New cleaning type -- rationale is because it is occupied for only 1 day. Need to do set up before dog arrives, then sanitize after dog leaves.",
+      "type": "Sanitize + Set Up"
+    },
+    "306": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "3A": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "3B": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "3C": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "401": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "402": {
+      "rationale": "Last day of multi-day stay, therefore full disinfect required",
+      "type": "Full Disinfect"
+    },
+    "403": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "404": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "405": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "406": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "407": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "408": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "409": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "410": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "4A": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "4B": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "4C": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "501": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "502": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "503": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "504": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "505": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "5A": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "5B": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "5C": {
+      "rationale": "Last day of multi-day stay, therefore full disinfect required",
+      "type": "Full Disinfect"
+    },
+    "6A": {
+      "rationale": "Mid stay (not the first day or last day of a multi-day reservation), therefore room refresh required",
+      "type": "Room Refresh"
+    },
+    "6B": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "6C": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "7A": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "7B": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "7C": {
+      "rationale": "First day of multi-day reservation, therefore no cleaning required, however a set up is required to set up the room for the incoming reservation",
+      "type": "Set Up"
+    },
+    "8A": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "8B": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "8C": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER1": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER10": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER2": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER3": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER4": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER5": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER6": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER7": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER8": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "LER9": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER1": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER2": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER3": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER4": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER5": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER6": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    },
+    "SER7": {
+      "rationale": "Vacant, therefore no cleaning required",
+      "type": "-"
+    }
+  },
+  "summary": {
+    "Full Disinfect": 4,
+    "Room Refresh": 24,
+    "Sanitize + Set Up": 6,
+    "Set Up": 8
+  }
+}
