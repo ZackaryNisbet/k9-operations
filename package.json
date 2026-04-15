@@ -13,6 +13,7 @@
     "supabase:functions:rollback": "node scripts/rollback-functions.mjs",
     "supabase:cron:audit": "node scripts/audit-cron-jobs.mjs",
     "supabase:cron:reconcile": "node scripts/reconcile-cron-jobs.mjs",
+    "room-cleaning:drift": "node scripts/report-room-cleaning-drift.mjs",
     "test": "vitest run",
     "test:report": "node scripts/generate-test-results.js"
   },
