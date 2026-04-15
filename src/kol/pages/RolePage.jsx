@@ -10,6 +10,8 @@ import { Card, Badge, Btn, Modal } from "../../shared/ui";
 import { I, Icons } from "../../shared/icons";
 import { getOpsCardStatus, getOpsProgress, getOpsCountLabel, getRoomCleaningStats, getPPStats, resSvcIncludes } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
+import { getInventoryWorkflow } from "./inventoryStatus";
+import { buildTrainingTemplateScopeClause, resolveTrainingLocationId, summarizeTrainingWorkflow } from "../trainingData";
 
 // ─── Fixed Section Definitions ──────────────────────────────────────────────
 const FIXED_SECTIONS = [
@@ -42,7 +44,7 @@ const WORKFLOW_CARDS = [
   { id: "meds", label: "Medications", icon: "Heart", routeTo: "eod", typeSub: "meds" },
   { id: "evaluations", label: "Evaluations", icon: "BarChart2", routeTo: "eod", typeSub: "evaluations" },
   { id: "weekly_inventory", label: "Weekly Inventory", icon: "Package", routeTo: "inventory", typeSub: "weekly_inventory" },
-  { id: "training", label: "Training", icon: "GraduationCap", routeTo: "training", typeSub: "training" },
+  { id: "training", label: "Labor", icon: "GraduationCap", routeTo: "training", typeSub: "training" },
 ];
 
 // Checkbox component (matches DailyOpsPage K9Check)
@@ -383,30 +385,22 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
         const catalogItems = catalogRes.data || [];
         const totalItems = catalogItems.length;
         if (snapRes.data?.id) {
-          const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
+          const [countsRes, adhocRes] = await Promise.all([
+            supabase.from("inventory_counts")
+              .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+            supabase.from("inventory_adhoc_items")
+              .select("stock_count, ordered, skipped, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+          ]);
           if (cancelled) return;
-          const rows = countRows || [];
-          const counted = rows.filter(r => r.stock_count != null).length;
-          const countingDone = counted >= totalItems && totalItems > 0;
-          const countMap = {};
-          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
-          let needsOrder = 0, ordered = 0;
-          catalogItems.forEach(item => {
-            const c = countMap[item.id];
-            if (!c || c.stock_count == null) return;
-            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
-            if (toOrder > 0) { needsOrder++; if (c.ordered) ordered++; }
+          const workflow = getInventoryWorkflow({
+            snapshotStatus: snapRes.data.status,
+            catalogItems,
+            countRows: countsRes.data || [],
+            adhocItems: adhocRes.data || [],
           });
-          const orderingDone = needsOrder === 0 || ordered >= needsOrder;
-          const allDone = countingDone && orderingDone;
-          let status, phaseLabel;
-          if (allDone) { status = "completed"; phaseLabel = "Completed this week"; }
-          else if (countingDone) { status = "in_progress"; phaseLabel = `${ordered}/${needsOrder} items ordered`; }
-          else if (counted > 0) { status = "in_progress"; phaseLabel = `${counted}/${totalItems} items counted`; }
-          else { status = "not_started"; phaseLabel = "Not started this week"; }
-          const progress = allDone ? 100 : countingDone && needsOrder > 0 ? Math.round((ordered / needsOrder) * 100) : totalItems > 0 ? Math.round((counted / totalItems) * 100) : 0;
-          if (!cancelled) setInvStatus({ status, progress, countLabel: phaseLabel });
+          if (!cancelled) setInvStatus({ status: workflow.status, progress: workflow.progress, countLabel: workflow.phaseLabel });
         } else {
           if (!cancelled) setInvStatus({ status: "not_started", progress: 0, countLabel: totalItems > 0 ? "Not started this week" : "" });
         }
@@ -421,25 +415,57 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
     let cancelled = false;
     (async () => {
       try {
-        const [tRes, tvRes, trRes] = await Promise.all([
-          supabase.from("training_templates").select("id, is_active, template_class").eq("is_active", true),
-          supabase.from("training_template_versions").select("id, template_id").eq("is_current", true).eq("status", "published"),
-          supabase.from("training_records").select("id, overall_status").in("overall_status", ["not_started", "in_progress", "needs_follow_up", "retest_required"]),
-        ]);
-        if (cancelled) return;
-        const templates = (tRes.data || []).filter(t => t.template_class === "training_plan");
-        const versions = tvRes.data || [];
-        const availableCount = templates.filter(t => versions.some(v => v.template_id === t.id)).length;
-        const activeRecords = (trRes.data || []).length;
-        let status, countLabel;
-        if (activeRecords > 0) { status = "in_progress"; countLabel = `${activeRecords} active record${activeRecords > 1 ? "s" : ""}`; }
-        else if (availableCount > 0) { status = "not_started"; countLabel = `${availableCount} template${availableCount > 1 ? "s" : ""} available`; }
-        else { status = "not_started"; countLabel = "No templates"; }
-        if (!cancelled) setTrainingStatus({ status, progress: 0, countLabel });
-      } catch { if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "" }); }
+        const resolvedLocationId = await resolveTrainingLocationId(
+          supabase,
+          currentLocation || profile?.location_id,
+          profile?.user_id || profile?.id
+        );
+        if (!resolvedLocationId || cancelled) {
+          if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "No templates" });
+          return;
+        }
+
+        const { data: templateRows, error: templateError } = await supabase
+          .from("training_templates")
+          .select("id, is_active, template_class, location_id")
+          .eq("is_active", true)
+          .or(buildTrainingTemplateScopeClause(resolvedLocationId));
+        if (templateError) throw templateError;
+
+        const templateIds = (templateRows || []).map((template) => template.id);
+        let versionRows = [];
+        if (templateIds.length > 0) {
+          const { data, error } = await supabase
+            .from("training_template_versions")
+            .select("id, template_id")
+            .in("template_id", templateIds)
+            .eq("is_current", true)
+            .eq("status", "published");
+          if (error) throw error;
+          versionRows = data || [];
+        }
+
+        const { data: recordRows, error: recordError } = await supabase
+          .from("training_records")
+          .select("id, overall_status")
+          .eq("location_id", resolvedLocationId);
+        if (recordError) throw recordError;
+
+        if (!cancelled) {
+          setTrainingStatus(
+            summarizeTrainingWorkflow({
+              templates: templateRows || [],
+              versions: versionRows,
+              records: recordRows || [],
+            })
+          );
+        }
+      } catch {
+        if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "" });
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [currentLocation, profile?.id, profile?.location_id, profile?.user_id]);
 
   // ─── Merged workflow summaries (overrides for Supabase-backed cards) ─────
   const mergedSummaries = useMemo(() => {
@@ -518,6 +544,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   const statusConfig = {
     not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
     in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
+    ready: { label: "Ready", bg: C.priLt, color: C.pri, barColor: C.pri },
     completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
   };
 
