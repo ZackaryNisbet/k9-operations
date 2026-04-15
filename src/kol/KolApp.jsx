@@ -53,23 +53,10 @@ import RollCallSessionsPage from "./pages/RollCallSessionsPage";
 import HomePage from "./pages/HomePage";
 import TrainingPage from "./pages/TrainingPage";
 import SchedulingPage from "./pages/SchedulingPage";
+import ClientManagementPage from "./pages/ClientManagementPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
-
-class LeanAppErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null, info: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("K9 Lite Error:", error, info); this.setState({ info }); }
-  render() {
-    if (this.state.error) {
-      return <div style={{padding:40,fontFamily:"monospace"}}>
-        <h2 style={{color:"red"}}>K9 Operations Lite crashed</h2>
-        <pre style={{whiteSpace:"pre-wrap",fontSize:13,background:"#f5f5f5",padding:20,borderRadius:8}}>{this.state.error.toString()}{"\n\n"}{this.state.info?.componentStack}</pre>
-      </div>;
-    }
-    return this.props.children;
-  }
-}
+import { BrandedErrorBoundary } from "../shared/AppCrashScreen";
 
 // ─── Lite URL Routing ────────────────────────────────────────────────────
 // Maps page IDs to URL slugs (root-level: /cherry-hill/dashboard)
@@ -121,11 +108,13 @@ const LITE_PAGE_SLUGS = {
   "cash-tips": "cash-tips",
   "onboarding": "onboarding",
   "pricing": "pricing",
-  "training": "training",
+  "training": "labor",
+  "client-management": "client-management",
   "scheduling": "scheduling",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
+LITE_SLUG_TO_PAGE.training = "training";
 
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
   const slug = LITE_PAGE_SLUGS[pg] || pg;
@@ -219,7 +208,8 @@ const MANAGER_NAV_ITEMS = [
   { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
-  { id: "training", label: "Training", icon: "GraduationCap" },
+  { id: "training", label: "Labor", icon: "GraduationCap" },
+  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -231,7 +221,8 @@ const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
-  { id: "training", label: "Training", icon: "GraduationCap" },
+  { id: "training", label: "Labor", icon: "GraduationCap" },
+  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -246,7 +237,8 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
-  { id: "training", label: "Training", icon: "GraduationCap" },
+  { id: "training", label: "Labor", icon: "GraduationCap" },
+  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -660,7 +652,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -677,6 +669,7 @@ function LeanAppInner() {
       case "home": return "Home";
       case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
+      case "client-management": return "Client Management";
       case "funnel": return "Lead Funnel";
       case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
@@ -698,7 +691,7 @@ function LeanAppInner() {
       case "role-page": return "My Work";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
-      case "attendance": case "mgmt-attendance": return "Attendance Tracker";
+      case "attendance": case "mgmt-attendance": return "Attendance";
       case "mgmt-audit-log": return "Audit Log";
       case "client-detail": {
         const c = (mockData?.clients||[]).find(cl => cl.id === prms?.clientId);
@@ -711,7 +704,7 @@ function LeanAppInner() {
       case "enterprise-ops": return "Operations Matrix";
       case "enterprise-attendance": return "Attendance";
       case "enterprise-users": return "User Management";
-      case "training": return "Training";
+      case "training": return "Labor";
       case "scheduling": return "Scheduling";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
@@ -817,7 +810,8 @@ function LeanAppInner() {
       "reports": null,
       "photos": "Photos Module",
       "settings": null, // settings handles its own per-tab permissions
-      "training": "Training Management",
+      "training": "Labor Management",
+      "client-management": "Customer Lifecycle",
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
       "occupancy-report": "Occupancy Reports",
@@ -938,9 +932,9 @@ function LeanAppInner() {
       case "mgmt-audit-log":
         return <AuditLogPage data={data} save={save} nav={nav} profile={profile} />;
       case "mgmt-attendance":
-        return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} />;
+        return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "attendance":
-        return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} />;
+        return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
       case "dog-detail":
         if (params.dogId && !params.clientId) {
           return <DogProfilePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} dogId={params.dogId} />;
@@ -970,6 +964,8 @@ function LeanAppInner() {
         return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
       case "training":
         return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "client-management":
+        return <ClientManagementPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "scheduling":
         return <SchedulingPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory":
@@ -1250,5 +1246,13 @@ function LeanAppInner() {
 }
 
 export default function LiteApp() {
-  return <LeanAppErrorBoundary><LeanAppInner /></LeanAppErrorBoundary>;
+  return (
+    <BrandedErrorBoundary
+      title="K9 Operations Lite hit an unexpected error"
+      description="The Lite app caught a render error and stayed in recovery mode instead of dumping the raw JavaScript stack on screen."
+      returnHref="/welcome"
+    >
+      <LeanAppInner />
+    </BrandedErrorBoundary>
+  );
 }

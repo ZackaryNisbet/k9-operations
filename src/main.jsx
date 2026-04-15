@@ -2,31 +2,6 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
-// ── Global Error Display (debug) ──────────────────────────────────────────
-window.addEventListener('error', (e) => {
-  const el = document.getElementById('root');
-  if (el && !el.dataset.errShown) {
-    el.dataset.errShown = '1';
-    el.innerHTML = `<div style="padding:40px;font-family:monospace"><h2 style="color:red">JS Error</h2><pre style="white-space:pre-wrap;font-size:13px;background:#f5f5f5;padding:20px;border-radius:8px">${e.message}\n${e.filename}:${e.lineno}:${e.colno}\n${e.error?.stack || ''}</pre></div>`;
-  }
-});
-window.addEventListener('unhandledrejection', (e) => {
-  // Supabase auth-js uses navigator.locks internally. When a lock is orphaned
-  // (e.g. React double-mount, tab backgrounding), the library recovers by
-  // stealing it. The evicted holder throws this AbortError — it's expected
-  // recovery behavior, not a real error. Suppress it.
-  if (e.reason?.name === 'AbortError' && String(e.reason?.message || '').includes('steal')) {
-    e.preventDefault();
-    console.warn('[Auth] Lock recovered via steal — this is normal');
-    return;
-  }
-  const el = document.getElementById('root');
-  if (el && !el.dataset.errShown) {
-    el.dataset.errShown = '1';
-    el.innerHTML = `<div style="padding:40px;font-family:monospace"><h2 style="color:red">Unhandled Promise Rejection</h2><pre style="white-space:pre-wrap;font-size:13px;background:#f5f5f5;padding:20px;border-radius:8px">${e.reason?.message || e.reason}\n${e.reason?.stack || ''}</pre></div>`;
-  }
-});
-
 // ── Production Security Guard ──────────────────────────────────────────────
 if (import.meta.env.PROD) {
   // Disable right-click context menu
@@ -55,6 +30,62 @@ import LiteApp from './kol/KolApp';
 import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
 import LandingPage from './LandingPage';
+import { AppCrashScreen, BrandedErrorBoundary } from './shared/AppCrashScreen';
+
+function RuntimeCrashManager({ children }) {
+  const [runtimeError, setRuntimeError] = useState(null);
+
+  useEffect(() => {
+    const handleWindowError = (event) => {
+      setRuntimeError({
+        title: 'Unexpected application error',
+        description: 'The app caught a runtime error and stayed mounted so you do not have to hard-refresh the entire session.',
+        error: event.error || new Error(event.message || 'Unknown runtime error'),
+        details: `${event.filename || 'unknown'}:${event.lineno || 0}:${event.colno || 0}`,
+      });
+    };
+
+    const handleUnhandledRejection = (event) => {
+      // Supabase auth-js uses navigator.locks internally. When a lock is orphaned
+      // (e.g. React double-mount, tab backgrounding), the library recovers by
+      // stealing it. The evicted holder throws this AbortError — it's expected
+      // recovery behavior, not a real error. Suppress it.
+      if (event.reason?.name === 'AbortError' && String(event.reason?.message || '').includes('steal')) {
+        event.preventDefault();
+        console.warn('[Auth] Lock recovered via steal — this is normal');
+        return;
+      }
+
+      setRuntimeError({
+        title: 'Background action failed',
+        description: 'The app intercepted an unhandled promise rejection. Reload if the current screen still behaves unexpectedly.',
+        error: event.reason || new Error('Unhandled promise rejection'),
+      });
+    };
+
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
+  if (runtimeError) {
+    return (
+      <AppCrashScreen
+        title={runtimeError.title}
+        description={runtimeError.description}
+        error={runtimeError.error}
+        details={runtimeError.details}
+        onRetry={() => setRuntimeError(null)}
+        retryLabel="Return to App"
+      />
+    );
+  }
+
+  return children;
+}
 
 function AuthStatusScreen({ title, description, authError, onRetry }) {
   return (
@@ -281,7 +312,15 @@ function Root() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <AuthProvider>
-    <Root />
-  </AuthProvider>
+  <BrandedErrorBoundary
+    title="K9 Operations could not finish rendering this screen"
+    description="A render-time error was caught before the app could fully crash. You can retry, reload, or go back to the welcome screen."
+    returnHref="/welcome"
+  >
+    <RuntimeCrashManager>
+      <AuthProvider>
+        <Root />
+      </AuthProvider>
+    </RuntimeCrashManager>
+  </BrandedErrorBoundary>
 );

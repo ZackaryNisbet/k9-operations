@@ -11,6 +11,7 @@ import { I, Icons } from "../../shared/icons";
 import { getOpsCardStatus, getOpsProgress, getOpsCountLabel, getRoomCleaningStats, getPPStats, resSvcIncludes } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { getInventoryWorkflow } from "./inventoryStatus";
+import { buildTrainingTemplateScopeClause, resolveTrainingLocationId, summarizeTrainingWorkflow } from "../trainingData";
 
 // ─── Fixed Section Definitions ──────────────────────────────────────────────
 const FIXED_SECTIONS = [
@@ -43,7 +44,7 @@ const WORKFLOW_CARDS = [
   { id: "meds", label: "Medications", icon: "Heart", routeTo: "eod", typeSub: "meds" },
   { id: "evaluations", label: "Evaluations", icon: "BarChart2", routeTo: "eod", typeSub: "evaluations" },
   { id: "weekly_inventory", label: "Weekly Inventory", icon: "Package", routeTo: "inventory", typeSub: "weekly_inventory" },
-  { id: "training", label: "Training", icon: "GraduationCap", routeTo: "training", typeSub: "training" },
+  { id: "training", label: "Labor", icon: "GraduationCap", routeTo: "training", typeSub: "training" },
 ];
 
 // Checkbox component (matches DailyOpsPage K9Check)
@@ -414,25 +415,57 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
     let cancelled = false;
     (async () => {
       try {
-        const [tRes, tvRes, trRes] = await Promise.all([
-          supabase.from("training_templates").select("id, is_active, template_class").eq("is_active", true),
-          supabase.from("training_template_versions").select("id, template_id").eq("is_current", true).eq("status", "published"),
-          supabase.from("training_records").select("id, overall_status").in("overall_status", ["not_started", "in_progress", "needs_follow_up", "retest_required"]),
-        ]);
-        if (cancelled) return;
-        const templates = (tRes.data || []).filter(t => t.template_class === "training_plan");
-        const versions = tvRes.data || [];
-        const availableCount = templates.filter(t => versions.some(v => v.template_id === t.id)).length;
-        const activeRecords = (trRes.data || []).length;
-        let status, countLabel;
-        if (activeRecords > 0) { status = "in_progress"; countLabel = `${activeRecords} active record${activeRecords > 1 ? "s" : ""}`; }
-        else if (availableCount > 0) { status = "not_started"; countLabel = `${availableCount} template${availableCount > 1 ? "s" : ""} available`; }
-        else { status = "not_started"; countLabel = "No templates"; }
-        if (!cancelled) setTrainingStatus({ status, progress: 0, countLabel });
-      } catch { if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "" }); }
+        const resolvedLocationId = await resolveTrainingLocationId(
+          supabase,
+          currentLocation || profile?.location_id,
+          profile?.user_id || profile?.id
+        );
+        if (!resolvedLocationId || cancelled) {
+          if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "No templates" });
+          return;
+        }
+
+        const { data: templateRows, error: templateError } = await supabase
+          .from("training_templates")
+          .select("id, is_active, template_class, location_id")
+          .eq("is_active", true)
+          .or(buildTrainingTemplateScopeClause(resolvedLocationId));
+        if (templateError) throw templateError;
+
+        const templateIds = (templateRows || []).map((template) => template.id);
+        let versionRows = [];
+        if (templateIds.length > 0) {
+          const { data, error } = await supabase
+            .from("training_template_versions")
+            .select("id, template_id")
+            .in("template_id", templateIds)
+            .eq("is_current", true)
+            .eq("status", "published");
+          if (error) throw error;
+          versionRows = data || [];
+        }
+
+        const { data: recordRows, error: recordError } = await supabase
+          .from("training_records")
+          .select("id, overall_status")
+          .eq("location_id", resolvedLocationId);
+        if (recordError) throw recordError;
+
+        if (!cancelled) {
+          setTrainingStatus(
+            summarizeTrainingWorkflow({
+              templates: templateRows || [],
+              versions: versionRows,
+              records: recordRows || [],
+            })
+          );
+        }
+      } catch {
+        if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "" });
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [currentLocation, profile?.id, profile?.location_id, profile?.user_id]);
 
   // ─── Merged workflow summaries (overrides for Supabase-backed cards) ─────
   const mergedSummaries = useMemo(() => {
