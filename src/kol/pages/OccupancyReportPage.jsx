@@ -415,7 +415,7 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
         borderBottom: `1px solid ${C.border}`,
         flexWrap: "wrap",
       }}>
-        <button onClick={() => nav && nav("dashboard")} style={{
+        <button onClick={() => nav && nav("home")} style={{
           border: "none", background: "none", cursor: "pointer", padding: 0,
           display: "flex", alignItems: "center",
           color: C.textMut, fontSize: 12, fontFamily: "inherit",

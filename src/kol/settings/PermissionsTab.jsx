@@ -40,8 +40,8 @@ function PermissionsTab() {
   }, []);
 
   const LITE_PERM_CATEGORIES = [
-    { key: "dashboard", label: "Dashboard & Reporting", permissions: [
-      { key: "Dashboard", label: "Dashboard", desc: "View the main dashboard with today's metrics" },
+    { key: "dashboard", label: "Home & Reporting", permissions: [
+      { key: "Dashboard", label: "Home Metrics", desc: "View the home surface with today's metrics and briefing" },
       { key: "Financial Reporting", label: "Financial Reporting", desc: "View revenue, transactions, refunds, and financial charts" },
       { key: "Occupancy Reports", label: "Occupancy Reports", desc: "View occupancy trends and reports" },
     ]},
