@@ -13,6 +13,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { getInventoryWorkflow } from "./inventoryStatus";
 
 // ─── OPS-010: Full FE/BE checklist templates imported from POS app ───────────
 // These replace the condensed shared/theme defaults for Lite locations.
@@ -174,7 +175,7 @@ function OperationsHub({ data, save, nav, profile }) {
     (async () => {
       try {
         const locId = profile?.location_id || "cherry-hill";
-        if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "" }); return; }
+        if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "", needsOrder: 0, ordered: 0, skipped: 0, progress: 0 }); return; }
 
         // Compute Monday of the viewed week
         const d = new Date(viewDate + "T12:00:00");
@@ -193,41 +194,38 @@ function OperationsHub({ data, save, nav, profile }) {
         const catalogItems = catalogRes.data || [];
         const totalItems = catalogItems.length;
         if (snapRes.data?.id) {
-          const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
+          const [countsRes, adhocRes] = await Promise.all([
+            supabase.from("inventory_counts")
+              .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+            supabase.from("inventory_adhoc_items")
+              .select("stock_count, ordered, skipped, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+          ]);
           if (cancelled) return;
-          const rows = countRows || [];
-          const counted = rows.filter(r => r.stock_count != null).length;
-          const countingDone = counted >= totalItems && totalItems > 0;
-
-          // Compute ordering progress
-          const countMap = {};
-          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
-          let needsOrder = 0, ordered = 0;
-          catalogItems.forEach(item => {
-            const c = countMap[item.id];
-            if (!c || c.stock_count == null) return;
-            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
-            if (toOrder > 0) { needsOrder++; if (c.ordered) ordered++; }
+          const workflow = getInventoryWorkflow({
+            snapshotStatus: snapRes.data.status,
+            catalogItems,
+            countRows: countsRes.data || [],
+            adhocItems: adhocRes.data || [],
           });
-          const orderingDone = needsOrder === 0 || ordered >= needsOrder;
-          const allDone = countingDone && orderingDone;
-
-          let status, phase, phaseLabel;
-          if (allDone) {
-            status = "completed"; phase = "done"; phaseLabel = "Completed this week";
-          } else if (countingDone) {
-            status = "in_progress"; phase = "ordering"; phaseLabel = `${ordered}/${needsOrder} items ordered`;
-          } else if (counted > 0) {
-            status = "in_progress"; phase = "counting"; phaseLabel = `${counted}/${totalItems} items counted`;
-          } else {
-            status = "not_started"; phase = "counting"; phaseLabel = "Not started this week";
+          if (!cancelled) {
+            setInvStatus({
+              status: workflow.status,
+              itemsCounted: workflow.itemsCounted,
+              totalItems: workflow.totalItems,
+              phase: workflow.phase,
+              phaseLabel: workflow.phaseLabel,
+              needsOrder: workflow.itemsNeedingOrder,
+              ordered: workflow.itemsOrdered,
+              skipped: workflow.itemsSkipped,
+              progress: workflow.progress,
+            });
           }
-          if (!cancelled) setInvStatus({ status, itemsCounted: counted, totalItems, phase, phaseLabel, needsOrder, ordered });
         } else {
-          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems, phase: "counting", phaseLabel: totalItems > 0 ? "Not started this week" : "" });
+          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems, phase: "counting", phaseLabel: totalItems > 0 ? "Not started this week" : "", needsOrder: 0, ordered: 0, skipped: 0, progress: 0 });
         }
-      } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "" }); }
+      } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "", needsOrder: 0, ordered: 0, skipped: 0, progress: 0 }); }
     })();
     return () => { cancelled = true; };
   }, [viewDate, profile?.location_id]);
@@ -574,6 +572,7 @@ function OperationsHub({ data, save, nav, profile }) {
   const statusConfig = {
     not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
     in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
+    ready: { label: "Ready", bg: C.priLt, color: C.pri, barColor: C.pri },
     completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
     coming_soon: { label: "Coming Soon", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
     none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
@@ -853,9 +852,7 @@ function OperationsHub({ data, save, nav, profile }) {
                 let status, progress, countLabel;
                 if (isInv && invStatus) {
                   status = invStatus.status;
-                  progress = invStatus.status === "completed" ? 100
-                    : invStatus.phase === "ordering" ? (invStatus.needsOrder > 0 ? Math.round((invStatus.ordered / invStatus.needsOrder) * 100) : 100)
-                    : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0;
+                  progress = invStatus.progress || 0;
                   countLabel = invStatus.phaseLabel;
                 } else if (rcTemplate && rcTemplate.length > 0) {
                   // DB-sourced template: compute locally so cards match RolePage
@@ -889,7 +886,7 @@ function OperationsHub({ data, save, nav, profile }) {
                   <div key={item.id}
                     style={{
                       background: C.surface, borderRadius: 16,
-                      border: `1.5px solid ${isEod ? C.border : status === "completed" ? C.suc : status === "in_progress" ? C.warn : C.border}`,
+                      border: `1.5px solid ${isEod ? C.border : status === "completed" ? C.suc : status === "ready" ? C.pri : status === "in_progress" ? C.warn : C.border}`,
                       cursor: isComingSoon ? "default" : "pointer",
                       opacity: isComingSoon ? 0.55 : 1,
                       transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)",

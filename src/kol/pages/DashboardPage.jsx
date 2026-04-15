@@ -21,6 +21,7 @@ import { mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 import { getRoomCleaningBreakdown, getWeeklyMaintenanceStats } from "../../shared/opsHelpers";
+import { getInventoryWorkflow } from "./inventoryStatus";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CSS — injected once
@@ -1055,7 +1056,7 @@ function DashboardContent({
   }, [nav]);
 
   // ─── Inventory snapshot status (reads from inventory_snapshots + inventory_counts) ──
-  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: null });
+  const [invStatus, setInvStatus] = useState({ status: "not_started", itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: null });
   const [invTick, setInvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -1070,7 +1071,7 @@ function DashboardContent({
         const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
         const [catalogRes, snapRes] = await Promise.all([
           supabase.from("inventory_catalog").select("id, par_level").eq("location_id", locId).eq("is_active", true),
-          supabase.from("inventory_snapshots").select("id").eq("location_id", locId).eq("week_start", monday).maybeSingle(),
+          supabase.from("inventory_snapshots").select("id, status").eq("location_id", locId).eq("week_start", monday).maybeSingle(),
         ]);
         if (cancelled) return;
         const catalogItems = catalogRes.data || [];
@@ -1080,64 +1081,67 @@ function DashboardContent({
         const isPastMonday = dow !== 1;
         const daysSinceMonday = dow === 0 ? 6 : dow - 1;
         if (snapRes.data?.id) {
-          const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at, created_at").eq("snapshot_id", snapRes.data.id);
+          const [countsRes, adhocRes] = await Promise.all([
+            supabase.from("inventory_counts")
+              .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+            supabase.from("inventory_adhoc_items")
+              .select("stock_count, ordered, skipped, created_at")
+              .eq("snapshot_id", snapRes.data.id),
+          ]);
           if (cancelled) return;
-          const rows = countRows || [];
-          const counted = rows.filter(r => r.stock_count != null).length;
-          const countingDone = counted >= totalItems && totalItems > 0;
-
-          // Compute ordering progress (skipped items count as addressed)
-          const countMap = {};
-          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
-          let needsOrder = 0, orderedCount = 0, skippedCount = 0;
-          catalogItems.forEach(item => {
-            const c = countMap[item.id];
-            if (!c || c.stock_count == null) return;
-            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
-            if (toOrder > 0) { needsOrder++; if (c.ordered) orderedCount++; else if (c.skipped) skippedCount++; }
+          const workflow = getInventoryWorkflow({
+            snapshotStatus: snapRes.data.status,
+            catalogItems,
+            countRows: countsRes.data || [],
+            adhocItems: adhocRes.data || [],
           });
-          const addressedCount = orderedCount + skippedCount;
-          const orderingDone = needsOrder === 0 || addressedCount >= needsOrder;
-          const allDone = countingDone && orderingDone;
-          const phase = allDone ? "done" : countingDone ? "ordering" : "counting";
-
-          // Find completion dates
-          let countingDoneDate = null, orderingDoneDate = null;
-          if (countingDone) {
-            const countedDates = rows.filter(r => r.counted_at || r.created_at).map(r => new Date(r.counted_at || r.created_at));
-            if (countedDates.length > 0) countingDoneDate = new Date(Math.max(...countedDates));
-          }
-          if (orderingDone && countingDone) {
-            const orderDates = rows.filter(r => r.ordered_at || r.skipped_at).map(r => new Date(r.ordered_at || r.skipped_at));
-            const countedDates = rows.filter(r => r.counted_at).map(r => new Date(r.counted_at));
-            const allDates = [...orderDates, ...countedDates];
-            if (allDates.length > 0) orderingDoneDate = new Date(Math.max(...allDates));
-          }
 
           // Compute days until next Monday (next inventory cycle)
           const todayDow = now.getDay();
           const daysUntilNext = todayDow === 1 ? 7 : ((8 - todayDow) % 7);
 
-          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday, phase, needsOrder, ordered: orderedCount, skipped: skippedCount, countingDoneDate, orderingDoneDate, daysUntilNext });
+          if (!cancelled) {
+            setInvStatus({
+              status: workflow.status,
+              itemsCounted: workflow.itemsCounted,
+              totalItems: workflow.totalItems,
+              overdue: isPastMonday && workflow.status !== "completed",
+              daysOverdue: daysSinceMonday,
+              phase: workflow.phase,
+              needsOrder: workflow.itemsNeedingOrder,
+              ordered: workflow.itemsOrdered,
+              skipped: workflow.itemsSkipped,
+              countingDoneDate: workflow.countingDoneDate,
+              orderingDoneDate: workflow.orderingDoneDate,
+              daysUntilNext,
+            });
+          }
         } else {
           const todayDow2 = now.getDay();
           const daysUntilNext2 = todayDow2 === 1 ? 7 : ((8 - todayDow2) % 7);
-          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: daysUntilNext2 });
+          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: daysUntilNext2 });
         }
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
   }, [today, profile?.location_id, invTick]);
 
-  // Realtime: re-fetch inventory when inventory_counts changes
+  // Realtime: re-fetch inventory when counts, ad-hoc items, or snapshot status changes
   useEffect(() => {
     const locId = profile?.location_id;
     if (!locId) return;
     const chan = supabase.channel("dash-inv-rt")
       .on("postgres_changes", { event: "*", schema: "public", table: "inventory_counts" },
         () => { setInvTick(t => t + 1); }
-      ).subscribe();
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_adhoc_items" },
+        () => { setInvTick(t => t + 1); }
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_snapshots" },
+        () => { setInvTick(t => t + 1); }
+      )
+      .subscribe();
     return () => { supabase.removeChannel(chan); };
   }, [profile?.location_id]);
 
@@ -2100,8 +2104,9 @@ function DashboardContent({
             {(() => {
               const isOrdering = invStatus.phase === "ordering";
               const isDone = invStatus.phase === "done";
+              const isReady = invStatus.phase === "ready";
               const countingDone = invStatus.itemsCounted >= invStatus.totalItems && invStatus.totalItems > 0;
-              const mainColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
+              const mainColor = isDone ? C.suc : isReady ? C.pri : invStatus.overdue ? "#EF4444" : C.acc;
               const fmtDate = (d) => { if (!d) return ""; const dt = new Date(d); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
               const addressedCount = (invStatus.ordered || 0) + (invStatus.skipped || 0);
               return (
@@ -2128,6 +2133,16 @@ function DashboardContent({
                         </div>
                         <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, marginTop: 2 }}>
                           Next due in {invStatus.daysUntilNext} day{invStatus.daysUntilNext !== 1 ? "s" : ""}
+                        </div>
+                      </>
+                    ) : isReady ? (
+                      <>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 700, color: C.pri }}>
+                          <span>Ready to Submit</span>
+                          <span>100%</span>
+                        </div>
+                        <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>
+                          Counted and ordered. Waiting for manual submit.
                         </div>
                       </>
                     ) : countingDone ? (
@@ -2855,9 +2870,10 @@ const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
 /* InventoryCell — icon + status display + overdue badge */
 const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, phase, needsOrder, ordered, skipped, countingDoneDate, orderingDoneDate, daysUntilNext, onClick }) {
   const allDone = phase === "done";
+  const readyToSubmit = phase === "ready";
   const countingDone = done >= total && total > 0;
   const addressedCount = (ordered || 0) + (skipped || 0);
-  const iconColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
+  const iconColor = allDone ? C.suc : readyToSubmit ? C.pri : overdue ? "#EF4444" : C.acc;
   const fmtDate = (d) => { if (!d) return ""; const dt = new Date(d); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
   return (
     <div className="dash-checklist-cell" onClick={onClick}
@@ -2885,6 +2901,11 @@ const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOv
             {daysUntilNext != null && (
               <div style={{ fontSize: 8, fontWeight: 500, color: C.textMut, marginTop: 1 }}>Next in {daysUntilNext}d</div>
             )}
+          </>
+        ) : readyToSubmit ? (
+          <>
+            <div style={{ fontSize: 8, fontWeight: 700, color: C.pri }}>Ready to Submit</div>
+            <div style={{ fontSize: 8, fontWeight: 500, color: C.textMut }}>Waiting for lock-in</div>
           </>
         ) : countingDone ? (
           <>

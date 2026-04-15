@@ -3,9 +3,11 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
+import { useAuth } from "../../AuthProvider";
 import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
+import { getInventoryWorkflow } from "./inventoryStatus";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,36 @@ const fmtAuditTime = (ts) => {
   const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
   return `${day} ${time}`;
 };
+
+const INVENTORY_REOPEN_ROLES = new Set([
+  "supervisor",
+  "manager",
+  "location_admin",
+  "enterprise_admin",
+  "owner",
+  "role_owner",
+]);
+
+const LITE_ROLE_PRIORITY = {
+  enterprise_admin: 1,
+  location_admin: 2,
+  manager: 3,
+  supervisor: 4,
+  csr: 5,
+  pct: 6,
+};
+
+function pickHighestLiteRole(rows, locationId) {
+  const candidates = (rows || []).filter(row =>
+    row?.role === "enterprise_admin" || row?.location_id === locationId
+  );
+
+  if (candidates.length === 0) return null;
+
+  return [...candidates]
+    .sort((a, b) => (LITE_ROLE_PRIORITY[a.role] || 99) - (LITE_ROLE_PRIORITY[b.role] || 99))[0]
+    ?.role || null;
+}
 
 const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange, onKeyDown, inputRef }) {
   const [hovered, setHovered] = useState(false);
@@ -1079,6 +1111,61 @@ function SubmitModal({ onClose, onConfirm, saving }) {
   );
 }
 
+function ReopenModal({ onClose, onConfirm, saving }) {
+  const [reason, setReason] = useState("");
+  const [showError, setShowError] = useState(false);
+
+  const handleConfirm = () => {
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      setShowError(true);
+      return;
+    }
+    onConfirm(trimmed);
+  };
+
+  return (
+    <Modal title="Mark Inventory Incomplete" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: 16, borderRadius: 12, background: C.warnLt, border: `1px solid ${C.warn}30` }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.warn, marginBottom: 6 }}>
+            Reopen this completed count?
+          </div>
+          <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+            This will unlock the week for editing and write an audit trail showing who reopened it and why.
+          </div>
+        </div>
+
+        <div>
+          <Inp
+            label="Reason"
+            type="textarea"
+            value={reason}
+            onChange={(value) => {
+              setReason(value);
+              if (showError && value.trim()) setShowError(false);
+            }}
+            placeholder="Explain what still needs to be fixed or counted..."
+            rows={3}
+          />
+          {showError && (
+            <div style={{ fontSize: 11, color: C.dan, marginTop: 4 }}>
+              A reason is required to reopen a completed inventory count.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="danger" onClick={handleConfirm} disabled={saving}>
+            {saving ? "Reopening..." : "Mark Incomplete"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Depletion Rate Modal ─────────────────────────────────────────────────────
 
 function DepletionRateModal({ locationId, reservations, currentWeekStart, onClose }) {
@@ -1378,6 +1465,8 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage({ data, save, nav, profile, addGlobalToast }) {
+  const { user: authUser, profile: authProfile } = useAuth();
+
   // ── Week + Day navigation ──
   const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(todayStr()));
   const thisWeekStart = getWeekStart(todayStr());
@@ -1415,14 +1504,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [search, setSearch] = useState("");
   const [showAddAdhoc, setShowAddAdhoc] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showReopenModal, setShowReopenModal] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [submitSaving, setSubmitSaving] = useState(false);
+  const [reopenSaving, setReopenSaving] = useState(false);
   const [showDepletionModal, setShowDepletionModal] = useState(false);
   const [catalogEditMode, setCatalogEditMode] = useState(false);
   const [editingField, setEditingField] = useState(null); // { itemId, field }
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
+  const [viewerLiteRole, setViewerLiteRole] = useState(null);
 
   // ── Refs ──
   const saveTimer = useRef(null);
@@ -1430,6 +1522,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const pendingSave = useRef({}); // accumulated dirty counts to save
   const snapshotRef = useRef(null); // always-current snapshot for async ops
   const catalogSaveTimers = useRef({});
+  const countsRef = useRef({});
+  const countedDateRef = useRef(countedDate);
+  const profileRef = useRef(profile);
 
   const locationId = profile?.location_id;
   const isReadOnly = snapshot?.status === "completed";
@@ -1441,6 +1536,34 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // Sync snapshotRef
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
+  useEffect(() => { countsRef.current = counts; }, [counts]);
+  useEffect(() => { countedDateRef.current = countedDate; }, [countedDate]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authUser?.id || !locationId) {
+      setViewerLiteRole(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    supabase
+      .from("lite_profiles")
+      .select("location_id, role")
+      .eq("user_id", authUser.id)
+      .eq("is_active", true)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setViewerLiteRole(pickHighestLiteRole(data || [], locationId));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id, locationId]);
 
   // ── CSS injection for shimmer + animations ──
   useEffect(() => {
@@ -1556,6 +1679,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         });
       }
       setCounts(countMap);
+      countsRef.current = countMap;
 
       // 4. Load adhoc items
       if (snap) {
@@ -1587,15 +1711,18 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     if (!snap || Object.keys(pendingSave.current).length === 0) return;
 
     const snapshotId = snap.id;
+    const currentCounts = countsRef.current;
+    const currentCountedDate = countedDateRef.current;
+    const currentProfile = profileRef.current;
     setSaveStatus("saving");
 
     try {
       const itemIds = Object.keys(pendingSave.current);
       // Build upserts
-      const userName = profile?.full_name || profile?.email || "Unknown";
+      const userName = currentProfile?.full_name || currentProfile?.email || "Unknown";
       const now = new Date().toISOString();
       const toUpsert = itemIds.map(itemId => {
-        const existing = counts[itemId];
+        const existing = currentCounts[itemId];
         const pending = pendingSave.current[itemId];
         const merged = { ...(existing || {}), ...pending };
         const row = {
@@ -1612,7 +1739,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         if (pending.stock_count !== undefined || pending.in_transit !== undefined) {
           row.counted_by = userName;
           // Use the selected countedDate (supports backdating), with current time
-          row.counted_at = countedDate === todayStr() ? now : `${countedDate}T${new Date().toISOString().split('T')[1]}`;
+          row.counted_at = currentCountedDate === todayStr() ? now : `${currentCountedDate}T${new Date().toISOString().split('T')[1]}`;
         }
         if (pending.ordered !== undefined) {
           row.ordered_by = userName;
@@ -1630,87 +1757,35 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         .upsert(toUpsert, { onConflict: "snapshot_id,catalog_item_id" })
         .select();
 
-      // Update counts state with returned IDs
-      setCounts(prev => {
-        const next = { ...prev };
-        (upserted || []).forEach(row => {
-          next[row.catalog_item_id] = {
-            id: row.id,
-            stock_count: row.stock_count,
-            in_transit: row.in_transit ?? "",
-            notes: row.notes ?? "",
-            ordered: row.ordered ?? false,
-            counted_by: row.counted_by || prev[row.catalog_item_id]?.counted_by || null,
-            counted_at: row.counted_at || prev[row.catalog_item_id]?.counted_at || null,
-            ordered_by: row.ordered_by || prev[row.catalog_item_id]?.ordered_by || null,
-            ordered_at: row.ordered_at || prev[row.catalog_item_id]?.ordered_at || null,
-            skipped: row.skipped ?? false,
-            skipped_by: row.skipped_by || null,
-            skipped_at: row.skipped_at || null,
-          };
-        });
-        return next;
+      const nextCounts = { ...currentCounts };
+      (upserted || []).forEach(row => {
+        nextCounts[row.catalog_item_id] = {
+          id: row.id,
+          stock_count: row.stock_count,
+          in_transit: row.in_transit ?? "",
+          notes: row.notes ?? "",
+          ordered: row.ordered ?? false,
+          counted_by: row.counted_by || currentCounts[row.catalog_item_id]?.counted_by || null,
+          counted_at: row.counted_at || currentCounts[row.catalog_item_id]?.counted_at || null,
+          ordered_by: row.ordered_by || currentCounts[row.catalog_item_id]?.ordered_by || null,
+          ordered_at: row.ordered_at || currentCounts[row.catalog_item_id]?.ordered_at || null,
+          skipped: row.skipped ?? false,
+          skipped_by: row.skipped_by || null,
+          skipped_at: row.skipped_at || null,
+        };
       });
-
-      // Update snapshot status to in_progress if it was somehow not set
-      if (snap.status !== "in_progress" && snap.status !== "completed") {
-        await supabase
-          .from("inventory_snapshots")
-          .update({ status: "in_progress" })
-          .eq("id", snapshotId);
-      }
+      countsRef.current = nextCounts;
+      setCounts(nextCounts);
 
       pendingSave.current = {};
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2200);
-
-      // ── Auto-complete: check if all items are counted + all needing order are ordered/skipped ──
-      if (snap.status !== "completed") {
-        // Get latest counts after this save
-        setCounts(latestCounts => {
-          const activeItems = catalogItems.filter(c => c.is_active);
-          // Check catalog items: all counted + all orders handled
-          const allCatalogCounted = activeItems.every(c => {
-            const cnt = latestCounts[c.id];
-            return cnt && cnt.stock_count != null && cnt.stock_count !== "";
-          });
-          const allCatalogOrdersHandled = activeItems.every(c => {
-            const cnt = latestCounts[c.id];
-            if (!cnt) return false;
-            const stockCount = typeof cnt.stock_count === 'number' ? cnt.stock_count : parseInt(cnt.stock_count, 10);
-            const par = c.par_level ?? 0;
-            const needsOrder = par > 0 && stockCount < par;
-            if (!needsOrder) return true;
-            return cnt.ordered || cnt.skipped;
-          });
-          // Check ad hoc items: all must have stock_count AND be ordered or skipped
-          const allAdhocHandled = adhocItems.every(a =>
-            a.stock_count != null && a.stock_count !== "" && (a.ordered || a.skipped)
-          );
-          if (allCatalogCounted && allCatalogOrdersHandled && allAdhocHandled) {
-            // Auto-complete the snapshot
-            supabase
-              .from("inventory_snapshots")
-              .update({
-                status: "completed",
-                completed_at: new Date().toISOString(),
-                completed_by: profile?.name || profile?.email || "Auto",
-              })
-              .eq("id", snap.id)
-              .then(() => {
-                setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
-                if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count auto-completed!" });
-              });
-          }
-          return latestCounts; // don't modify, just reading
-        });
-      }
     } catch (err) {
       console.error("Auto-save error:", err);
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [counts, profile]);
+  }, []);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1725,18 +1800,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       // Synchronously trigger save — can't await in beforeunload, but
       // navigator.sendBeacon can't do upserts. Instead, flush immediately.
       if (Object.keys(pendingSave.current).length > 0) {
-        flushSave();
+        void flushSave();
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && Object.keys(pendingSave.current).length > 0) {
-        flushSave();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && Object.keys(pendingSave.current).length > 0) {
+        void flushSave();
       }
-    });
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [flushSave]);
 
@@ -1753,6 +1831,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       ...prev,
       [itemId]: { ...(prev[itemId] || {}), ...updates },
     }));
+    countsRef.current = {
+      ...countsRef.current,
+      [itemId]: { ...(countsRef.current[itemId] || {}), ...updates },
+    };
     pendingSave.current[itemId] = {
       ...(pendingSave.current[itemId] || {}),
       ...updates,
@@ -1918,16 +2000,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
     setSubmitSaving(true);
     try {
-      const { error } = await supabase
-        .from("inventory_snapshots")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          completed_by: profile?.name || profile?.email || "Unknown",
-        })
-        .eq("id", snap.id);
+      const { data: completedSnapshot, error } = await supabase
+        .rpc("complete_inventory_snapshot", { p_snapshot_id: snap.id });
       if (error) throw error;
-      setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
+      if (completedSnapshot) {
+        setSnapshot(completedSnapshot);
+        snapshotRef.current = completedSnapshot;
+      }
       setShowSubmitModal(false);
       if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count completed and locked!" });
 
@@ -1955,12 +2034,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           // Get current week's counts (already in state as `counts`)
           const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+          const currentCounts = countsRef.current;
 
           // Build depletion records
           const depletionRecords = [];
           catalogItems.forEach(item => {
             const prev = prevCountMap[item.id];
-            const curr = counts[item.id];
+            const curr = currentCounts[item.id];
             if (!prev || !curr || curr.stock_count == null || curr.stock_count === "") return;
 
             const openingStock = prev.stock_count || 0;
@@ -1996,6 +2076,32 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to submit inventory count." });
     } finally {
       setSubmitSaving(false);
+    }
+  };
+
+  const handleReopen = async (reason) => {
+    const snap = snapshotRef.current;
+    if (!snap) return;
+
+    setReopenSaving(true);
+    try {
+      const { data: reopenedSnapshot, error } = await supabase
+        .rpc("reopen_inventory_snapshot", {
+          p_snapshot_id: snap.id,
+          p_reason: reason,
+        });
+      if (error) throw error;
+      if (reopenedSnapshot) {
+        setSnapshot(reopenedSnapshot);
+        snapshotRef.current = reopenedSnapshot;
+      }
+      setShowReopenModal(false);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count reopened for editing." });
+    } catch (err) {
+      console.error("Reopen error:", err);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to reopen inventory count." });
+    } finally {
+      setReopenSaving(false);
     }
   };
 
@@ -2116,35 +2222,55 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     return total;
   }, [catalogItems, counts, adhocItems]);
 
-  // ── Ordering progress (two-phase completion) ──
-  const orderingStatus = useMemo(() => {
-    let itemsNeedingOrder = 0;
-    let itemsOrdered = 0;
-    let itemsSkipped = 0;
-    catalogItems.forEach(item => {
-      const count = counts[item.id];
-      const sc = count?.stock_count;
-      if (sc == null || sc === "") return; // not yet counted
-      const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(sc, 10) || 0) - (parseInt(count?.in_transit, 10) || 0));
-      if (toOrder > 0) {
-        itemsNeedingOrder++;
-        if (count?.ordered) itemsOrdered++;
-        else if (count?.skipped) itemsSkipped++;
-      }
-    });
-    const itemsAddressed = itemsOrdered + itemsSkipped;
-    return { itemsNeedingOrder, itemsOrdered, itemsSkipped, allOrdered: itemsNeedingOrder === 0 || itemsAddressed >= itemsNeedingOrder };
-  }, [catalogItems, counts]);
+  const inventoryWorkflow = useMemo(() => getInventoryWorkflow({
+    snapshotStatus: snapshot?.status,
+    catalogItems,
+    counts,
+    adhocItems,
+  }), [snapshot?.status, catalogItems, counts, adhocItems]);
 
-  const countingComplete = useMemo(() => {
-    if (catalogItems.length === 0) return false;
-    return catalogItems.every(item => {
-      const sc = counts[item.id]?.stock_count;
-      return sc != null && sc !== "";
-    });
-  }, [catalogItems, counts]);
+  const canComplete = inventoryWorkflow.readyToSubmit;
+  const viewerRole = viewerLiteRole || authProfile?.role || null;
+  const canReopenSnapshot = snapshot?.status === "completed" && INVENTORY_REOPEN_ROLES.has(viewerRole);
+  const snapshotHistory = useMemo(() => (
+    Array.isArray(snapshot?.history)
+      ? [...snapshot.history].sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
+      : []
+  ), [snapshot?.history]);
+  const latestReopenEntry = snapshotHistory.find(entry => entry?.action === "reopened") || null;
 
-  const canComplete = countingComplete && orderingStatus.allOrdered;
+  const statusBadge = useMemo(() => {
+    if (snapshot?.status === "completed") {
+      return {
+        label: "Completed",
+        background: C.sucLt,
+        color: C.suc,
+        borderColor: `${C.suc}40`,
+      };
+    }
+    if (inventoryWorkflow.readyToSubmit) {
+      return {
+        label: "Ready to Submit",
+        background: C.priLt,
+        color: C.pri,
+        borderColor: `${C.pri}35`,
+      };
+    }
+    if (snapshot?.status === "in_progress") {
+      return {
+        label: "In Progress",
+        background: C.warnLt,
+        color: C.warn,
+        borderColor: `${C.warn}40`,
+      };
+    }
+    return {
+      label: "Draft",
+      background: C.bg,
+      color: C.textMut,
+      borderColor: C.border,
+    };
+  }, [inventoryWorkflow.readyToSubmit, snapshot?.status]);
 
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
@@ -2198,12 +2324,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 borderRadius: 20,
                 fontSize: 12,
                 fontWeight: 700,
-                background: snapshot.status === "completed" ? C.sucLt : snapshot.status === "in_progress" ? C.warnLt : C.bg,
-                color: snapshot.status === "completed" ? C.suc : snapshot.status === "in_progress" ? C.warn : C.textMut,
-                border: `1.5px solid ${snapshot.status === "completed" ? C.suc + "40" : snapshot.status === "in_progress" ? C.warn + "40" : C.border}`,
+                background: statusBadge.background,
+                color: statusBadge.color,
+                border: `1.5px solid ${statusBadge.borderColor}`,
               }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: snapshot.status === "completed" ? C.suc : snapshot.status === "in_progress" ? C.warn : C.textMut, display: "inline-block" }} />
-                {snapshot.status === "completed" ? "Completed" : snapshot.status === "in_progress" ? "In Progress" : "Draft"}
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusBadge.color, display: "inline-block" }} />
+                {statusBadge.label}
               </span>
             )}
 
@@ -2420,17 +2546,70 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         <div className="inv-fade-in">
           {/* Read-only banner */}
           {isReadOnly && (
-            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <I.CheckCircle />
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.suc }}>Inventory count completed. </span>
+                  <span style={{ fontSize: 13, color: C.textSec }}>
+                    This count is locked for editing.
+                    {snapshot?.completed_at && ` Submitted ${new Date(snapshot.completed_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
+                    {snapshot?.completed_by && ` By ${snapshot.completed_by}.`}
+                  </span>
+                </div>
+              </div>
+              {canReopenSnapshot && (
+                <Btn variant="danger" size="sm" onClick={() => setShowReopenModal(true)} disabled={reopenSaving}>
+                  {reopenSaving ? "Reopening..." : "Mark Incomplete"}
+                </Btn>
+              )}
+            </div>
+          )}
+
+          {!isReadOnly && inventoryWorkflow.readyToSubmit && (
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1px solid ${C.pri}25`, display: "flex", alignItems: "center", gap: 10 }}>
               <I.CheckCircle />
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.suc }}>Inventory count completed. </span>
-                <span style={{ fontSize: 13, color: C.textSec }}>
-                  This count is locked for editing.
-                  {snapshot?.completed_at && ` Submitted ${new Date(snapshot.completed_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
-                  {snapshot?.completed_by && ` By ${snapshot.completed_by}.`}
-                </span>
+              <div style={{ fontSize: 13, color: C.textSec }}>
+                <span style={{ fontWeight: 700, color: C.pri }}>Ready to submit. </span>
+                All catalog and ad-hoc items have been counted, and every reorder has been handled. Use the submit button below to lock the week.
               </div>
             </div>
+          )}
+
+          {!isReadOnly && latestReopenEntry && (
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}30`, display: "flex", alignItems: "center", gap: 10 }}>
+              <I.RefreshCw />
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 700, color: C.warn }}>Count reopened. </span>
+                {latestReopenEntry.user_name && `Reopened by ${latestReopenEntry.user_name}`}
+                {latestReopenEntry.ts && ` on ${new Date(latestReopenEntry.ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                {latestReopenEntry.reason ? ` — ${latestReopenEntry.reason}` : "."}
+              </div>
+            </div>
+          )}
+
+          {snapshotHistory.length > 0 && (
+            <Card style={{ marginBottom: 14, padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                Count History
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {snapshotHistory.map((entry, idx) => (
+                  <div key={`${entry?.ts || "history"}-${idx}`} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, paddingBottom: idx === snapshotHistory.length - 1 ? 0 : 8, borderBottom: idx === snapshotHistory.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 700, color: entry?.action === "reopened" ? C.warn : C.suc }}>
+                        {entry?.action === "reopened" ? "Marked incomplete" : "Completed"}
+                      </span>
+                      {entry?.user_name ? ` by ${entry.user_name}` : ""}
+                      {entry?.reason ? ` — ${entry.reason}` : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>
+                      {entry?.ts ? new Date(entry.ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
           )}
 
           {/* Catalog edit mode banner */}
@@ -2570,7 +2749,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Total Items
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>
-                        {catalogItems.length + adhocItems.length}
+                        {inventoryWorkflow.totalItems}
                       </div>
                     </div>
                     <div>
@@ -2578,7 +2757,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Items Counted
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>
-                        {catalogItems.filter(i => counts[i.id]?.stock_count != null && counts[i.id]?.stock_count !== "").length + adhocItems.filter(i => i.stock_count != null).length}
+                        {inventoryWorkflow.itemsCounted}
                       </div>
                     </div>
                     <div>
@@ -2586,13 +2765,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Items to Reorder
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.warn }}>
-                        {catalogItems.filter(item => {
-                          const count = counts[item.id];
-                          const sc = count?.stock_count;
-                          if (sc == null || sc === "") return false;
-                          const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(sc, 10) || 0) - (parseInt(count?.in_transit, 10) || 0));
-                          return toOrder > 0;
-                        }).length}
+                        {inventoryWorkflow.itemsNeedingOrder}
                       </div>
                     </div>
                     {dogDays > 0 && (
@@ -2624,9 +2797,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
               {!canComplete && (
                 <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>
-                  {!countingComplete
-                    ? `${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length} item${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length !== 1 ? "s" : ""} still need counting`
-                    : `${orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered} item${(orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered) !== 1 ? "s" : ""} still need to be ordered`
+                  {!inventoryWorkflow.countingComplete
+                    ? `${inventoryWorkflow.missingCountCount} item${inventoryWorkflow.missingCountCount !== 1 ? "s" : ""} still need counting`
+                    : `${inventoryWorkflow.pendingOrderingCount} item${inventoryWorkflow.pendingOrderingCount !== 1 ? "s" : ""} still need an order decision`
                   }
                 </div>
               )}
@@ -2658,6 +2831,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           onClose={() => setShowSubmitModal(false)}
           onConfirm={handleSubmit}
           saving={submitSaving}
+        />
+      )}
+
+      {showReopenModal && (
+        <ReopenModal
+          onClose={() => setShowReopenModal(false)}
+          onConfirm={handleReopen}
+          saving={reopenSaving}
         />
       )}
 
