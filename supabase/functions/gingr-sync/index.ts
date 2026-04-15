@@ -12,6 +12,10 @@ import {
   buildIconIdentityKey,
   upsertAnimalIconsFromGingr,
 } from "../_shared/gingr-icons.ts";
+import {
+  fetchFeedingRowsForAnimals,
+  fetchMedicationRowsForAnimals,
+} from "../_shared/gingr-operational-details.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1759,6 +1763,120 @@ async function syncAnimalPhotos(
   return { synced, skipped: animals.length - toSync.length, errors };
 }
 
+async function fetchOperationalAnimalIds(
+  supabase: any,
+  locationId: string,
+): Promise<string[]> {
+  const today = dateStrET();
+  const tomorrow = addDaysStr(today, 1);
+  const dayAfterTomorrow = addDaysStr(today, 2);
+
+  const { data: horizonReservations, error } = await supabase
+    .from("gingr_reservations")
+    .select("animal_gingr_id")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lt("start_date", `${dayAfterTomorrow}T00:00:00`)
+    .gte("end_date", `${today}T00:00:00`);
+
+  if (error) {
+    throw new Error(`Operational animal scope query failed: ${error.message}`);
+  }
+
+  return [...new Set(
+    (horizonReservations || [])
+      .map((row: any) => String(row.animal_gingr_id || "").trim())
+      .filter(Boolean),
+  )];
+}
+
+async function replaceOperationalDetailRows(
+  supabase: any,
+  table: string,
+  locationId: string,
+  animalIds: string[],
+  rows: any[],
+) {
+  if (animalIds.length > 0) {
+    const { error: deleteError } = await supabase
+      .from(table)
+      .delete()
+      .eq("location_id", locationId)
+      .in("animal_gingr_id", animalIds);
+    if (deleteError) {
+      throw new Error(`${table} delete failed: ${deleteError.message}`);
+    }
+  }
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error: insertError } = await supabase
+      .from(table)
+      .insert(chunk);
+    if (insertError) {
+      throw new Error(`${table} insert failed: ${insertError.message}`);
+    }
+  }
+}
+
+async function syncFeedingSchedules(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string,
+): Promise<{ synced: number; animals: number }> {
+  const animalIds = await fetchOperationalAnimalIds(supabase, locationId);
+  if (animalIds.length === 0) {
+    return { synced: 0, animals: 0 };
+  }
+
+  const { rows, processedAnimals } = await fetchFeedingRowsForAnimals(
+    locationId,
+    animalIds,
+    { subdomain, apiKey },
+  );
+
+  await replaceOperationalDetailRows(
+    supabase,
+    "gingr_feeding_schedules",
+    locationId,
+    animalIds,
+    rows,
+  );
+
+  console.log(`Feeding sync: ${rows.length} rows for ${processedAnimals}/${animalIds.length} animals`);
+  return { synced: rows.length, animals: processedAnimals };
+}
+
+async function syncMedications(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string,
+): Promise<{ synced: number; animals: number }> {
+  const animalIds = await fetchOperationalAnimalIds(supabase, locationId);
+  if (animalIds.length === 0) {
+    return { synced: 0, animals: 0 };
+  }
+
+  const { rows, processedAnimals } = await fetchMedicationRowsForAnimals(
+    locationId,
+    animalIds,
+    { subdomain, apiKey },
+  );
+
+  await replaceOperationalDetailRows(
+    supabase,
+    "gingr_medications",
+    locationId,
+    animalIds,
+    rows,
+  );
+
+  console.log(`Medication sync: ${rows.length} rows for ${processedAnimals}/${animalIds.length} animals`);
+  return { synced: rows.length, animals: processedAnimals };
+}
+
 // ─── Server-side room assignment via BOH API ─────────────────────────────
 // The back_of_house API with full_day=true returns ALL currently-housed dogs
 // (checking_in + checking_out lists) with their actual run_name (room).
@@ -2251,8 +2369,8 @@ Deno.serve(async (req: Request) => {
     const toSync =
       entities ||
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_icons_all", "animal_photos"]
-        : ["invoices", "invoice_payments", "deposits", "animal_photos"]);
+        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "feeding_schedules", "medications", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_icons_all", "animal_photos"]
+        : ["feeding_schedules", "medications", "invoices", "invoice_payments", "deposits", "animal_photos"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
@@ -2299,6 +2417,22 @@ Deno.serve(async (req: Request) => {
               api_key,
               location_id,
               sync_type === "full"
+            );
+            break;
+          case "feeding_schedules":
+            results.feeding_schedules = await syncFeedingSchedules(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
+            );
+            break;
+          case "medications":
+            results.medications = await syncMedications(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
             );
             break;
           case "invoice_payments":

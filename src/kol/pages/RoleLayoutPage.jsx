@@ -41,6 +41,12 @@ const WORKFLOW_DEFS = [
   { id: "roll_call_closing", label: "Closing Roll Call" },
   { id: "emergency_contacts", label: "Emergency Contacts" },
   { id: "attendance", label: "Attendance" },
+  { id: "feeding_meds_am", label: "AM Feeding and Meds" },
+  { id: "feeding_meds_midday", label: "Midday Feeding and Meds" },
+  { id: "feeding_meds_pm", label: "PM Feeding and Meds" },
+  { id: "feeding_report", label: "Feeding Report" },
+  { id: "vendor_log", label: "Vendor Log" },
+  { id: "re_eval", label: "Re-eval" },
   { id: "meds", label: "Medications" },
   { id: "evaluations", label: "Evaluations" },
 ];
