@@ -2,11 +2,11 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "commit": "950b31c338e980644eaf77057b262279961af60e",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "XL recovery cleanup baseline",
-      "updatedAt": "2026-04-14T02:46:41.138Z"
+      "note": "today-sync room occupancy refresh",
+      "updatedAt": "2026-04-15T17:38:36.883Z"
     },
     "compute-scheduling-matrix": {
       "commit": "9a561c412197ec3e321c79e24897126769b747e8",
