@@ -23,9 +23,15 @@ describe("clientManagementData", () => {
     const metrics = buildClientIncidentMetrics({
       asOf,
       cases: [
-        { id: "c1", status: "open", severity: "critical", incident_date: "2026-04-10" },
-        { id: "c2", status: "closed", severity: "standard", incident_date: "2026-03-20" },
-        { id: "c3", status: "closed", severity: "standard", incident_date: "2026-02-01" },
+        {
+          id: "c1",
+          status: "open",
+          case_type: "serious_animal_event",
+          metadata: { incident_category: "dog_death" },
+          incident_date: "2026-04-10",
+        },
+        { id: "c2", status: "closed", case_type: "animal_incident", metadata: { incident_category: "dog_laceration" }, incident_date: "2026-03-20" },
+        { id: "c3", status: "closed", case_type: "animal_incident", metadata: { incident_category: "loose_stool" }, incident_date: "2026-02-01" },
       ],
       documents: [{ id: "d1" }, { id: "d2" }],
       reservations: [
