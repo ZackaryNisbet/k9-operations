@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "eac93110929bd54a192d4f7c2b4e9c3f8f347cc0",
+      "commit": "d4a91ed7c94449a51d0fbc4aabfaa5c5fbed4227",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "ops compute resId hotfix",
-      "updatedAt": "2026-04-15T17:27:37.796Z"
+      "note": "room occupancy lodging only",
+      "updatedAt": "2026-04-15T18:10:51.977Z"
     },
     "ops-compute-ondemand": {
-      "commit": "eac93110929bd54a192d4f7c2b4e9c3f8f347cc0",
+      "commit": "d4a91ed7c94449a51d0fbc4aabfaa5c5fbed4227",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "ops compute resId hotfix",
-      "updatedAt": "2026-04-15T17:27:37.796Z"
+      "note": "room occupancy lodging only",
+      "updatedAt": "2026-04-15T18:10:51.977Z"
     },
     "scheduling-audit": {
       "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
