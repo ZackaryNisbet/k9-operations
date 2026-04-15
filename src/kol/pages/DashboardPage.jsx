@@ -1870,7 +1870,7 @@ function DashboardContent({
             <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={navTo["checkout-tv"]} />
             <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={navTo["photos"]} />
             <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={navTo["cash-tips"]} />
-            <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={navTo["checkout-notes"]} />
+            <QuickLinkCell label="Today's Notes" icon={<I.Clipboard />} onClick={navTo["checkout-notes"]} />
             <MetricCell label="LTV" value={`$${Math.round(funnelMetrics.avgLTV).toLocaleString("en-US")}`} onClick={navTo["lifecycle"]} />
             <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={navTo["lifecycle"]} />
             <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
@@ -2092,7 +2092,7 @@ function DashboardContent({
               { label: "Checkout TV", icon: <I.Monitor />, click: navTo["checkout-tv"] },
               { label: "Photos", icon: <I.Camera />, click: navTo["photos"] },
               { label: "Cash Tips", icon: <I.DollarSign />, click: navTo["cash-tips"] },
-              { label: "Checkout Notes", icon: <I.Clipboard />, click: navTo["checkout-notes"] },
+              { label: "Today's Notes", icon: <I.Clipboard />, click: navTo["checkout-notes"] },
               { label: "Operations Hub", icon: <I.ClipboardCheck />, click: navTo["ops-opening"] },
             ].map((item) => (
               <div key={item.label} className="ops-quick-action" onClick={item.click}>

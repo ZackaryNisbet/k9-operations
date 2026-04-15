@@ -717,7 +717,7 @@ function LeanAppInner() {
       case "scheduling": return "Scheduling";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
-      case "checkout-notes": return "Today's Gingr Notes";
+      case "checkout-notes": return "Today's Notes";
       case "cash-tips": return "Cash Tips";
       case "test-health": return "Test Health";
       default: return pg;

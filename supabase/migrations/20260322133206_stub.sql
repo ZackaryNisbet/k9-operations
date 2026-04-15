@@ -1,0 +1,1 @@
+-- Migration history placeholder for an already-applied remote migration.
