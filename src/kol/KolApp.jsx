@@ -32,7 +32,6 @@ import CheckoutTVPage from "./pages/CheckoutTVPage";
 import LiteReportsPage from "./pages/ReportsPage";
 import PhotosPage from "./pages/PhotosPage";
 import SettingsPage from "./pages/SettingsPage";
-import DashboardPage from "./pages/DashboardPage";
 import RefundsPage from "./pages/RefundsPage";
 import EnterpriseOpsMatrix from "./enterprise/OpsMatrix";
 import EnterpriseAttendance from "./enterprise/Attendance";
@@ -54,16 +53,17 @@ import HomePage from "./pages/HomePage";
 import TrainingPage from "./pages/TrainingPage";
 import SchedulingPage from "./pages/SchedulingPage";
 import ClientManagementPage from "./pages/ClientManagementPage";
+import ResourcesPage from "./pages/ResourcesPage";
+import GrassrootsPage from "./pages/GrassrootsPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 import { BrandedErrorBoundary } from "../shared/AppCrashScreen";
 
 // ─── Lite URL Routing ────────────────────────────────────────────────────
-// Maps page IDs to URL slugs (root-level: /cherry-hill/dashboard)
+// Maps page IDs to URL slugs (root-level: /cherry-hill/home)
 const LITE_BASE = "";
 const LITE_PAGE_SLUGS = {
   "home": "home",
-  "dashboard": "dashboard",
   "lifecycle": "lifecycle",
   "client-detail": "client",
   "dog-detail": "dog",
@@ -109,12 +109,15 @@ const LITE_PAGE_SLUGS = {
   "onboarding": "onboarding",
   "pricing": "pricing",
   "training": "labor",
-  "client-management": "client-management",
+  "client-management": "incidents",
   "scheduling": "scheduling",
+  "resources": "resources",
+  "grassroots": "grassroots",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
 LITE_SLUG_TO_PAGE.training = "training";
+LITE_SLUG_TO_PAGE["client-management"] = "client-management";
 
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
   const slug = LITE_PAGE_SLUGS[pg] || pg;
@@ -189,10 +192,10 @@ function parseLiteUrl(pathname, dataRef) {
 // ─── Navigation Config ───────────────────────────────────────────────────
 // Role-aware navigation aligned to mobile product model.
 // Home is the universal landing; My Work is the staff execution surface;
-// Ops Overview is demoted to managers+ only; Dashboard (analytics) is secondary.
+// Ops Overview is demoted to managers+ only; analytics mode now layers onto Home.
 // Staff roles: Home, My Work, Inventory, Photos, TV, Settings
 // Manager roles: Home, My Work, Ops Overview, Inventory, Cash Tips, Photos, Settings
-// Admin/owner roles: Home, Dashboard, Ops Overview, Inventory, Cash Tips, Photos, Settings
+// Admin/owner roles: Home, Ops Overview, Inventory, Cash Tips, Photos, Settings
 
 const STAFF_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
@@ -209,7 +212,9 @@ const MANAGER_NAV_ITEMS = [
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
-  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
+  { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
+  { id: "resources", label: "Resources", icon: "Book" },
+  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -218,11 +223,12 @@ const MANAGER_NAV_ITEMS = [
 
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
-  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
-  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
+  { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
+  { id: "resources", label: "Resources", icon: "Book" },
+  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -233,12 +239,13 @@ const LEAN_NAV_ITEMS = [
 // Full nav when ?mode=analytics is active (K9 Operations + Analytics)
 const ANALYTICS_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
-  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
-  { id: "client-management", label: "Client Mgmt", icon: "AlertTriangle" },
+  { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
+  { id: "resources", label: "Resources", icon: "Book" },
+  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -250,7 +257,6 @@ const ANALYTICS_NAV_ITEMS = [
 const IS_ANALYTICS_MODE = new URLSearchParams(window.location.search).get("mode") === "analytics";
 
 const LEAN_ENTERPRISE_NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "enterprise-ops", label: "Operations Matrix", icon: "Dashboard" },
   { id: "enterprise-attendance", label: "Attendance", icon: "Calendar" },
   { id: "enterprise-users", label: "User Management", icon: "Users" },
@@ -261,7 +267,7 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
 // Adair Forsythe is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/dashboard?mode=analytics" },
+  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/home?mode=analytics" },
   { id: "demo-pos", name: "K9 Operations POS", slug: "pos-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
 
@@ -339,8 +345,8 @@ function LeanAppInner() {
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
   const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
 
-  // Live BOH poll — runs every 10s, shared across Dashboard + Checkout TV
-  const bohEnabled = page === "dashboard" || page === "checkout-tv";
+  // Live BOH poll — runs every 10s, shared across Home + Checkout TV surfaces
+  const bohEnabled = page === "home" || page === "checkout-tv";
   const boh = useBackOfHouse(currentLocation, bohEnabled);
   const bohStats = boh.stats;  // { total, boardingCount, daycareCount, expectedCount, pendingCount, pendingDaycare, pendingBoarding, goingHomeCount }
   const bohLastFetch = boh.lastFetch;
@@ -592,7 +598,7 @@ function LeanAppInner() {
     if (skipUrlPush.current) { skipUrlPush.current = false; return; }
     const url = buildLiteUrl(locSlug, page, params, data);
     if (window.location.pathname !== url) {
-      // Use replaceState for the initial redirect (e.g., / → /cherry-hill/dashboard)
+      // Use replaceState for the initial redirect (e.g., / → /cherry-hill/home)
       // to avoid creating a back-button entry to the bare root URL
       if (!initialUrlSet.current) {
         initialUrlSet.current = true;
@@ -652,7 +658,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -667,9 +673,10 @@ function LeanAppInner() {
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
       case "home": return "Home";
-      case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
-      case "client-management": return "Client Management";
+      case "client-management": return "Incidents";
+      case "resources": return "Resources";
+      case "grassroots": return "Grassroots Tracking";
       case "funnel": return "Lead Funnel";
       case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
@@ -708,6 +715,7 @@ function LeanAppInner() {
       case "scheduling": return "Scheduling";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
+      case "checkout-notes": return "Today's Gingr Notes";
       case "cash-tips": return "Cash Tips";
       case "test-health": return "Test Health";
       default: return pg;
@@ -799,7 +807,6 @@ function LeanAppInner() {
   const renderPage = () => {
     // Permission area mapping: page id → LEAN_PERMISSION_AREAS key
     const PAGE_PERM_MAP = {
-      "dashboard": null, // dashboard handles its own per-section permissions via props
       "lifecycle": "Customer Lifecycle",
       "client-detail": "Customer Lifecycle",
       "dog-detail": null,
@@ -812,6 +819,8 @@ function LeanAppInner() {
       "settings": null, // settings handles its own per-tab permissions
       "training": "Labor Management",
       "client-management": "Customer Lifecycle",
+      "resources": null,
+      "grassroots": null,
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
       "occupancy-report": "Occupancy Reports",
@@ -830,27 +839,6 @@ function LeanAppInner() {
     switch (page) {
       case "home":
         return <HomePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} bohStats={bohStats} analyticsMode={IS_ANALYTICS_MODE} userLocationRoles={userLocationRoles} currentLocation={currentLocation} />;
-      case "dashboard": {
-        // DASH-002: Permission-based dashboard views — driven by permission matrix, not hardcoded roles
-        // When ?mode=analytics is active, show the full K9 Operations + Analytics dashboard
-        const analyticsMode = IS_ANALYTICS_MODE;
-        const hasFinancial = analyticsMode || hasLeanPermission(profile, "Financial Reporting");
-        const hasOpsHub = analyticsMode || hasLeanPermission(profile, "Operations Hub");
-        const dashboardPermissions = {
-          showSnapshot: true,
-          showRevenue: hasFinancial,
-          showFunnel: hasFinancial,
-          showLTV: hasFinancial,
-          showRevenueComposition: hasFinancial,
-          showRevenueByCategory: hasFinancial,
-          showDiscountAnalysis: hasFinancial,
-          showTopClients: hasFinancial,
-          showOps: hasOpsHub,
-          showFunnelMetrics: hasFinancial,
-          showHeroKPIs: hasFinancial,
-        };
-        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} analyticsMode={analyticsMode} {...dashboardPermissions} />;
-      }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
           <ClientsPage
@@ -966,6 +954,10 @@ function LeanAppInner() {
         return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "client-management":
         return <ClientManagementPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "resources":
+        return <ResourcesPage profile={profile} addGlobalToast={addGlobalToast} />;
+      case "grassroots":
+        return <GrassrootsPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "scheduling":
         return <SchedulingPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory":
@@ -990,7 +982,7 @@ function LeanAppInner() {
   };
 
   const isFullscreenPage = page === "checkout-tv" || page === "onboarding" || page === "pricing";
-  const isEdgeToEdgePage = page === "dashboard" || isFullscreenPage;
+  const isEdgeToEdgePage = isFullscreenPage;
   const isHomePage = page === "home";
 
   return (
@@ -1203,7 +1195,7 @@ function LeanAppInner() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: page === "dashboard" ? "hidden" : "auto", background: isFullscreenPage ? "transparent" : isHomePage ? "#FAFBFC" : C.bg, padding: isEdgeToEdgePage ? 0 : isHomePage ? "36px 44px" : "32px 40px" }}>
+      <div style={{ flex: 1, overflow: "auto", background: isFullscreenPage ? "transparent" : isHomePage ? "#FAFBFC" : C.bg, padding: isEdgeToEdgePage ? 0 : isHomePage ? "36px 44px" : "32px 40px" }}>
         <div style={{ maxWidth: isEdgeToEdgePage ? "none" : 1440, margin: "0 auto", height: isEdgeToEdgePage ? "100%" : "auto" }}>
           {navStack.length > 1 && !isFullscreenPage && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>

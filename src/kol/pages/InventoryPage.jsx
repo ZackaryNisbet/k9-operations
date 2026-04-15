@@ -1,4 +1,4 @@
-// K9 Operations — Weekly Inventory Count Page
+// K9 Operations — Inventory Count Page
 // Comprehensive inventory management module for K9 Operations Lite (KOL)
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -8,17 +8,15 @@ import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
 import { getInventoryWorkflow } from "./inventoryStatus";
+import {
+  DEFAULT_INVENTORY_SCHEDULE,
+  formatInventoryCadenceLabel,
+  getInventoryCycleStart,
+  getInventoryOverdueInfo,
+  normalizeInventorySchedule,
+} from "./inventorySchedule";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getWeekStart(dateStr) {
-  // Returns the Monday of the week containing dateStr
-  const dt = new Date(dateStr + "T12:00:00");
-  const day = dt.getDay(); // 0=Sun, 1=Mon ... 6=Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  dt.setDate(dt.getDate() + diff);
-  return dt.toISOString().split("T")[0];
-}
 
 function fmtWeekLabel(weekStart) {
   const dt = new Date(weekStart + "T12:00:00");
@@ -40,11 +38,11 @@ function clampPositive(val) {
 
 // ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
 
-function getDogDaysForWeek(reservations, weekStart) {
+function getDogDaysForWeek(reservations, weekStart, cycleDays = 7) {
   if (!reservations || !reservations.length) return 0;
   const start = new Date(weekStart + "T00:00:00");
   const end = new Date(start);
-  end.setDate(end.getDate() + 6); // Sunday
+  end.setDate(end.getDate() + Math.max(0, cycleDays - 1));
   let totalDogDays = 0;
   const validRes = reservations.filter(r => r.status !== "cancelled");
   for (const res of validRes) {
@@ -60,11 +58,11 @@ function getDogDaysForWeek(reservations, weekStart) {
   return totalDogDays;
 }
 
-function getAvgDogsPerDay(reservations, weekStart) {
+function getAvgDogsPerDay(reservations, weekStart, cycleDays = 7) {
   if (!reservations || !reservations.length) return 0;
   const start = new Date(weekStart + "T00:00:00");
   let total = 0;
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < cycleDays; d++) {
     const day = new Date(start);
     day.setDate(day.getDate() + d);
     const dayStr = day.toISOString().split('T')[0];
@@ -73,7 +71,7 @@ function getAvgDogsPerDay(reservations, weekStart) {
     ).length;
     total += dogsThisDay;
   }
-  return Math.round(total / 7);
+  return Math.round(total / Math.max(1, cycleDays));
 }
 
 // ─── Skeleton Loader ──────────────────────────────────────────────────────────
@@ -1097,7 +1095,7 @@ function SubmitModal({ onClose, onConfirm, saving }) {
             Mark this count as completed?
           </div>
           <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-            Once submitted, this inventory count will be locked for editing. All counts will be saved and this week's snapshot will be marked complete.
+            Once submitted, this inventory count will be locked for editing. All counts will be saved and this cycle's snapshot will be marked complete.
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -1132,7 +1130,7 @@ function ReopenModal({ onClose, onConfirm, saving }) {
             Reopen this completed count?
           </div>
           <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-            This will unlock the week for editing and write an audit trail showing who reopened it and why.
+            This will unlock the cycle for editing and write an audit trail showing who reopened it and why.
           </div>
         </div>
 
@@ -1166,12 +1164,62 @@ function ReopenModal({ onClose, onConfirm, saving }) {
   );
 }
 
+function InventoryScheduleModal({ draft, onChange, onClose, onConfirm, saving }) {
+  const cadenceOptions = [
+    { value: "7", label: "Every week" },
+    { value: "14", label: "Every 2 weeks" },
+    { value: "28", label: "Every 4 weeks" },
+  ];
+  const weekdayOptions = [
+    { value: "0", label: "Sunday" },
+    { value: "1", label: "Monday" },
+    { value: "2", label: "Tuesday" },
+    { value: "3", label: "Wednesday" },
+    { value: "4", label: "Thursday" },
+    { value: "5", label: "Friday" },
+    { value: "6", label: "Saturday" },
+  ];
+
+  return (
+    <Modal title="Inventory Schedule" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: 14, borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>
+          Control the resort-level cadence, due day, and due time here. Enterprise overrides can layer on later without changing the local data shape.
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Cadence</div>
+            <CustomSelect value={String(draft.cadenceDays)} onChange={(value) => onChange({ ...draft, cadenceDays: Number(value) })} options={cadenceOptions} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Due Day</div>
+            <CustomSelect value={String(draft.dueWeekday)} onChange={(value) => onChange({ ...draft, dueWeekday: Number(value) })} options={weekdayOptions} />
+          </div>
+          <Inp
+            label="Due Time"
+            type="time"
+            value={draft.dueTime || "09:00"}
+            onChange={(value) => onChange({ ...draft, dueTime: value || "09:00" })}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="primary" onClick={onConfirm} disabled={saving}>{saving ? "Saving..." : "Save Schedule"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Depletion Rate Modal ─────────────────────────────────────────────────────
 
-function DepletionRateModal({ locationId, reservations, currentWeekStart, onClose }) {
+function DepletionRateModal({ locationId, reservations, currentWeekStart, inventorySchedule, onClose }) {
   const [depletionData, setDepletionData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [catalogMap, setCatalogMap] = useState({});
+  const cycleDays = Number(inventorySchedule?.cadenceDays) || 7;
 
   useEffect(() => {
     (async () => {
@@ -1225,9 +1273,9 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       // Sort by week_start descending
       const sorted = [...records].sort((a, b) => b.week_start.localeCompare(a.week_start));
 
-      // Average weekly usage
+      // Average cycle usage
       const totalDepletion = sorted.reduce((s, r) => s + (r.depletion || 0), 0);
-      const avgWeeklyUsage = totalDepletion / sorted.length;
+      const avgCycleUsage = totalDepletion / sorted.length;
 
       // Average rate per dog-day
       const ratesWithDogDay = sorted.filter(r => r.rate_per_dog_day != null);
@@ -1246,14 +1294,14 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       const confidence = weeksOfData >= 9 ? "High" : weeksOfData >= 4 ? "Medium" : "Low";
 
       // Current week dog-days for recommended par
-      const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
-      const avgDogDaysPerWeek = ratesWithDogDay.length > 0
+      const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, cycleDays);
+      const avgDogDaysPerCycle = ratesWithDogDay.length > 0
         ? ratesWithDogDay.reduce((s, r) => s + (r.dog_days || 0), 0) / ratesWithDogDay.length
         : currentDogDays;
 
-      // Recommended par = coefficient x avg dog-days x 1.2 safety factor
+      // Recommended par = coefficient x avg dog-days per cycle x 1.2 safety factor
       const recommendedPar = avgRatePerDogDay != null
-        ? Math.ceil(avgRatePerDogDay * avgDogDaysPerWeek * 1.2)
+        ? Math.ceil(avgRatePerDogDay * avgDogDaysPerCycle * 1.2)
         : null;
 
       stats.push({
@@ -1262,7 +1310,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
         category: catItem.category,
         unitPrice: catItem.unit_price,
         currentPar: catItem.par_level,
-        avgWeeklyUsage: +avgWeeklyUsage.toFixed(1),
+        avgCycleUsage: +avgCycleUsage.toFixed(1),
         avgRatePerDogDay: avgRatePerDogDay != null ? +avgRatePerDogDay.toFixed(4) : null,
         trend,
         confidence,
@@ -1272,9 +1320,9 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
     });
 
     // Sort by highest usage
-    stats.sort((a, b) => b.avgWeeklyUsage - a.avgWeeklyUsage);
+    stats.sort((a, b) => b.avgCycleUsage - a.avgCycleUsage);
     return stats;
-  }, [depletionData, catalogMap, reservations, currentWeekStart]);
+  }, [cycleDays, depletionData, catalogMap, reservations, currentWeekStart]);
 
   // Header metrics
   const headerMetrics = useMemo(() => {
@@ -1301,7 +1349,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
     });
 
     // Average cost per dog-day
-    const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+    const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, cycleDays);
     const avgCostPerDogDay = currentDogDays > 0 ? totalValue / currentDogDays : 0;
 
     return {
@@ -1310,7 +1358,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       avgCostPerDogDay,
       weeksOfData: uniqueWeeks.size,
     };
-  }, [depletionData, catalogMap, currentWeekStart, reservations]);
+  }, [cycleDays, depletionData, catalogMap, currentWeekStart, reservations]);
 
   const trendIcon = (trend) => {
     if (trend === "up") return <span style={{ color: C.dan }}>&#9650;</span>;
@@ -1373,7 +1421,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
               </div>
               <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
-                  Weeks of Data
+                  Cycles of Data
                 </div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{headerMetrics.weeksOfData}</div>
               </div>
@@ -1383,7 +1431,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
             {itemStats.length === 0 ? (
               <div style={{ padding: 32, textAlign: "center", color: C.textMut, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Not enough data yet</div>
-                <div style={{ fontSize: 12 }}>Depletion rates require at least 2 completed weekly counts. Keep counting!</div>
+                <div style={{ fontSize: 12 }}>Depletion rates require at least 2 completed inventory cycles. Keep counting.</div>
               </div>
             ) : (
               <div style={{ borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
@@ -1396,7 +1444,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
                   background: C.bg,
                   borderBottom: `1px solid ${C.borderLight}`,
                 }}>
-                  {["Item", "Avg/Week", "Per Dog-Day", "Trend", "Confidence", "Rec. Par"].map((h, i) => (
+                  {["Item", "Avg/Cycle", "Per Dog-Day", "Trend", "Confidence", "Rec. Par"].map((h, i) => (
                     <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                       {h}
                     </div>
@@ -1421,7 +1469,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
                       {stat.category && <div style={{ fontSize: 10, color: C.textMut }}>{stat.category}</div>}
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
-                      {stat.avgWeeklyUsage} units
+                      {stat.avgCycleUsage} units
                     </div>
                     <div style={{ fontSize: 13, color: C.textSec }}>
                       {stat.avgRatePerDogDay != null ? stat.avgRatePerDogDay.toFixed(3) : "—"}
@@ -1468,12 +1516,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const { user: authUser, profile: authProfile } = useAuth();
 
   // ── Week + Day navigation ──
-  const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(todayStr()));
-  const thisWeekStart = getWeekStart(todayStr());
+  const [inventorySchedule, setInventorySchedule] = useState(() => normalizeInventorySchedule(DEFAULT_INVENTORY_SCHEDULE, todayStr()));
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => getInventoryCycleStart(todayStr(), DEFAULT_INVENTORY_SCHEDULE));
+  const thisWeekStart = useMemo(() => getInventoryCycleStart(todayStr(), inventorySchedule), [inventorySchedule]);
   const [countedDate, setCountedDate] = useState(() => {
     const saved = localStorage.getItem("k9_inventory_countedDate");
-    const week = getWeekStart(todayStr());
-    // Restore if saved date is within the current week
+    const week = getInventoryCycleStart(todayStr(), DEFAULT_INVENTORY_SCHEDULE);
+    // Restore if saved date is within the current cycle.
     if (saved && saved >= week && saved <= todayStr()) return saved;
     return todayStr();
   });
@@ -1483,7 +1532,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     localStorage.setItem("k9_inventory_countedDate", countedDate);
   }, [countedDate]);
 
-  // Reset countedDate when week changes — but NOT on initial mount
+  // Reset countedDate when the viewed cycle changes, but not on initial mount.
   const weekChangeRef = useRef(currentWeekStart);
   useEffect(() => {
     if (weekChangeRef.current === currentWeekStart) return; // skip initial mount
@@ -1509,12 +1558,16 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [submitSaving, setSubmitSaving] = useState(false);
   const [reopenSaving, setReopenSaving] = useState(false);
   const [showDepletionModal, setShowDepletionModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState(() => normalizeInventorySchedule(DEFAULT_INVENTORY_SCHEDULE, todayStr()));
+  const [scheduleSaving, setScheduleSaving] = useState(false);
   const [catalogEditMode, setCatalogEditMode] = useState(false);
   const [editingField, setEditingField] = useState(null); // { itemId, field }
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
   const [viewerLiteRole, setViewerLiteRole] = useState(null);
+  const currentCycleRef = useRef(thisWeekStart);
 
   // ── Refs ──
   const saveTimer = useRef(null);
@@ -1531,14 +1584,50 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Dog-Days computed values ──
   const reservations = data?.reservations || [];
-  const dogDays = useMemo(() => getDogDaysForWeek(reservations, currentWeekStart), [reservations, currentWeekStart]);
-  const avgDogsPerDay = useMemo(() => getAvgDogsPerDay(reservations, currentWeekStart), [reservations, currentWeekStart]);
+  const dogDays = useMemo(
+    () => getDogDaysForWeek(reservations, currentWeekStart, inventorySchedule.cadenceDays),
+    [inventorySchedule.cadenceDays, reservations, currentWeekStart]
+  );
+  const avgDogsPerDay = useMemo(
+    () => getAvgDogsPerDay(reservations, currentWeekStart, inventorySchedule.cadenceDays),
+    [inventorySchedule.cadenceDays, reservations, currentWeekStart]
+  );
 
   // Sync snapshotRef
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
   useEffect(() => { countsRef.current = counts; }, [counts]);
   useEffect(() => { countedDateRef.current = countedDate; }, [countedDate]);
   useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!locationId) return () => { cancelled = true; };
+
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "inventory_schedule")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const nextSchedule = normalizeInventorySchedule(data?.setting_value || DEFAULT_INVENTORY_SCHEDULE, todayStr());
+        setInventorySchedule(nextSchedule);
+        setScheduleDraft(nextSchedule);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  useEffect(() => {
+    const previousCurrentCycle = currentCycleRef.current;
+    if (currentWeekStart === previousCurrentCycle) {
+      setCurrentWeekStart(thisWeekStart);
+    }
+    currentCycleRef.current = thisWeekStart;
+  }, [currentWeekStart, thisWeekStart]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1620,7 +1709,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       if (existing) {
         snap = existing;
       } else {
-        // Only create a snapshot if it's the current week (don't auto-create for past weeks)
+        // Only create a snapshot if it's the current cycle (don't auto-create for historical cycles)
         if (currentWeekStart === thisWeekStart) {
           const { data: created, error: createErr } = await supabase
             .from("inventory_snapshots")
@@ -2033,7 +2122,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           (prevCounts || []).forEach(c => { prevCountMap[c.catalog_item_id] = c; });
 
           // Get current week's counts (already in state as `counts`)
-          const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+          const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, inventorySchedule.cadenceDays);
           const currentCounts = countsRef.current;
 
           // Build depletion records
@@ -2104,6 +2193,38 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setReopenSaving(false);
     }
   };
+
+  const handleSaveSchedule = useCallback(async () => {
+    if (!locationId) return;
+    setScheduleSaving(true);
+    try {
+      const nextSchedule = normalizeInventorySchedule({
+        cadenceDays: Number(scheduleDraft.cadenceDays),
+        dueWeekday: Number(scheduleDraft.dueWeekday),
+        dueTime: scheduleDraft.dueTime,
+      }, todayStr());
+      nextSchedule.anchorDate = getInventoryCycleStart(todayStr(), nextSchedule);
+
+      const { error } = await supabase
+        .from("lite_settings")
+        .upsert({
+          location_id: locationId,
+          setting_key: "inventory_schedule",
+          setting_value: nextSchedule,
+        }, { onConflict: "location_id,setting_key" });
+      if (error) throw error;
+
+      setInventorySchedule(nextSchedule);
+      setScheduleDraft(nextSchedule);
+      setShowScheduleModal(false);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory schedule updated." });
+    } catch (err) {
+      console.error("Inventory schedule save error:", err);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to save inventory schedule." });
+    } finally {
+      setScheduleSaving(false);
+    }
+  }, [addGlobalToast, locationId, scheduleDraft]);
 
   // ── Add adhoc item ──
   const handleAddAdhoc = async (formData) => {
@@ -2272,6 +2393,16 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     };
   }, [inventoryWorkflow.readyToSubmit, snapshot?.status]);
 
+  const overdueInfo = getInventoryOverdueInfo(todayStr(), inventorySchedule, currentWeekStart === thisWeekStart && snapshot?.status === "completed");
+  const inventoryCadenceLabel = formatInventoryCadenceLabel(inventorySchedule);
+  const inventoryDueLabel = currentWeekStart !== thisWeekStart
+    ? `Viewing cycle starting ${fmtWeekLabel(currentWeekStart)}`
+    : snapshot?.status === "completed"
+      ? "Completed this cycle"
+      : overdueInfo.isDueToday
+        ? "Due today"
+        : `${overdueInfo.daysOverdue} day${overdueInfo.daysOverdue !== 1 ? "s" : ""} overdue`;
+
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
     Array.from(new Set(catalogItems.map(i => i.category).filter(Boolean))).sort(),
@@ -2292,10 +2423,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif", lineHeight: 1.2 }}>
-              Weekly Inventory Count
+              Inventory Count
             </h1>
             <div style={{ fontSize: 13, color: C.textSec, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>{new Date().getDay() === 1 ? "Due today" : "Due every Monday"}</span>
+              <span>{inventoryCadenceLabel}</span>
               <span style={{ color: C.borderLight }}>·</span>
               <span>Track on-hand stock, transit items, and reorder needs</span>
             </div>
@@ -2303,6 +2434,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           {/* Status badge + Manage Catalog */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <Btn
+              variant="secondary"
+              size="sm"
+              icon={<I.Calendar />}
+              onClick={() => {
+                setScheduleDraft(inventorySchedule);
+                setShowScheduleModal(true);
+              }}
+            >
+              Schedule
+            </Btn>
             {!isReadOnly && (
               catalogEditMode ? (
                 <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
@@ -2335,10 +2477,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
             {/* Overdue indicator — current week, past Monday, not completed */}
             {currentWeekStart === thisWeekStart && (() => {
-              const dow = new Date().getDay();
-              const isPastMonday = dow !== 1;
-              const daysSince = dow === 0 ? 6 : dow - 1;
-              return isPastMonday && (!snapshot || snapshot.status !== "completed") ? (
+              return overdueInfo.isOverdue && (!snapshot || snapshot.status !== "completed") ? (
                 <span style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -2352,7 +2491,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                   border: "1.5px solid #DC262640",
                 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#DC2626", display: "inline-block" }} />
-                  {daysSince} day{daysSince !== 1 ? "s" : ""} overdue
+                  {overdueInfo.daysOverdue} day{overdueInfo.daysOverdue !== 1 ? "s" : ""} overdue
                 </span>
               ) : null;
             })()}
@@ -2381,11 +2520,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           {/* Week Navigator */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
-              onClick={() => setCurrentWeekStart(prev => addDays(prev, -7))}
+              onClick={() => setCurrentWeekStart(prev => addDays(prev, -inventorySchedule.cadenceDays))}
               style={{ width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.borderColor = C.pri; }}
               onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.borderColor = C.border; }}
-              title="Previous week"
+              title="Previous cycle"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
@@ -2393,14 +2532,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
               <I.Calendar />
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                Week of {fmtWeekLabel(currentWeekStart)}
+                Cycle starting {fmtWeekLabel(currentWeekStart)}
               </span>
               {currentWeekStart === thisWeekStart && (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: C.priLt, color: C.pri }}>
                   CURRENT
                 </span>
               )}
-              {currentWeekStart === thisWeekStart && new Date().getDay() !== 1 && (!snapshot || snapshot.status !== "completed") && (
+              {currentWeekStart === thisWeekStart && overdueInfo.isOverdue && (!snapshot || snapshot.status !== "completed") && (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "#FEF2F2", color: "#DC2626" }}>
                   OVERDUE
                 </span>
@@ -2408,30 +2547,30 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             </div>
 
             <button
-              onClick={() => setCurrentWeekStart(prev => addDays(prev, 7))}
+              onClick={() => setCurrentWeekStart(prev => addDays(prev, inventorySchedule.cadenceDays))}
               style={{ width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.borderColor = C.pri; }}
               onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.borderColor = C.border; }}
-              title="Next week"
+              title="Next cycle"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
 
             {currentWeekStart !== thisWeekStart && (
               <Btn variant="secondary" size="sm" onClick={() => setCurrentWeekStart(thisWeekStart)}>
-                This Week
+                Current Cycle
               </Btn>
             )}
           </div>
 
-          {/* Day picker — Mon through today (or full week for past weeks) */}
+          {/* Day picker — cycle start through today (or full cycle for non-current views) */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut, marginRight: 4 }}>Counted on:</span>
             {(() => {
               const days = [];
               const start = new Date(currentWeekStart + "T12:00:00");
               const endDate = currentWeekStart === thisWeekStart ? new Date(todayStr() + "T12:00:00") : new Date(start);
-              if (currentWeekStart !== thisWeekStart) endDate.setDate(endDate.getDate() + 6);
+              if (currentWeekStart !== thisWeekStart) endDate.setDate(endDate.getDate() + Math.max(0, inventorySchedule.cadenceDays - 1));
               const d = new Date(start);
               while (d <= endDate) {
                 const ds = d.toISOString().split("T")[0];
@@ -2519,6 +2658,26 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         )}
       </div>
 
+      <Card style={{ marginBottom: 16, padding: "14px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          {[
+            { label: "Status", value: statusBadge.label, color: statusBadge.color },
+            { label: "Phase", value: inventoryWorkflow.phaseLabel || "Not started", color: C.text },
+            { label: "Cadence", value: inventoryCadenceLabel, color: C.text },
+            { label: "Due", value: inventoryDueLabel, color: inventoryDueLabel.includes("overdue") ? C.dan : C.text },
+          ].map((item) => (
+            <div key={item.label} style={{ padding: "8px 10px", borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                {item.label}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: item.color, lineHeight: 1.4 }}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* ── Main Content ── */}
       {loading ? (
         <div>
@@ -2571,7 +2730,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               <I.CheckCircle />
               <div style={{ fontSize: 13, color: C.textSec }}>
                 <span style={{ fontWeight: 700, color: C.pri }}>Ready to submit. </span>
-                All catalog and ad-hoc items have been counted, and every reorder has been handled. Use the submit button below to lock the week.
+                All catalog and ad-hoc items have been counted, and every reorder has been handled. Use the submit button below to lock the cycle.
               </div>
             </div>
           )}
@@ -2634,10 +2793,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <Card style={{ padding: 32, textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 36, marginBottom: 10 }}>🗓</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6, fontFamily: "'Outfit', sans-serif" }}>
-                No count for this week
+                No count for this cycle
               </div>
               <div style={{ fontSize: 13, color: C.textSec }}>
-                No inventory count was recorded for the week of {fmtWeekLabel(currentWeekStart)}.
+                No inventory count was recorded for the cycle starting {fmtWeekLabel(currentWeekStart)}.
               </div>
             </Card>
           )}
@@ -2700,7 +2859,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
               {adhocItems.length === 0 ? (
                 <Card style={{ padding: 20, textAlign: "center", border: `1.5px dashed ${C.border}`, background: C.bg }}>
-                  <div style={{ fontSize: 13, color: C.textMut }}>No ad-hoc items for this week.</div>
+                  <div style={{ fontSize: 13, color: C.textMut }}>No ad-hoc items for this cycle.</div>
                   {!isReadOnly && (
                     <div style={{ marginTop: 8 }}>
                       <button
@@ -2842,13 +3001,22 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         />
       )}
 
-
+      {showScheduleModal && (
+        <InventoryScheduleModal
+          draft={scheduleDraft}
+          onChange={setScheduleDraft}
+          onClose={() => setShowScheduleModal(false)}
+          onConfirm={handleSaveSchedule}
+          saving={scheduleSaving}
+        />
+      )}
 
       {showDepletionModal && (
         <DepletionRateModal
           locationId={locationId}
           reservations={reservations}
           currentWeekStart={currentWeekStart}
+          inventorySchedule={inventorySchedule}
           onClose={() => setShowDepletionModal(false)}
         />
       )}

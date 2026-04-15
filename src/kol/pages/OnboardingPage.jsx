@@ -336,12 +336,12 @@ export default function OnboardingPage({ nav }) {
           }
         }
 
-        addStep("All set! Redirecting to your dashboard...");
+        addStep("All set! Redirecting to your home page...");
         setProvisionDone(true);
 
         // Redirect to the app after a brief delay
         setTimeout(() => {
-          window.location.href = `/lite/${slug}/dashboard`;
+          window.location.href = `/lite/${slug}/home`;
         }, 2000);
       } catch (err) {
         console.error("Provision error:", err);
@@ -514,7 +514,7 @@ export default function OnboardingPage({ nav }) {
       {step === 3 && (
         <StepCard
           title={provisionDone ? "You're all set!" : "Setting up your resort"}
-          subtitle={provisionDone ? "Redirecting to your dashboard..." : "This will only take a moment."}
+          subtitle={provisionDone ? "Redirecting to your home page..." : "This will only take a moment."}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {provisionSteps.map((msg, i) => (
