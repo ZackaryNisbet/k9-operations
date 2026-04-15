@@ -1,22 +1,22 @@
-// K9 Operations — Weekly Inventory Count Page
+// K9 Operations — Inventory Count Page
 // Comprehensive inventory management module for K9 Operations Lite (KOL)
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
+import { useAuth } from "../../AuthProvider";
 import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
+import { getInventoryWorkflow } from "./inventoryStatus";
+import {
+  DEFAULT_INVENTORY_SCHEDULE,
+  formatInventoryCadenceLabel,
+  getInventoryCycleStart,
+  getInventoryOverdueInfo,
+  normalizeInventorySchedule,
+} from "./inventorySchedule";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getWeekStart(dateStr) {
-  // Returns the Monday of the week containing dateStr
-  const dt = new Date(dateStr + "T12:00:00");
-  const day = dt.getDay(); // 0=Sun, 1=Mon ... 6=Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  dt.setDate(dt.getDate() + diff);
-  return dt.toISOString().split("T")[0];
-}
 
 function fmtWeekLabel(weekStart) {
   const dt = new Date(weekStart + "T12:00:00");
@@ -38,11 +38,11 @@ function clampPositive(val) {
 
 // ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
 
-function getDogDaysForWeek(reservations, weekStart) {
+function getDogDaysForWeek(reservations, weekStart, cycleDays = 7) {
   if (!reservations || !reservations.length) return 0;
   const start = new Date(weekStart + "T00:00:00");
   const end = new Date(start);
-  end.setDate(end.getDate() + 6); // Sunday
+  end.setDate(end.getDate() + Math.max(0, cycleDays - 1));
   let totalDogDays = 0;
   const validRes = reservations.filter(r => r.status !== "cancelled");
   for (const res of validRes) {
@@ -58,11 +58,11 @@ function getDogDaysForWeek(reservations, weekStart) {
   return totalDogDays;
 }
 
-function getAvgDogsPerDay(reservations, weekStart) {
+function getAvgDogsPerDay(reservations, weekStart, cycleDays = 7) {
   if (!reservations || !reservations.length) return 0;
   const start = new Date(weekStart + "T00:00:00");
   let total = 0;
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < cycleDays; d++) {
     const day = new Date(start);
     day.setDate(day.getDate() + d);
     const dayStr = day.toISOString().split('T')[0];
@@ -71,7 +71,7 @@ function getAvgDogsPerDay(reservations, weekStart) {
     ).length;
     total += dogsThisDay;
   }
-  return Math.round(total / 7);
+  return Math.round(total / Math.max(1, cycleDays));
 }
 
 // ─── Skeleton Loader ──────────────────────────────────────────────────────────
@@ -106,6 +106,36 @@ const fmtAuditTime = (ts) => {
   const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
   return `${day} ${time}`;
 };
+
+const INVENTORY_REOPEN_ROLES = new Set([
+  "supervisor",
+  "manager",
+  "location_admin",
+  "enterprise_admin",
+  "owner",
+  "role_owner",
+]);
+
+const LITE_ROLE_PRIORITY = {
+  enterprise_admin: 1,
+  location_admin: 2,
+  manager: 3,
+  supervisor: 4,
+  csr: 5,
+  pct: 6,
+};
+
+function pickHighestLiteRole(rows, locationId) {
+  const candidates = (rows || []).filter(row =>
+    row?.role === "enterprise_admin" || row?.location_id === locationId
+  );
+
+  if (candidates.length === 0) return null;
+
+  return [...candidates]
+    .sort((a, b) => (LITE_ROLE_PRIORITY[a.role] || 99) - (LITE_ROLE_PRIORITY[b.role] || 99))[0]
+    ?.role || null;
+}
 
 const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange, onKeyDown, inputRef }) {
   const [hovered, setHovered] = useState(false);
@@ -1065,7 +1095,7 @@ function SubmitModal({ onClose, onConfirm, saving }) {
             Mark this count as completed?
           </div>
           <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-            Once submitted, this inventory count will be locked for editing. All counts will be saved and this week's snapshot will be marked complete.
+            Once submitted, this inventory count will be locked for editing. All counts will be saved and this cycle's snapshot will be marked complete.
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -1079,12 +1109,117 @@ function SubmitModal({ onClose, onConfirm, saving }) {
   );
 }
 
+function ReopenModal({ onClose, onConfirm, saving }) {
+  const [reason, setReason] = useState("");
+  const [showError, setShowError] = useState(false);
+
+  const handleConfirm = () => {
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      setShowError(true);
+      return;
+    }
+    onConfirm(trimmed);
+  };
+
+  return (
+    <Modal title="Mark Inventory Incomplete" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: 16, borderRadius: 12, background: C.warnLt, border: `1px solid ${C.warn}30` }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.warn, marginBottom: 6 }}>
+            Reopen this completed count?
+          </div>
+          <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+            This will unlock the cycle for editing and write an audit trail showing who reopened it and why.
+          </div>
+        </div>
+
+        <div>
+          <Inp
+            label="Reason"
+            type="textarea"
+            value={reason}
+            onChange={(value) => {
+              setReason(value);
+              if (showError && value.trim()) setShowError(false);
+            }}
+            placeholder="Explain what still needs to be fixed or counted..."
+            rows={3}
+          />
+          {showError && (
+            <div style={{ fontSize: 11, color: C.dan, marginTop: 4 }}>
+              A reason is required to reopen a completed inventory count.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="danger" onClick={handleConfirm} disabled={saving}>
+            {saving ? "Reopening..." : "Mark Incomplete"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function InventoryScheduleModal({ draft, onChange, onClose, onConfirm, saving }) {
+  const cadenceOptions = [
+    { value: "7", label: "Every week" },
+    { value: "14", label: "Every 2 weeks" },
+    { value: "28", label: "Every 4 weeks" },
+  ];
+  const weekdayOptions = [
+    { value: "0", label: "Sunday" },
+    { value: "1", label: "Monday" },
+    { value: "2", label: "Tuesday" },
+    { value: "3", label: "Wednesday" },
+    { value: "4", label: "Thursday" },
+    { value: "5", label: "Friday" },
+    { value: "6", label: "Saturday" },
+  ];
+
+  return (
+    <Modal title="Inventory Schedule" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: 14, borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>
+          Control the resort-level cadence, due day, and due time here. Enterprise overrides can layer on later without changing the local data shape.
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Cadence</div>
+            <CustomSelect value={String(draft.cadenceDays)} onChange={(value) => onChange({ ...draft, cadenceDays: Number(value) })} options={cadenceOptions} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Due Day</div>
+            <CustomSelect value={String(draft.dueWeekday)} onChange={(value) => onChange({ ...draft, dueWeekday: Number(value) })} options={weekdayOptions} />
+          </div>
+          <Inp
+            label="Due Time"
+            type="time"
+            value={draft.dueTime || "09:00"}
+            onChange={(value) => onChange({ ...draft, dueTime: value || "09:00" })}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="primary" onClick={onConfirm} disabled={saving}>{saving ? "Saving..." : "Save Schedule"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Depletion Rate Modal ─────────────────────────────────────────────────────
 
-function DepletionRateModal({ locationId, reservations, currentWeekStart, onClose }) {
+function DepletionRateModal({ locationId, reservations, currentWeekStart, inventorySchedule, onClose }) {
   const [depletionData, setDepletionData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [catalogMap, setCatalogMap] = useState({});
+  const cycleDays = Number(inventorySchedule?.cadenceDays) || 7;
 
   useEffect(() => {
     (async () => {
@@ -1138,9 +1273,9 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       // Sort by week_start descending
       const sorted = [...records].sort((a, b) => b.week_start.localeCompare(a.week_start));
 
-      // Average weekly usage
+      // Average cycle usage
       const totalDepletion = sorted.reduce((s, r) => s + (r.depletion || 0), 0);
-      const avgWeeklyUsage = totalDepletion / sorted.length;
+      const avgCycleUsage = totalDepletion / sorted.length;
 
       // Average rate per dog-day
       const ratesWithDogDay = sorted.filter(r => r.rate_per_dog_day != null);
@@ -1159,14 +1294,14 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       const confidence = weeksOfData >= 9 ? "High" : weeksOfData >= 4 ? "Medium" : "Low";
 
       // Current week dog-days for recommended par
-      const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
-      const avgDogDaysPerWeek = ratesWithDogDay.length > 0
+      const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, cycleDays);
+      const avgDogDaysPerCycle = ratesWithDogDay.length > 0
         ? ratesWithDogDay.reduce((s, r) => s + (r.dog_days || 0), 0) / ratesWithDogDay.length
         : currentDogDays;
 
-      // Recommended par = coefficient x avg dog-days x 1.2 safety factor
+      // Recommended par = coefficient x avg dog-days per cycle x 1.2 safety factor
       const recommendedPar = avgRatePerDogDay != null
-        ? Math.ceil(avgRatePerDogDay * avgDogDaysPerWeek * 1.2)
+        ? Math.ceil(avgRatePerDogDay * avgDogDaysPerCycle * 1.2)
         : null;
 
       stats.push({
@@ -1175,7 +1310,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
         category: catItem.category,
         unitPrice: catItem.unit_price,
         currentPar: catItem.par_level,
-        avgWeeklyUsage: +avgWeeklyUsage.toFixed(1),
+        avgCycleUsage: +avgCycleUsage.toFixed(1),
         avgRatePerDogDay: avgRatePerDogDay != null ? +avgRatePerDogDay.toFixed(4) : null,
         trend,
         confidence,
@@ -1185,9 +1320,9 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
     });
 
     // Sort by highest usage
-    stats.sort((a, b) => b.avgWeeklyUsage - a.avgWeeklyUsage);
+    stats.sort((a, b) => b.avgCycleUsage - a.avgCycleUsage);
     return stats;
-  }, [depletionData, catalogMap, reservations, currentWeekStart]);
+  }, [cycleDays, depletionData, catalogMap, reservations, currentWeekStart]);
 
   // Header metrics
   const headerMetrics = useMemo(() => {
@@ -1214,7 +1349,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
     });
 
     // Average cost per dog-day
-    const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+    const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, cycleDays);
     const avgCostPerDogDay = currentDogDays > 0 ? totalValue / currentDogDays : 0;
 
     return {
@@ -1223,7 +1358,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
       avgCostPerDogDay,
       weeksOfData: uniqueWeeks.size,
     };
-  }, [depletionData, catalogMap, currentWeekStart, reservations]);
+  }, [cycleDays, depletionData, catalogMap, currentWeekStart, reservations]);
 
   const trendIcon = (trend) => {
     if (trend === "up") return <span style={{ color: C.dan }}>&#9650;</span>;
@@ -1286,7 +1421,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
               </div>
               <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
-                  Weeks of Data
+                  Cycles of Data
                 </div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{headerMetrics.weeksOfData}</div>
               </div>
@@ -1296,7 +1431,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
             {itemStats.length === 0 ? (
               <div style={{ padding: 32, textAlign: "center", color: C.textMut, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Not enough data yet</div>
-                <div style={{ fontSize: 12 }}>Depletion rates require at least 2 completed weekly counts. Keep counting!</div>
+                <div style={{ fontSize: 12 }}>Depletion rates require at least 2 completed inventory cycles. Keep counting.</div>
               </div>
             ) : (
               <div style={{ borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
@@ -1309,7 +1444,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
                   background: C.bg,
                   borderBottom: `1px solid ${C.borderLight}`,
                 }}>
-                  {["Item", "Avg/Week", "Per Dog-Day", "Trend", "Confidence", "Rec. Par"].map((h, i) => (
+                  {["Item", "Avg/Cycle", "Per Dog-Day", "Trend", "Confidence", "Rec. Par"].map((h, i) => (
                     <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                       {h}
                     </div>
@@ -1334,7 +1469,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
                       {stat.category && <div style={{ fontSize: 10, color: C.textMut }}>{stat.category}</div>}
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
-                      {stat.avgWeeklyUsage} units
+                      {stat.avgCycleUsage} units
                     </div>
                     <div style={{ fontSize: 13, color: C.textSec }}>
                       {stat.avgRatePerDogDay != null ? stat.avgRatePerDogDay.toFixed(3) : "—"}
@@ -1378,13 +1513,16 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage({ data, save, nav, profile, addGlobalToast }) {
+  const { user: authUser, profile: authProfile } = useAuth();
+
   // ── Week + Day navigation ──
-  const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(todayStr()));
-  const thisWeekStart = getWeekStart(todayStr());
+  const [inventorySchedule, setInventorySchedule] = useState(() => normalizeInventorySchedule(DEFAULT_INVENTORY_SCHEDULE, todayStr()));
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => getInventoryCycleStart(todayStr(), DEFAULT_INVENTORY_SCHEDULE));
+  const thisWeekStart = useMemo(() => getInventoryCycleStart(todayStr(), inventorySchedule), [inventorySchedule]);
   const [countedDate, setCountedDate] = useState(() => {
     const saved = localStorage.getItem("k9_inventory_countedDate");
-    const week = getWeekStart(todayStr());
-    // Restore if saved date is within the current week
+    const week = getInventoryCycleStart(todayStr(), DEFAULT_INVENTORY_SCHEDULE);
+    // Restore if saved date is within the current cycle.
     if (saved && saved >= week && saved <= todayStr()) return saved;
     return todayStr();
   });
@@ -1394,7 +1532,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     localStorage.setItem("k9_inventory_countedDate", countedDate);
   }, [countedDate]);
 
-  // Reset countedDate when week changes — but NOT on initial mount
+  // Reset countedDate when the viewed cycle changes, but not on initial mount.
   const weekChangeRef = useRef(currentWeekStart);
   useEffect(() => {
     if (weekChangeRef.current === currentWeekStart) return; // skip initial mount
@@ -1415,14 +1553,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [search, setSearch] = useState("");
   const [showAddAdhoc, setShowAddAdhoc] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showReopenModal, setShowReopenModal] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [submitSaving, setSubmitSaving] = useState(false);
+  const [reopenSaving, setReopenSaving] = useState(false);
   const [showDepletionModal, setShowDepletionModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState(() => normalizeInventorySchedule(DEFAULT_INVENTORY_SCHEDULE, todayStr()));
+  const [scheduleSaving, setScheduleSaving] = useState(false);
   const [catalogEditMode, setCatalogEditMode] = useState(false);
   const [editingField, setEditingField] = useState(null); // { itemId, field }
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
+  const [viewerLiteRole, setViewerLiteRole] = useState(null);
+  const currentCycleRef = useRef(thisWeekStart);
 
   // ── Refs ──
   const saveTimer = useRef(null);
@@ -1430,17 +1575,84 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const pendingSave = useRef({}); // accumulated dirty counts to save
   const snapshotRef = useRef(null); // always-current snapshot for async ops
   const catalogSaveTimers = useRef({});
+  const countsRef = useRef({});
+  const countedDateRef = useRef(countedDate);
+  const profileRef = useRef(profile);
 
   const locationId = profile?.location_id;
   const isReadOnly = snapshot?.status === "completed";
 
   // ── Dog-Days computed values ──
   const reservations = data?.reservations || [];
-  const dogDays = useMemo(() => getDogDaysForWeek(reservations, currentWeekStart), [reservations, currentWeekStart]);
-  const avgDogsPerDay = useMemo(() => getAvgDogsPerDay(reservations, currentWeekStart), [reservations, currentWeekStart]);
+  const dogDays = useMemo(
+    () => getDogDaysForWeek(reservations, currentWeekStart, inventorySchedule.cadenceDays),
+    [inventorySchedule.cadenceDays, reservations, currentWeekStart]
+  );
+  const avgDogsPerDay = useMemo(
+    () => getAvgDogsPerDay(reservations, currentWeekStart, inventorySchedule.cadenceDays),
+    [inventorySchedule.cadenceDays, reservations, currentWeekStart]
+  );
 
   // Sync snapshotRef
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
+  useEffect(() => { countsRef.current = counts; }, [counts]);
+  useEffect(() => { countedDateRef.current = countedDate; }, [countedDate]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!locationId) return () => { cancelled = true; };
+
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "inventory_schedule")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const nextSchedule = normalizeInventorySchedule(data?.setting_value || DEFAULT_INVENTORY_SCHEDULE, todayStr());
+        setInventorySchedule(nextSchedule);
+        setScheduleDraft(nextSchedule);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  useEffect(() => {
+    const previousCurrentCycle = currentCycleRef.current;
+    if (currentWeekStart === previousCurrentCycle) {
+      setCurrentWeekStart(thisWeekStart);
+    }
+    currentCycleRef.current = thisWeekStart;
+  }, [currentWeekStart, thisWeekStart]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authUser?.id || !locationId) {
+      setViewerLiteRole(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    supabase
+      .from("lite_profiles")
+      .select("location_id, role")
+      .eq("user_id", authUser.id)
+      .eq("is_active", true)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setViewerLiteRole(pickHighestLiteRole(data || [], locationId));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id, locationId]);
 
   // ── CSS injection for shimmer + animations ──
   useEffect(() => {
@@ -1497,7 +1709,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       if (existing) {
         snap = existing;
       } else {
-        // Only create a snapshot if it's the current week (don't auto-create for past weeks)
+        // Only create a snapshot if it's the current cycle (don't auto-create for historical cycles)
         if (currentWeekStart === thisWeekStart) {
           const { data: created, error: createErr } = await supabase
             .from("inventory_snapshots")
@@ -1556,6 +1768,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         });
       }
       setCounts(countMap);
+      countsRef.current = countMap;
 
       // 4. Load adhoc items
       if (snap) {
@@ -1587,15 +1800,18 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     if (!snap || Object.keys(pendingSave.current).length === 0) return;
 
     const snapshotId = snap.id;
+    const currentCounts = countsRef.current;
+    const currentCountedDate = countedDateRef.current;
+    const currentProfile = profileRef.current;
     setSaveStatus("saving");
 
     try {
       const itemIds = Object.keys(pendingSave.current);
       // Build upserts
-      const userName = profile?.full_name || profile?.email || "Unknown";
+      const userName = currentProfile?.full_name || currentProfile?.email || "Unknown";
       const now = new Date().toISOString();
       const toUpsert = itemIds.map(itemId => {
-        const existing = counts[itemId];
+        const existing = currentCounts[itemId];
         const pending = pendingSave.current[itemId];
         const merged = { ...(existing || {}), ...pending };
         const row = {
@@ -1612,7 +1828,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         if (pending.stock_count !== undefined || pending.in_transit !== undefined) {
           row.counted_by = userName;
           // Use the selected countedDate (supports backdating), with current time
-          row.counted_at = countedDate === todayStr() ? now : `${countedDate}T${new Date().toISOString().split('T')[1]}`;
+          row.counted_at = currentCountedDate === todayStr() ? now : `${currentCountedDate}T${new Date().toISOString().split('T')[1]}`;
         }
         if (pending.ordered !== undefined) {
           row.ordered_by = userName;
@@ -1630,87 +1846,35 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         .upsert(toUpsert, { onConflict: "snapshot_id,catalog_item_id" })
         .select();
 
-      // Update counts state with returned IDs
-      setCounts(prev => {
-        const next = { ...prev };
-        (upserted || []).forEach(row => {
-          next[row.catalog_item_id] = {
-            id: row.id,
-            stock_count: row.stock_count,
-            in_transit: row.in_transit ?? "",
-            notes: row.notes ?? "",
-            ordered: row.ordered ?? false,
-            counted_by: row.counted_by || prev[row.catalog_item_id]?.counted_by || null,
-            counted_at: row.counted_at || prev[row.catalog_item_id]?.counted_at || null,
-            ordered_by: row.ordered_by || prev[row.catalog_item_id]?.ordered_by || null,
-            ordered_at: row.ordered_at || prev[row.catalog_item_id]?.ordered_at || null,
-            skipped: row.skipped ?? false,
-            skipped_by: row.skipped_by || null,
-            skipped_at: row.skipped_at || null,
-          };
-        });
-        return next;
+      const nextCounts = { ...currentCounts };
+      (upserted || []).forEach(row => {
+        nextCounts[row.catalog_item_id] = {
+          id: row.id,
+          stock_count: row.stock_count,
+          in_transit: row.in_transit ?? "",
+          notes: row.notes ?? "",
+          ordered: row.ordered ?? false,
+          counted_by: row.counted_by || currentCounts[row.catalog_item_id]?.counted_by || null,
+          counted_at: row.counted_at || currentCounts[row.catalog_item_id]?.counted_at || null,
+          ordered_by: row.ordered_by || currentCounts[row.catalog_item_id]?.ordered_by || null,
+          ordered_at: row.ordered_at || currentCounts[row.catalog_item_id]?.ordered_at || null,
+          skipped: row.skipped ?? false,
+          skipped_by: row.skipped_by || null,
+          skipped_at: row.skipped_at || null,
+        };
       });
-
-      // Update snapshot status to in_progress if it was somehow not set
-      if (snap.status !== "in_progress" && snap.status !== "completed") {
-        await supabase
-          .from("inventory_snapshots")
-          .update({ status: "in_progress" })
-          .eq("id", snapshotId);
-      }
+      countsRef.current = nextCounts;
+      setCounts(nextCounts);
 
       pendingSave.current = {};
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2200);
-
-      // ── Auto-complete: check if all items are counted + all needing order are ordered/skipped ──
-      if (snap.status !== "completed") {
-        // Get latest counts after this save
-        setCounts(latestCounts => {
-          const activeItems = catalogItems.filter(c => c.is_active);
-          // Check catalog items: all counted + all orders handled
-          const allCatalogCounted = activeItems.every(c => {
-            const cnt = latestCounts[c.id];
-            return cnt && cnt.stock_count != null && cnt.stock_count !== "";
-          });
-          const allCatalogOrdersHandled = activeItems.every(c => {
-            const cnt = latestCounts[c.id];
-            if (!cnt) return false;
-            const stockCount = typeof cnt.stock_count === 'number' ? cnt.stock_count : parseInt(cnt.stock_count, 10);
-            const par = c.par_level ?? 0;
-            const needsOrder = par > 0 && stockCount < par;
-            if (!needsOrder) return true;
-            return cnt.ordered || cnt.skipped;
-          });
-          // Check ad hoc items: all must have stock_count AND be ordered or skipped
-          const allAdhocHandled = adhocItems.every(a =>
-            a.stock_count != null && a.stock_count !== "" && (a.ordered || a.skipped)
-          );
-          if (allCatalogCounted && allCatalogOrdersHandled && allAdhocHandled) {
-            // Auto-complete the snapshot
-            supabase
-              .from("inventory_snapshots")
-              .update({
-                status: "completed",
-                completed_at: new Date().toISOString(),
-                completed_by: profile?.name || profile?.email || "Auto",
-              })
-              .eq("id", snap.id)
-              .then(() => {
-                setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
-                if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count auto-completed!" });
-              });
-          }
-          return latestCounts; // don't modify, just reading
-        });
-      }
     } catch (err) {
       console.error("Auto-save error:", err);
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [counts, profile]);
+  }, []);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1725,18 +1889,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       // Synchronously trigger save — can't await in beforeunload, but
       // navigator.sendBeacon can't do upserts. Instead, flush immediately.
       if (Object.keys(pendingSave.current).length > 0) {
-        flushSave();
+        void flushSave();
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && Object.keys(pendingSave.current).length > 0) {
-        flushSave();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && Object.keys(pendingSave.current).length > 0) {
+        void flushSave();
       }
-    });
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [flushSave]);
 
@@ -1753,6 +1920,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       ...prev,
       [itemId]: { ...(prev[itemId] || {}), ...updates },
     }));
+    countsRef.current = {
+      ...countsRef.current,
+      [itemId]: { ...(countsRef.current[itemId] || {}), ...updates },
+    };
     pendingSave.current[itemId] = {
       ...(pendingSave.current[itemId] || {}),
       ...updates,
@@ -1918,16 +2089,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
     setSubmitSaving(true);
     try {
-      const { error } = await supabase
-        .from("inventory_snapshots")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          completed_by: profile?.name || profile?.email || "Unknown",
-        })
-        .eq("id", snap.id);
+      const { data: completedSnapshot, error } = await supabase
+        .rpc("complete_inventory_snapshot", { p_snapshot_id: snap.id });
       if (error) throw error;
-      setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
+      if (completedSnapshot) {
+        setSnapshot(completedSnapshot);
+        snapshotRef.current = completedSnapshot;
+      }
       setShowSubmitModal(false);
       if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count completed and locked!" });
 
@@ -1954,13 +2122,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           (prevCounts || []).forEach(c => { prevCountMap[c.catalog_item_id] = c; });
 
           // Get current week's counts (already in state as `counts`)
-          const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+          const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart, inventorySchedule.cadenceDays);
+          const currentCounts = countsRef.current;
 
           // Build depletion records
           const depletionRecords = [];
           catalogItems.forEach(item => {
             const prev = prevCountMap[item.id];
-            const curr = counts[item.id];
+            const curr = currentCounts[item.id];
             if (!prev || !curr || curr.stock_count == null || curr.stock_count === "") return;
 
             const openingStock = prev.stock_count || 0;
@@ -1998,6 +2167,64 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setSubmitSaving(false);
     }
   };
+
+  const handleReopen = async (reason) => {
+    const snap = snapshotRef.current;
+    if (!snap) return;
+
+    setReopenSaving(true);
+    try {
+      const { data: reopenedSnapshot, error } = await supabase
+        .rpc("reopen_inventory_snapshot", {
+          p_snapshot_id: snap.id,
+          p_reason: reason,
+        });
+      if (error) throw error;
+      if (reopenedSnapshot) {
+        setSnapshot(reopenedSnapshot);
+        snapshotRef.current = reopenedSnapshot;
+      }
+      setShowReopenModal(false);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count reopened for editing." });
+    } catch (err) {
+      console.error("Reopen error:", err);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to reopen inventory count." });
+    } finally {
+      setReopenSaving(false);
+    }
+  };
+
+  const handleSaveSchedule = useCallback(async () => {
+    if (!locationId) return;
+    setScheduleSaving(true);
+    try {
+      const nextSchedule = normalizeInventorySchedule({
+        cadenceDays: Number(scheduleDraft.cadenceDays),
+        dueWeekday: Number(scheduleDraft.dueWeekday),
+        dueTime: scheduleDraft.dueTime,
+      }, todayStr());
+      nextSchedule.anchorDate = getInventoryCycleStart(todayStr(), nextSchedule);
+
+      const { error } = await supabase
+        .from("lite_settings")
+        .upsert({
+          location_id: locationId,
+          setting_key: "inventory_schedule",
+          setting_value: nextSchedule,
+        }, { onConflict: "location_id,setting_key" });
+      if (error) throw error;
+
+      setInventorySchedule(nextSchedule);
+      setScheduleDraft(nextSchedule);
+      setShowScheduleModal(false);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory schedule updated." });
+    } catch (err) {
+      console.error("Inventory schedule save error:", err);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to save inventory schedule." });
+    } finally {
+      setScheduleSaving(false);
+    }
+  }, [addGlobalToast, locationId, scheduleDraft]);
 
   // ── Add adhoc item ──
   const handleAddAdhoc = async (formData) => {
@@ -2116,35 +2343,65 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     return total;
   }, [catalogItems, counts, adhocItems]);
 
-  // ── Ordering progress (two-phase completion) ──
-  const orderingStatus = useMemo(() => {
-    let itemsNeedingOrder = 0;
-    let itemsOrdered = 0;
-    let itemsSkipped = 0;
-    catalogItems.forEach(item => {
-      const count = counts[item.id];
-      const sc = count?.stock_count;
-      if (sc == null || sc === "") return; // not yet counted
-      const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(sc, 10) || 0) - (parseInt(count?.in_transit, 10) || 0));
-      if (toOrder > 0) {
-        itemsNeedingOrder++;
-        if (count?.ordered) itemsOrdered++;
-        else if (count?.skipped) itemsSkipped++;
-      }
-    });
-    const itemsAddressed = itemsOrdered + itemsSkipped;
-    return { itemsNeedingOrder, itemsOrdered, itemsSkipped, allOrdered: itemsNeedingOrder === 0 || itemsAddressed >= itemsNeedingOrder };
-  }, [catalogItems, counts]);
+  const inventoryWorkflow = useMemo(() => getInventoryWorkflow({
+    snapshotStatus: snapshot?.status,
+    catalogItems,
+    counts,
+    adhocItems,
+  }), [snapshot?.status, catalogItems, counts, adhocItems]);
 
-  const countingComplete = useMemo(() => {
-    if (catalogItems.length === 0) return false;
-    return catalogItems.every(item => {
-      const sc = counts[item.id]?.stock_count;
-      return sc != null && sc !== "";
-    });
-  }, [catalogItems, counts]);
+  const canComplete = inventoryWorkflow.readyToSubmit;
+  const viewerRole = viewerLiteRole || authProfile?.role || null;
+  const canReopenSnapshot = snapshot?.status === "completed" && INVENTORY_REOPEN_ROLES.has(viewerRole);
+  const snapshotHistory = useMemo(() => (
+    Array.isArray(snapshot?.history)
+      ? [...snapshot.history].sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
+      : []
+  ), [snapshot?.history]);
+  const latestReopenEntry = snapshotHistory.find(entry => entry?.action === "reopened") || null;
 
-  const canComplete = countingComplete && orderingStatus.allOrdered;
+  const statusBadge = useMemo(() => {
+    if (snapshot?.status === "completed") {
+      return {
+        label: "Completed",
+        background: C.sucLt,
+        color: C.suc,
+        borderColor: `${C.suc}40`,
+      };
+    }
+    if (inventoryWorkflow.readyToSubmit) {
+      return {
+        label: "Ready to Submit",
+        background: C.priLt,
+        color: C.pri,
+        borderColor: `${C.pri}35`,
+      };
+    }
+    if (snapshot?.status === "in_progress") {
+      return {
+        label: "In Progress",
+        background: C.warnLt,
+        color: C.warn,
+        borderColor: `${C.warn}40`,
+      };
+    }
+    return {
+      label: "Draft",
+      background: C.bg,
+      color: C.textMut,
+      borderColor: C.border,
+    };
+  }, [inventoryWorkflow.readyToSubmit, snapshot?.status]);
+
+  const overdueInfo = getInventoryOverdueInfo(todayStr(), inventorySchedule, currentWeekStart === thisWeekStart && snapshot?.status === "completed");
+  const inventoryCadenceLabel = formatInventoryCadenceLabel(inventorySchedule);
+  const inventoryDueLabel = currentWeekStart !== thisWeekStart
+    ? `Viewing cycle starting ${fmtWeekLabel(currentWeekStart)}`
+    : snapshot?.status === "completed"
+      ? "Completed this cycle"
+      : overdueInfo.isDueToday
+        ? "Due today"
+        : `${overdueInfo.daysOverdue} day${overdueInfo.daysOverdue !== 1 ? "s" : ""} overdue`;
 
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
@@ -2166,10 +2423,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif", lineHeight: 1.2 }}>
-              Weekly Inventory Count
+              Inventory Count
             </h1>
             <div style={{ fontSize: 13, color: C.textSec, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>{new Date().getDay() === 1 ? "Due today" : "Due every Monday"}</span>
+              <span>{inventoryCadenceLabel}</span>
               <span style={{ color: C.borderLight }}>·</span>
               <span>Track on-hand stock, transit items, and reorder needs</span>
             </div>
@@ -2177,6 +2434,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           {/* Status badge + Manage Catalog */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <Btn
+              variant="secondary"
+              size="sm"
+              icon={<I.Calendar />}
+              onClick={() => {
+                setScheduleDraft(inventorySchedule);
+                setShowScheduleModal(true);
+              }}
+            >
+              Schedule
+            </Btn>
             {!isReadOnly && (
               catalogEditMode ? (
                 <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
@@ -2198,21 +2466,18 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 borderRadius: 20,
                 fontSize: 12,
                 fontWeight: 700,
-                background: snapshot.status === "completed" ? C.sucLt : snapshot.status === "in_progress" ? C.warnLt : C.bg,
-                color: snapshot.status === "completed" ? C.suc : snapshot.status === "in_progress" ? C.warn : C.textMut,
-                border: `1.5px solid ${snapshot.status === "completed" ? C.suc + "40" : snapshot.status === "in_progress" ? C.warn + "40" : C.border}`,
+                background: statusBadge.background,
+                color: statusBadge.color,
+                border: `1.5px solid ${statusBadge.borderColor}`,
               }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: snapshot.status === "completed" ? C.suc : snapshot.status === "in_progress" ? C.warn : C.textMut, display: "inline-block" }} />
-                {snapshot.status === "completed" ? "Completed" : snapshot.status === "in_progress" ? "In Progress" : "Draft"}
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusBadge.color, display: "inline-block" }} />
+                {statusBadge.label}
               </span>
             )}
 
             {/* Overdue indicator — current week, past Monday, not completed */}
             {currentWeekStart === thisWeekStart && (() => {
-              const dow = new Date().getDay();
-              const isPastMonday = dow !== 1;
-              const daysSince = dow === 0 ? 6 : dow - 1;
-              return isPastMonday && (!snapshot || snapshot.status !== "completed") ? (
+              return overdueInfo.isOverdue && (!snapshot || snapshot.status !== "completed") ? (
                 <span style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -2226,7 +2491,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                   border: "1.5px solid #DC262640",
                 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#DC2626", display: "inline-block" }} />
-                  {daysSince} day{daysSince !== 1 ? "s" : ""} overdue
+                  {overdueInfo.daysOverdue} day{overdueInfo.daysOverdue !== 1 ? "s" : ""} overdue
                 </span>
               ) : null;
             })()}
@@ -2255,11 +2520,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           {/* Week Navigator */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
-              onClick={() => setCurrentWeekStart(prev => addDays(prev, -7))}
+              onClick={() => setCurrentWeekStart(prev => addDays(prev, -inventorySchedule.cadenceDays))}
               style={{ width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.borderColor = C.pri; }}
               onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.borderColor = C.border; }}
-              title="Previous week"
+              title="Previous cycle"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
@@ -2267,14 +2532,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
               <I.Calendar />
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                Week of {fmtWeekLabel(currentWeekStart)}
+                Cycle starting {fmtWeekLabel(currentWeekStart)}
               </span>
               {currentWeekStart === thisWeekStart && (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: C.priLt, color: C.pri }}>
                   CURRENT
                 </span>
               )}
-              {currentWeekStart === thisWeekStart && new Date().getDay() !== 1 && (!snapshot || snapshot.status !== "completed") && (
+              {currentWeekStart === thisWeekStart && overdueInfo.isOverdue && (!snapshot || snapshot.status !== "completed") && (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "#FEF2F2", color: "#DC2626" }}>
                   OVERDUE
                 </span>
@@ -2282,30 +2547,30 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             </div>
 
             <button
-              onClick={() => setCurrentWeekStart(prev => addDays(prev, 7))}
+              onClick={() => setCurrentWeekStart(prev => addDays(prev, inventorySchedule.cadenceDays))}
               style={{ width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.borderColor = C.pri; }}
               onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.borderColor = C.border; }}
-              title="Next week"
+              title="Next cycle"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
 
             {currentWeekStart !== thisWeekStart && (
               <Btn variant="secondary" size="sm" onClick={() => setCurrentWeekStart(thisWeekStart)}>
-                This Week
+                Current Cycle
               </Btn>
             )}
           </div>
 
-          {/* Day picker — Mon through today (or full week for past weeks) */}
+          {/* Day picker — cycle start through today (or full cycle for non-current views) */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut, marginRight: 4 }}>Counted on:</span>
             {(() => {
               const days = [];
               const start = new Date(currentWeekStart + "T12:00:00");
               const endDate = currentWeekStart === thisWeekStart ? new Date(todayStr() + "T12:00:00") : new Date(start);
-              if (currentWeekStart !== thisWeekStart) endDate.setDate(endDate.getDate() + 6);
+              if (currentWeekStart !== thisWeekStart) endDate.setDate(endDate.getDate() + Math.max(0, inventorySchedule.cadenceDays - 1));
               const d = new Date(start);
               while (d <= endDate) {
                 const ds = d.toISOString().split("T")[0];
@@ -2393,6 +2658,26 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         )}
       </div>
 
+      <Card style={{ marginBottom: 16, padding: "14px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          {[
+            { label: "Status", value: statusBadge.label, color: statusBadge.color },
+            { label: "Phase", value: inventoryWorkflow.phaseLabel || "Not started", color: C.text },
+            { label: "Cadence", value: inventoryCadenceLabel, color: C.text },
+            { label: "Due", value: inventoryDueLabel, color: inventoryDueLabel.includes("overdue") ? C.dan : C.text },
+          ].map((item) => (
+            <div key={item.label} style={{ padding: "8px 10px", borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                {item.label}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: item.color, lineHeight: 1.4 }}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* ── Main Content ── */}
       {loading ? (
         <div>
@@ -2420,17 +2705,70 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         <div className="inv-fade-in">
           {/* Read-only banner */}
           {isReadOnly && (
-            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <I.CheckCircle />
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.suc }}>Inventory count completed. </span>
+                  <span style={{ fontSize: 13, color: C.textSec }}>
+                    This count is locked for editing.
+                    {snapshot?.completed_at && ` Submitted ${new Date(snapshot.completed_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
+                    {snapshot?.completed_by && ` By ${snapshot.completed_by}.`}
+                  </span>
+                </div>
+              </div>
+              {canReopenSnapshot && (
+                <Btn variant="danger" size="sm" onClick={() => setShowReopenModal(true)} disabled={reopenSaving}>
+                  {reopenSaving ? "Reopening..." : "Mark Incomplete"}
+                </Btn>
+              )}
+            </div>
+          )}
+
+          {!isReadOnly && inventoryWorkflow.readyToSubmit && (
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1px solid ${C.pri}25`, display: "flex", alignItems: "center", gap: 10 }}>
               <I.CheckCircle />
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.suc }}>Inventory count completed. </span>
-                <span style={{ fontSize: 13, color: C.textSec }}>
-                  This count is locked for editing.
-                  {snapshot?.completed_at && ` Submitted ${new Date(snapshot.completed_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
-                  {snapshot?.completed_by && ` By ${snapshot.completed_by}.`}
-                </span>
+              <div style={{ fontSize: 13, color: C.textSec }}>
+                <span style={{ fontWeight: 700, color: C.pri }}>Ready to submit. </span>
+                All catalog and ad-hoc items have been counted, and every reorder has been handled. Use the submit button below to lock the cycle.
               </div>
             </div>
+          )}
+
+          {!isReadOnly && latestReopenEntry && (
+            <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}30`, display: "flex", alignItems: "center", gap: 10 }}>
+              <I.RefreshCw />
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 700, color: C.warn }}>Count reopened. </span>
+                {latestReopenEntry.user_name && `Reopened by ${latestReopenEntry.user_name}`}
+                {latestReopenEntry.ts && ` on ${new Date(latestReopenEntry.ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                {latestReopenEntry.reason ? ` — ${latestReopenEntry.reason}` : "."}
+              </div>
+            </div>
+          )}
+
+          {snapshotHistory.length > 0 && (
+            <Card style={{ marginBottom: 14, padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                Count History
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {snapshotHistory.map((entry, idx) => (
+                  <div key={`${entry?.ts || "history"}-${idx}`} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, paddingBottom: idx === snapshotHistory.length - 1 ? 0 : 8, borderBottom: idx === snapshotHistory.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 700, color: entry?.action === "reopened" ? C.warn : C.suc }}>
+                        {entry?.action === "reopened" ? "Marked incomplete" : "Completed"}
+                      </span>
+                      {entry?.user_name ? ` by ${entry.user_name}` : ""}
+                      {entry?.reason ? ` — ${entry.reason}` : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>
+                      {entry?.ts ? new Date(entry.ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
           )}
 
           {/* Catalog edit mode banner */}
@@ -2455,10 +2793,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <Card style={{ padding: 32, textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 36, marginBottom: 10 }}>🗓</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6, fontFamily: "'Outfit', sans-serif" }}>
-                No count for this week
+                No count for this cycle
               </div>
               <div style={{ fontSize: 13, color: C.textSec }}>
-                No inventory count was recorded for the week of {fmtWeekLabel(currentWeekStart)}.
+                No inventory count was recorded for the cycle starting {fmtWeekLabel(currentWeekStart)}.
               </div>
             </Card>
           )}
@@ -2521,7 +2859,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
               {adhocItems.length === 0 ? (
                 <Card style={{ padding: 20, textAlign: "center", border: `1.5px dashed ${C.border}`, background: C.bg }}>
-                  <div style={{ fontSize: 13, color: C.textMut }}>No ad-hoc items for this week.</div>
+                  <div style={{ fontSize: 13, color: C.textMut }}>No ad-hoc items for this cycle.</div>
                   {!isReadOnly && (
                     <div style={{ marginTop: 8 }}>
                       <button
@@ -2570,7 +2908,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Total Items
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>
-                        {catalogItems.length + adhocItems.length}
+                        {inventoryWorkflow.totalItems}
                       </div>
                     </div>
                     <div>
@@ -2578,7 +2916,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Items Counted
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>
-                        {catalogItems.filter(i => counts[i.id]?.stock_count != null && counts[i.id]?.stock_count !== "").length + adhocItems.filter(i => i.stock_count != null).length}
+                        {inventoryWorkflow.itemsCounted}
                       </div>
                     </div>
                     <div>
@@ -2586,13 +2924,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         Items to Reorder
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: C.warn }}>
-                        {catalogItems.filter(item => {
-                          const count = counts[item.id];
-                          const sc = count?.stock_count;
-                          if (sc == null || sc === "") return false;
-                          const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(sc, 10) || 0) - (parseInt(count?.in_transit, 10) || 0));
-                          return toOrder > 0;
-                        }).length}
+                        {inventoryWorkflow.itemsNeedingOrder}
                       </div>
                     </div>
                     {dogDays > 0 && (
@@ -2624,9 +2956,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
               {!canComplete && (
                 <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>
-                  {!countingComplete
-                    ? `${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length} item${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length !== 1 ? "s" : ""} still need counting`
-                    : `${orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered} item${(orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered) !== 1 ? "s" : ""} still need to be ordered`
+                  {!inventoryWorkflow.countingComplete
+                    ? `${inventoryWorkflow.missingCountCount} item${inventoryWorkflow.missingCountCount !== 1 ? "s" : ""} still need counting`
+                    : `${inventoryWorkflow.pendingOrderingCount} item${inventoryWorkflow.pendingOrderingCount !== 1 ? "s" : ""} still need an order decision`
                   }
                 </div>
               )}
@@ -2661,13 +2993,30 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         />
       )}
 
+      {showReopenModal && (
+        <ReopenModal
+          onClose={() => setShowReopenModal(false)}
+          onConfirm={handleReopen}
+          saving={reopenSaving}
+        />
+      )}
 
+      {showScheduleModal && (
+        <InventoryScheduleModal
+          draft={scheduleDraft}
+          onChange={setScheduleDraft}
+          onClose={() => setShowScheduleModal(false)}
+          onConfirm={handleSaveSchedule}
+          saving={scheduleSaving}
+        />
+      )}
 
       {showDepletionModal && (
         <DepletionRateModal
           locationId={locationId}
           reservations={reservations}
           currentWeekStart={currentWeekStart}
+          inventorySchedule={inventorySchedule}
           onClose={() => setShowDepletionModal(false)}
         />
       )}

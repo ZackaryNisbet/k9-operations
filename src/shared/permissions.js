@@ -5,6 +5,38 @@ import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX } from "./theme";
 const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
 // New role code map for location_roles table (7-role system)
 const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", multi_location_admin:"multi_location_admin", developer:"developer" };
+const LEAN_ROLE_ALIAS_MAP = {
+  owner: "enterprise_admin",
+  enterprise_admin: "enterprise_admin",
+  developer: "enterprise_admin",
+  multi_location_admin: "multi_location_admin",
+  regional: "multi_location_admin",
+  admin: "location_admin",
+  location_admin: "location_admin",
+  manager: "manager",
+  supervisor: "supervisor",
+  csr: "csr",
+  pct: "pct",
+  staff: "csr",
+  role_owner: "enterprise_admin",
+  role_enterprise_admin: "enterprise_admin",
+  role_manager: "manager",
+  role_staff: "csr",
+};
+const LEAN_PERMISSION_ALIAS_MAP = {
+  "Labor Management": ["Labor Management", "Training Management"],
+  "Training Management": ["Training Management", "Labor Management"],
+};
+
+function resolveLeanRoleKey(userRole) {
+  const normalized = String(userRole || "").trim();
+  return LEAN_ROLE_ALIAS_MAP[normalized] || normalized || "pct";
+}
+
+function resolveLeanPermissionKeys(area) {
+  const normalized = String(area || "").trim();
+  return LEAN_PERMISSION_ALIAS_MAP[normalized] || [normalized];
+}
 
 function _resolveRole(profile, data) {
   if (!profile || !data) return null;
@@ -50,11 +82,9 @@ function hasPermission(profile, data, permKey) {
 // ─── hasLitePermission Helper ──────────────────────────────────────────────
 function hasLeanPermission(profile, area) {
   if (!profile) return false;
-  const userRole = profile.role || "pct";
-  // Map owner → enterprise_admin, multi_location_admin uses its own matrix entry
-  const roleKey = userRole === "owner" ? "enterprise_admin" : userRole;
+  const roleKey = resolveLeanRoleKey(profile.role || "pct");
   const perms = LEAN_PERMISSION_MATRIX[roleKey] || {};
-  return perms[area] === true;
+  return resolveLeanPermissionKeys(area).some((key) => perms[key] === true);
 }
 
 // ─── getUserLocationIds ─────────────────────────────────────────────────────
@@ -78,4 +108,4 @@ function getUserLocationIds(profile, locationRoles) {
 
 // ─── Gingr Reservation Type → Lite Type Mapping ───────────────────────────
 
-export { LEGACY_ROLE_MAP, ROLE_CODE_MAP, _resolveRole, hasPermission, hasLeanPermission, getUserLocationIds };
+export { LEGACY_ROLE_MAP, ROLE_CODE_MAP, _resolveRole, hasPermission, hasLeanPermission, getUserLocationIds, resolveLeanRoleKey, resolveLeanPermissionKeys };
