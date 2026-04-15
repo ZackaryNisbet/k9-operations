@@ -13,8 +13,12 @@ import {
   extractBathLikeServices,
   getBathSchedulingForDate,
   isBoardingReservation,
-  normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
+import {
+  fetchLocationIconMappings,
+  resolveBathDisplayFromIconRows,
+  type GingrAnimalIconRow,
+} from "../_shared/gingr-icon-mappings.ts";
 import {
   getRollCallWorkflowTitle,
   loadRollCallSessionRow,
@@ -612,12 +616,13 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
 
   // Fetch bath icons, play icons, and weights
   // iconMap stores ALL bath icons per dog (array) to support multiple bath types
-  let iconMap: Record<string, Array<{ title: string; comment: string }>> = {};
+  let iconMap: Record<string, GingrAnimalIconRow[]> = {};
   let playIconMap: Record<string, string> = {};
   let weightMap: Record<string, number | null> = {};
+  const iconMappings = await fetchLocationIconMappings({ supabase, locationId });
   if (animalIds.length > 0) {
     const [{ data: icons }, playAssignments, { data: animals }] = await Promise.all([
-      supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title, icon_comment")
+      supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title, icon_comment, icon_template_id, icon_identity_key, icon_group, icon_color, icon_class")
         .eq("location_id", locationId).eq("icon_group", "Bath").in("animal_gingr_id", animalIds),
       fetchPlaygroupAssignments({
         supabase,
@@ -630,7 +635,16 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     (icons || []).forEach((r: any) => {
       const id = r.animal_gingr_id;
       if (!iconMap[id]) iconMap[id] = [];
-      iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
+      iconMap[id].push({
+        animal_gingr_id: r.animal_gingr_id,
+        icon_title: r.icon_title || "",
+        icon_comment: r.icon_comment || "",
+        icon_template_id: r.icon_template_id || "",
+        icon_identity_key: r.icon_identity_key || "",
+        icon_group: r.icon_group || "",
+        icon_color: r.icon_color || "",
+        icon_class: r.icon_class || "",
+      });
     });
     (playAssignments || []).forEach((assignment: any) => {
       if (assignment?.hasPrivatePlay) {
@@ -699,10 +713,10 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   // ─── Build final dog objects ───────────────────────────────────────────
   function buildDogOutput(d: any): any {
     const icons = iconMap[d.animalGingrId] || [];
-    const iconTitles = icons.map(i => i.title).filter(Boolean);
-    const iconComments = icons.map(i => i.comment).filter(Boolean);
-    const normalizedBath = normalizeBathDisplay({
-      iconTitles,
+    const iconComments = icons.map(i => i.icon_comment).filter(Boolean);
+    const normalizedBath = resolveBathDisplayFromIconRows({
+      iconRows: icons,
+      mappings: iconMappings,
       addonType: d.addonType,
       serviceName: d.bathServiceName,
       rawModifiers: d.bathModifiers,
@@ -867,12 +881,26 @@ function computeServiceReport(
   const dogs: any[] = [];
   const seen = new Set<string>();
 
+  const normalizeAddonStatus = (value: any) =>
+    String(value || "").trim().toLowerCase().replace(/[_\s]+/g, "-");
+  const isOperationalAddonStatus = (value: any) => {
+    const normalized = normalizeAddonStatus(value);
+    if (!normalized) return true;
+    return ["scheduled", "confirmed", "checked-in", "completed"].includes(normalized);
+  };
+
   for (const res of Object.values(reservations)) {
     const services = res.services || [];
     const matched = services.filter((s: any) =>
+      isOperationalAddonStatus(
+        s?.status || s?.service_status || s?.reservation_status || s?.booking_status,
+      ) &&
       (s.name || s.service_name || "").toLowerCase().includes(filterKeyword.toLowerCase()),
     );
-    if (matched.length === 0) continue;
+    const reservationType = res.reservation_type?.type || res.reservationType || "";
+    const isLuxurySuite = filterKeyword.toLowerCase() === "pamper" &&
+      reservationType.toLowerCase().includes("luxury suite");
+    if (matched.length === 0 && !isLuxurySuite) continue;
 
     const animalId = String(res.animal?.id || "");
     if (!animalId || seen.has(animalId)) continue;
@@ -882,7 +910,11 @@ function computeServiceReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${res.owner?.first_name || ""} ${res.owner?.last_name || ""}`.trim(),
-      services: matched.map((s: any) => s.name || s.service_name || filterKeyword),
+      roomLabel: res.roomLabel || res.room?.name || "",
+      reservationType,
+      services: matched.length > 0
+        ? matched.map((s: any) => s.name || s.service_name || filterKeyword)
+        : ["Luxury Suite"],
     });
   }
 
@@ -901,6 +933,13 @@ async function computeEnrichmentReport(
   const scheduled: any[] = [];
   const suggested: any[] = [];
   const seen = new Set<string>();
+  const normalizeAddonStatus = (value: any) =>
+    String(value || "").trim().toLowerCase().replace(/[_\s]+/g, "-");
+  const isOperationalAddonStatus = (value: any) => {
+    const normalized = normalizeAddonStatus(value);
+    if (!normalized) return true;
+    return ["scheduled", "confirmed", "checked-in", "completed"].includes(normalized);
+  };
 
   // 1) First try local reservations (from Supabase — currently checked-in dogs)
   for (const res of Object.values(localReservations)) {
@@ -909,6 +948,9 @@ async function computeEnrichmentReport(
     if (!animalId || seen.has(animalId)) continue;
 
     const enrichmentServices = services.filter((s: any) =>
+      isOperationalAddonStatus(
+        s?.status || s?.service_status || s?.reservation_status || s?.booking_status,
+      ) &&
       (s.name || s.service_name || "").toLowerCase().includes("enrichment"),
     );
     if (enrichmentServices.length === 0) continue;
@@ -927,6 +969,7 @@ async function computeEnrichmentReport(
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
+      roomLabel: res.roomLabel || res.room?.name || "",
       services: enrichmentServices.map((s: any) => s.name || s.service_name || "enrichment"),
       status: scheduledForToday ? "scheduled" : "suggested",
       reservationType: resType,
@@ -980,6 +1023,9 @@ async function computeEnrichmentReport(
         const topServices = Array.isArray(row.services) ? row.services : [];
         const services = [...rawServices, ...topServices];
         const enrichmentSvcs = services.filter((s: any) =>
+          isOperationalAddonStatus(
+            s?.status || s?.service_status || s?.reservation_status || s?.booking_status,
+          ) &&
           (s?.name || s?.service_name || "").toLowerCase().includes("enrichment"),
         );
         if (enrichmentSvcs.length === 0) continue;
@@ -989,6 +1035,7 @@ async function computeEnrichmentReport(
           animalId,
           animalName: row?.animal_name || "",
           ownerName: `${row?.owner_first_name || ""} ${row?.owner_last_name || ""}`.trim(),
+          roomLabel: (row.raw_data as any)?.run?.name || "",
           services: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment"),
           status: "scheduled",
           reservationType: row?.reservation_type_name || "",
@@ -1014,32 +1061,81 @@ async function computeEnrichmentReport(
 
 // ─── Compute private play ─────────────────────────────────────────────────
 
-function computePrivatePlay(reservations: Record<string, any>): any {
+async function computePrivatePlay(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+  reservations: Record<string, any>,
+  privatePlayAnimalIds: Set<string>,
+): Promise<any> {
   const dogs: any[] = [];
-  const seen = new Set<string>();
+  const seenAnimalIds = new Set<string>();
+  const seenReservationIds = new Set<string>();
 
-  for (const res of Object.values(reservations)) {
+  for (const [reservationKey, res] of Object.entries(reservations)) {
+    const gingrReservationId = String(
+      res.gingrReservationId || res.gingr_id || reservationKey || "",
+    ).trim();
     const animalId = String(res.animal?.id || "");
     const animalName = res.animal?.name || "";
     const ownerName = `${res.owner?.first_name || ""} ${res.owner?.last_name || ""}`.trim();
     const resType = res.reservation_type?.type || "";
     const isDayBoarding = resType.toLowerCase().startsWith("day boarding");
+    const hasCanonicalPrivatePlay = privatePlayAnimalIds.has(animalId);
     const services = res.services || [];
-    const hasPP = services.some((s: any) =>
+    const hasPPService = services.some((s: any) =>
       (s.name || s.service_name || "").toLowerCase().includes("private play"),
     );
+    const hasPP = hasCanonicalPrivatePlay || hasPPService;
 
-    if ((isDayBoarding || hasPP) && animalId && !seen.has(animalId)) {
-      seen.add(animalId);
+    if ((isDayBoarding || hasPP) && animalId && !seenAnimalIds.has(animalId)) {
+      seenAnimalIds.add(animalId);
+      if (gingrReservationId) seenReservationIds.add(gingrReservationId);
       dogs.push({
+        gingrReservationId,
         animalId,
         animalName,
         ownerName,
         reservationType: resType,
         requiredSessions: 3,
-        source: isDayBoarding ? "day_boarding" : "private_play_service",
+        source: isDayBoarding
+          ? "day_boarding"
+          : hasCanonicalPrivatePlay
+            ? "private_play_icon"
+            : "private_play_service",
       });
     }
+  }
+
+  const { data: manualOverrideRows } = await supabase
+    .from("ops_private_play_manual_overrides")
+    .select("gingr_reservation_id, animal_gingr_id, room_label_override")
+    .eq("location_id", locationId)
+    .eq("override_date", targetDate)
+    .is("removed_at", null);
+
+  for (const override of (manualOverrideRows || [])) {
+    const gingrReservationId = String(override.gingr_reservation_id || "").trim();
+    if (!gingrReservationId || seenReservationIds.has(gingrReservationId)) continue;
+
+    const reservation = reservations[gingrReservationId];
+    if (!reservation) continue;
+
+    const animalId = String(reservation.animal?.id || "").trim();
+    if (!animalId || seenAnimalIds.has(animalId)) continue;
+
+    seenAnimalIds.add(animalId);
+    seenReservationIds.add(gingrReservationId);
+    dogs.push({
+      gingrReservationId,
+      animalId,
+      animalName: reservation.animal?.name || "",
+      ownerName: `${reservation.owner?.first_name || ""} ${reservation.owner?.last_name || ""}`.trim(),
+      reservationType: reservation.reservation_type?.type || "",
+      requiredSessions: 3,
+      source: "manual_override",
+      roomLabel: String(override.room_label_override || "").trim() || reservation.roomLabel || reservation.room?.name || "",
+    });
   }
 
   dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
@@ -1291,6 +1387,24 @@ Deno.serve(async (req: Request) => {
 
     // Compute all service reports in parallel
     const reservations = await fetchReservationsForDate(sb, locationId, date);
+    const ppAnimalIds = [...new Set(
+      Object.values(reservations)
+        .map((res: any) => String(res?.animal?.id || "").trim())
+        .filter(Boolean),
+    )];
+    const ppAssignments = ppAnimalIds.length > 0
+      ? await fetchPlaygroupAssignments({
+          supabase: sb,
+          locationId,
+          animalIds: ppAnimalIds,
+          columns: "animal_gingr_id, has_private_play",
+        })
+      : [];
+    const privatePlayAnimalIds = new Set(
+      (ppAssignments || [])
+        .filter((assignment: any) => assignment?.hasPrivatePlay)
+        .map((assignment: any) => assignment.animalGingrId),
+    );
 
     const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
       computeBathingReport(sb, locationId, date),
@@ -1298,7 +1412,13 @@ Deno.serve(async (req: Request) => {
       computeEnrichmentReport(sb, locationId, date, reservations),
       computeLodgingTransfers(sb, locationId, date),
     ]);
-    const privatePlay = computePrivatePlay(reservations);
+    const privatePlay = await computePrivatePlay(
+      sb,
+      locationId,
+      date,
+      reservations,
+      privatePlayAnimalIds,
+    );
 
     // Upsert results into lite_daily_ops so subsequent requests are cached
     await Promise.allSettled([
