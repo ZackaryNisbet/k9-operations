@@ -13,6 +13,11 @@ export type RoomOccupancyResolutionStatus =
   | "resolved_from_reservation_label"
   | "not_assigned_in_gingr";
 
+export const ROOM_OCCUPANCY_LODGING_CATEGORIES: RoomOccupancyReservationCategory[] = [
+  "boarding",
+  "day_boarding",
+];
+
 export interface RoomOccupancyRunInput {
   gingr_run_id?: string | number | null;
   run_name?: string | null;
@@ -610,7 +615,9 @@ function enrichReservations(
   includeCategories?: RoomOccupancyReservationCategory[],
 ): EnrichedReservation[] {
   const result: EnrichedReservation[] = [];
-  const allowed = includeCategories?.length ? new Set(includeCategories) : null;
+  const allowed = new Set(
+    includeCategories?.length ? includeCategories : ROOM_OCCUPANCY_LODGING_CATEGORIES,
+  );
 
   for (const reservation of reservations || []) {
     const cancelledDate = normalizeDate(reservation.cancelled_date);
@@ -1222,6 +1229,6 @@ export async function fetchRoomOccupancySnapshotForDate(
     runs: runsResult.data || [],
     occupancy_rows: occupancyResult.data || [],
     reservations,
-    include_categories: input.includeCategories,
+    include_categories: input.includeCategories || ROOM_OCCUPANCY_LODGING_CATEGORIES,
   });
 }
