@@ -9,11 +9,12 @@ import {
   buildClientIncidentMetrics,
   buildDefaultIncidentPayload,
   buildIncidentCaseCode,
-  CLIENT_CASE_SEVERITY_OPTIONS,
   CLIENT_CASE_STATUS_OPTIONS,
   CLIENT_CASE_TYPE_OPTIONS,
   getClientCaseStatusLabel,
+  getIncidentCategoryLabel,
   getClientCaseTypeLabel,
+  INCIDENT_CATEGORY_OPTIONS,
   getIncidentTemplateById,
   RED_BINDER_FORM_LIBRARY,
 } from "../clientManagementData";
@@ -57,12 +58,6 @@ function getStatusBadgeColor(status) {
   return "default";
 }
 
-function getSeverityBadgeColor(severity) {
-  if (severity === "critical") return "danger";
-  if (severity === "elevated") return "warning";
-  return "default";
-}
-
 function buildDocumentHighlights(document) {
   const payload = document?.form_payload || {};
   const entries = Object.entries(payload).filter(([, value]) => String(value || "").trim());
@@ -100,7 +95,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
   const [pendingTemplateId, setPendingTemplateId] = useState("");
   const [caseType, setCaseType] = useState("animal_incident");
   const [caseStatus, setCaseStatus] = useState("open");
-  const [caseSeverity, setCaseSeverity] = useState("standard");
+  const [caseIncidentCategory, setCaseIncidentCategory] = useState("other");
   const [caseIncidentDate, setCaseIncidentDate] = useState(todayStr());
   const [caseIncidentTime, setCaseIncidentTime] = useState("");
   const [caseIncidentArea, setCaseIncidentArea] = useState("");
@@ -108,6 +103,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
   const [caseSecondarySubjectName, setCaseSecondarySubjectName] = useState("");
   const [caseClientName, setCaseClientName] = useState("");
   const [caseOwnerPhone, setCaseOwnerPhone] = useState("");
+  const [caseReporterEmail, setCaseReporterEmail] = useState("");
   const [caseSummary, setCaseSummary] = useState("");
   const [caseNarrative, setCaseNarrative] = useState("");
   const [savingCase, setSavingCase] = useState(false);
@@ -127,13 +123,14 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const canManageClientDocs = hasLeanPermission(profile, "Customer Lifecycle");
+  const caseDraftStorageKey = useMemo(() => `incident_case_draft_${resolvedLocationId || locationRef || "global"}`, [locationRef, resolvedLocationId]);
 
   const resetCaseModal = useCallback(() => {
     setEditingCaseId(null);
     setPendingTemplateId("");
     setCaseType("animal_incident");
     setCaseStatus("open");
-    setCaseSeverity("standard");
+    setCaseIncidentCategory("other");
     setCaseIncidentDate(todayStr());
     setCaseIncidentTime("");
     setCaseIncidentArea("");
@@ -141,6 +138,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
     setCaseSecondarySubjectName("");
     setCaseClientName("");
     setCaseOwnerPhone("");
+    setCaseReporterEmail("");
     setCaseSummary("");
     setCaseNarrative("");
   }, []);
@@ -190,6 +188,70 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!showCaseModal || editingCaseId) return;
+    try {
+      const rawDraft = window.localStorage.getItem(caseDraftStorageKey);
+      if (!rawDraft) return;
+      const draft = JSON.parse(rawDraft);
+      setCaseType(draft.caseType || "animal_incident");
+      setCaseStatus(draft.caseStatus || "open");
+      setCaseIncidentCategory(draft.caseIncidentCategory || "other");
+      setCaseIncidentDate(draft.caseIncidentDate || todayStr());
+      setCaseIncidentTime(draft.caseIncidentTime || "");
+      setCaseIncidentArea(draft.caseIncidentArea || "");
+      setCaseSubjectName(draft.caseSubjectName || "");
+      setCaseSecondarySubjectName(draft.caseSecondarySubjectName || "");
+      setCaseClientName(draft.caseClientName || "");
+      setCaseOwnerPhone(draft.caseOwnerPhone || "");
+      setCaseReporterEmail(draft.caseReporterEmail || "");
+      setCaseSummary(draft.caseSummary || "");
+      setCaseNarrative(draft.caseNarrative || "");
+    } catch (error) {
+      console.warn("Unable to restore incident case draft", error);
+    }
+  }, [caseDraftStorageKey, editingCaseId, showCaseModal]);
+
+  useEffect(() => {
+    if (!showCaseModal || editingCaseId) return;
+    try {
+      window.localStorage.setItem(caseDraftStorageKey, JSON.stringify({
+        caseType,
+        caseStatus,
+        caseIncidentCategory,
+        caseIncidentDate,
+        caseIncidentTime,
+        caseIncidentArea,
+        caseSubjectName,
+        caseSecondarySubjectName,
+        caseClientName,
+        caseOwnerPhone,
+        caseReporterEmail,
+        caseSummary,
+        caseNarrative,
+      }));
+    } catch (error) {
+      console.warn("Unable to persist incident case draft", error);
+    }
+  }, [
+    caseClientName,
+    caseDraftStorageKey,
+    caseIncidentArea,
+    caseIncidentCategory,
+    caseIncidentDate,
+    caseIncidentTime,
+    caseNarrative,
+    caseOwnerPhone,
+    caseReporterEmail,
+    caseSecondarySubjectName,
+    caseStatus,
+    caseSubjectName,
+    caseSummary,
+    caseType,
+    editingCaseId,
+    showCaseModal,
+  ]);
 
   const metrics = useMemo(() => {
     return buildClientIncidentMetrics({
@@ -260,7 +322,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
     setPendingTemplateId("");
     setCaseType(caseRow.case_type || "animal_incident");
     setCaseStatus(caseRow.status || "open");
-    setCaseSeverity(caseRow.severity || "standard");
+    setCaseIncidentCategory(caseRow.metadata?.incident_category || "other");
     setCaseIncidentDate(caseRow.incident_date || todayStr());
     setCaseIncidentTime(caseRow.incident_time || "");
     setCaseIncidentArea(caseRow.incident_area || "");
@@ -268,6 +330,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
     setCaseSecondarySubjectName(caseRow.secondary_subject_name || "");
     setCaseClientName(caseRow.client_name || "");
     setCaseOwnerPhone(String(caseRow.owner_phone || "").replace(/\D/g, "").slice(0, 10));
+    setCaseReporterEmail(caseRow.metadata?.reporter_email || "");
     setCaseSummary(caseRow.summary || "");
     setCaseNarrative(caseRow.narrative || "");
     setShowCaseModal(true);
@@ -279,11 +342,16 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
       return;
     }
     setSavingCase(true);
+    const derivedSeverity = caseType === "serious_animal_event" || caseIncidentCategory === "dog_death"
+      ? "critical"
+      : caseIncidentCategory === "employee_injury"
+        ? "elevated"
+        : "standard";
     const payload = {
       location_id: resolvedLocationId,
       case_type: caseType,
       status: caseStatus,
-      severity: caseSeverity,
+      severity: derivedSeverity,
       incident_date: caseIncidentDate,
       incident_time: caseIncidentTime || null,
       incident_area: caseIncidentArea.trim() || null,
@@ -297,6 +365,8 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
       updated_by_name: actorName,
       metadata: {
         source_manual: "Section 10 - Red Binder",
+        incident_category: caseIncidentCategory,
+        reporter_email: caseReporterEmail.trim() || null,
       },
     };
 
@@ -309,7 +379,10 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
         setSavingCase(false);
         return;
       }
-      await logCaseActivity(editingCaseId, "case_updated", "Case updated", { status: caseStatus, severity: caseSeverity });
+      await logCaseActivity(editingCaseId, "case_updated", "Case updated", {
+        status: caseStatus,
+        incident_category: caseIncidentCategory,
+      });
     } else {
       const { data: inserted, error } = await supabase
         .from("client_incident_cases")
@@ -327,7 +400,10 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
       }
       savedCaseId = inserted?.id || null;
       if (savedCaseId) {
-        await logCaseActivity(savedCaseId, "case_created", "Case created", { case_type: caseType });
+        await logCaseActivity(savedCaseId, "case_created", "Case created", {
+          case_type: caseType,
+          incident_category: caseIncidentCategory,
+        });
       }
     }
 
@@ -335,6 +411,11 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
     setSavingCase(false);
     setShowCaseModal(false);
     resetCaseModal();
+    try {
+      window.localStorage.removeItem(caseDraftStorageKey);
+    } catch (error) {
+      console.warn("Unable to clear incident draft", error);
+    }
     if (savedCaseId) {
       setSelectedCaseId(savedCaseId);
       if (pendingTemplateId) {
@@ -359,11 +440,13 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
     caseNarrative,
     caseOwnerPhone,
     caseSecondarySubjectName,
-    caseSeverity,
+    caseIncidentCategory,
     caseStatus,
     caseSubjectName,
     caseSummary,
     caseType,
+    caseDraftStorageKey,
+    caseReporterEmail,
     editingCaseId,
     loadData,
     logCaseActivity,
@@ -515,7 +598,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <I.AlertTriangle style={{ width: 22, height: 22 }} />
-          <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Client Management</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Incidents</span>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Btn variant="secondary" onClick={() => setTab("library")}>Red Binder Library</Btn>
@@ -525,7 +608,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
 
       <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}` }}>
         {[
-          { id: "dashboard", label: "Dashboard" },
+          { id: "dashboard", label: "Home" },
           { id: "cases", label: "Incident Cases" },
           { id: "library", label: "Required Forms" },
         ].map((tabOption) => (
@@ -551,7 +634,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
       </div>
 
       {loading ? (
-        <Card style={{ padding: 28, textAlign: "center", color: C.textMut }}>Loading client management…</Card>
+        <Card style={{ padding: 28, textAlign: "center", color: C.textMut }}>Loading incidents…</Card>
       ) : (
         <>
           {tab === "dashboard" && (
@@ -559,7 +642,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 20 }}>
                 <MetricCard label="Open Cases" value={metrics.openCaseCount} color={C.pri} />
                 <MetricCard label="Incidents In 30 Days" value={metrics.caseCount30d} color={C.dan} />
-                <MetricCard label="Critical In 30 Days" value={metrics.criticalCaseCount30d} color={C.dan} />
+                <MetricCard label="Serious Events In 30 Days" value={metrics.seriousCaseCount30d || metrics.criticalCaseCount30d} color={C.dan} />
                 <MetricCard label="Dog-Days In 30 Days" value={metrics.dogDays30} color={C.text} />
                 <MetricCard
                   label="Incident Rate"
@@ -575,7 +658,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
                     <div>
                       <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Recent Incident Cases</div>
-                      <div style={{ fontSize: 12, color: C.textMut }}>New Red Binder documentation should start here.</div>
+                      <div style={{ fontSize: 12, color: C.textMut }}>New incident documentation should start here.</div>
                     </div>
                     <Btn variant="secondary" size="sm" onClick={() => setTab("cases")}>Open Cases</Btn>
                   </div>
@@ -609,7 +692,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
                           <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>{caseRow.summary}</div>
                         </div>
                         <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
-                          <Badge color={getSeverityBadgeColor(caseRow.severity)}>{caseRow.severity || "standard"}</Badge>
+                          <Badge color={getStatusBadgeColor(caseRow.status)}>{getClientCaseStatusLabel(caseRow.status)}</Badge>
                           <span style={{ fontSize: 11, color: C.textMut }}>{caseRow.incident_date ? fmtDate(caseRow.incident_date) : "—"}</span>
                         </div>
                       </button>
@@ -671,11 +754,14 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
                           <div style={{ fontSize: 13, fontWeight: 800, color: caseRow.id === selectedCaseId ? C.pri : C.text }}>
                             {buildIncidentCaseCode(caseRow)} · {caseRow.subject_name}
                           </div>
-                          <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>{getClientCaseTypeLabel(caseRow.case_type)} · {caseRow.client_name || "No client linked yet"}</div>
+                          <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>
+                            {getClientCaseTypeLabel(caseRow.case_type)}
+                            {caseRow.metadata?.incident_category ? ` · ${getIncidentCategoryLabel(caseRow.metadata.incident_category)}` : ""}
+                            {caseRow.client_name ? ` · ${caseRow.client_name}` : ""}
+                          </div>
                           <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.45, marginTop: 4 }}>{caseRow.summary}</div>
                         </div>
                         <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
-                          <Badge color={getSeverityBadgeColor(caseRow.severity)}>{caseRow.severity || "standard"}</Badge>
                           <Badge color={getStatusBadgeColor(caseRow.status)}>{getClientCaseStatusLabel(caseRow.status)}</Badge>
                           <span style={{ fontSize: 11, color: C.textMut }}>{caseRow.incident_date ? fmtDate(caseRow.incident_date) : "—"}</span>
                         </div>
@@ -710,10 +796,13 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
                       </div>
 
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                        <Badge color={getSeverityBadgeColor(selectedCase.severity)}>{selectedCase.severity || "standard"}</Badge>
                         <Badge color={getStatusBadgeColor(selectedCase.status)}>{getClientCaseStatusLabel(selectedCase.status)}</Badge>
+                        {selectedCase.metadata?.incident_category && (
+                          <Badge color="warning">{getIncidentCategoryLabel(selectedCase.metadata.incident_category)}</Badge>
+                        )}
                         {selectedCase.client_name && <Badge color="default">{selectedCase.client_name}</Badge>}
                         {selectedCase.owner_phone && <Badge color="default">{fmtPhoneInput(selectedCase.owner_phone)}</Badge>}
+                        {selectedCase.metadata?.reporter_email && <Badge color="default">{selectedCase.metadata.reporter_email}</Badge>}
                       </div>
 
                       <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55, marginBottom: 8 }}>{selectedCase.summary}</div>
@@ -841,7 +930,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Inp label="Case Type" type="select" value={caseType} onChange={setCaseType} options={CLIENT_CASE_TYPE_OPTIONS} required />
               <Inp label="Status" type="select" value={caseStatus} onChange={setCaseStatus} options={CLIENT_CASE_STATUS_OPTIONS} />
-              <Inp label="Severity" type="select" value={caseSeverity} onChange={setCaseSeverity} options={CLIENT_CASE_SEVERITY_OPTIONS} />
+              <Inp label="Incident Category" type="select" value={caseIncidentCategory} onChange={setCaseIncidentCategory} options={INCIDENT_CATEGORY_OPTIONS} />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Inp label="Incident Date" type="date" value={caseIncidentDate} onChange={setCaseIncidentDate} required />
@@ -861,6 +950,7 @@ export default function ClientManagementPage({ data, nav, profile, addGlobalToas
                 onChange={(value) => setCaseOwnerPhone(String(value || "").replace(/\D/g, "").slice(0, 10))}
               />
             </div>
+            <Inp label="Reporter Email" type="email" value={caseReporterEmail} onChange={setCaseReporterEmail} placeholder="Reporter email for follow-up replies" />
             <Inp label="Summary" value={caseSummary} onChange={setCaseSummary} placeholder="Short operational summary of what happened" required />
             <Inp label="Narrative" type="textarea" rows={5} value={caseNarrative} onChange={setCaseNarrative} placeholder="What happened, what led up to it, what happened next, and what follow-up is needed." />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

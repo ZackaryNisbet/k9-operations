@@ -118,7 +118,7 @@ function DogProfilePage({ data, save, nav, profile, addGlobalToast, dogId }) {
   if (!dog) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto", padding: 20 }}>
-        <button onClick={() => nav && nav("dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.pri, padding: "0 0 12px", fontFamily: "inherit" }}>{"← Back"}</button>
+        <button onClick={() => nav && nav("home")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.pri, padding: "0 0 12px", fontFamily: "inherit" }}>{"← Back"}</button>
         <Card style={{ textAlign: "center", padding: 48 }}>
           <div style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Dog not found</div>
           <div style={{ fontSize: 13, color: C.textMut, marginTop: 4 }}>The requested dog profile could not be found.</div>
