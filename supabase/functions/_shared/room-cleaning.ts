@@ -1,3 +1,8 @@
+import {
+  buildRoomOccupancySnapshot,
+  extractRoomCode,
+} from "./room-occupancy.ts";
+
 export const ROOM_CLEANING_CLASSIFICATION_BUCKETS = [
   "room_refresh",
   "full_disinfect",
@@ -38,8 +43,10 @@ export interface RoomCleaningOccupancyInput {
   gingr_run_id?: string | number | null;
   run_name?: string | null;
   area_name?: string | null;
+  occupancy_date?: string | null;
   animal_names?: string | null;
   occupied?: boolean | null;
+  end_date?: string | null;
 }
 
 export interface RoomCleaningBohDogInput {
@@ -53,6 +60,7 @@ export interface RoomCleaningReservationInput {
   reservation_id: string;
   animal_id: string;
   animal_name: string;
+  owner_first_name?: string | null;
   owner_last_name: string;
   reservation_type_name: string;
   start_date: string;
@@ -265,22 +273,6 @@ function sanitizeRoomKey(value: string): string {
     .replace(/\s+/g, "_")
     .replace(/[^a-zA-Z0-9_-]/g, "")
     .toLowerCase();
-}
-
-export function extractRoomCode(label: string | null | undefined): string | null {
-  const source = String(label || "").trim().toUpperCase();
-  if (!source) return null;
-
-  const letterRoom = source.match(/\b([1-8][ABC])\b/);
-  if (letterRoom) return letterRoom[1];
-
-  const wingRoom = source.match(/\b(LER|SER)\s*0*([1-9]|10)\b/);
-  if (wingRoom) return `${wingRoom[1]}${wingRoom[2]}`;
-
-  const numericRoom = source.match(/\b([1-9][0-9]{2})\b/);
-  if (numericRoom) return numericRoom[1];
-
-  return null;
 }
 
 function normalizeLabel(value: string | null | undefined): string {
@@ -733,131 +725,144 @@ export function buildRoomCleaningPayload(
 ): RoomCleaningPayload {
   const date = normalizeDate(input.date);
   const catalog = buildRunCatalog(input.runs || []);
-  const occupancyByName = buildOccupancyMap(input.occupancyRows || [], catalog);
-  const bohByAnimalId = buildBohMap(input.bohDogs || [], catalog);
+  const occupancy = buildRoomOccupancySnapshot({
+    date,
+    runs: input.runs || [],
+    occupancy_rows: input.occupancyRows || [],
+    reservations: (input.reservations || []).map((reservation) => ({
+      reservation_id: reservation.reservation_id,
+      animal_id: reservation.animal_id,
+      animal_name: reservation.animal_name,
+      owner_first_name: reservation.owner_first_name || null,
+      owner_last_name: reservation.owner_last_name || null,
+      reservation_type_name: reservation.reservation_type_name,
+      start_date: reservation.start_date,
+      end_date: reservation.end_date,
+      check_in_date: reservation.check_in_date || null,
+      check_out_date: reservation.check_out_date || null,
+      cancelled_date: reservation.cancelled_date || null,
+      raw_data: reservation.raw_data || null,
+      room_assignment: reservation.room_assignment || null,
+      photo_url: reservation.photo_url || null,
+    })),
+    include_categories: ["boarding", "day_boarding"],
+  });
   const dataIssues: RoomCleaningDataIssue[] = [];
   const reservationContexts: ReservationContext[] = [];
 
-  for (const reservation of input.reservations || []) {
-    if (reservation.cancelled_date) continue;
-    if (shouldIgnoreReservationType(reservation.reservation_type_name)) continue;
+  for (const unresolved of occupancy.unresolved_assignments) {
+    const totalNights = daysBetween(unresolved.start_day, unresolved.end_day);
+    const isRelevant =
+      (unresolved.start_day === date && unresolved.end_day > date) ||
+      (unresolved.start_day === date && unresolved.end_day === date) ||
+      (unresolved.start_day < date && unresolved.end_day === date && totalNights >= 1) ||
+      (unresolved.start_day < date && unresolved.end_day > date && totalNights >= 1);
+    if (!isRelevant) continue;
 
-    const startDate = normalizeDate(reservation.start_date);
-    const endDate = normalizeDate(reservation.end_date);
+    dataIssues.push({
+      issue_type: "not_assigned_in_gingr",
+      message: `Not assigned in GINGR for ${unresolved.animal_name} on ${date}.`,
+      reservation_id: unresolved.reservation_id,
+      animal_id: unresolved.animal_id,
+      animal_name: unresolved.animal_name,
+      reservation_type: unresolved.reservation_type_name,
+      start_date: unresolved.start_day,
+      end_date: unresolved.end_day,
+      room_candidates: unresolved.assignment_candidates.map((candidate) => ({
+        source: candidate.source,
+        room: candidate.room_name,
+        room_code: candidate.room_code,
+        run_id: candidate.run_id,
+      })),
+    });
+  }
+
+  const weightByReservationId = new Map<string, number | null>();
+  for (const reservation of input.reservations || []) {
+    weightByReservationId.set(
+      reservation.reservation_id,
+      reservation.dog_weight ?? null,
+    );
+  }
+
+  for (const assignment of occupancy.assignments) {
+    const startDate = assignment.start_day;
+    const endDate = assignment.end_day;
     if (!startDate || !endDate) continue;
     if (startDate > date || endDate < date) continue;
 
     const totalNights = daysBetween(startDate, endDate);
     const dayNumber = daysBetween(startDate, date) + 1;
-    const arrivalTodayMulti = startDate === date && endDate > date;
+    const arrivalTodayMulti = assignment.reservation_category === "boarding" &&
+      startDate === date && endDate > date;
     const sameDayStay = startDate === date && endDate === date;
     const departureTodayMulti = startDate < date && endDate === date && totalNights >= 1;
     const midStay = startDate < date && endDate > date && totalNights >= 1;
 
-    const candidates: Array<{
-      source: string;
-      room: string | null;
-      room_code: string | null;
-      run_id: string | null;
-    }> = [];
-    let resolvedRoom: ResolvedRoom | null = null;
-    const animalId = String(reservation.animal_id || "");
-    const animalNameLower = String(reservation.animal_name || "").trim().toLowerCase();
-
-    const occupancyRoom = animalNameLower
-      ? occupancyByName.get(animalNameLower) || null
+    const resolvedRoom: ResolvedRoom | null = assignment.assigned_room_name
+      ? {
+        room: assignment.assigned_room_name,
+        roomKey: assignment.assigned_room_key || sanitizeRoomKey(assignment.assigned_room_name),
+        roomCode: assignment.assigned_room_code,
+        runId: assignment.assigned_run_id,
+        areaName: assignment.assigned_area_name,
+        roomType: assignment.assigned_room_type,
+        resolutionStatus: assignment.room_resolution_status as RoomResolutionStatus,
+        chosenSource: assignment.assignment_source,
+        candidates: assignment.assignment_candidates.map((candidate) => ({
+          source: candidate.source,
+          room: candidate.room_name,
+          room_code: candidate.room_code,
+          run_id: candidate.run_id,
+        })),
+      }
       : null;
-    if (occupancyRoom) {
-      candidates.push(...occupancyRoom.candidates);
-      resolvedRoom = occupancyRoom;
-    }
-
-    const bohRoom = animalId ? bohByAnimalId.get(animalId) || null : null;
-    if (bohRoom) {
-      candidates.push(...bohRoom.candidates);
-      if (!resolvedRoom) resolvedRoom = bohRoom;
-    }
-
-    const rawRunId = reservation.raw_data?.run_id == null
-      ? null
-      : String(reservation.raw_data.run_id);
-    const rawRoomName = reservation.raw_data?.run_name || reservation.room_assignment || null;
-    const reservationRoom = resolveRunCandidate("reservation", {
-      runId: rawRunId,
-      room: rawRoomName,
-      areaName: reservation.raw_data?.area_name || null,
-    }, catalog);
-    if (reservationRoom.resolved) {
-      candidates.push(...reservationRoom.resolved.candidates);
-      if (!resolvedRoom) resolvedRoom = reservationRoom.resolved;
-    } else if (reservationRoom.ambiguous) {
-      dataIssues.push({
-        issue_type: "ambiguous_room_match",
-        message: `Multiple Gingr runs matched room candidate ${rawRoomName || rawRunId || "unknown"} for ${reservation.animal_name}.`,
-        reservation_id: reservation.reservation_id,
-        animal_id: reservation.animal_id,
-        animal_name: reservation.animal_name,
-        reservation_type: reservation.reservation_type_name,
-        start_date: startDate,
-        end_date: endDate,
-        room_candidates: [{
-          source: "reservation",
-          room: rawRoomName,
-          room_code: extractRoomCode(rawRoomName),
-          run_id: rawRunId,
-        }],
-      });
-    }
 
     const roomIssues: RoomCleaningDataIssue[] = [];
-    const distinctCandidateRooms = [...new Set(candidates.map((candidate) => candidate.room_code || candidate.room || ""))].filter(Boolean);
+    const distinctCandidateRooms = [
+      ...new Set(
+        (assignment.assignment_candidates || [])
+          .map((candidate) => candidate.room_code || candidate.room_name || "")
+          .filter(Boolean),
+      ),
+    ];
     if (resolvedRoom && distinctCandidateRooms.length > 1) {
       roomIssues.push({
         issue_type: "room_resolution_conflict",
-        message: `Room sources disagreed for ${reservation.animal_name}; using ${resolvedRoom.room}.`,
-        reservation_id: reservation.reservation_id,
-        animal_id: reservation.animal_id,
-        animal_name: reservation.animal_name,
-        reservation_type: reservation.reservation_type_name,
+        message: `Room sources disagreed for ${assignment.animal_name}; using ${resolvedRoom.room}.`,
+        reservation_id: assignment.reservation_id,
+        animal_id: assignment.animal_id,
+        animal_name: assignment.animal_name,
+        reservation_type: assignment.reservation_type_name,
         start_date: startDate,
         end_date: endDate,
         chosen_room: resolvedRoom.room,
         chosen_room_code: resolvedRoom.roomCode,
-        room_candidates: candidates,
+        room_candidates: assignment.assignment_candidates.map((candidate) => ({
+          source: candidate.source,
+          room: candidate.room_name,
+          room_code: candidate.room_code,
+          run_id: candidate.run_id,
+        })),
       });
+      dataIssues.push(...roomIssues);
     }
-
-    if (!resolvedRoom && (arrivalTodayMulti || sameDayStay || departureTodayMulti || midStay)) {
-      roomIssues.push({
-        issue_type: "not_assigned_in_gingr",
-        message: `Not assigned in GINGR for ${reservation.animal_name} on ${date}.`,
-        reservation_id: reservation.reservation_id,
-        animal_id: reservation.animal_id,
-        animal_name: reservation.animal_name,
-        reservation_type: reservation.reservation_type_name,
-        start_date: startDate,
-        end_date: endDate,
-        room_candidates: candidates,
-      });
-    }
-
-    dataIssues.push(...roomIssues);
 
     reservationContexts.push({
-      reservationId: reservation.reservation_id,
-      animalId: reservation.animal_id,
-      animalName: reservation.animal_name,
-      ownerLastName: reservation.owner_last_name,
-      reservationType: reservation.reservation_type_name,
+      reservationId: assignment.reservation_id,
+      animalId: assignment.animal_id,
+      animalName: assignment.animal_name,
+      ownerLastName: assignment.owner_last_name,
+      reservationType: assignment.reservation_type_name,
       startDate,
       endDate,
-      checkOutDate: normalizeDate(reservation.check_out_date),
+      checkOutDate: normalizeDate(assignment.check_out_date),
       totalNights,
       dayNumber,
-      photoUrl: reservation.photo_url || null,
-      dogWeight: reservation.dog_weight ?? null,
-      suggestedBowlSize: suggestBowlSize(reservation.dog_weight ?? null),
-      setupReason: setupReasonForReservation(reservation.reservation_type_name),
+      photoUrl: assignment.photo_url || null,
+      dogWeight: weightByReservationId.get(assignment.reservation_id) ?? null,
+      suggestedBowlSize: suggestBowlSize(weightByReservationId.get(assignment.reservation_id) ?? null),
+      setupReason: setupReasonForReservation(assignment.reservation_type_name),
       resolvedRoom,
       roomIssues,
       arrivalTodayMulti,

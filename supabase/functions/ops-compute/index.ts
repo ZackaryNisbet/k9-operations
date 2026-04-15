@@ -482,6 +482,12 @@ async function loadTemplate(
 // ─── 1. Room Cleaning ─────────────────────────────────────────────────────
 
 async function computeRoomCleaning(supabase: any, bohData: any, locationId: string, today: string): Promise<any> {
+  const previousDate = new Date(`${today}T12:00:00`);
+  previousDate.setDate(previousDate.getDate() - 1);
+  const nextDate = new Date(`${today}T12:00:00`);
+  nextDate.setDate(nextDate.getDate() + 1);
+  const previousDateKey = previousDate.toISOString().slice(0, 10);
+  const nextDateKey = nextDate.toISOString().slice(0, 10);
   const [{ data: gingrRuns }, { data: roomOccupancy }, { data: reservationRows }] =
     await Promise.all([
       supabase
@@ -490,13 +496,13 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         .eq("location_id", locationId),
       supabase
         .from("gingr_room_occupancy")
-        .select("gingr_run_id, run_name, area_name, animal_names, occupied")
+        .select("gingr_run_id, run_name, area_name, occupancy_date, animal_names, occupied, end_date")
         .eq("location_id", locationId)
-        .eq("occupancy_date", today),
+        .in("occupancy_date", [previousDateKey, today, nextDateKey]),
       supabase
         .from("gingr_reservations")
         .select(
-          "gingr_id, animal_gingr_id, animal_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment",
+          "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment",
         )
         .eq("location_id", locationId)
         .is("cancelled_date", null)
@@ -571,6 +577,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         reservation_id: String(row.gingr_id || ""),
         animal_id: animalId,
         animal_name: row.animal_name || "",
+        owner_first_name: row.owner_first_name || "",
         owner_last_name: row.owner_last_name || "",
         reservation_type_name: row.reservation_type_name || "",
         start_date: row.start_date,
