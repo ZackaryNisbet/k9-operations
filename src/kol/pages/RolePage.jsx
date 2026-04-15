@@ -12,6 +12,7 @@ import { getOpsCardStatus, getOpsProgress, getOpsCountLabel, getRoomCleaningStat
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { getInventoryWorkflow } from "./inventoryStatus";
 import { buildTrainingTemplateScopeClause, resolveTrainingLocationId, summarizeTrainingWorkflow } from "../trainingData";
+import useWorkflowProgressSnapshot, { ROLE_WORKFLOW_TO_SNAPSHOT, formatWorkflowCountLabel } from "../../hooks/useWorkflowProgressSnapshot";
 
 // ─── Fixed Section Definitions ──────────────────────────────────────────────
 const FIXED_SECTIONS = [
@@ -243,6 +244,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   // ─── Task completion state ──────────────────────────────────────────────
   const [taskStates, setTaskStates] = useState({});
   const [statesLoading, setStatesLoading] = useState(true);
+  const { rowMap: workflowProgressMap } = useWorkflowProgressSnapshot(locationId, viewDate);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,6 +264,40 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
       });
     return () => { cancelled = true; };
   }, [locationId, effectiveRole, viewDate]);
+
+  useEffect(() => {
+    if (!locationId) return undefined;
+
+    const channel = supabase
+      .channel(`role-page-task-state-${locationId}-${effectiveRole}-${viewDate}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "role_page_task_state",
+          filter: `location_id=eq.${locationId}`,
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old;
+          if (!row || row.role !== effectiveRole || row.task_date !== viewDate) return;
+          setTaskStates((prev) => ({
+            ...prev,
+            [row.task_id]: {
+              ...prev[row.task_id],
+              completed: !!row.completed,
+              completed_by: row.completed_by || null,
+              completed_at: row.completed_at || null,
+            },
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [effectiveRole, locationId, viewDate]);
 
   // Toggle task completion
   const toggleTask = useCallback(async (taskId) => {
@@ -470,10 +506,20 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   // ─── Merged workflow summaries (overrides for Supabase-backed cards) ─────
   const mergedSummaries = useMemo(() => {
     const merged = { ...workflowSummaries };
+    Object.entries(ROLE_WORKFLOW_TO_SNAPSHOT).forEach(([workflowId, snapshotId]) => {
+      const row = workflowProgressMap[snapshotId];
+      if (!row) return;
+      merged[workflowId] = {
+        ...merged[workflowId],
+        status: row.status === "complete" ? "completed" : row.status === "in_progress" ? "in_progress" : "not_started",
+        progress: row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0,
+        countLabel: row.total > 0 ? formatWorkflowCountLabel(row) : "",
+      };
+    });
     if (invStatus) merged.weekly_inventory = invStatus;
     if (trainingStatus) merged.training = trainingStatus;
     return merged;
-  }, [workflowSummaries, invStatus, trainingStatus]);
+  }, [workflowSummaries, invStatus, trainingStatus, workflowProgressMap]);
 
   // ─── Group workflow cards into sections per role ─────────────────────────
   // Derive from role_page_config rows so Role Layout is authoritative.
