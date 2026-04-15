@@ -4,7 +4,7 @@ import {
   getCanonicalPlaygroupTags,
   humanizePlaygroupTag,
 } from "./playgroup-assignments.ts";
-import { buildRoomOccupancySnapshot } from "./room-occupancy.ts";
+import { fetchRoomOccupancySnapshotForDate } from "./room-occupancy.ts";
 
 export type RollCallSession = "opening" | "closing";
 
@@ -195,36 +195,15 @@ export async function buildRollCallSnapshot(
   targetDate: string,
   session: RollCallSession,
 ): Promise<RollCallComputedItems> {
-  const previousDate = new Date(`${targetDate}T12:00:00`);
-  previousDate.setDate(previousDate.getDate() - 1);
-  const nextDate = new Date(`${targetDate}T12:00:00`);
-  nextDate.setDate(nextDate.getDate() + 1);
-  const previousDateKey = previousDate.toISOString().slice(0, 10);
-  const nextDateKey = nextDate.toISOString().slice(0, 10);
-  const [{ data: reservations, error: reservationError }, { data: runs }, { data: occupancy }] =
-    await Promise.all([
-      supabase
-        .from("gingr_reservations")
-        .select(
-          "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, room_assignment, raw_data",
-        )
-        .eq("location_id", locationId)
-        .is("cancelled_date", null)
-        .lte("start_date", `${targetDate}T23:59:59`)
-        .gte("end_date", `${targetDate}T00:00:00`),
-      supabase
-        .from("gingr_runs")
-        .select("run_name, area_name, run_type")
-        .eq("location_id", locationId)
-        .order("area_name")
-        .order("run_name"),
-      supabase
-        .from("gingr_room_occupancy")
-        .select("gingr_run_id, run_name, area_name, occupancy_date, animal_names, occupied, end_date")
-        .eq("location_id", locationId)
-        .in("occupancy_date", [previousDateKey, targetDate, nextDateKey])
-        .eq("occupied", true),
-    ]);
+  const { data: reservations, error: reservationError } = await supabase
+    .from("gingr_reservations")
+    .select(
+      "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, room_assignment, raw_data",
+    )
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${targetDate}T23:59:59`)
+    .gte("end_date", `${targetDate}T00:00:00`);
 
   if (reservationError) {
     throw new Error(`Roll call reservation query failed: ${reservationError.message}`);
@@ -235,60 +214,24 @@ export async function buildRollCallSnapshot(
     reservationById.set(safeText(reservation.gingr_id), reservation);
   }
 
-  const runMetaByName: Record<string, { runName: string; areaName: string; runType: string }> = {};
   const areaOrder = new Map<string, number>();
   const roomOrder = new Map<string, number>();
-  for (const [index, run] of (runs || []).entries()) {
-    const runName = safeText(run.run_name);
-    const areaName = safeText(run.area_name) || "Other";
-    const normalized = normalizeRoomName(runName);
-    runMetaByName[normalized] = {
-      runName,
-      areaName,
-      runType: safeText(run.run_type),
-    };
+  const occupancyModel = await fetchRoomOccupancySnapshotForDate({
+    supabase,
+    locationId,
+    date: targetDate,
+    reservations: reservations || [],
+    includeCategories: ["boarding"],
+  });
+
+  for (const [index, roomGroup] of (occupancyModel.room_groups || []).entries()) {
+    const runName = safeText(roomGroup.room_name);
+    const areaName = safeText(roomGroup.area_name) || "Other";
     if (!areaOrder.has(areaName)) {
       areaOrder.set(areaName, areaOrder.size);
     }
     roomOrder.set(`${areaName}::${runName}`, index);
   }
-
-  const occupancyModel = buildRoomOccupancySnapshot({
-    date: targetDate,
-    runs: (runs || []).map((run: any) => ({
-      gingr_run_id: run.gingr_run_id || null,
-      run_name: run.run_name,
-      area_name: run.area_name,
-      run_type: run.run_type,
-    })),
-    occupancy_rows: (occupancy || []).map((row: any) => ({
-      gingr_run_id: row.gingr_run_id || null,
-      run_name: row.run_name,
-      area_name: row.area_name,
-      occupancy_date: row.occupancy_date,
-      animal_names: row.animal_names,
-      occupied: row.occupied,
-      end_date: row.end_date,
-    })),
-    reservations: (reservations || []).map((reservation: any) => ({
-      reservation_id: safeText(reservation.gingr_id),
-      animal_id: safeText(reservation.animal_gingr_id || reservation.raw_data?.animal?.id),
-      animal_name: safeText(reservation.animal_name || reservation.raw_data?.animal?.name),
-      owner_first_name: safeText(reservation.owner_first_name || reservation.raw_data?.owner?.first_name),
-      owner_last_name: safeText(reservation.owner_last_name || reservation.raw_data?.owner?.last_name),
-      reservation_type_name: safeText(
-        reservation.reservation_type_name || reservation.raw_data?.reservation_type?.type,
-      ),
-      start_date: safeText(reservation.start_date || reservation.raw_data?.start_date),
-      end_date: safeText(reservation.end_date || reservation.raw_data?.end_date),
-      check_in_date: safeText(reservation.check_in_date),
-      check_out_date: safeText(reservation.check_out_date),
-      cancelled_date: safeText(reservation.cancelled_date),
-      room_assignment: safeText(reservation.room_assignment),
-      raw_data: reservation.raw_data || null,
-    })),
-    include_categories: ["boarding"],
-  });
 
   const animalIds = [...new Set(
     occupancyModel.assignments
@@ -339,7 +282,6 @@ export async function buildRollCallSnapshot(
           .map((tag) => humanizePlaygroupTag(tag))
           .filter(Boolean) as string[];
 
-    const resolvedRunMeta = runMetaByName[normalizeRoomName(assignment.assigned_room_name)];
     const dog = {
       animalGingrId,
       reservationGingrId: safeText(assignment.reservation_id),
@@ -351,8 +293,8 @@ export async function buildRollCallSnapshot(
       reservationTypeName: assignment.reservation_type_name,
       startDate,
       endDate,
-      roomName: resolvedRunMeta?.runName || normalizeWhitespace(assignment.assigned_room_name),
-      areaName: resolvedRunMeta?.areaName || normalizeWhitespace(assignment.assigned_area_name || "Other"),
+      roomName: normalizeWhitespace(assignment.assigned_room_name),
+      areaName: normalizeWhitespace(assignment.assigned_area_name || "Other"),
       photoUrl: animalGingrId ? (photoByAnimalId[animalGingrId] || assignment.photo_url || null) : assignment.photo_url || null,
       playgroup,
       tags,

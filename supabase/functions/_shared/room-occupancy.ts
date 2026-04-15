@@ -132,12 +132,98 @@ export interface RoomOccupancySnapshot {
   unresolved_assignments: RoomOccupancyAssignment[];
 }
 
+export interface RoomOccupancyLookupCompanion {
+  animal_name: string;
+  owner_name: string;
+  is_sibling: boolean;
+}
+
+export interface RoomOccupancyLookupEntry {
+  reservation_id: string;
+  animal_id: string;
+  animal_name: string;
+  owner_name: string;
+  join_key: string;
+  reservation_type_name: string;
+  reservation_category: RoomOccupancyReservationCategory;
+  start_day: string;
+  end_day: string;
+  check_in_date: string | null;
+  check_out_date: string | null;
+  room_label: string | null;
+  room_code: string | null;
+  room_key: string | null;
+  run_id: string | null;
+  area_name: string;
+  room_type: string;
+  room_resolution_status: RoomOccupancyResolutionStatus;
+  assignment_source: RoomOccupancyCandidate["source"] | "unresolved";
+  assignment_source_date: string | null;
+  assignment_score: number | null;
+  assignment_matched_on: string | null;
+  occupancy_end_date: string | null;
+  occupants_today: RoomOccupancyLookupCompanion[];
+  roommates: RoomOccupancyLookupCompanion[];
+}
+
+export interface RoomOccupancyLookup {
+  byReservationId: Map<string, RoomOccupancyLookupEntry>;
+  byAnimalId: Map<string, RoomOccupancyLookupEntry[]>;
+  byAnimalName: Map<string, RoomOccupancyLookupEntry[]>;
+  byJoinKey: Map<string, RoomOccupancyLookupEntry[]>;
+}
+
+export interface RoomOccupancyComputedItems {
+  date: string;
+  previous_date: string;
+  next_date: string;
+  summary: {
+    total_assignments: number;
+    resolved_assignments: number;
+    unresolved_assignments: number;
+    shadow_dropped_reservations: number;
+    total_rooms: number;
+    occupied_rooms_today: number;
+  };
+  assignments: RoomOccupancyLookupEntry[];
+  rooms: Array<{
+    room_label: string;
+    room_code: string | null;
+    room_key: string;
+    run_id: string | null;
+    area_name: string;
+    room_type: string;
+    occupants_today: RoomOccupancyLookupCompanion[];
+    occupants_previous_day: RoomOccupancyLookupCompanion[];
+    occupants_next_day: RoomOccupancyLookupCompanion[];
+    assignment_reservation_ids: string[];
+  }>;
+  unresolved_assignments: RoomOccupancyLookupEntry[];
+  shadow_dropped_reservations: Array<{
+    reservation_id: string;
+    animal_id: string;
+    animal_name: string;
+    owner_name: string;
+    reservation_type_name: string;
+    start_day: string;
+    end_day: string;
+  }>;
+}
+
 export interface BuildRoomOccupancyInput {
   date: string;
   runs: RoomOccupancyRunInput[];
   occupancy_rows: RoomOccupancyInputRow[];
   reservations: RoomOccupancyReservationInput[];
   include_categories?: RoomOccupancyReservationCategory[];
+}
+
+export interface FetchRoomOccupancySnapshotInput {
+  supabase: any;
+  locationId: string;
+  date: string;
+  reservations?: RoomOccupancyReservationInput[];
+  includeCategories?: RoomOccupancyReservationCategory[];
 }
 
 interface RunCatalogEntry {
@@ -302,6 +388,29 @@ export function classifyRoomOccupancyReservationType(
   }
   if (value.includes("groom") || value.includes("bath")) return "grooming";
   return "other";
+}
+
+export function mapDbReservationRowToRoomOccupancyInput(
+  row: any,
+): RoomOccupancyReservationInput {
+  return {
+    reservation_id: safeText(row?.gingr_id || row?.reservation_id || row?.id),
+    animal_id: safeText(row?.animal_gingr_id || row?.animal_id || row?.raw_data?.animal?.id),
+    animal_name: safeText(row?.animal_name || row?.raw_data?.animal?.name),
+    owner_first_name: safeText(row?.owner_first_name || row?.raw_data?.owner?.first_name),
+    owner_last_name: safeText(row?.owner_last_name || row?.raw_data?.owner?.last_name),
+    reservation_type_name: safeText(
+      row?.reservation_type_name || row?.raw_data?.reservation_type?.type,
+    ),
+    start_date: safeText(row?.start_date || row?.raw_data?.start_date),
+    end_date: safeText(row?.end_date || row?.raw_data?.end_date),
+    check_in_date: safeText(row?.check_in_date),
+    check_out_date: safeText(row?.check_out_date),
+    cancelled_date: safeText(row?.cancelled_date),
+    raw_data: row?.raw_data || null,
+    room_assignment: safeText(row?.room_assignment),
+    photo_url: safeText(row?.photo_url || row?.image_url || row?.local_photo_url),
+  };
 }
 
 function buildRunCatalog(runs: RoomOccupancyRunInput[]): {
@@ -873,4 +982,246 @@ export function buildRoomOccupancySnapshot(
     shadow_dropped_reservations: droppedAssignments,
     unresolved_assignments: unresolvedAssignments,
   };
+}
+
+export function buildRoomOccupancyLookup(
+  snapshot: RoomOccupancySnapshot,
+): RoomOccupancyLookup {
+  const byReservationId = new Map<string, RoomOccupancyLookupEntry>();
+  const byAnimalId = new Map<string, RoomOccupancyLookupEntry[]>();
+  const byAnimalName = new Map<string, RoomOccupancyLookupEntry[]>();
+  const byJoinKey = new Map<string, RoomOccupancyLookupEntry[]>();
+  const roomGroupByKey = new Map<string, RoomOccupancyRoomGroup>();
+
+  for (const group of snapshot.room_groups || []) {
+    roomGroupByKey.set(group.room_key, group);
+  }
+
+  for (const assignment of snapshot.assignments || []) {
+    const group = assignment.assigned_room_key
+      ? roomGroupByKey.get(assignment.assigned_room_key) || null
+      : null;
+    const occupantsToday = (group?.observed_by_date?.[snapshot.date] || []).map((occupant) => ({
+      animal_name: occupant.animal_name,
+      owner_name: occupant.owner_name,
+      is_sibling: occupant.owner_name !== "" && occupant.owner_name === assignment.owner_name,
+    }));
+    const roommates = occupantsToday.filter((occupant) =>
+      normalizeName(occupant.animal_name) !== normalizeName(assignment.animal_name) ||
+      normalizeName(occupant.owner_name) !== normalizeName(assignment.owner_name)
+    );
+
+    const entry: RoomOccupancyLookupEntry = {
+      reservation_id: assignment.reservation_id,
+      animal_id: assignment.animal_id,
+      animal_name: assignment.animal_name,
+      owner_name: assignment.owner_name,
+      join_key: assignment.join_key,
+      reservation_type_name: assignment.reservation_type_name,
+      reservation_category: assignment.reservation_category,
+      start_day: assignment.start_day,
+      end_day: assignment.end_day,
+      check_in_date: assignment.check_in_date,
+      check_out_date: assignment.check_out_date,
+      room_label: assignment.assigned_room_name,
+      room_code: assignment.assigned_room_code,
+      room_key: assignment.assigned_room_key,
+      run_id: assignment.assigned_run_id,
+      area_name: assignment.assigned_area_name,
+      room_type: assignment.assigned_room_type,
+      room_resolution_status: assignment.room_resolution_status,
+      assignment_source: assignment.assignment_source,
+      assignment_source_date: assignment.assignment_source_date,
+      assignment_score: assignment.assignment_score,
+      assignment_matched_on: assignment.assignment_matched_on,
+      occupancy_end_date: assignment.occupancy_end_date,
+      occupants_today: occupantsToday,
+      roommates,
+    };
+
+    byReservationId.set(entry.reservation_id, entry);
+    if (entry.animal_id) {
+      const existingByAnimalId = byAnimalId.get(entry.animal_id) || [];
+      existingByAnimalId.push(entry);
+      byAnimalId.set(entry.animal_id, existingByAnimalId);
+    }
+    const animalNameKey = normalizeName(entry.animal_name);
+    if (animalNameKey) {
+      const existingByAnimalName = byAnimalName.get(animalNameKey) || [];
+      existingByAnimalName.push(entry);
+      byAnimalName.set(animalNameKey, existingByAnimalName);
+    }
+    const existingByJoinKey = byJoinKey.get(entry.join_key) || [];
+    existingByJoinKey.push(entry);
+    byJoinKey.set(entry.join_key, existingByJoinKey);
+  }
+
+  return {
+    byReservationId,
+    byAnimalId,
+    byAnimalName,
+    byJoinKey,
+  };
+}
+
+export function resolveRoomOccupancyLookupEntry(
+  lookup: RoomOccupancyLookup,
+  input: {
+    reservationId?: string | null;
+    animalId?: string | null;
+    animalName?: string | null;
+    ownerFirstName?: string | null;
+    ownerLastName?: string | null;
+    ownerName?: string | null;
+  },
+): RoomOccupancyLookupEntry | null {
+  const reservationId = safeText(input.reservationId);
+  if (reservationId && lookup.byReservationId.has(reservationId)) {
+    return lookup.byReservationId.get(reservationId)!;
+  }
+
+  const animalId = safeText(input.animalId);
+  if (animalId && lookup.byAnimalId.has(animalId)) {
+    const candidates = lookup.byAnimalId.get(animalId) || [];
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      return [...candidates].sort((left, right) =>
+        (right.assignment_score || 0) - (left.assignment_score || 0)
+      )[0] || null;
+    }
+  }
+
+  const ownerName = safeText(input.ownerName)
+    || [safeText(input.ownerFirstName), safeText(input.ownerLastName)]
+      .filter(Boolean)
+      .join(" ");
+  const joinKey = `${normalizeName(input.animalName || "")}|${normalizeName(ownerName)}`;
+  if (lookup.byJoinKey.has(joinKey)) {
+    return (lookup.byJoinKey.get(joinKey) || [])[0] || null;
+  }
+
+  const animalNameKey = normalizeName(input.animalName || "");
+  if (animalNameKey && lookup.byAnimalName.has(animalNameKey)) {
+    return (lookup.byAnimalName.get(animalNameKey) || [])[0] || null;
+  }
+
+  return null;
+}
+
+export function buildRoomOccupancyComputedItems(
+  snapshot: RoomOccupancySnapshot,
+): RoomOccupancyComputedItems {
+  const lookup = buildRoomOccupancyLookup(snapshot);
+  const assignments = snapshot.assignments
+    .map((assignment) => lookup.byReservationId.get(assignment.reservation_id))
+    .filter(Boolean) as RoomOccupancyLookupEntry[];
+
+  const rooms = (snapshot.room_groups || []).map((group) => ({
+    room_label: group.room_name,
+    room_code: group.room_code,
+    room_key: group.room_key,
+    run_id: group.run_id,
+    area_name: group.area_name,
+    room_type: group.room_type,
+    occupants_today: (group.observed_by_date?.[snapshot.date] || []).map((occupant) => ({
+      animal_name: occupant.animal_name,
+      owner_name: occupant.owner_name,
+      is_sibling: false,
+    })),
+    occupants_previous_day: (group.observed_by_date?.[snapshot.previous_date] || []).map((occupant) => ({
+      animal_name: occupant.animal_name,
+      owner_name: occupant.owner_name,
+      is_sibling: false,
+    })),
+    occupants_next_day: (group.observed_by_date?.[snapshot.next_date] || []).map((occupant) => ({
+      animal_name: occupant.animal_name,
+      owner_name: occupant.owner_name,
+      is_sibling: false,
+    })),
+    assignment_reservation_ids: group.assignments.map((assignment) => assignment.reservation_id),
+  }));
+
+  return {
+    date: snapshot.date,
+    previous_date: snapshot.previous_date,
+    next_date: snapshot.next_date,
+    summary: {
+      total_assignments: snapshot.assignments.length,
+      resolved_assignments: snapshot.assignments.filter((assignment) => !!assignment.assigned_room_name).length,
+      unresolved_assignments: snapshot.unresolved_assignments.length,
+      shadow_dropped_reservations: snapshot.shadow_dropped_reservations.length,
+      total_rooms: snapshot.room_groups.length,
+      occupied_rooms_today: snapshot.room_groups.filter((group) =>
+        (group.observed_by_date?.[snapshot.date] || []).length > 0
+      ).length,
+    },
+    assignments,
+    rooms,
+    unresolved_assignments: snapshot.unresolved_assignments
+      .map((assignment) => lookup.byReservationId.get(assignment.reservation_id))
+      .filter(Boolean) as RoomOccupancyLookupEntry[],
+    shadow_dropped_reservations: snapshot.shadow_dropped_reservations.map((assignment) => ({
+      reservation_id: assignment.reservation_id,
+      animal_id: assignment.animal_id,
+      animal_name: assignment.animal_name,
+      owner_name: assignment.owner_name,
+      reservation_type_name: assignment.reservation_type_name,
+      start_day: assignment.start_day,
+      end_day: assignment.end_day,
+    })),
+  };
+}
+
+export async function fetchRoomOccupancySnapshotForDate(
+  input: FetchRoomOccupancySnapshotInput,
+): Promise<RoomOccupancySnapshot> {
+  const date = normalizeDate(input.date);
+  const previousDate = addDays(date, -1);
+  const nextDate = addDays(date, 1);
+
+  const [runsResult, occupancyResult, reservationsResult] = await Promise.all([
+    input.supabase
+      .from("gingr_runs")
+      .select("gingr_run_id, run_name, area_name, run_type")
+      .eq("location_id", input.locationId),
+    input.supabase
+      .from("gingr_room_occupancy")
+      .select("gingr_run_id, run_name, area_name, occupancy_date, animal_names, occupied, end_date")
+      .eq("location_id", input.locationId)
+      .in("occupancy_date", [previousDate, date, nextDate])
+      .eq("occupied", true),
+    input.reservations
+      ? Promise.resolve({ data: input.reservations, error: null })
+      : input.supabase
+          .from("gingr_reservations")
+          .select(
+            "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment",
+          )
+          .eq("location_id", input.locationId)
+          .is("cancelled_date", null)
+          .lte("start_date", `${date}T23:59:59`)
+          .gte("end_date", `${date}T00:00:00`),
+  ]);
+
+  if (runsResult.error) {
+    throw new Error(`Room occupancy runs query failed: ${runsResult.error.message}`);
+  }
+  if (occupancyResult.error) {
+    throw new Error(`Room occupancy rows query failed: ${occupancyResult.error.message}`);
+  }
+  if (reservationsResult.error) {
+    throw new Error(`Room occupancy reservations query failed: ${reservationsResult.error.message}`);
+  }
+
+  const reservations = input.reservations || (reservationsResult.data || []).map(
+    mapDbReservationRowToRoomOccupancyInput,
+  );
+
+  return buildRoomOccupancySnapshot({
+    date,
+    runs: runsResult.data || [],
+    occupancy_rows: occupancyResult.data || [],
+    reservations,
+    include_categories: input.includeCategories,
+  });
 }
