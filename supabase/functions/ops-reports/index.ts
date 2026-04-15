@@ -17,6 +17,7 @@ import {
 import {
   buildRoomOccupancyLookup,
   fetchRoomOccupancySnapshotForDate,
+  ROOM_OCCUPANCY_LODGING_CATEGORIES,
   resolveRoomOccupancyLookupEntry,
 } from "../_shared/room-occupancy.ts";
 
@@ -210,7 +211,7 @@ async function modDeparting(
     supabase,
     locationId,
     date,
-    includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+    includeCategories: ROOM_OCCUPANCY_LODGING_CATEGORIES,
   });
   const roomLookup = buildRoomOccupancyLookup(roomOccupancySnapshot);
 
