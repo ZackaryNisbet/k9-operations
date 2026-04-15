@@ -1,13 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import {
-  normalizeBathTypeLabel,
-  sanitizeBathModifierLabels,
-} from "../_shared/bathing-logic.ts";
-import {
-  fetchLocationIconMappings,
-  resolveBathDisplayFromIconRows,
-  type GingrAnimalIconRow,
-} from "../_shared/gingr-icon-mappings.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,14 +35,6 @@ function reservationMatchesDate(reservation: any, targetDate: string): boolean {
     startDate < `${nextDate}T00:00:00`;
 
   return overlapsActiveStay || checkedOutThatDay || pendingStartThatDay;
-}
-
-function getServiceLabels(services: any[]): string[] {
-  return (services || [])
-    .map((service: any) =>
-      typeof service === "string" ? service : service?.name || service?.service_name || "",
-    )
-    .filter(Boolean);
 }
 
 async function userHasLocationAccess(sb: any, userId: string, locationId: string): Promise<boolean> {
@@ -113,11 +96,7 @@ Deno.serve(async (req: Request) => {
     const locationId = String(body?.location_id || "").trim();
     const date = String(body?.date || "").trim();
     const gingrReservationId = String(body?.gingr_reservation_id || "").trim();
-    const requestedBathType = normalizeBathTypeLabel(body?.bath_type || "") || "";
-    const requestedBathModifiers = sanitizeBathModifierLabels(
-      Array.isArray(body?.bath_modifiers) ? body.bath_modifiers : [],
-    );
-    const useGingrDefaults = body?.use_gingr_defaults !== false;
+    const roomLabelOverride = String(body?.room_label_override || "").trim().slice(0, 120);
     const note = String(body?.note || "").trim().slice(0, 500);
 
     if (!locationId || !date || !gingrReservationId) {
@@ -126,14 +105,12 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
     if (!isDateKey(date)) {
       return new Response(
         JSON.stringify({ error: "date must be YYYY-MM-DD" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
     if (action !== "add" && action !== "remove") {
       return new Response(
         JSON.stringify({ error: "action must be add or remove" }),
@@ -164,7 +141,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: reservation, error: reservationError } = await adminClient
       .from("gingr_reservations")
-      .select("gingr_id, animal_gingr_id, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services")
+      .select("gingr_id, animal_gingr_id, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment")
       .eq("location_id", locationId)
       .eq("gingr_id", gingrReservationId)
       .maybeSingle();
@@ -175,14 +152,12 @@ Deno.serve(async (req: Request) => {
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
     if (reservation.cancelled_date) {
       return new Response(
-        JSON.stringify({ error: "Cancelled reservations cannot be added to the bathing report" }),
+        JSON.stringify({ error: "Cancelled reservations cannot be added to private play" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
     if (!reservationMatchesDate(reservation, date)) {
       return new Response(
         JSON.stringify({ error: "That reservation is not active on the selected report date" }),
@@ -190,57 +165,16 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let finalBathType = requestedBathType || "Standard";
-    let finalBathModifiers = requestedBathModifiers;
-
     if (action === "add") {
-      const rawData = typeof reservation.raw_data === "object" && reservation.raw_data
-        ? reservation.raw_data
-        : {};
-      const animalGingrId = String(
-        reservation.animal_gingr_id || rawData?.animal?.id || "",
-      ).trim();
-
-      if (useGingrDefaults) {
-        let iconRows: GingrAnimalIconRow[] = [];
-        if (animalGingrId) {
-          const { data } = await adminClient
-            .from("gingr_animal_icons_live")
-            .select("animal_gingr_id, icon_title, icon_comment, icon_template_id, icon_identity_key, icon_group, icon_color, icon_class")
-            .eq("location_id", locationId)
-            .eq("animal_gingr_id", animalGingrId)
-            .eq("icon_group", "Bath");
-          iconRows = (data || []) as GingrAnimalIconRow[];
-        }
-
-        const iconMappings = await fetchLocationIconMappings({ supabase: adminClient, locationId });
-        const normalized = resolveBathDisplayFromIconRows({
-          iconRows,
-          mappings: iconMappings,
-          rawModifiers: [
-            ...getServiceLabels(Array.isArray(rawData?.services) ? rawData.services : []),
-            ...getServiceLabels(Array.isArray(reservation.services) ? reservation.services : []),
-          ],
-          defaultType: requestedBathType || "Standard",
-        });
-
-        finalBathType = requestedBathType || normalized.bathType || "Standard";
-        finalBathModifiers = sanitizeBathModifierLabels([
-          ...normalized.bathModifiers,
-          ...requestedBathModifiers,
-        ]);
-      }
-
       const { error: upsertError } = await adminClient
-        .from("ops_bathing_manual_overrides")
+        .from("ops_private_play_manual_overrides")
         .upsert(
           {
             location_id: locationId,
             override_date: date,
             gingr_reservation_id: gingrReservationId,
-            animal_gingr_id: animalGingrId || null,
-            bath_type: finalBathType,
-            bath_modifiers: finalBathModifiers,
+            animal_gingr_id: String(reservation.animal_gingr_id || "").trim() || null,
+            room_label_override: roomLabelOverride,
             note,
             added_by_user_id: authData.user.id,
             added_by_name: actorName,
@@ -254,12 +188,10 @@ Deno.serve(async (req: Request) => {
           },
         );
 
-      if (upsertError) {
-        throw upsertError;
-      }
+      if (upsertError) throw upsertError;
     } else {
       const { error: removeError } = await adminClient
-        .from("ops_bathing_manual_overrides")
+        .from("ops_private_play_manual_overrides")
         .update({
           removed_at: new Date().toISOString(),
           removed_by_user_id: authData.user.id,
@@ -270,9 +202,7 @@ Deno.serve(async (req: Request) => {
         .eq("gingr_reservation_id", gingrReservationId)
         .is("removed_at", null);
 
-      if (removeError) {
-        throw removeError;
-      }
+      if (removeError) throw removeError;
     }
 
     const recomputeResp = await fetch(`${supabaseUrl}/functions/v1/ops-compute-ondemand`, {
@@ -294,15 +224,14 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         action,
-        bath_type: finalBathType,
-        bath_modifiers: finalBathModifiers,
         note,
-        recompute: recomputeData?.bathing || null,
+        room_label_override: roomLabelOverride,
+        recompute: recomputeData?.private_play || null,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
-    console.error("ops-bathing-manual error:", err);
+    console.error("ops-private-play-manual error:", err);
     return new Response(
       JSON.stringify({ error: err?.message || "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },

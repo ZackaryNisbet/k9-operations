@@ -67,6 +67,81 @@ function extractRoomFromType(typeName) {
   return null;
 }
 
+const ROOM_CLEANING_TASK_TYPES = ["room_refresh", "full_disinfect", "setup", "sanitize"];
+
+function normalizeRoomCleaningTaskType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "room_refresh" || normalized === "refresh") return "room_refresh";
+  if (normalized === "full_disinfect" || normalized === "disinfect") return "full_disinfect";
+  if (normalized === "setup" || normalized === "set_up") return "setup";
+  if (normalized === "sanitize" || normalized === "sanitise") return "sanitize";
+  return null;
+}
+
+function createRoomCleaningBuckets() {
+  return ROOM_CLEANING_TASK_TYPES.reduce((acc, type) => {
+    acc[type] = { total: 0, completed: 0 };
+    return acc;
+  }, {});
+}
+
+function toRoomCleaningNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getRoomCleaningTaskState(task, items) {
+  return items[task?.task_id] || items[task?.room_key] || items[task?.room] || {};
+}
+
+function isRoomCleaningTaskCompleted(task, state) {
+  if (state && typeof state === "object") {
+    if (state.completed || state.checked || state.done) return true;
+    if (task?.task_type === "room_refresh" && state.refresh) return true;
+    if (task?.task_type === "full_disinfect" && state.disinfect) return true;
+    if (task?.task_type === "setup" && state.setupDone) return true;
+    if (task?.task_type === "sanitize" && (state.asNeededDone || state.sanitizeDone)) return true;
+  }
+  return !!task?.completed;
+}
+
+function buildRoomCleaningBuckets(computedItems, items) {
+  const buckets = createRoomCleaningBuckets();
+  const summary = computedItems?.task_summary || computedItems?.summary;
+  const summarySource = summary?.by_type || summary?.byType || summary?.buckets || summary?.task_types;
+
+  if (summarySource && typeof summarySource === "object") {
+    ROOM_CLEANING_TASK_TYPES.forEach((type) => {
+      const bucket = summarySource[type];
+      if (!bucket || typeof bucket !== "object") return;
+      buckets[type] = {
+        total: toRoomCleaningNumber(bucket.total ?? bucket.total_tasks ?? bucket.totalTasks ?? bucket.count) || 0,
+        completed: toRoomCleaningNumber(bucket.completed ?? bucket.completed_tasks ?? bucket.completedTasks ?? bucket.done) || 0,
+      };
+    });
+    return buckets;
+  }
+
+  const taskInstances = Array.isArray(computedItems?.task_instances) ? computedItems.task_instances : [];
+  if (taskInstances.length > 0) {
+    taskInstances.forEach((task) => {
+      const type = normalizeRoomCleaningTaskType(task?.task_type || task?.type);
+      if (!type) return;
+      buckets[type].total += 1;
+      if (isRoomCleaningTaskCompleted(task, getRoomCleaningTaskState(task, items))) {
+        buckets[type].completed += 1;
+      }
+    });
+    return buckets;
+  }
+
+  return null;
+}
+
 // ─── Room Cleaning Stats ────────────────────────────────────────────────────
 function getRoomCleaningStats(data, date) {
   const td = date || todayStr();
@@ -74,8 +149,19 @@ function getRoomCleaningStats(data, date) {
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
 
-  // Use computed_items if available (server-generated room list)
   const ci = entry?.computed_items;
+  const taskBuckets = buildRoomCleaningBuckets(ci, ei);
+  if (taskBuckets) {
+    const totalSetups = taskBuckets.setup.total;
+    const doneSetups = taskBuckets.setup.completed;
+    const asNeededCount = taskBuckets.sanitize.total;
+    const asNeededDone = taskBuckets.sanitize.completed;
+    const totalNeeded = taskBuckets.room_refresh.total + taskBuckets.full_disinfect.total + asNeededCount;
+    const totalDone = taskBuckets.room_refresh.completed + taskBuckets.full_disinfect.completed + asNeededDone;
+    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone, totalSetups, doneSetups, asNeededCount, asNeededDone };
+  }
+
+  // Use legacy computed_items if available (server-generated room list)
   const sanitizeKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
   if (ci && ci.rooms && ci.rooms.length > 0) {
     // Group by room key — one cleaning task per room
@@ -398,6 +484,17 @@ function getRoomCleaningBreakdown(data, date) {
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
   const ci = entry?.computed_items;
+  const taskBuckets = buildRoomCleaningBuckets(ci, ei);
+  if (taskBuckets) {
+    return {
+      totalSetups: taskBuckets.setup.total,
+      doneSetups: taskBuckets.setup.completed,
+      totalDisinfects: taskBuckets.full_disinfect.total,
+      doneDisinfects: taskBuckets.full_disinfect.completed,
+      totalRefreshes: taskBuckets.room_refresh.total,
+      doneRefreshes: taskBuckets.room_refresh.completed,
+    };
+  }
   const sanitizeKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
 
   if (ci && ci.rooms && ci.rooms.length > 0) {
