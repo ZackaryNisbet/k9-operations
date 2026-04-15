@@ -38,6 +38,8 @@
   - `gingr-sync`
   - `ops-audit`
   - `gingr-today-notes`
+- The stale incident-metrics test fixture was updated to match the new explicit incident-category model, so the exact Vercel `prebuild` path now passes locally (`306 / 306` tests, then `vite build`).
+- The fixed web commit was pushed to both `codex/k9-finish-web` and `main`.
 
 ## What is still intentionally not finished
 
@@ -52,6 +54,7 @@
   - no `iOS Distribution` signing certificate
   - no App Store profile for `com.k9operations.mobile`
 - The app installed to Zack’s iPhone successfully, but remote launch failed because the phone was locked during the launch attempt.
+- Vercel saw the follow-up production commit immediately, but the last observed deployment state for that new `main` push was still `QUEUED` at handoff time, so production should be rechecked in the morning instead of assumed ready.
 
 ## Production caveats that are real
 - The linked Supabase project can deploy functions from this machine, but the remote database login path for migration management is not healthy.
