@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "50d46b68fdc4ac1f666792207397d20b5be4dacb",
+      "commit": "eac93110929bd54a192d4f7c2b4e9c3f8f347cc0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room occupancy centralization release",
-      "updatedAt": "2026-04-15T17:24:30.609Z"
+      "note": "ops compute resId hotfix",
+      "updatedAt": "2026-04-15T17:27:37.796Z"
     },
     "ops-compute-ondemand": {
-      "commit": "50d46b68fdc4ac1f666792207397d20b5be4dacb",
+      "commit": "eac93110929bd54a192d4f7c2b4e9c3f8f347cc0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room occupancy centralization release",
-      "updatedAt": "2026-04-15T17:24:30.609Z"
+      "note": "ops compute resId hotfix",
+      "updatedAt": "2026-04-15T17:27:37.796Z"
     },
     "scheduling-audit": {
       "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
