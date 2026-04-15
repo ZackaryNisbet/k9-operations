@@ -16,25 +16,25 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "XL recovery cleanup baseline",
-      "updatedAt": "2026-04-14T02:46:41.138Z"
+      "note": "mobile finish release",
+      "updatedAt": "2026-04-15T14:54:49.229Z"
     },
     "ops-compute-ondemand": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "mobile finish release",
+      "updatedAt": "2026-04-15T14:54:49.229Z"
     },
     "scheduling-audit": {
-      "commit": null,
-      "sourceRef": null,
-      "action": null,
-      "note": "",
-      "updatedAt": null
+      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "mobile finish release",
+      "updatedAt": "2026-04-15T14:54:49.229Z"
     },
     "gingr-boh-poll": {
       "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
