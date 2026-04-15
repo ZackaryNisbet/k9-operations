@@ -1,127 +1,115 @@
 // © 2026 K9 Operations LLC. All Rights Reserved.
 // Supabase Edge Function: get-room-assignments
-// Fetches room assignments from Gingr API for a given date.
-// Returns a map of animal_name → room_name for all occupied rooms.
+// Returns canonical room assignments from the shared room-occupancy model.
 
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildRoomOccupancyLookup,
+  fetchRoomOccupancySnapshotForDate,
+} from "../_shared/room-occupancy.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-async function loadGingrConfig(supabase: any, locationId: string) {
-  const { data: settingsRows } = await supabase
-    .from('lite_settings')
-    .select('setting_value')
-    .eq('location_id', locationId)
-    .eq('setting_key', 'gingr_config')
-    .limit(1);
-
-  const gingrConfig = settingsRows?.[0]?.setting_value;
-  if (gingrConfig?.api_key && gingrConfig?.subdomain) {
-    return {
-      apiKey: gingrConfig.api_key,
-      subdomain: gingrConfig.subdomain,
-      gingrLocationId: gingrConfig.gingr_location_id || '1',
-    };
-  }
-
-  const { data: creds } = await supabase
-    .from('k9_gingr_credentials')
-    .select('gingr_subdomain, gingr_api_key, gingr_location_id')
-    .eq('location_id', locationId)
-    .maybeSingle();
-
-  if (!creds?.gingr_api_key || !creds?.gingr_subdomain) {
-    throw new Error(`No Gingr credentials found for location ${locationId}`);
-  }
-
-  return {
-    apiKey: creds.gingr_api_key,
-    subdomain: creds.gingr_subdomain,
-    gingrLocationId: creds.gingr_location_id || '1',
-  };
-}
-
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { date, location_id: locationId } = await req.json(); // date in YYYY-MM-DD format
+    const { date, location_id: locationId } = await req.json();
     if (!date || !locationId) {
-      return new Response(JSON.stringify({ error: 'Missing date' }), {
+      return new Response(JSON.stringify({ error: "date and location_id are required" }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-    const { apiKey, subdomain, gingrLocationId } = await loadGingrConfig(supabase, locationId);
 
-    // Convert YYYY-MM-DD to MM-DD-YYYY for Gingr API
-    const [year, month, day] = date.split('-');
-    const gingrDate = `${month}-${day}-${year}`;
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
-    const nd = nextDay.toISOString().split('T')[0].split('-');
-    const gingrNextDate = `${nd[1]}-${nd[2]}-${nd[0]}`;
+    const entryId = `ops_room_occupancy_${date}`;
+    let computedItems: any = null;
+    const { data: existingRow } = await supabase
+      .from("lite_daily_ops")
+      .select("computed_items")
+      .eq("id", entryId)
+      .maybeSingle();
+    computedItems = existingRow?.computed_items || null;
 
-    // Gingr returns all boarding areas from any boarding type id. Use one call.
-    const body = new URLSearchParams();
-    body.append('key', apiKey);
-    body.append('location_id', gingrLocationId);
-    body.append('type_id', '5');
-    body.append('reservation_dates[0][startDate]', gingrDate);
-    body.append('reservation_dates[0][endDate]', gingrNextDate);
+    if (!computedItems) {
+      const snapshot = await fetchRoomOccupancySnapshotForDate({
+        supabase,
+        locationId,
+        date,
+        includeCategories: ["boarding", "day_boarding", "daycare", "evaluation"],
+      });
+      const lookup = buildRoomOccupancyLookup(snapshot);
+      const rooms: Record<string, string> = {};
+      const roomsByAnimalId: Record<string, string> = {};
 
-    const res = await fetch(`https://${subdomain}.gingrapp.com/api/v1/get_runs_and_reservations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
-      body: body.toString(),
-    });
-    if (!res.ok) {
-      throw new Error(`Gingr get_runs_and_reservations error ${res.status}: ${await res.text()}`);
-    }
-    const results = await res.json();
-
-    // Parse all runs to build animal_name → room_name map
-    const roomMap: Record<string, string> = {};
-
-    for (const area of Array.isArray(results) ? results : []) {
-      for (const run of area.runs || []) {
-        const runName = run.name || '';
-        for (const rd of run.reservation_date || []) {
-          if (rd.date === date && rd.occupied && rd.animal_name) {
-            const animalEntries = rd.animal_name.split('<br>');
-            for (const entry of animalEntries) {
-              const match = entry.trim().match(/^([^(]+)/);
-              if (match) {
-                const dogName = match[1].trim();
-                roomMap[dogName] = runName;
-                roomMap[dogName.toLowerCase()] = runName;
-              }
-            }
-          }
+      for (const entry of lookup.byReservationId.values()) {
+        if (!entry.room_label) continue;
+        const normalizedName = entry.animal_name.trim();
+        if (normalizedName) {
+          rooms[normalizedName] = entry.room_label;
+          rooms[normalizedName.toLowerCase()] = entry.room_label;
         }
+        if (entry.animal_id) {
+          roomsByAnimalId[entry.animal_id] = entry.room_label;
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          date,
+          location_id: locationId,
+          rooms,
+          rooms_by_animal_id: roomsByAnimalId,
+          count: Object.keys(roomsByAnimalId).length,
+          source: "shared_room_occupancy_helper",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const rooms: Record<string, string> = {};
+    const roomsByAnimalId: Record<string, string> = {};
+    for (const assignment of computedItems.assignments || []) {
+      const roomLabel = String(assignment.room_label || "").trim();
+      const animalName = String(assignment.animal_name || "").trim();
+      const animalId = String(assignment.animal_id || "").trim();
+      if (!roomLabel) continue;
+      if (animalName) {
+        rooms[animalName] = roomLabel;
+        rooms[animalName.toLowerCase()] = roomLabel;
+      }
+      if (animalId) {
+        roomsByAnimalId[animalId] = roomLabel;
       }
     }
 
     return new Response(
-      JSON.stringify({ date, location_id: locationId, rooms: roomMap, count: Object.keys(roomMap).length / 2 }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({
+        date,
+        location_id: locationId,
+        rooms,
+        rooms_by_animal_id: roomsByAnimalId,
+        count: Object.keys(roomsByAnimalId).length,
+        source: "lite_daily_ops.room_occupancy",
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
     return new Response(
-      JSON.stringify({ error: 'Failed to fetch room assignments', details: (err as Error).message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: "Failed to fetch room assignments", details: (err as Error).message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
