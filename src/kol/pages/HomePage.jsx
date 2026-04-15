@@ -471,7 +471,6 @@ function ManagerHome({ data, nav, profile, briefingSentences, inventorySummary }
 
       {/* Primary action cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14, marginBottom: 28 }}>
-        <QuickCard label="Operations Overview" desc="Full ops status and checklists" icon="Dashboard" onClick={() => nav("ops-hub")} accent={C.pri} />
         <QuickCard label="My Work" desc="Your personal task list" icon="Clipboard" onClick={() => nav("role-page")} accent="#3B82F6" />
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
@@ -520,7 +519,6 @@ function AdminHome({ data, nav, profile, analyticsMode, briefingSentences, inven
         Quick Access
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 28 }}>
-        <QuickCard label="Operations Overview" desc="Ops status across all categories" icon="Dashboard" onClick={() => nav("ops-hub")} accent="#059669" />
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
         <QuickCard label="Scheduling" desc="Demand matrix and labor plan" icon="Calendar" onClick={() => nav("scheduling")} accent="#059669" />

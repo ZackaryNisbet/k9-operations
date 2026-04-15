@@ -194,10 +194,10 @@ function parseLiteUrl(pathname, dataRef) {
 // ─── Navigation Config ───────────────────────────────────────────────────
 // Role-aware navigation aligned to mobile product model.
 // Home is the universal landing; My Work is the staff execution surface;
-// Ops Overview is demoted to managers+ only; analytics mode preserves the old dashboard.
+// the deprecated analytics mode preserves the old dashboard.
 // Staff roles: Home, My Work, Inventory, Photos, TV, Settings
-// Manager roles: Home, My Work, Ops Overview, Inventory, Cash Tips, Photos, Settings
-// Admin/owner roles: Home, Ops Overview, Inventory, Cash Tips, Photos, Settings
+// Manager roles: Home, My Work, Inventory, Cash Tips, Photos, Settings
+// Admin/owner roles: Home, Inventory, Cash Tips, Photos, Settings
 
 const STAFF_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
@@ -211,7 +211,6 @@ const STAFF_NAV_ITEMS = [
 const MANAGER_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
-  { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
@@ -225,7 +224,6 @@ const MANAGER_NAV_ITEMS = [
 
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
-  { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
@@ -1006,7 +1004,7 @@ function LeanAppInner() {
   };
 
   const isFullscreenPage = page === "checkout-tv" || page === "onboarding" || page === "pricing";
-  const isEdgeToEdgePage = isFullscreenPage;
+  const isEdgeToEdgePage = isFullscreenPage || page === "dashboard";
   const isHomePage = page === "home";
 
   return (
