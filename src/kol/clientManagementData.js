@@ -21,6 +21,20 @@ export const CLIENT_CASE_SEVERITY_OPTIONS = [
   { value: "critical", label: "Critical" },
 ];
 
+export const INCIDENT_CATEGORY_OPTIONS = [
+  { value: "dog_laceration", label: "Dog Laceration" },
+  { value: "dog_fight", label: "Dog Fight / Altercation" },
+  { value: "loose_stool", label: "Loose Stool / GI Issue" },
+  { value: "vomiting", label: "Vomiting / Illness" },
+  { value: "dog_death", label: "Dog Death" },
+  { value: "dog_mix_up", label: "Dog Mix-Up" },
+  { value: "escape", label: "Escape / Loose Dog" },
+  { value: "bite_or_scratch", label: "Bite / Scratch" },
+  { value: "employee_injury", label: "Employee Injury" },
+  { value: "facility_damage", label: "Facility / Safety Issue" },
+  { value: "other", label: "Other" },
+];
+
 export const RED_BINDER_FORM_LIBRARY = [
   {
     id: "vet_visit_form",
@@ -428,6 +442,11 @@ export function getClientCaseStatusLabel(value) {
   return CASE_STATUS_LABELS[value] || value || "Open";
 }
 
+export function getIncidentCategoryLabel(value) {
+  const match = INCIDENT_CATEGORY_OPTIONS.find((option) => option.value === value);
+  return match?.label || value || "General Incident";
+}
+
 export function buildIncidentCaseCode(caseRow) {
   const dateText = String(caseRow?.incident_date || caseRow?.created_at || "").slice(0, 10).replace(/-/g, "");
   const idText = String(caseRow?.id || "").replace(/-/g, "").slice(0, 6).toUpperCase();
@@ -480,7 +499,10 @@ export function buildClientIncidentMetrics({ cases = [], documents = [], reserva
     return incidentDate && incidentDate >= windowStart;
   });
   const openCases = cases.filter((caseRow) => caseRow?.status !== "closed");
-  const criticalCases30d = recentCases.filter((caseRow) => String(caseRow?.severity || "") === "critical");
+  const seriousCases30d = recentCases.filter((caseRow) => (
+    String(caseRow?.case_type || "") === "serious_animal_event"
+    || String(caseRow?.metadata?.incident_category || "") === "dog_death"
+  ));
   const dogDays30 = computeDogDaysLast30(reservations, asOf);
   const incidentRatePer100DogDays = dogDays30
     ? Number(((recentCases.length / dogDays30) * 100).toFixed(2))
@@ -490,7 +512,8 @@ export function buildClientIncidentMetrics({ cases = [], documents = [], reserva
     totalCases: cases.length,
     openCaseCount: openCases.length,
     caseCount30d: recentCases.length,
-    criticalCaseCount30d: criticalCases30d.length,
+    criticalCaseCount30d: seriousCases30d.length,
+    seriousCaseCount30d: seriousCases30d.length,
     documentationCount: documents.length,
     dogDays30,
     incidentRatePer100DogDays,
