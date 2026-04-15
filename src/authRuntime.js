@@ -150,3 +150,24 @@ export function summarizeAuthFailure(error) {
   if (error.timedOut) return `${authStageLabel(error.stage)} timed out`;
   return `${authStageLabel(error.stage)} failed`;
 }
+
+export function resolveAuthStateTransition(event, { currentUserId = null, nextUserId = null } = {}) {
+  if (event === 'INITIAL_SESSION') return 'ignore';
+  if (!nextUserId) return 'signed_out';
+
+  const isSameUser = !!currentUserId && currentUserId === nextUserId;
+
+  if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+    return isSameUser ? 'quiet_refresh' : 'hydrate';
+  }
+
+  if (event === 'SIGNED_IN') {
+    return isSameUser ? 'quiet_refresh' : 'hydrate';
+  }
+
+  if (event === 'PASSWORD_RECOVERY') {
+    return isSameUser ? 'quiet_refresh' : 'hydrate';
+  }
+
+  return isSameUser ? 'quiet_refresh' : 'hydrate';
+}

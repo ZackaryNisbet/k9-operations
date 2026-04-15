@@ -5,6 +5,7 @@ import {
   authStageLabel,
   classifyAuthFailure,
   createAuthFailure,
+  resolveAuthStateTransition,
   summarizeAuthFailure,
   withAuthTimeout,
 } from '../authRuntime';
@@ -73,5 +74,31 @@ describe('authRuntime', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('quietly handles token refreshes for the current user', () => {
+    expect(resolveAuthStateTransition('TOKEN_REFRESHED', {
+      currentUserId: 'user-1',
+      nextUserId: 'user-1',
+    })).toBe('quiet_refresh');
+
+    expect(resolveAuthStateTransition('USER_UPDATED', {
+      currentUserId: 'user-1',
+      nextUserId: 'user-1',
+    })).toBe('quiet_refresh');
+  });
+
+  it('rehydrates when auth events switch to a different user', () => {
+    expect(resolveAuthStateTransition('SIGNED_IN', {
+      currentUserId: 'user-1',
+      nextUserId: 'user-2',
+    })).toBe('hydrate');
+  });
+
+  it('treats empty auth sessions as signed out', () => {
+    expect(resolveAuthStateTransition('SIGNED_OUT', {
+      currentUserId: 'user-1',
+      nextUserId: null,
+    })).toBe('signed_out');
   });
 });

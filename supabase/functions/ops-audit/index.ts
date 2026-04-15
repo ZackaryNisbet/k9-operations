@@ -1,7 +1,7 @@
 // ============================================================================
 // Ops Audit — K9 Operations
 // Compares app-computed data against Gingr source data for validation.
-// Currently supports: bathing report audit.
+// Supports bathing plus workflow audits against browser-visible Gingr data.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -13,6 +13,11 @@ import {
   isBoardingReservation,
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
+import {
+  fetchAnimalViewJson,
+  fetchReservationViewJson,
+  gingrWebLogin,
+} from "../_shared/gingr-browser-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +45,25 @@ function normalizeName(name: string): string {
   return (name || "").trim().toLowerCase();
 }
 
+function normalizeText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value).trim();
+  if (Array.isArray(value)) return value.map(normalizeText).filter(Boolean).join(", ");
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(normalizeText).filter(Boolean).join(" ");
+  return "";
+}
+
+function normalizeList<T = any>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object") return Object.values(value as Record<string, T>);
+  return [];
+}
+
+function choiceLabel(value: any): string {
+  return normalizeText(value?.label || value?.name || value?.value || value);
+}
+
 function dogKey(animalName: string, ownerLastName: string): string {
   const name = (animalName || "").trim();
   const initial = (ownerLastName || "").trim().charAt(0).toUpperCase();
@@ -53,6 +77,20 @@ function daysBetween(startDateStr: string, endDateStr: string): number {
   const startMs = new Date(startDay + "T12:00:00").getTime();
   const endMs = new Date(endDay + "T12:00:00").getTime();
   return Math.round((endMs - startMs) / (24 * 60 * 60 * 1000));
+}
+
+async function mapInBatches<T, U>(
+  items: T[],
+  batchSize: number,
+  mapper: (item: T, index: number) => Promise<U>,
+) {
+  const results: U[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    const mapped = await Promise.all(batch.map((item, offset) => mapper(item, index + offset)));
+    results.push(...mapped);
+  }
+  return results;
 }
 
 // ─── Fetch app bathing data from lite_daily_ops ───────────────────────────
@@ -602,6 +640,389 @@ function compareBathingData(
   };
 }
 
+const WORKFLOW_AUDIT_CONFIG: Record<string, {
+  label: string;
+  typeSub: string;
+  session?: "am" | "midday" | "pm";
+  kind: "feeding-meds" | "feeding-report";
+}> = {
+  feeding_meds_am: { label: "AM Feeding and Meds", typeSub: "feeding_meds_am", session: "am", kind: "feeding-meds" },
+  feeding_meds_midday: { label: "Midday Feeding and Meds", typeSub: "feeding_meds_midday", session: "midday", kind: "feeding-meds" },
+  feeding_meds_pm: { label: "PM Feeding and Meds", typeSub: "feeding_meds_pm", session: "pm", kind: "feeding-meds" },
+  feeding_report: { label: "Feeding Report", typeSub: "feeding_report", kind: "feeding-report" },
+};
+
+function normalizeReservationCollection(result: any): any[] {
+  if (Array.isArray(result?.data)) return result.data;
+  if (result?.data && typeof result.data === "object") return Object.values(result.data);
+  if (Array.isArray(result)) return result;
+  return [];
+}
+
+function classifyReservationCategory(typeName: string): string {
+  const value = String(typeName || "").toLowerCase();
+  if (value.includes("evaluation") || value.includes("eval")) return "evaluation";
+  if (value.includes("day board")) return "day boarding";
+  if (value.includes("daycare") || value.includes("day care")) return "daycare";
+  if (value.includes("boarding") || value.includes("suite") || value.includes("villa") || value.includes("executive") || value.includes("compartment")) return "boarding";
+  return "other";
+}
+
+function normalizeInstructionLabel(value: any) {
+  const parts = [
+    normalizeText(value?.summary),
+    normalizeText(value?.detail),
+    normalizeText(value?.schedule),
+    normalizeText(value?.notes),
+    normalizeText(value?.medication_name),
+    normalizeText(value?.food_type),
+    normalizeText(value?.schedule_time),
+    normalizeText(value?.frequency),
+  ].filter(Boolean);
+  return [...new Set(parts)].join(" · ");
+}
+
+function workflowDogKey(row: any) {
+  return String(row?.reservationId || row?.reservation_id || row?.animalGingrId || row?.animal_gingr_id || normalizeName(row?.dogName || row?.animalName || row?.animal_name || ""));
+}
+
+function matchesWorkflowSession(row: any, session: "am" | "midday" | "pm", type: "feeding" | "medication") {
+  const text = [
+    normalizeText(row?.schedule_time),
+    normalizeText(row?.frequency),
+    normalizeText(row?.raw_data?.schedule_time),
+    normalizeText(row?.raw_data?.schedule),
+    normalizeText(row?.raw_data?.normalized_schedule_label),
+  ].join(" ").toLowerCase();
+
+  if (text.includes("three") || text.includes("3x") || text.includes("tid")) return true;
+  if (session === "midday") {
+    if (text.includes("midday") || text.includes("noon") || text.includes("12") || text.includes("afternoon")) return true;
+    return false;
+  }
+  if (session === "am") {
+    if (text.includes("am") || text.includes("morning") || text.includes("breakfast") || text.includes("7") || text.includes("6")) return true;
+    if (text.includes("twice") || text.includes("2x") || text.includes("bid")) return true;
+    return !text && type === "feeding";
+  }
+  if (text.includes("pm") || text.includes("evening") || text.includes("dinner") || text.includes("night") || text.includes("17") || text.includes("18") || text.includes("19")) return true;
+  if (text.includes("twice") || text.includes("2x") || text.includes("bid")) return true;
+  return !text;
+}
+
+async function fetchGingrConfig(sb: any, locationId: string) {
+  const { data, error } = await sb
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", "gingr_config")
+    .maybeSingle();
+
+  if (error) throw error;
+  const config = data?.setting_value || {};
+  if (!config?.api_key || !config?.subdomain) {
+    throw new Error("Gingr is not configured for this location.");
+  }
+  return { subdomain: String(config.subdomain), apiKey: String(config.api_key) };
+}
+
+function buildBrowserFeedingItems(report: any) {
+  const payload = report?.feeding_report || report?.feedingReport || report?.feeding_info || report?.feedingInfo || report || {};
+  const schedules = normalizeList<any>(payload?.feedingSchedules || payload?.feeding_schedules);
+  const foodType = choiceLabel(payload?.foodType || payload?.food_type) || choiceLabel(payload?.feedingMethod || payload?.feeding_method) || "Feeding";
+  const feedingNotes = normalizeText(payload?.feedingNotes || payload?.feeding_notes);
+
+  if (schedules.length === 0 && !foodType && !feedingNotes) {
+    return [];
+  }
+
+  if (schedules.length === 0) {
+    return [{
+      id: "feeding_browser_default",
+      summary: foodType || "Feeding",
+      detail: foodType || "Feeding",
+      schedule: "",
+      notes: feedingNotes,
+      food_type: foodType,
+      schedule_time: "",
+      frequency: "",
+      raw_data: { source: "gingr_browser_view_json", payload },
+    }];
+  }
+
+  return schedules.map((schedule, index) => {
+    const scheduleLabel = choiceLabel(schedule?.feedingSchedule || schedule?.schedule || schedule?.time);
+    const amount = [
+      choiceLabel(schedule?.feedingAmount || schedule?.amount),
+      choiceLabel(schedule?.feedingUnit || schedule?.unit),
+    ].filter(Boolean).join(" ").trim();
+    const scheduleNotes = normalizeText(schedule?.feedingInstructions || schedule?.instructions);
+    const summary = [amount, foodType].filter(Boolean).join(" · ") || foodType || "Feeding";
+
+    return {
+      id: `feeding_browser_${index}`,
+      summary,
+      detail: [amount, foodType, scheduleLabel].filter(Boolean).join(" · ") || summary,
+      schedule: scheduleLabel,
+      notes: [scheduleNotes, feedingNotes].filter(Boolean).join(" · "),
+      food_type: foodType,
+      schedule_time: scheduleLabel,
+      frequency: scheduleLabel,
+      raw_data: {
+        source: "gingr_browser_view_json",
+        payload,
+        schedule,
+        normalized_schedule_label: scheduleLabel,
+      },
+    };
+  });
+}
+
+function buildBrowserMedicationItems(report: any) {
+  const payload = report?.medication_report || report?.medicationReport || report?.medication_info || report?.medicationInfo || report || {};
+  const schedules = normalizeList<any>(payload?.medicationSchedules || payload?.medication_schedules);
+
+  return schedules.flatMap((schedule, scheduleIndex) => {
+    const scheduleLabel = choiceLabel(schedule?.medicationSchedule || schedule?.schedule || schedule?.time);
+    return normalizeList<any>(schedule?.medications || schedule?.items).map((medication, medIndex) => {
+      const medicationName =
+        choiceLabel(medication?.medicationType || medication?.medication_type || medication?.type) ||
+        normalizeText(medication?.medication_name) ||
+        "Medication";
+      const dosage = [
+        choiceLabel(medication?.medicationAmount || medication?.amount),
+        choiceLabel(medication?.medicationUnit || medication?.unit),
+      ].filter(Boolean).join(" ").trim();
+      const notes = normalizeText(medication?.medicationNotes || medication?.notes || payload?.medicationNotes || payload?.medication_notes);
+      const summary = [medicationName, dosage].filter(Boolean).join(" · ") || medicationName;
+
+      return {
+        id: `medication_browser_${scheduleIndex}_${medIndex}`,
+        summary,
+        detail: [medicationName, dosage, scheduleLabel].filter(Boolean).join(" · ") || summary,
+        schedule: scheduleLabel,
+        notes,
+        medication_name: medicationName,
+        dosage,
+        schedule_time: scheduleLabel,
+        frequency: scheduleLabel,
+        raw_data: {
+          source: "gingr_browser_view_json",
+          payload,
+          schedule,
+          medication,
+          normalized_schedule_label: scheduleLabel,
+        },
+      };
+    });
+  });
+}
+
+async function fetchWorkflowCandidateReservations(
+  sb: any,
+  locationId: string,
+  date: string,
+  kind: "feeding-meds" | "feeding-report",
+) {
+  const { data, error } = await sb
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, cancelled_date")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${date}T23:59:59`)
+    .gte("end_date", `${date}T00:00:00`)
+    .order("start_date", { ascending: true });
+
+  if (error) throw error;
+
+  return (data || []).filter((reservation: any) => {
+    const category = classifyReservationCategory(reservation?.reservation_type_name || "");
+    if (kind === "feeding-report") {
+      return category === "boarding" && String(reservation?.start_date || "").slice(0, 10) < date;
+    }
+    return ["boarding", "daycare", "day boarding", "evaluation"].includes(category);
+  });
+}
+
+async function fetchWorkflowAuditData(
+  sb: any,
+  locationId: string,
+  date: string,
+  report: string,
+) {
+  const config = WORKFLOW_AUDIT_CONFIG[report];
+  if (!config) {
+    throw new Error(`Unsupported report type: ${report}`);
+  }
+
+  const [credentials, candidateReservations, appEntry] = await Promise.all([
+    fetchGingrConfig(sb, locationId),
+    fetchWorkflowCandidateReservations(sb, locationId, date, config.kind),
+    sb
+      .from("lite_daily_ops")
+      .select("computed_items")
+      .eq("id", `ops_${config.typeSub}_${date}`)
+      .maybeSingle(),
+  ]);
+  const cookies = await gingrWebLogin(credentials.subdomain, credentials.apiKey);
+  const auditErrors: string[] = [];
+  const liveRows = (await mapInBatches(candidateReservations, 8, async (reservation: any) => {
+    try {
+      const reservationId = String(reservation?.gingr_id || "").trim();
+      const animalId = String(reservation?.animal_gingr_id || "").trim();
+      const reservationDetail = reservationId
+        ? await fetchReservationViewJson(credentials.subdomain, cookies, reservationId)
+        : null;
+
+      let feedingItems = buildBrowserFeedingItems(
+        reservationDetail?.feeding_report || reservationDetail?.feedingReport || reservationDetail?.feeding_info || reservationDetail?.feedingInfo,
+      );
+      let medicationItems = buildBrowserMedicationItems(
+        reservationDetail?.medication_report || reservationDetail?.medicationReport || reservationDetail?.medication_info || reservationDetail?.medicationInfo,
+      );
+
+      if ((feedingItems.length === 0 || medicationItems.length === 0) && animalId) {
+        const animalDetail = await fetchAnimalViewJson(credentials.subdomain, cookies, animalId);
+        if (feedingItems.length === 0) {
+          feedingItems = buildBrowserFeedingItems(animalDetail?.feeding_info || animalDetail?.feedingInfo);
+        }
+        if (medicationItems.length === 0) {
+          medicationItems = buildBrowserMedicationItems(animalDetail?.medication_info || animalDetail?.medicationInfo);
+        }
+      }
+
+      if (config.session) {
+        feedingItems = feedingItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "feeding"));
+        medicationItems = medicationItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "medication"));
+      }
+
+      const ownerLastName = normalizeText(
+        reservation?.owner_last_name ||
+        reservationDetail?.owner_last_name ||
+        reservationDetail?.owner?.last_name,
+      );
+
+      return {
+        reservationId,
+        animalGingrId: animalId || String(reservationDetail?.a_id || reservationDetail?.animal?.id || "").trim(),
+        dogName: normalizeText(reservation?.animal_name || reservationDetail?.animal_name || reservationDetail?.animal?.name) || "Dog",
+        ownerInitial: `${ownerLastName.charAt(0).toUpperCase() || ""}.`,
+        feedingItems,
+        medicationItems,
+      };
+    } catch (error: any) {
+      auditErrors.push(
+        `${reservation?.animal_name || "Dog"} (${reservation?.gingr_id || "unknown reservation"}): ${error?.message || "Browser audit fetch failed."}`,
+      );
+      return null;
+    }
+  }))
+    .filter(Boolean)
+    .filter((row: any) => {
+      if (config.kind === "feeding-report") return row.feedingItems.length > 0;
+      return row.feedingItems.length > 0 || row.medicationItems.length > 0;
+    });
+
+  const appRows = Array.isArray(appEntry.data?.computed_items?.rows) ? appEntry.data.computed_items.rows : [];
+  return {
+    config,
+    appRows,
+    liveRows,
+    auditSource: "gingr_browser_reservation_view_json",
+    auditErrors,
+    browserCandidateCount: candidateReservations.length,
+  };
+}
+
+function compareWorkflowRows(appRows: any[], liveRows: any[]) {
+  const appByKey = new Map(appRows.map((row) => [workflowDogKey(row), row]));
+  const liveByKey = new Map(liveRows.map((row) => [workflowDogKey(row), row]));
+
+  const details: any[] = [];
+  const missingFromApp: string[] = [];
+  const missingFromGingr: string[] = [];
+  let matched = 0;
+  let mismatched = 0;
+
+  for (const liveRow of liveRows) {
+    const key = workflowDogKey(liveRow);
+    const appRow = appByKey.get(key);
+    const liveLabel = `${liveRow.dogName} ${liveRow.ownerInitial || ""}`.trim();
+    if (!appRow) {
+      missingFromApp.push(liveLabel);
+      details.push({
+        dog: liveLabel,
+        status: "missing_from_app",
+        app: null,
+        gingr: {
+          feeding_items: liveRow.feedingItems.map(normalizeInstructionLabel),
+          medication_items: liveRow.medicationItems.map(normalizeInstructionLabel),
+        },
+        differences: ["Dog exists in live Gingr detail but is missing from the app report."],
+      });
+      continue;
+    }
+
+    const appFeeding = (appRow.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean).sort();
+    const appMedication = (appRow.medicationItems || []).map(normalizeInstructionLabel).filter(Boolean).sort();
+    const liveFeeding = (liveRow.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean).sort();
+    const liveMedication = (liveRow.medicationItems || []).map(normalizeInstructionLabel).filter(Boolean).sort();
+
+    const differences: string[] = [];
+    if (JSON.stringify(appFeeding) !== JSON.stringify(liveFeeding)) {
+      differences.push("Feeding instructions differ.");
+    }
+    if (JSON.stringify(appMedication) !== JSON.stringify(liveMedication)) {
+      differences.push("Medication instructions differ.");
+    }
+
+    if (differences.length === 0) {
+      matched += 1;
+      details.push({
+        dog: liveLabel,
+        status: "match",
+        app: { feeding_items: appFeeding, medication_items: appMedication },
+        gingr: { feeding_items: liveFeeding, medication_items: liveMedication },
+        differences: [],
+      });
+    } else {
+      mismatched += 1;
+      details.push({
+        dog: liveLabel,
+        status: "mismatch",
+        app: { feeding_items: appFeeding, medication_items: appMedication },
+        gingr: { feeding_items: liveFeeding, medication_items: liveMedication },
+        differences,
+      });
+    }
+  }
+
+  for (const appRow of appRows) {
+    const key = workflowDogKey(appRow);
+    if (liveByKey.has(key)) continue;
+    const label = `${appRow.dogName || appRow.animalName || "Dog"} ${appRow.ownerInitial || ""}`.trim();
+    missingFromGingr.push(label);
+    details.push({
+      dog: label,
+      status: "missing_from_gingr",
+      app: {
+        feeding_items: (appRow.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean),
+        medication_items: (appRow.medicationItems || []).map(normalizeInstructionLabel).filter(Boolean),
+      },
+      gingr: null,
+      differences: ["Dog exists in the app report but was not returned by the live Gingr audit fetch."],
+    });
+  }
+
+  return {
+    matched,
+    mismatched,
+    missing_from_app: missingFromApp,
+    missing_from_gingr: missingFromGingr,
+    details,
+  };
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -627,17 +1048,72 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (report !== "bathing") {
-      return new Response(
-        JSON.stringify({ error: `Unsupported report type: ${report}. Supported: bathing` }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(supabaseUrl, supabaseServiceKey);
     const startTime = Date.now();
+
+    if (report !== "bathing" && !WORKFLOW_AUDIT_CONFIG[report]) {
+      return new Response(
+        JSON.stringify({ error: `Unsupported report type: ${report}. Supported: bathing, ${Object.keys(WORKFLOW_AUDIT_CONFIG).join(", ")}` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (WORKFLOW_AUDIT_CONFIG[report]) {
+      const { config, appRows, liveRows, auditSource, auditErrors, browserCandidateCount } = await fetchWorkflowAuditData(sb, location_id, date, report);
+      const comparison = compareWorkflowRows(appRows, liveRows);
+      const duration = Date.now() - startTime;
+      const hasMissing = comparison.missing_from_app.length > 0 || comparison.missing_from_gingr.length > 0;
+      const hasSourceErrors = auditErrors.length > 0 || liveRows.length !== browserCandidateCount;
+      const status = hasMissing || hasSourceErrors
+        ? "FAIL"
+        : comparison.mismatched > 0
+          ? "WARNING"
+          : "PASS";
+
+      return new Response(
+        JSON.stringify({
+          status,
+          date,
+          report,
+          report_label: config.label,
+          duration_ms: duration,
+          audit_source: auditSource,
+          browser_candidate_count: browserCandidateCount,
+          source_errors: auditErrors,
+          audited_at: new Date().toISOString(),
+          app_scheduled: {
+            count: appRows.length,
+            dogs: appRows.map((row: any) => ({
+              reservationId: row.reservationId,
+              animalGingrId: row.animalGingrId,
+              animalName: row.dogName,
+              feeding_items: (row.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean),
+              medication_items: (row.medicationItems || []).map(normalizeInstructionLabel).filter(Boolean),
+            })),
+          },
+          gingr_scheduled: {
+            count: liveRows.length,
+            dogs: liveRows.map((row: any) => ({
+              reservationId: row.reservationId,
+              animalGingrId: row.animalGingrId,
+              animalName: row.dogName,
+              feeding_items: (row.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean),
+              medication_items: (row.medicationItems || []).map(normalizeInstructionLabel).filter(Boolean),
+            })),
+          },
+          comparison: {
+            matched: comparison.matched,
+            mismatched: comparison.mismatched,
+            missing_from_app: comparison.missing_from_app,
+            missing_from_gingr: comparison.missing_from_gingr,
+          },
+          details: comparison.details,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Fetch both datasets in parallel
     // fetchGingrGroundTruth now also returns allRes for Fresh n Clean / Suggested detection
@@ -689,7 +1165,10 @@ Deno.serve(async (req: Request) => {
         status,
         date,
         report,
+        report_label: "Bathing",
         duration_ms: duration,
+        audit_source: "gingr_synced_reservations_plus_service_context",
+        audited_at: new Date().toISOString(),
         gingr_scheduled: {
           count: gingrDogs.length,
           dogs: gingrDogs.map((d) => ({

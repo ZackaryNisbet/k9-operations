@@ -40,14 +40,15 @@ function PermissionsTab() {
   }, []);
 
   const LITE_PERM_CATEGORIES = [
-    { key: "dashboard", label: "Dashboard & Reporting", permissions: [
-      { key: "Dashboard", label: "Dashboard", desc: "View the main dashboard with today's metrics" },
+    { key: "dashboard", label: "Home & Reporting", permissions: [
+      { key: "Dashboard", label: "Home Metrics", desc: "View the home surface with today's metrics and briefing" },
       { key: "Financial Reporting", label: "Financial Reporting", desc: "View revenue, transactions, refunds, and financial charts" },
       { key: "Occupancy Reports", label: "Occupancy Reports", desc: "View occupancy trends and reports" },
     ]},
     { key: "pages", label: "Module Access", permissions: [
       { key: "Customer Lifecycle", label: "Customer Lifecycle", desc: "View and manage customer lifecycle stages" },
       { key: "Operations Hub", label: "Operations Hub", desc: "Access daily operations checklists" },
+      { key: "Training Management", label: "Labor Management", desc: "Access labor home, roster, training, templates, reviews, certifications, and notes" },
       { key: "Photos Module", label: "Photos", desc: "View and manage pet photos" },
       { key: "Services Management", label: "Services", desc: "View and manage bathing, enrichment, pamper, and ice cream services" },
       { key: "Inventory Management", label: "Inventory", desc: "Manage inventory counts and orders" },
