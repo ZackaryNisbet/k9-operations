@@ -34,7 +34,7 @@ const WORKFLOW_DEFS = [
   { id: "belongings", label: "Belongings" },
   { id: "weekly_maintenance", label: "Weekly Maintenance" },
   { id: "weekly_inventory", label: "Weekly Inventory" },
-  { id: "training", label: "Training" },
+  { id: "training", label: "Labor" },
   { id: "enrichment", label: "Enrichment" },
   { id: "ice_cream", label: "Gourmet Ice Cream" },
   { id: "roll_call_opening", label: "Opening Roll Call" },

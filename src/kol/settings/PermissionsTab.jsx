@@ -48,6 +48,7 @@ function PermissionsTab() {
     { key: "pages", label: "Module Access", permissions: [
       { key: "Customer Lifecycle", label: "Customer Lifecycle", desc: "View and manage customer lifecycle stages" },
       { key: "Operations Hub", label: "Operations Hub", desc: "Access daily operations checklists" },
+      { key: "Training Management", label: "Labor Management", desc: "Access labor home, roster, training, templates, reviews, certifications, and notes" },
       { key: "Photos Module", label: "Photos", desc: "View and manage pet photos" },
       { key: "Services Management", label: "Services", desc: "View and manage bathing, enrichment, pamper, and ice cream services" },
       { key: "Inventory Management", label: "Inventory", desc: "Manage inventory counts and orders" },
