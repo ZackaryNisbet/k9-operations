@@ -14,6 +14,11 @@ import {
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
 import {
+  fetchLocationIconMappings,
+  resolveBathDisplayFromIconRows,
+  type GingrAnimalIconRow,
+} from "../_shared/gingr-icon-mappings.ts";
+import {
   fetchAnimalViewJson,
   fetchReservationViewJson,
   gingrWebLogin,
@@ -238,30 +243,41 @@ async function fetchGingrGroundTruth(
 
   // Fetch bath icons from gingr_animal_icons_live
   if (animalIds.length > 0) {
+    const iconMappings = await fetchLocationIconMappings({ supabase: sb, locationId });
     const { data: icons } = await sb
       .from("gingr_animal_icons_live")
-      .select("animal_gingr_id, icon_title, icon_comment")
+      .select("animal_gingr_id, icon_title, icon_comment, icon_template_id, icon_identity_key, icon_group, icon_color, icon_class")
       .eq("location_id", locationId)
       .eq("icon_group", "Bath")
       .in("animal_gingr_id", animalIds);
 
-    const iconMap: Record<string, string[]> = {};
+    const iconMap: Record<string, GingrAnimalIconRow[]> = {};
     for (const icon of (icons || [])) {
       const id = icon.animal_gingr_id;
       if (!iconMap[id]) iconMap[id] = [];
-      iconMap[id].push(icon.icon_title || "");
+      iconMap[id].push({
+        animal_gingr_id: icon.animal_gingr_id || "",
+        icon_title: icon.icon_title || "",
+        icon_comment: icon.icon_comment || "",
+        icon_template_id: icon.icon_template_id || "",
+        icon_identity_key: icon.icon_identity_key || "",
+        icon_group: icon.icon_group || "",
+        icon_color: icon.icon_color || "",
+        icon_class: icon.icon_class || "",
+      });
     }
 
     for (const dog of bathDogs) {
       if (iconMap[dog.animalGingrId]) {
-        const normalized = normalizeBathDisplay({
-          iconTitles: iconMap[dog.animalGingrId].filter(Boolean),
+        const normalized = resolveBathDisplayFromIconRows({
+          iconRows: iconMap[dog.animalGingrId],
+          mappings: iconMappings,
           serviceName: dog.bathServiceName,
-          rawModifiers: dog.bathModifiers,
+          rawModifiers: dog.bathModifiers || [],
           defaultType: "Standard",
         });
         dog.bathType = normalized.bathType;
-        dog.bathAddons = normalized.bathIcons;
+        dog.bathAddons = normalized.bathIcons || [];
         dog.bathModifiers = normalized.bathModifiers;
       }
     }
