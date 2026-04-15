@@ -1,7 +1,7 @@
 // ============================================================================
 // Ops Audit — K9 Operations
 // Compares app-computed data against Gingr source data for validation.
-// Currently supports: bathing report audit.
+// Supports bathing plus workflow audits against browser-visible Gingr data.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -14,10 +14,10 @@ import {
   normalizeBathDisplay,
 } from "../_shared/bathing-logic.ts";
 import {
-  fetchFeedingRowsForAnimals,
-  fetchMedicationRowsForAnimals,
-  gingrFetchV1,
-} from "../_shared/gingr-operational-details.ts";
+  fetchAnimalViewJson,
+  fetchReservationViewJson,
+  gingrWebLogin,
+} from "../_shared/gingr-browser-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +54,16 @@ function normalizeText(value: unknown): string {
   return "";
 }
 
+function normalizeList<T = any>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object") return Object.values(value as Record<string, T>);
+  return [];
+}
+
+function choiceLabel(value: any): string {
+  return normalizeText(value?.label || value?.name || value?.value || value);
+}
+
 function dogKey(animalName: string, ownerLastName: string): string {
   const name = (animalName || "").trim();
   const initial = (ownerLastName || "").trim().charAt(0).toUpperCase();
@@ -67,6 +77,20 @@ function daysBetween(startDateStr: string, endDateStr: string): number {
   const startMs = new Date(startDay + "T12:00:00").getTime();
   const endMs = new Date(endDay + "T12:00:00").getTime();
   return Math.round((endMs - startMs) / (24 * 60 * 60 * 1000));
+}
+
+async function mapInBatches<T, U>(
+  items: T[],
+  batchSize: number,
+  mapper: (item: T, index: number) => Promise<U>,
+) {
+  const results: U[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    const mapped = await Promise.all(batch.map((item, offset) => mapper(item, index + offset)));
+    results.push(...mapped);
+  }
+  return results;
 }
 
 // ─── Fetch app bathing data from lite_daily_ops ───────────────────────────
@@ -659,7 +683,7 @@ function normalizeInstructionLabel(value: any) {
 }
 
 function workflowDogKey(row: any) {
-  return String(row?.animalGingrId || row?.animal_gingr_id || row?.reservationId || row?.reservation_id || normalizeName(row?.dogName || row?.animalName || row?.animal_name || ""));
+  return String(row?.reservationId || row?.reservation_id || row?.animalGingrId || row?.animal_gingr_id || normalizeName(row?.dogName || row?.animalName || row?.animal_name || ""));
 }
 
 function matchesWorkflowSession(row: any, session: "am" | "midday" | "pm", type: "feeding" | "medication") {
@@ -702,12 +726,122 @@ async function fetchGingrConfig(sb: any, locationId: string) {
   return { subdomain: String(config.subdomain), apiKey: String(config.api_key) };
 }
 
-async function fetchLiveReservationsForDate(credentials: { subdomain: string; apiKey: string }, date: string) {
-  const result = await gingrFetchV1(credentials, "reservations", "POST", {
-    start_date: date,
-    end_date: date,
+function buildBrowserFeedingItems(report: any) {
+  const payload = report?.feeding_report || report?.feedingReport || report?.feeding_info || report?.feedingInfo || report || {};
+  const schedules = normalizeList<any>(payload?.feedingSchedules || payload?.feeding_schedules);
+  const foodType = choiceLabel(payload?.foodType || payload?.food_type) || choiceLabel(payload?.feedingMethod || payload?.feeding_method) || "Feeding";
+  const feedingNotes = normalizeText(payload?.feedingNotes || payload?.feeding_notes);
+
+  if (schedules.length === 0 && !foodType && !feedingNotes) {
+    return [];
+  }
+
+  if (schedules.length === 0) {
+    return [{
+      id: "feeding_browser_default",
+      summary: foodType || "Feeding",
+      detail: foodType || "Feeding",
+      schedule: "",
+      notes: feedingNotes,
+      food_type: foodType,
+      schedule_time: "",
+      frequency: "",
+      raw_data: { source: "gingr_browser_view_json", payload },
+    }];
+  }
+
+  return schedules.map((schedule, index) => {
+    const scheduleLabel = choiceLabel(schedule?.feedingSchedule || schedule?.schedule || schedule?.time);
+    const amount = [
+      choiceLabel(schedule?.feedingAmount || schedule?.amount),
+      choiceLabel(schedule?.feedingUnit || schedule?.unit),
+    ].filter(Boolean).join(" ").trim();
+    const scheduleNotes = normalizeText(schedule?.feedingInstructions || schedule?.instructions);
+    const summary = [amount, foodType].filter(Boolean).join(" · ") || foodType || "Feeding";
+
+    return {
+      id: `feeding_browser_${index}`,
+      summary,
+      detail: [amount, foodType, scheduleLabel].filter(Boolean).join(" · ") || summary,
+      schedule: scheduleLabel,
+      notes: [scheduleNotes, feedingNotes].filter(Boolean).join(" · "),
+      food_type: foodType,
+      schedule_time: scheduleLabel,
+      frequency: scheduleLabel,
+      raw_data: {
+        source: "gingr_browser_view_json",
+        payload,
+        schedule,
+        normalized_schedule_label: scheduleLabel,
+      },
+    };
   });
-  return normalizeReservationCollection(result);
+}
+
+function buildBrowserMedicationItems(report: any) {
+  const payload = report?.medication_report || report?.medicationReport || report?.medication_info || report?.medicationInfo || report || {};
+  const schedules = normalizeList<any>(payload?.medicationSchedules || payload?.medication_schedules);
+
+  return schedules.flatMap((schedule, scheduleIndex) => {
+    const scheduleLabel = choiceLabel(schedule?.medicationSchedule || schedule?.schedule || schedule?.time);
+    return normalizeList<any>(schedule?.medications || schedule?.items).map((medication, medIndex) => {
+      const medicationName =
+        choiceLabel(medication?.medicationType || medication?.medication_type || medication?.type) ||
+        normalizeText(medication?.medication_name) ||
+        "Medication";
+      const dosage = [
+        choiceLabel(medication?.medicationAmount || medication?.amount),
+        choiceLabel(medication?.medicationUnit || medication?.unit),
+      ].filter(Boolean).join(" ").trim();
+      const notes = normalizeText(medication?.medicationNotes || medication?.notes || payload?.medicationNotes || payload?.medication_notes);
+      const summary = [medicationName, dosage].filter(Boolean).join(" · ") || medicationName;
+
+      return {
+        id: `medication_browser_${scheduleIndex}_${medIndex}`,
+        summary,
+        detail: [medicationName, dosage, scheduleLabel].filter(Boolean).join(" · ") || summary,
+        schedule: scheduleLabel,
+        notes,
+        medication_name: medicationName,
+        dosage,
+        schedule_time: scheduleLabel,
+        frequency: scheduleLabel,
+        raw_data: {
+          source: "gingr_browser_view_json",
+          payload,
+          schedule,
+          medication,
+          normalized_schedule_label: scheduleLabel,
+        },
+      };
+    });
+  });
+}
+
+async function fetchWorkflowCandidateReservations(
+  sb: any,
+  locationId: string,
+  date: string,
+  kind: "feeding-meds" | "feeding-report",
+) {
+  const { data, error } = await sb
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, cancelled_date")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${date}T23:59:59`)
+    .gte("end_date", `${date}T00:00:00`)
+    .order("start_date", { ascending: true });
+
+  if (error) throw error;
+
+  return (data || []).filter((reservation: any) => {
+    const category = classifyReservationCategory(reservation?.reservation_type_name || "");
+    if (kind === "feeding-report") {
+      return category === "boarding" && String(reservation?.start_date || "").slice(0, 10) < date;
+    }
+    return ["boarding", "daycare", "day boarding", "evaluation"].includes(category);
+  });
 }
 
 async function fetchWorkflowAuditData(
@@ -721,66 +855,70 @@ async function fetchWorkflowAuditData(
     throw new Error(`Unsupported report type: ${report}`);
   }
 
-  const credentials = await fetchGingrConfig(sb, locationId);
-  const liveReservations = await fetchLiveReservationsForDate(credentials, date);
-  const animalIds = [...new Set(
-    liveReservations
-      .map((row: any) => String(row?.animal?.id || "").trim())
-      .filter(Boolean),
-  )];
-  const [feedingRows, medicationRows, appEntry] = await Promise.all([
-    fetchFeedingRowsForAnimals(locationId, animalIds, credentials),
-    fetchMedicationRowsForAnimals(locationId, animalIds, credentials),
+  const [credentials, candidateReservations, appEntry] = await Promise.all([
+    fetchGingrConfig(sb, locationId),
+    fetchWorkflowCandidateReservations(sb, locationId, date, config.kind),
     sb
       .from("lite_daily_ops")
       .select("computed_items")
       .eq("id", `ops_${config.typeSub}_${date}`)
       .maybeSingle(),
   ]);
+  const cookies = await gingrWebLogin(credentials.subdomain, credentials.apiKey);
+  const auditErrors: string[] = [];
+  const liveRows = (await mapInBatches(candidateReservations, 8, async (reservation: any) => {
+    try {
+      const reservationId = String(reservation?.gingr_id || "").trim();
+      const animalId = String(reservation?.animal_gingr_id || "").trim();
+      const reservationDetail = reservationId
+        ? await fetchReservationViewJson(credentials.subdomain, cookies, reservationId)
+        : null;
 
-  const feedingByAnimal = new Map<string, any[]>();
-  feedingRows.rows.forEach((row: any) => {
-    const key = String(row.animal_gingr_id);
-    if (!feedingByAnimal.has(key)) feedingByAnimal.set(key, []);
-    feedingByAnimal.get(key)!.push(row);
-  });
-  const medicationByAnimal = new Map<string, any[]>();
-  medicationRows.rows.forEach((row: any) => {
-    const key = String(row.animal_gingr_id);
-    if (!medicationByAnimal.has(key)) medicationByAnimal.set(key, []);
-    medicationByAnimal.get(key)!.push(row);
-  });
+      let feedingItems = buildBrowserFeedingItems(
+        reservationDetail?.feeding_report || reservationDetail?.feedingReport || reservationDetail?.feeding_info || reservationDetail?.feedingInfo,
+      );
+      let medicationItems = buildBrowserMedicationItems(
+        reservationDetail?.medication_report || reservationDetail?.medicationReport || reservationDetail?.medication_info || reservationDetail?.medicationInfo,
+      );
 
-  const liveRows = liveReservations
-    .filter((reservation: any) => {
-      const typeName = reservation?.reservation_type?.type || "";
-      const category = classifyReservationCategory(typeName);
-      const startDate = String(reservation?.start_date || "").slice(0, 10);
-      const endDate = String(reservation?.end_date || "").slice(0, 10);
-      if (config.kind === "feeding-report") {
-        return category === "boarding" && startDate < date && endDate >= date;
+      if ((feedingItems.length === 0 || medicationItems.length === 0) && animalId) {
+        const animalDetail = await fetchAnimalViewJson(credentials.subdomain, cookies, animalId);
+        if (feedingItems.length === 0) {
+          feedingItems = buildBrowserFeedingItems(animalDetail?.feeding_info || animalDetail?.feedingInfo);
+        }
+        if (medicationItems.length === 0) {
+          medicationItems = buildBrowserMedicationItems(animalDetail?.medication_info || animalDetail?.medicationInfo);
+        }
       }
-      return startDate <= date && endDate >= date;
-    })
-    .map((reservation: any) => {
-      const animalId = String(reservation?.animal?.id || "");
-      const allFeeding = feedingByAnimal.get(animalId) || [];
-      const allMedication = medicationByAnimal.get(animalId) || [];
-      const feedingItems = config.session
-        ? allFeeding.filter((row) => matchesWorkflowSession(row, config.session!, "feeding"))
-        : allFeeding;
-      const medicationItems = config.session
-        ? allMedication.filter((row) => matchesWorkflowSession(row, config.session!, "medication"))
-        : allMedication;
+
+      if (config.session) {
+        feedingItems = feedingItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "feeding"));
+        medicationItems = medicationItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "medication"));
+      }
+
+      const ownerLastName = normalizeText(
+        reservation?.owner_last_name ||
+        reservationDetail?.owner_last_name ||
+        reservationDetail?.owner?.last_name,
+      );
+
       return {
-        animalGingrId: animalId,
-        dogName: reservation?.animal?.name || "Dog",
-        ownerInitial: `${String(reservation?.owner?.last_name || "").trim().charAt(0).toUpperCase() || ""}.`,
+        reservationId,
+        animalGingrId: animalId || String(reservationDetail?.a_id || reservationDetail?.animal?.id || "").trim(),
+        dogName: normalizeText(reservation?.animal_name || reservationDetail?.animal_name || reservationDetail?.animal?.name) || "Dog",
+        ownerInitial: `${ownerLastName.charAt(0).toUpperCase() || ""}.`,
         feedingItems,
         medicationItems,
       };
-    })
-    .filter((row) => {
+    } catch (error: any) {
+      auditErrors.push(
+        `${reservation?.animal_name || "Dog"} (${reservation?.gingr_id || "unknown reservation"}): ${error?.message || "Browser audit fetch failed."}`,
+      );
+      return null;
+    }
+  }))
+    .filter(Boolean)
+    .filter((row: any) => {
       if (config.kind === "feeding-report") return row.feedingItems.length > 0;
       return row.feedingItems.length > 0 || row.medicationItems.length > 0;
     });
@@ -790,7 +928,9 @@ async function fetchWorkflowAuditData(
     config,
     appRows,
     liveRows,
-    auditSource: "gingr_live_api",
+    auditSource: "gingr_browser_reservation_view_json",
+    auditErrors,
+    browserCandidateCount: candidateReservations.length,
   };
 }
 
@@ -921,11 +1061,12 @@ Deno.serve(async (req: Request) => {
     }
 
     if (WORKFLOW_AUDIT_CONFIG[report]) {
-      const { config, appRows, liveRows, auditSource } = await fetchWorkflowAuditData(sb, location_id, date, report);
+      const { config, appRows, liveRows, auditSource, auditErrors, browserCandidateCount } = await fetchWorkflowAuditData(sb, location_id, date, report);
       const comparison = compareWorkflowRows(appRows, liveRows);
       const duration = Date.now() - startTime;
       const hasMissing = comparison.missing_from_app.length > 0 || comparison.missing_from_gingr.length > 0;
-      const status = hasMissing
+      const hasSourceErrors = auditErrors.length > 0 || liveRows.length !== browserCandidateCount;
+      const status = hasMissing || hasSourceErrors
         ? "FAIL"
         : comparison.mismatched > 0
           ? "WARNING"
@@ -939,10 +1080,13 @@ Deno.serve(async (req: Request) => {
           report_label: config.label,
           duration_ms: duration,
           audit_source: auditSource,
+          browser_candidate_count: browserCandidateCount,
+          source_errors: auditErrors,
           audited_at: new Date().toISOString(),
           app_scheduled: {
             count: appRows.length,
             dogs: appRows.map((row: any) => ({
+              reservationId: row.reservationId,
               animalGingrId: row.animalGingrId,
               animalName: row.dogName,
               feeding_items: (row.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean),
@@ -952,6 +1096,7 @@ Deno.serve(async (req: Request) => {
           gingr_scheduled: {
             count: liveRows.length,
             dogs: liveRows.map((row: any) => ({
+              reservationId: row.reservationId,
               animalGingrId: row.animalGingrId,
               animalName: row.dogName,
               feeding_items: (row.feedingItems || []).map(normalizeInstructionLabel).filter(Boolean),
