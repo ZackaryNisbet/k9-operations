@@ -61,7 +61,9 @@ export function AuthProvider({ children }) {
 
     if (existing) {
       // Stamp last_accessed_at (fire-and-forget)
-      supabase.from('profiles').update({ last_accessed_at: new Date().toISOString() }).eq('id', userId).then(() => {});
+      const now = new Date().toISOString();
+      supabase.from('profiles').update({ last_accessed_at: now }).eq('id', userId).then(() => {});
+      supabase.from('lite_profiles').update({ last_active: now }).eq('user_id', userId).eq('is_active', true).then(() => {});
       return existing;
     }
 
