@@ -138,8 +138,10 @@ async function describeFunctionError(error) {
 }
 
 function noteTypeLabel(entry) {
-  return String(entry?.note_type || entry?.note_title || "").trim()
-    || (entry?.subject_kind === "owner" ? "Owner Note" : "Dog Note");
+  const label = String(entry?.note_type || entry?.note_title || "").trim();
+  if (/^owner note$/i.test(label)) return "Owner Notes";
+  if (/^dog note$/i.test(label)) return "Pet Notes";
+  return label || (entry?.subject_kind === "owner" ? "Owner Notes" : "Pet Notes");
 }
 
 function formatTimestamp(value) {
@@ -632,11 +634,16 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
   const [activeNoteType, setActiveNoteType] = useState(ALL_TAB);
   const [flagRows, setFlagRows] = useState([]);
   const [expandedReservations, setExpandedReservations] = useState({});
-  const refreshInFlightRef = useRef(false);
+  const refreshInFlightKeyRef = useRef("");
+  const activeSelectionRef = useRef("");
   const isToday = selectedDate === today;
   const notesRowId = useMemo(() => {
     if (!locationId || !selectedDate) return "";
     return `ops_gingr_notes_${locationId}_${selectedDate}`;
+  }, [locationId, selectedDate]);
+
+  useEffect(() => {
+    activeSelectionRef.current = `${locationId}|${selectedDate}`;
   }, [locationId, selectedDate]);
 
   useEffect(() => {
@@ -673,7 +680,9 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     setExpandedReservations({});
   }, [locationId, selectedDate]);
 
-  const applyComputedItems = useCallback((computedItems = {}) => {
+  const applyComputedItems = useCallback((computedItems = {}, expectedDate = selectedDate, expectedLocationId = locationId) => {
+    if (computedItems?.date && expectedDate && computedItems.date !== expectedDate) return;
+    if (computedItems?.location_id && expectedLocationId && computedItems.location_id !== expectedLocationId) return;
     const nextEntries = Array.isArray(computedItems?.entries)
       ? computedItems.entries.map((entry) => ({ ...entry, note_text: cleanNoteText(entry.note_text) }))
       : [];
@@ -689,10 +698,11 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     setReservationSummary(computedItems?.reservation_group_summary || {});
     setDiagnostics(computedItems?.diagnostics || {});
     setRefreshedAt(computedItems?.refreshed_at || "");
-  }, []);
+  }, [locationId, selectedDate]);
 
   const loadCached = useCallback(async () => {
     if (!locationId) return;
+    const requestKey = `${locationId}|${selectedDate}`;
     const { data } = await supabase
       .from("lite_daily_ops")
       .select("computed_items")
@@ -700,7 +710,8 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       .eq("date", selectedDate)
       .eq("type_sub", "gingr_notes")
       .maybeSingle();
-    applyComputedItems(data?.computed_items || {});
+    if (activeSelectionRef.current !== requestKey) return;
+    applyComputedItems(data?.computed_items || {}, selectedDate, locationId);
   }, [applyComputedItems, locationId, selectedDate]);
 
   const refreshLive = useCallback(async () => {
@@ -708,15 +719,12 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       setLoading(false);
       return;
     }
-    if (!liveRefreshAvailable) {
+    const requestKey = `${locationId}|${selectedDate}`;
+    if (refreshInFlightKeyRef.current === requestKey) {
       setLoading(false);
       return;
     }
-    if (refreshInFlightRef.current) {
-      setLoading(false);
-      return;
-    }
-    refreshInFlightRef.current = true;
+    refreshInFlightKeyRef.current = requestKey;
     setRefreshing(true);
     setRefreshError("");
     setLiveRefreshAvailable(true);
@@ -725,8 +733,10 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
         body: { location_id: locationId, date: selectedDate },
       });
       if (error) throw error;
-      applyComputedItems(data || { refreshed_at: new Date().toISOString() });
+      if (activeSelectionRef.current !== requestKey) return;
+      applyComputedItems(data || { refreshed_at: new Date().toISOString(), date: selectedDate, location_id: locationId }, selectedDate, locationId);
     } catch (error) {
+      if (activeSelectionRef.current !== requestKey) return;
       console.error("Failed to refresh Gingr notes", error);
       const message = await describeFunctionError(error);
       setRefreshError(message);
@@ -739,9 +749,12 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
         addGlobalToast(message, "error");
       }
     } finally {
-      refreshInFlightRef.current = false;
-      setRefreshing(false);
-      setLoading(false);
+      const isCurrentSelection = activeSelectionRef.current === requestKey;
+      if (refreshInFlightKeyRef.current === requestKey) refreshInFlightKeyRef.current = "";
+      if (isCurrentSelection) {
+        setRefreshing(false);
+        setLoading(false);
+      }
     }
   }, [addGlobalToast, applyComputedItems, liveRefreshAvailable, locationId, selectedDate]);
 
@@ -795,7 +808,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
         "postgres_changes",
         { event: "*", schema: "public", table: "lite_daily_ops", filter: `id=eq.${notesRowId}` },
         (payload) => {
-          if (payload?.new?.computed_items) applyComputedItems(payload.new.computed_items);
+          if (payload?.new?.computed_items) applyComputedItems(payload.new.computed_items, selectedDate, locationId);
         },
       )
       .subscribe();
