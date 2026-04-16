@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
+import { I } from "../../shared/icons";
 import { Btn, Card } from "../../shared/ui";
 
 const GRASSROOTS_SETTING_KEY = "grassroots_tracker";
@@ -97,11 +98,16 @@ function addDays(dateStr, days) {
   return base.toISOString().slice(0, 10);
 }
 
-function EmptyState({ title, subtitle }) {
+function EmptyState({ title, subtitle, action }) {
   return (
     <Card style={{ padding: 30, textAlign: "center", color: C.textMut }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13 }}>{subtitle}</div>
+      {action && (
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+          {action}
+        </div>
+      )}
     </Card>
   );
 }
@@ -115,6 +121,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const loadedRef = useRef(false);
   const lastSavedRef = useRef("");
   const saveTimerRef = useRef(null);
+  const saveResetTimerRef = useRef(null);
 
   const activeSheetConfig = SHEETS.find((sheet) => sheet.id === activeSheet) || SHEETS[0];
   const rows = tracker[activeSheet] || [];
@@ -186,7 +193,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       if (error) throw error;
       lastSavedRef.current = JSON.stringify(nextTracker);
       setSaveState("saved");
-      window.setTimeout(() => setSaveState((prev) => (prev === "saved" ? "idle" : prev)), 1800);
+      if (saveResetTimerRef.current) window.clearTimeout(saveResetTimerRef.current);
+      saveResetTimerRef.current = window.setTimeout(() => {
+        setSaveState((prev) => (prev === "saved" ? "idle" : prev));
+        saveResetTimerRef.current = null;
+      }, 1800);
     } catch (error) {
       console.error("Failed to autosave grassroots tracker", error);
       setSaveState("error");
@@ -210,6 +221,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       }
     };
   }, [loading, persistTracker, tracker]);
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    if (saveResetTimerRef.current) window.clearTimeout(saveResetTimerRef.current);
+  }, []);
 
   const updateCell = (sheetId, rowId, key, value) => {
     setTracker((prev) => ({
@@ -239,22 +255,67 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       ? "Saved"
       : saveState === "error"
         ? "Autosave failed"
-        : "Autosaves";
+        : "Autosave ready";
+  const saveTone = saveState === "saving"
+    ? C.info
+    : saveState === "saved"
+      ? C.suc
+      : saveState === "error"
+        ? C.dan
+        : C.textMut;
 
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
-        <div>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        marginBottom: 20,
+        padding: "16px 18px",
+        borderRadius: 18,
+        border: `1px solid ${C.border}`,
+        background: `linear-gradient(135deg, ${C.priLt} 0%, #ffffff 62%)`,
+        boxShadow: "0 12px 28px rgba(15,23,42,0.06)",
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+            Tracker controls
+          </div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Grassroots Tracking</h1>
-          <div style={{ fontSize: 13, color: C.textMut, marginTop: 4 }}>
-            Resort-level grassroots pipeline, event planning, partner outreach, and local marketing execution.
+          <div style={{ fontSize: 13, color: C.textMut, marginTop: 4, lineHeight: 1.5 }}>
+            Add a row and keep typing. Changes autosave after a short pause, so the page never needs a manual save.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: saveState === "error" ? C.dan : saveState === "saved" ? C.suc : C.textMut }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+          <div style={{
+            minWidth: 108,
+            padding: "7px 11px",
+            borderRadius: 999,
+            border: `1px solid ${C.border}`,
+            background: "#fff",
+            color: saveTone,
+            fontSize: 12,
+            fontWeight: 800,
+            textAlign: "center",
+            boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+          }}>
             {saveLabel}
           </div>
-          <Btn variant="primary" onClick={addRow}>Add Row</Btn>
+          <Btn
+            variant="primary"
+            size="lg"
+            icon={<I.Plus />}
+            onClick={addRow}
+            style={{
+              minWidth: 152,
+              justifyContent: "center",
+              whiteSpace: "nowrap",
+              boxShadow: "0 12px 24px rgba(20,83,45,0.18)",
+            }}
+          >
+            Add Row
+          </Btn>
         </div>
       </div>
 
@@ -305,7 +366,25 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       {loading ? (
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading tracker…</Card>
       ) : rows.length === 0 ? (
-        <EmptyState title={`No ${activeSheetConfig.label.toLowerCase()} yet`} subtitle="Add your first row for this sheet. Changes autosave as you work." />
+        <EmptyState
+          title={`No ${activeSheetConfig.label.toLowerCase()} yet`}
+          subtitle="Add the first row for this sheet. New entries appear immediately and autosave as you type."
+          action={(
+            <Btn
+              variant="primary"
+              size="lg"
+              icon={<I.Plus />}
+              onClick={addRow}
+              style={{
+                minWidth: 160,
+                justifyContent: "center",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Add Row
+            </Btn>
+          )}
+        />
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
