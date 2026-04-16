@@ -257,6 +257,9 @@ const ANALYTICS_NAV_ITEMS = [
 
 // Detect analytics mode from URL query param
 const IS_ANALYTICS_MODE = new URLSearchParams(window.location.search).get("mode") === "analytics";
+// Payment enforcement is paused during invite-led rollout. Flip this back on
+// when Stripe subscription gating is ready for production use.
+const ENABLE_SUBSCRIPTION_GATE = false;
 
 const LEAN_ENTERPRISE_NAV_ITEMS = [
   { id: "enterprise-ops", label: "Operations Matrix", icon: "Dashboard" },
@@ -276,7 +279,7 @@ const STATIC_LOCATIONS = [
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
   const { user, profile: authProfile } = useAuth();
-  const { subscription, loading: subLoading, isActive: subIsActive, isPastDue: subIsPastDue } = useSubscription(user?.id);
+  const { subscription, loading: subLoading, isActive: subIsActive, isPastDue: subIsPastDue } = useSubscription(user?.id, ENABLE_SUBSCRIPTION_GATE);
 
   // Parse URL on initial load to determine starting page and location
   const initialParsed = useMemo(() => {
@@ -1261,7 +1264,7 @@ function LeanAppInner() {
               ))}
             </div>
           )}
-          {page === "onboarding" || page === "pricing" ? (
+          {page === "onboarding" || page === "pricing" || !ENABLE_SUBSCRIPTION_GATE ? (
             renderPage()
           ) : (profile.role === "owner" || profile.role === "developer") ? (
             renderPage()
