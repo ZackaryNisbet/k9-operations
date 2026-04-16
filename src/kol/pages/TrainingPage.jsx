@@ -178,6 +178,10 @@ function splitEmployeeName(fullName = "") {
   };
 }
 
+function normalizeEmployeeName(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function isObjectRow(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -385,6 +389,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [showRecordConfig, setShowRecordConfig] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState(null);
   const [selectedLaborEmployeeId, setSelectedLaborEmployeeId] = useState(null);
+  const [selectedLaborEmployeeSeed, setSelectedLaborEmployeeSeed] = useState(null);
   const [selectedReviewInstanceId, setSelectedReviewInstanceId] = useState(null);
   const [previewTemplateKind, setPreviewTemplateKind] = useState("training");
   const [expandedSections, setExpandedSections] = useState({});
@@ -898,36 +903,55 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }, [fallbackDashboardMetrics, serverDashboardMetrics]);
 
   const selectedRecord = useMemo(() => toObjectRows(records).find((record) => record.id === selectedRecordId) || null, [records, selectedRecordId]);
+  const selectedRecordEmployeeId = useMemo(() => {
+    if (!selectedRecord) return null;
+    return selectedRecord.labor_employee_id || selectedRecord.employee_id || null;
+  }, [selectedRecord]);
   const selectedLaborEmployee = useMemo(() => {
-    const employeeId = selectedLaborEmployeeId || selectedRecord?.labor_employee_id;
-    if (!employeeId) return null;
-    return toObjectRows(laborEmployees).find((employee) => employee.id === employeeId) || null;
-  }, [laborEmployees, selectedLaborEmployeeId, selectedRecord]);
+    const employeeRows = toObjectRows(laborEmployees);
+    const employeeId = selectedLaborEmployeeId || selectedRecordEmployeeId;
+    if (employeeId) {
+      const directMatch = employeeRows.find((employee) => employee.id === employeeId);
+      if (directMatch) return directMatch;
+    }
+    const recordName = normalizeEmployeeName(selectedRecord?.employee_full_name);
+    if (!recordName) return null;
+    return employeeRows.find((employee) => normalizeEmployeeName(employee.full_name) === recordName) || null;
+  }, [laborEmployees, selectedLaborEmployeeId, selectedRecord, selectedRecordEmployeeId]);
   const selectedLaborEmployeeSnapshot = useMemo(() => {
-    const employeeId = selectedLaborEmployeeId || selectedRecord?.labor_employee_id;
-    if (!employeeId) return null;
-    return toObjectRows(rosterSnapshot).find((row) => getLaborEmployeeRowId(row) === employeeId) || null;
-  }, [rosterSnapshot, selectedLaborEmployeeId, selectedRecord]);
+    const snapshotRows = toObjectRows(rosterSnapshot);
+    const employeeId = selectedLaborEmployeeId || selectedLaborEmployee?.id || selectedRecordEmployeeId || getLaborEmployeeRowId(selectedLaborEmployeeSeed);
+    if (employeeId) {
+      const directMatch = snapshotRows.find((row) => getLaborEmployeeRowId(row) === employeeId);
+      if (directMatch) return directMatch;
+    }
+    if (isObjectRow(selectedLaborEmployeeSeed)) return selectedLaborEmployeeSeed;
+    const recordName = normalizeEmployeeName(selectedRecord?.employee_full_name);
+    if (!recordName) return null;
+    return snapshotRows.find((row) => normalizeEmployeeName(row.full_name) === recordName) || null;
+  }, [rosterSnapshot, selectedLaborEmployee?.id, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedRecord, selectedRecordEmployeeId]);
   const selectedLaborEmployeeView = useMemo(() => {
-    if (!selectedLaborEmployee && !selectedLaborEmployeeSnapshot) return null;
+    if (!selectedLaborEmployee && !selectedLaborEmployeeSnapshot && !selectedLaborEmployeeSeed) return null;
     const employeeId = selectedLaborEmployee?.id
       || getLaborEmployeeRowId(selectedLaborEmployeeSnapshot)
+      || getLaborEmployeeRowId(selectedLaborEmployeeSeed)
       || selectedLaborEmployeeId
-      || selectedRecord?.labor_employee_id
+      || selectedRecordEmployeeId
       || null;
     const employeeMetadata = isObjectRow(selectedLaborEmployee?.metadata) ? selectedLaborEmployee.metadata : {};
     return {
+      ...(selectedLaborEmployeeSeed || {}),
       ...(selectedLaborEmployeeSnapshot || {}),
       ...(selectedLaborEmployee || {}),
       id: employeeId,
       labor_employee_id: employeeId,
-      full_name: selectedLaborEmployee?.full_name || selectedLaborEmployeeSnapshot?.full_name || "",
-      position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || "",
-      start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || null,
-      end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || null,
+      full_name: selectedLaborEmployee?.full_name || selectedLaborEmployeeSnapshot?.full_name || selectedLaborEmployeeSeed?.full_name || selectedRecord?.employee_full_name || "",
+      position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || selectedLaborEmployeeSeed?.position_title || "",
+      start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || selectedLaborEmployeeSeed?.start_date || null,
+      end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || selectedLaborEmployeeSeed?.end_date || null,
       metadata: employeeMetadata,
     };
-  }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSnapshot, selectedRecord]);
+  }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedLaborEmployeeSnapshot, selectedRecord, selectedRecordEmployeeId]);
   const laborEmployeeMap = useMemo(() => Object.fromEntries(toObjectRows(laborEmployees).map((employee) => [employee.id, employee])), [laborEmployees]);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const selectedVersion = useMemo(() => {
@@ -2193,15 +2217,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     await refreshTemplateBundle();
   }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
 
-  const openLaborEmployeeProfile = useCallback((employeeId) => {
+  const openLaborEmployeeProfile = useCallback((employeeId, seedRow = null) => {
+    const resolvedEmployeeId = employeeId || getLaborEmployeeRowId(seedRow);
+    if (!resolvedEmployeeId && !isObjectRow(seedRow)) {
+      addGlobalToast?.("Employee record is missing an employee link", "error");
+      return;
+    }
     setSelectedRecordId(null);
-    setSelectedLaborEmployeeId(employeeId);
+    setSelectedLaborEmployeeId(resolvedEmployeeId);
+    setSelectedLaborEmployeeSeed(isObjectRow(seedRow) ? seedRow : null);
     setSelectedReviewInstanceId(null);
     setShowNewRecord(false);
     setShowRecordConfig(false);
     setPreviewTemplateId(null);
     setPreviewTemplateVersionId(null);
-  }, []);
+  }, [addGlobalToast]);
 
   const handleAddEmployeeNote = useCallback(async () => {
     if (!selectedLaborEmployeeView?.id || !employeeNoteText.trim()) return;
@@ -2930,10 +2960,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     return (
       <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
         <button
-          onClick={() => {
-            setSelectedLaborEmployeeId(null);
-            setSelectedReviewInstanceId(null);
-          }}
+	          onClick={() => {
+	            setSelectedLaborEmployeeId(null);
+	            setSelectedLaborEmployeeSeed(null);
+	            setSelectedReviewInstanceId(null);
+	          }}
           style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}
         >
           <I.Back /> Back to Labor
@@ -3175,10 +3206,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     return (
       <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
         <button
-          onClick={() => {
-            setSelectedLaborEmployeeId(null);
-            setSelectedReviewInstanceId(null);
-          }}
+	          onClick={() => {
+	            setSelectedLaborEmployeeId(null);
+	            setSelectedLaborEmployeeSeed(null);
+	            setSelectedReviewInstanceId(null);
+	          }}
           style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}
         >
           <I.Back /> Back to Labor
@@ -3216,10 +3248,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 <Btn
                   variant="primary"
                   size="sm"
-                  onClick={() => {
-                    setSelectedLaborEmployeeId(null);
-                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
-                  }}
+	                  onClick={() => {
+	                    setSelectedLaborEmployeeId(null);
+	                    setSelectedLaborEmployeeSeed(null);
+	                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
+	                  }}
                 >
                   Open Active Training
                 </Btn>
@@ -3387,10 +3420,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 	                {employeeTrainingRecords.map((record) => (
 	                  <tr
 	                    key={record.id}
-	                    onClick={() => {
-	                      setSelectedLaborEmployeeId(null);
-	                      setSelectedRecordId(record.id);
-	                    }}
+		                    onClick={() => {
+		                      setSelectedLaborEmployeeId(null);
+		                      setSelectedLaborEmployeeSeed(null);
+		                      setSelectedRecordId(record.id);
+		                    }}
 	                    style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
 	                  >
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{record.target_role}</td>
@@ -3675,10 +3709,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const RecordRow = ({ rec }) => (
     <tr
-      onClick={() => {
-        setSelectedLaborEmployeeId(null);
-        setSelectedRecordId(rec.id);
-      }}
+	      onClick={() => {
+	        setSelectedLaborEmployeeId(null);
+	        setSelectedLaborEmployeeSeed(null);
+	        setSelectedRecordId(rec.id);
+	      }}
       style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
       onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
@@ -4551,10 +4586,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                               {row[reviewKey].label}
                             </div>
                           </td>
-                        ))}
-                        <td style={{ padding: "9px 8px" }}>
-                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(rowEmployeeId)} disabled={!rowEmployeeId}>View Record</Btn>
-                        </td>
+	                        ))}
+	                        <td style={{ padding: "9px 8px" }}>
+	                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(rowEmployeeId, row)}>View Record</Btn>
+	                        </td>
                       </tr>
                     );
                   })}
