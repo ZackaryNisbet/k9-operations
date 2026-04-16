@@ -160,8 +160,13 @@ function bearerToken(req: Request): string {
   return match?.[1]?.trim() || "";
 }
 
-async function authenticateRequest(sb: any, req: Request): Promise<{ user: any } | Response> {
+async function authenticateRequest(sb: any, req: Request): Promise<{ user: any | null; serviceRole: boolean } | Response> {
   const token = bearerToken(req);
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (serviceRoleKey && token === serviceRoleKey) {
+    return { user: null, serviceRole: true };
+  }
+
   if (!token || token.startsWith("sb_")) {
     return jsonResponse({ error: "Authentication is required." }, 401);
   }
@@ -171,7 +176,7 @@ async function authenticateRequest(sb: any, req: Request): Promise<{ user: any }
     return jsonResponse({ error: "Authentication is invalid or expired." }, 401);
   }
 
-  return { user: data.user };
+  return { user: data.user, serviceRole: false };
 }
 
 async function authorizeLocationAccess(sb: any, userId: string, locationId: string): Promise<Response | null> {
@@ -887,8 +892,10 @@ Deno.serve(async (req: Request) => {
 
     const requestedLocationId = String(location_id);
     const { canonicalLocationId, gingrConfig } = await resolveLocationConfig(sb, requestedLocationId);
-    const accessError = await authorizeLocationAccess(sb, authResult.user.id, canonicalLocationId);
-    if (accessError) return accessError;
+    if (!authResult.serviceRole) {
+      const accessError = await authorizeLocationAccess(sb, authResult.user!.id, canonicalLocationId);
+      if (accessError) return accessError;
+    }
 
     if (!gingrConfig?.api_key || !gingrConfig?.subdomain) {
       return new Response(JSON.stringify({ error: "Gingr is not configured for this location." }), {
