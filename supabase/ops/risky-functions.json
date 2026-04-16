@@ -18,6 +18,9 @@
     },
     "gingr-boh-poll": {
       "verifyJwt": true
+    },
+    "gingr-today-notes": {
+      "verifyJwt": true
     }
   }
 }

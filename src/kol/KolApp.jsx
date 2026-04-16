@@ -993,7 +993,7 @@ function LeanAppInner() {
       case "test-health":
         return <TestHealthPage />;
       case "settings":
-        return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
+        return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} analyticsMode={IS_ANALYTICS_MODE} />;
       case "onboarding":
         return <OnboardingPage nav={nav} />;
       case "pricing":
