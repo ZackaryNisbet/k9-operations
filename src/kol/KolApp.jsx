@@ -381,16 +381,31 @@ function LeanAppInner() {
     ...(liveResortPolicies ? { resortPolicies: { ...mockData.resortPolicies, ...liveResortPolicies } } : {}),
   }), [mockData, liveDailyOps, liveAuditLog, liveEodEntries, liveResortPolicies]);
 
-  // Mock profile
-  const profile = {
-    id: user?.id || "mock-user",
-    user_id: user?.id || null,
-    role: "owner",
-    email: user?.email || "user@example.com",
-    full_name: user?.user_metadata?.full_name || "Demo User",
-    name: user?.user_metadata?.full_name || "Demo User",
-    location_id: currentLocation,
-  };
+  const profile = useMemo(() => {
+    const fullName = authProfile?.full_name || user?.user_metadata?.full_name || "Demo User";
+    return {
+      id: authProfile?.id || user?.id || "mock-user",
+      user_id: authProfile?.user_id || user?.id || null,
+      lite_profile_id: authProfile?.lite_profile_id || null,
+      role: authProfile?.role || "pct",
+      email: authProfile?.email || user?.email || "user@example.com",
+      full_name: fullName,
+      name: fullName,
+      location_id: authProfile?.location_id || currentLocation || null,
+    };
+  }, [
+    authProfile?.email,
+    authProfile?.full_name,
+    authProfile?.id,
+    authProfile?.lite_profile_id,
+    authProfile?.location_id,
+    authProfile?.role,
+    authProfile?.user_id,
+    currentLocation,
+    user?.email,
+    user?.id,
+    user?.user_metadata?.full_name,
+  ]);
 
   // Fetch user's location roles for role-based filtering.
   // Production schema: profile_locations links users → locations (no role_id),
@@ -431,8 +446,10 @@ function LeanAppInner() {
     return allLocations.filter(loc => {
       // Always include enterprise view for multi_location_admin
       if (loc.isEnterprise) return profile.role === "multi_location_admin" || profile.role === "enterprise_admin" || profile.role === "owner" || profile.role === "developer";
-      // Include POS locations and demo links for everyone
-      if (loc.isPOS || loc.isDemoLink) return true;
+      // Demo/POS launchers are internal shortcuts, not part of normal staff location access.
+      if (loc.isPOS || loc.isDemoLink) {
+        return profile.role === "owner" || profile.role === "developer" || profile.role === "enterprise_admin";
+      }
       // Filter regular locations by user's assigned location_ids
       return userLocationIds.includes(loc.id);
     });
@@ -796,8 +813,8 @@ function LeanAppInner() {
   useEffect(() => {
     if (!profile?.id) return;
     supabase.from("lite_profiles").select("id,user_id,full_name,email,role").eq("location_id", currentLocation).eq("is_active", true)
-      .then(({ data: members }) => { if (members) setTeamAccounts(members.filter(m => m.id !== profile.id)); });
-  }, [currentLocation, profile?.id]);
+      .then(({ data: members }) => { if (members) setTeamAccounts(members.filter(m => m.user_id !== profile.user_id)); });
+  }, [currentLocation, profile?.id, profile?.user_id]);
 
   // Handle account switch
   const handleAccountSwitch = async () => {

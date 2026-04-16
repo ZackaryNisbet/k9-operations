@@ -25,9 +25,10 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
     }
   }, [open]);
 
-  const current = locs.find(l => l.id === currentLocation) || locs[1] || locs[0];
+  const primaryLocations = locs.filter(l => !l.isEnterprise && !l.isPOS && !l.isDemoLink);
+  const current = locs.find(l => l.id === currentLocation) || primaryLocations[0] || locs[0];
   const isEnterprise = current?.isEnterprise;
-  const locations = locs.filter(l => !l.isEnterprise && !l.isPOS && !l.isDemoLink);
+  const locations = primaryLocations;
   const posLocations = locs.filter(l => l.isPOS);
   const demoLinks = locs.filter(l => l.isDemoLink);
 

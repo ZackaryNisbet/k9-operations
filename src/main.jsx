@@ -247,11 +247,6 @@ function Root() {
     return <LandingPage />;
   }
 
-  // Logged-in user hitting landing page or login → redirect to Lite app
-  if (isLandingPage || isLoginPage) {
-    return <LiteApp />;
-  }
-
   // User needs to set a password (came from reset link or invite link)
   if (needsPasswordSet) {
     return (
@@ -303,6 +298,12 @@ function Root() {
         </div>
       </div>
     );
+  }
+
+  // Logged-in user hitting landing page or login -> continue to Lite after
+  // any required first-login password setup has been handled.
+  if (isLandingPage || isLoginPage) {
+    return <LiteApp />;
   }
 
   // All good → route to POS or Lite app based on URL
