@@ -82,6 +82,57 @@ function firstText(...values: unknown[]): string {
   return "";
 }
 
+function decodeHtmlEntities(value: string): string {
+  const namedEntities: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: "\"",
+  };
+
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity) => {
+    const normalized = String(entity || "").toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    if (normalized.startsWith("#")) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    return namedEntities[normalized] ?? match;
+  });
+}
+
+function cleanGingrNoteText(value: unknown): string {
+  let text = normalizeText(value);
+  if (!text) return "";
+
+  text = text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/\s*(p|div|li|ul|ol|h[1-6]|blockquote|tr)\s*>/gi, "\n")
+    .replace(/<\s*li\b[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, " ");
+
+  text = decodeHtmlEntities(decodeHtmlEntities(text)).replace(/\u00a0/g, " ");
+
+  return text
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function buildStableId(parts: string[]) {
   const payload = parts.join("|");
   const bytes = new TextEncoder().encode(payload);
@@ -349,7 +400,7 @@ async function buildNoteEntryFromRow(
   noteTypes: any[],
   source: string,
 ) {
-  const noteText = firstText(row?.note, row?.notes, row?.body, row?.text);
+  const noteText = cleanGingrNoteText(firstText(row?.note, row?.notes, row?.body, row?.text));
   const createdAtRaw = firstText(row?.created_at, row?.date_created, row?.created);
   const noteDate = noteDateOnlyEt(createdAtRaw);
 
@@ -425,6 +476,46 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+async function resolveLocationConfig(sb: any, requestedLocationId: string) {
+  const loadConfig = (locationId: string) => sb
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", "gingr_config")
+    .maybeSingle();
+
+  const direct = await loadConfig(requestedLocationId);
+  if (direct.error) throw direct.error;
+  if (direct.data?.setting_value) {
+    return {
+      canonicalLocationId: requestedLocationId,
+      gingrConfig: direct.data.setting_value,
+    };
+  }
+
+  let locationQuery = sb.from("locations").select("id, slug").limit(1);
+  locationQuery = isUuid(requestedLocationId)
+    ? locationQuery.eq("id", requestedLocationId)
+    : locationQuery.eq("slug", requestedLocationId);
+  const locationResult = await locationQuery.maybeSingle();
+  if (locationResult.error) throw locationResult.error;
+
+  const canonicalLocationId = locationResult.data?.id || requestedLocationId;
+  if (canonicalLocationId === requestedLocationId) {
+    return {
+      canonicalLocationId,
+      gingrConfig: {},
+    };
+  }
+
+  const resolved = await loadConfig(canonicalLocationId);
+  if (resolved.error) throw resolved.error;
+  return {
+    canonicalLocationId,
+    gingrConfig: resolved.data?.setting_value || {},
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -444,15 +535,8 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: settingRow, error: settingError } = await sb
-      .from("lite_settings")
-      .select("setting_value")
-      .eq("location_id", location_id)
-      .eq("setting_key", "gingr_config")
-      .maybeSingle();
-
-    if (settingError) throw settingError;
-    const gingrConfig = settingRow?.setting_value || {};
+    const requestedLocationId = String(location_id);
+    const { canonicalLocationId, gingrConfig } = await resolveLocationConfig(sb, requestedLocationId);
     if (!gingrConfig?.api_key || !gingrConfig?.subdomain) {
       return new Response(JSON.stringify({ error: "Gingr is not configured for this location." }), {
         status: 400,
@@ -491,7 +575,7 @@ Deno.serve(async (req: Request) => {
     const { data: cachedReservations, error: cachedReservationError } = await sb
       .from("gingr_reservations")
       .select("gingr_id, owner_gingr_id, animal_gingr_id, owner_first_name, owner_last_name, animal_name, start_date, end_date, check_in_date, check_out_date, raw_data")
-      .eq("location_id", location_id)
+      .eq("location_id", canonicalLocationId)
       .or(`and(start_date.lte.${date},end_date.gte.${date}),check_in_date.eq.${date},check_out_date.eq.${date}`);
 
     if (cachedReservationError) throw cachedReservationError;
@@ -524,7 +608,7 @@ Deno.serve(async (req: Request) => {
       rawNoteCount += result.rows.length;
       for (const row of result.rows) {
         const entry = await buildNoteEntryFromRow(
-          String(location_id),
+          canonicalLocationId,
           date,
           result.subject,
           row,
@@ -547,6 +631,8 @@ Deno.serve(async (req: Request) => {
       });
     const payload = {
       refreshed_at: new Date().toISOString(),
+      location_id: canonicalLocationId,
+      requested_location_id: requestedLocationId,
       summary: buildSummary(uniqueEntries),
       diagnostics: {
         source: "gingr_browser_employee_notes",
@@ -566,8 +652,8 @@ Deno.serve(async (req: Request) => {
     };
 
     const { error: upsertError } = await sb.from("lite_daily_ops").upsert({
-      id: `ops_gingr_notes_${location_id}_${date}`,
-      location_id,
+      id: `ops_gingr_notes_${canonicalLocationId}_${date}`,
+      location_id: canonicalLocationId,
       type: "report",
       type_sub: "gingr_notes",
       date,
