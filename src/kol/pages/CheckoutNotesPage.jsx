@@ -15,11 +15,13 @@ function EmptyState({ title, subtitle }) {
 export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () => {} }) {
   const locationId = profile?.location_id || "";
   const today = todayStr();
+  const [selectedDate, setSelectedDate] = useState(today);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [liveRefreshAvailable, setLiveRefreshAvailable] = useState(true);
   const [entries, setEntries] = useState([]);
   const [refreshedAt, setRefreshedAt] = useState("");
+  const isToday = selectedDate === today;
 
   const summary = useMemo(() => {
     const ownerNotes = entries.filter((entry) => entry.note_source === "owner_note").length;
@@ -36,12 +38,14 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     const { data } = await supabase
       .from("lite_daily_ops")
       .select("computed_items")
-      .eq("id", `ops_gingr_notes_${today}`)
+      .eq("location_id", locationId)
+      .eq("date", selectedDate)
+      .eq("type_sub", "gingr_notes")
       .maybeSingle();
     const cachedEntries = Array.isArray(data?.computed_items?.entries) ? data.computed_items.entries : [];
     setEntries(cachedEntries);
     setRefreshedAt(data?.computed_items?.refreshed_at || "");
-  }, [locationId, today]);
+  }, [locationId, selectedDate]);
 
   const refreshLive = useCallback(async () => {
     if (!locationId) {
@@ -55,7 +59,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     setRefreshing(true);
     try {
       const { data, error } = await supabase.functions.invoke("gingr-today-notes", {
-        body: { location_id: locationId, date: today },
+        body: { location_id: locationId, date: selectedDate },
       });
       if (error) throw error;
       const nextEntries = Array.isArray(data?.entries) ? data.entries : [];
@@ -74,15 +78,17 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     }
     setRefreshing(false);
     setLoading(false);
-  }, [addGlobalToast, liveRefreshAvailable, locationId, today]);
+  }, [addGlobalToast, liveRefreshAvailable, locationId, selectedDate]);
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
     (async () => {
       await loadCached();
       if (mounted && liveRefreshAvailable) await refreshLive();
+      if (mounted && !liveRefreshAvailable) setLoading(false);
     })();
-    const interval = liveRefreshAvailable
+    const interval = liveRefreshAvailable && isToday
       ? window.setInterval(() => {
           refreshLive();
         }, 60000)
@@ -91,7 +97,14 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       mounted = false;
       if (interval) window.clearInterval(interval);
     };
-  }, [liveRefreshAvailable, loadCached, refreshLive]);
+  }, [isToday, liveRefreshAvailable, loadCached, refreshLive]);
+
+  const shiftDate = useCallback((days) => {
+    const base = new Date(`${selectedDate}T12:00:00`);
+    base.setDate(base.getDate() + days);
+    const nextDate = base.toISOString().slice(0, 10);
+    if (nextDate <= today) setSelectedDate(nextDate);
+  }, [selectedDate, today]);
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", paddingBottom: 28 }}>
@@ -116,12 +129,22 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text }}>Today's Notes</h1>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text }}>{isToday ? "Today's Notes" : "Gingr Notes"}</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.textMut }}>
-            {fmtDate(today)} · {liveRefreshAvailable ? "polling Gingr every 60 seconds for owner and dog notes." : "showing cached notes because live sync is unavailable in this environment."}
+            {fmtDate(selectedDate)} · {liveRefreshAvailable ? (isToday ? "polling Gingr every 60 seconds for owner and dog notes." : "showing the selected day's owner and dog notes from Gingr/cache.") : "showing cached notes because live sync is unavailable in this environment."}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Btn variant="ghost" onClick={() => shiftDate(-1)}>Previous Day</Btn>
+          <input
+            type="date"
+            value={selectedDate}
+            max={today}
+            onChange={(event) => setSelectedDate(event.target.value || today)}
+            style={{ padding: "9px 12px", borderRadius: 12, border: `1px solid ${C.border}`, fontFamily: "inherit", fontSize: 13, color: C.text }}
+          />
+          <Btn variant="ghost" onClick={() => shiftDate(1)} disabled={isToday}>Next Day</Btn>
+          {!isToday && <Btn variant="secondary" onClick={() => setSelectedDate(today)}>Today</Btn>}
           <Btn variant="secondary" onClick={loadCached}>Load Cached</Btn>
           <Btn variant="primary" onClick={refreshLive} disabled={refreshing || !liveRefreshAvailable}>
             {liveRefreshAvailable ? (refreshing ? "Refreshing…" : "Refresh Now") : "Cached Only"}
@@ -160,7 +183,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       {loading ? (
         <Card style={{ padding: 32, textAlign: "center", color: C.textMut }}>Loading Gingr notes…</Card>
       ) : entries.length === 0 ? (
-        <EmptyState title="No Gingr notes detected today" subtitle="This page only surfaces owner and dog notes returned by Gingr for today's live reservation set." />
+        <EmptyState title="No Gingr notes returned for this date" subtitle="The selected day returned zero owner or dog notes from the Gingr reservation sync/cache. Use Refresh Now to re-check Gingr or choose another day." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {entries.map((entry) => (
