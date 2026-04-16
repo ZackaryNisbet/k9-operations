@@ -2,103 +2,152 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, Card } from "../../shared/ui";
+import { Btn, CalendarPicker, Card, MiniDatePicker } from "../../shared/ui";
+import {
+  GRASSROOTS_CATEGORY_CONFIGS,
+  GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
+  GRASSROOTS_FILTER_OP_LABELS,
+  GRASSROOTS_STATUS_OPTIONS,
+  applyGrassrootsFilters,
+  buildGrassrootsMetrics,
+  calculateGrassrootsCpl,
+  getGrassrootsActivityCount,
+  getGrassrootsActivityType,
+  getGrassrootsBusinessCategory,
+  getGrassrootsCategoryConfig,
+  getGrassrootsDefaultFilters,
+  getGrassrootsNextDate,
+  getGrassrootsStatusLabel,
+  compareGrassrootsHistoryDesc,
+  groupGrassrootsActivities,
+  makeBlankGrassrootsTarget,
+} from "../grassrootsData";
+import { normalizeOptionalUuid } from "../trainingData";
 
-const GRASSROOTS_SETTING_KEY = "grassroots_tracker";
-
-const SHEETS = [
-  {
-    id: "events",
-    label: "Events",
-    columns: [
-      { key: "officiallyBooked", label: "Officially Booked?" },
-      { key: "organizer", label: "Organizer" },
-      { key: "event", label: "Event" },
-      { key: "startDate", label: "Start Date", type: "date" },
-      { key: "endDate", label: "End Date", type: "date" },
-      { key: "time", label: "Time" },
-      { key: "type", label: "Type" },
-      { key: "expectedAudience", label: "Expected Audience" },
-      { key: "leadsCaptured", label: "Leads Captured" },
-      { key: "cost", label: "Cost" },
-      { key: "cpl", label: "CPL" },
-      { key: "contact", label: "Contact" },
-      { key: "notes", label: "Notes" },
-    ],
-  },
-  {
-    id: "drops",
-    label: "Drops",
-    columns: [
-      { key: "business", label: "Business" },
-      { key: "date", label: "Date", type: "date" },
-      { key: "personInteractedWith", label: "Person Interacted With" },
-      { key: "notes", label: "Notes" },
-      { key: "whoDidIt", label: "Who Did It?" },
-    ],
-  },
-  {
-    id: "corporatePartnerships",
-    label: "Corporate Partnerships",
-    columns: [
-      { key: "corporation", label: "Corporation" },
-      { key: "firstName", label: "First Name" },
-      { key: "lastName", label: "Last Name" },
-      { key: "usEmployees", label: "US Employees" },
-      { key: "deerfieldEmployees", label: "Deerfield Employees" },
-      { key: "contactSource", label: "Contact Source" },
-      { key: "proposal", label: "Proposal" },
-      { key: "initialContactDate", label: "Initial Contact Date", type: "date" },
-      { key: "lastContactDate", label: "Last Contact Date", type: "date" },
-      { key: "nextStep", label: "Next Step" },
-      { key: "notes", label: "Notes" },
-    ],
-  },
-  {
-    id: "apartments",
-    label: "Apartments",
-    columns: [
-      { key: "apartmentComplex", label: "Apartment Complex" },
-      { key: "status", label: "Status" },
-    ],
-  },
-  {
-    id: "petProfessionalPartnerships",
-    label: "Pet Professional Partnerships",
-    columns: [
-      { key: "business", label: "Business" },
-      { key: "firstName", label: "First Name" },
-      { key: "lastName", label: "Last Name" },
-      { key: "proposal", label: "Proposal" },
-      { key: "initialContactDate", label: "Initial Contact Date", type: "date" },
-      { key: "lastContactDate", label: "Last Contact Date", type: "date" },
-      { key: "notes", label: "Notes" },
-    ],
-  },
-];
-
-const LONG_TEXT_KEYS = new Set(["notes", "proposal", "nextStep"]);
-const TITLE_KEYS_BY_SHEET = {
-  events: ["event", "organizer", "type"],
-  drops: ["business", "personInteractedWith"],
-  corporatePartnerships: ["corporation", "firstName", "lastName"],
-  apartments: ["apartmentComplex", "status"],
-  petProfessionalPartnerships: ["business", "firstName", "lastName"],
+const INPUT_STYLE = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "11px 12px",
+  borderRadius: 12,
+  border: `1.5px solid ${C.border}`,
+  background: "#fff",
+  color: C.text,
+  fontSize: 14,
+  fontFamily: "inherit",
+  outline: "none",
 };
 
-function makeBlankRow(columns) {
-  return columns.reduce((acc, column) => {
-    acc[column.key] = "";
-    return acc;
-  }, { id: `row_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}` });
+const HISTORY_EVENT_LABELS = {
+  target_created: "Created",
+  target_updated: "Edited",
+  target_moved: "Moved",
+  target_deleted: "Deleted",
+  development_logged: "Development",
+  drop_logged: "Drop",
+};
+
+const FIELD_CONFIGS = {
+  events: [
+    { key: "organizer", label: "Organizer", placeholder: "Organizer" },
+    { key: "event_start_date", label: "Start Date", type: "date" },
+    { key: "event_end_date", label: "End Date", type: "date" },
+    { key: "event_time", label: "Time", placeholder: "Time" },
+    { key: "event_type", label: "Type", placeholder: "Type" },
+    { key: "expected_audience", label: "Expected Audience", type: "number", placeholder: "Expected audience" },
+    { key: "leads_captured", label: "Leads Captured", type: "number", placeholder: "Leads captured" },
+    { key: "cost", label: "Cost", type: "number", placeholder: "Cost" },
+    { key: "cpl", label: "CPL", type: "computed", placeholder: "CPL" },
+    { key: "contact_source", label: "Contact", placeholder: "Contact" },
+    { key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" },
+  ],
+  drops: [
+    { key: "business_category", label: "Category", type: "select", options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS, allowCustom: true, placeholder: "Category" },
+    { key: "address", label: "Address", placeholder: "Business address" },
+  ],
+  corporatePartnerships: [
+    { key: "first_name", label: "First Name", placeholder: "First name" },
+    { key: "last_name", label: "Last Name", placeholder: "Last name" },
+    { key: "us_employees", label: "US Employees", type: "number", placeholder: "Number of US employees" },
+    { key: "local_employees", label: "Local Employees", type: "number", placeholder: "Number of local employees" },
+    { key: "contact_source", label: "Contact Source", placeholder: "Contact source" },
+    { key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" },
+    { key: "contact_phone", label: "Contact Phone", placeholder: "Contact phone" },
+    { key: "initial_contact_date", label: "Initial Contact Date", type: "date" },
+    { key: "last_contact_date", label: "Last Contact Date", type: "date" },
+    { key: "proposal", label: "Proposal", type: "textarea", placeholder: "Proposal details" },
+  ],
+  apartments: [
+    { key: "address", label: "Address", placeholder: "Apartment address" },
+    { key: "first_name", label: "First Name", placeholder: "First name" },
+    { key: "last_name", label: "Last Name", placeholder: "Last name" },
+    { key: "contact_source", label: "Contact Source", placeholder: "Contact source" },
+    { key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" },
+    { key: "contact_phone", label: "Contact Phone", placeholder: "Contact phone" },
+    { key: "proposal", label: "Proposal", type: "textarea", placeholder: "Proposal or partnership notes" },
+  ],
+  petProfessionalPartnerships: [
+    { key: "business_category", label: "Category", type: "select", options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS, allowCustom: true, placeholder: "Category" },
+    { key: "address", label: "Address", placeholder: "Business address" },
+    { key: "first_name", label: "First Name", placeholder: "First name" },
+    { key: "last_name", label: "Last Name", placeholder: "Last name" },
+    { key: "contact_source", label: "Contact Source", placeholder: "Contact source" },
+    { key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" },
+    { key: "contact_phone", label: "Contact Phone", placeholder: "Contact phone" },
+    { key: "initial_contact_date", label: "Initial Contact Date", type: "date" },
+    { key: "last_contact_date", label: "Last Contact Date", type: "date" },
+    { key: "proposal", label: "Proposal", type: "textarea", placeholder: "Proposal details" },
+  ],
+};
+
+const BASE_FILTER_FIELDS = [
+  { section: "Workflow", key: "is_active", label: "Tracking State", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
+  { section: "Workflow", key: "status", label: "Status", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_STATUS_OPTIONS.map((option) => option.value) },
+  { section: "Workflow", key: "next_contact_date", label: "Next Date", type: "date", ops: ["overdue", "today", "thisWeek", "hasDate", "noDate", "after", "before", "inLastDays"] },
+  { section: "Workflow", key: "activity_count", label: "Updates", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
+  { section: "Record", key: "name", label: "Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Record", key: "address", label: "Address", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+];
+
+const CATEGORY_FILTER_FIELDS = {
+  events: [
+    { section: "Event", key: "event_start_date", label: "Event Date", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+    { section: "Event", key: "event_type", label: "Event Type", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+    { section: "Event", key: "leads_captured", label: "Leads Captured", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
+  ],
+  drops: [
+    { section: "Drop", key: "business_category", label: "Category", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS },
+    { section: "Drop", key: "address", label: "Address", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  ],
+  corporatePartnerships: [
+    { section: "Employees", key: "local_employees", label: "Local Employees", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
+    { section: "Employees", key: "us_employees", label: "US Employees", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
+    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  ],
+  apartments: [
+    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  ],
+  petProfessionalPartnerships: [
+    { section: "Business", key: "business_category", label: "Category", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS },
+    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  ],
+};
+
+function usesBusinessCategoryColumn(categoryConfig) {
+  return categoryConfig.id === "drops" || categoryConfig.id === "petProfessionalPartnerships";
 }
 
-function startOfWeek(dateStr) {
-  const base = new Date(`${dateStr}T12:00:00`);
-  const day = base.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  base.setDate(base.getDate() + diff);
-  return base.toISOString().slice(0, 10);
+function getTrackerGridColumns(categoryConfig) {
+  if (categoryConfig.id === "petProfessionalPartnerships") {
+    return "42px minmax(210px, 1.7fr) minmax(125px, 0.75fr) minmax(130px, 0.8fr) minmax(120px, 0.7fr) 118px minmax(340px, 1.4fr)";
+  }
+  if (categoryConfig.id === "drops") {
+    return "42px minmax(270px, 2fr) minmax(150px, 0.9fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
+  }
+  return "42px minmax(230px, 2fr) minmax(140px, 0.85fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function addDays(dateStr, days) {
@@ -107,321 +156,906 @@ function addDays(dateStr, days) {
   return base.toISOString().slice(0, 10);
 }
 
-function EmptyState({ title, subtitle, action }) {
+function fmtDate(value) {
+  if (!value) return "—";
+  return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function fmtDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function parseNumberField(value) {
+  if (value === "" || value == null) return null;
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
+}
+
+function fmtCurrencyNumber(value) {
+  if (value === "" || value == null) return "";
+  const num = Number(value);
+  return Number.isNaN(num) ? "" : num.toFixed(2);
+}
+
+function historyEventLabel(eventType) {
+  return HISTORY_EVENT_LABELS[eventType] || "History";
+}
+
+function historyActorName(entry) {
+  return entry?.actor_name || "Unknown user";
+}
+
+function buildTargetPayload(draft, locationId, actor) {
+  const expectedAudience = parseNumberField(draft.expected_audience);
+  const leadsCaptured = parseNumberField(draft.leads_captured);
+  const cost = parseNumberField(draft.cost);
+  const businessCategory = String(draft.business_category || draft.drop_category || "").trim();
+  const cpl = getGrassrootsCategoryConfig(draft.category).id === "events"
+    ? calculateGrassrootsCpl(cost, leadsCaptured)
+    : parseNumberField(draft.cpl);
+
+  return {
+    location_id: locationId,
+    category: draft.category,
+    name: String(draft.name || "").trim(),
+    address: String(draft.address || "").trim() || null,
+    organizer: String(draft.organizer || "").trim() || null,
+    first_name: String(draft.first_name || "").trim() || null,
+    last_name: String(draft.last_name || "").trim() || null,
+    contact_source: String(draft.contact_source || "").trim() || null,
+    contact_email: String(draft.contact_email || "").trim() || null,
+    contact_phone: String(draft.contact_phone || "").trim() || null,
+    status: draft.status || "outreach",
+    is_active: draft.is_active !== false,
+    business_category: businessCategory || null,
+    drop_category: businessCategory || null,
+    local_employees: parseNumberField(draft.local_employees),
+    us_employees: parseNumberField(draft.us_employees),
+    proposal: String(draft.proposal || "").trim() || null,
+    initial_contact_date: draft.initial_contact_date || null,
+    last_contact_date: draft.last_contact_date || null,
+    next_contact_date: draft.next_contact_date || null,
+    event_start_date: draft.event_start_date || null,
+    event_end_date: draft.event_end_date || null,
+    event_time: String(draft.event_time || "").trim() || null,
+    event_type: String(draft.event_type || "").trim() || null,
+    expected_audience: expectedAudience,
+    leads_captured: leadsCaptured,
+    cost,
+    cpl,
+    details: draft.details && typeof draft.details === "object" ? draft.details : {},
+    updated_by_user_id: actor.userId,
+    updated_by_name: actor.name,
+    ...(draft.isDraft ? { created_by_user_id: actor.userId, created_by_name: actor.name } : {}),
+  };
+}
+
+function buildEditorDraft(target) {
+  return {
+    ...makeBlankGrassrootsTarget(getGrassrootsCategoryConfig(target.category).id),
+    ...target,
+    business_category: getGrassrootsBusinessCategory(target),
+    drop_category: getGrassrootsBusinessCategory(target),
+    local_employees: target.local_employees ?? "",
+    us_employees: target.us_employees ?? "",
+    expected_audience: target.expected_audience ?? "",
+    leads_captured: target.leads_captured ?? "",
+    cost: target.cost ?? "",
+    cpl: target.cpl ?? "",
+    isDraft: false,
+  };
+}
+
+function StatusPicker({ value, onChange }) {
   return (
-    <Card style={{ padding: 30, textAlign: "center", color: C.textMut }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 13 }}>{subtitle}</div>
-      {action && (
-        <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
-          {action}
-        </div>
-      )}
-    </Card>
+    <div>
+      <Label>Status</Label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+        {GRASSROOTS_STATUS_OPTIONS.map((option, index) => {
+          const active = value === option.value;
+          const color = ["#2563EB", "#7C3AED", "#D97706", C.suc][index] || C.pri;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1.5px solid ${active ? color : C.border}`,
+                background: active ? color : "#fff",
+                color: active ? "#fff" : C.text,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                boxShadow: active ? `0 8px 18px ${color}24` : "0 1px 3px rgba(15,23,42,0.04)",
+                transition: "all 0.18s cubic-bezier(0.2,0.8,0.2,1)",
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
-function getRowTitle(sheetId, row, index) {
-  const titleKeys = TITLE_KEYS_BY_SHEET[sheetId] || [];
-  const title = titleKeys
-    .map((key) => String(row?.[key] || "").trim())
-    .filter(Boolean)
-    .join(" ");
-  return title || `New ${String(sheetId || "entry").replace(/([A-Z])/g, " $1").toLowerCase()} #${index + 1}`;
-}
-
-function getRowMeta(columns, row) {
-  return columns
-    .filter((column) => !LONG_TEXT_KEYS.has(column.key))
-    .map((column) => String(row?.[column.key] || "").trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(" • ");
-}
-
-function FieldEditor({ column, value, onChange }) {
-  const longText = LONG_TEXT_KEYS.has(column.key);
-  const inputStyle = {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "11px 12px",
-    borderRadius: 12,
-    border: `1px solid ${C.border}`,
-    background: "#fff",
-    color: C.text,
-    fontSize: 14,
-    fontFamily: "inherit",
-    outline: "none",
-    boxShadow: "inset 0 1px 2px rgba(15,23,42,0.04)",
-  };
-
+function ActiveToggle({ value, onChange }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 7, gridColumn: longText ? "1 / -1" : "auto" }}>
-      <span style={{ fontSize: 11, fontWeight: 800, color: C.textMut, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-        {column.label}
-      </span>
-      {longText ? (
+    <div>
+      <Label>Tracking State</Label>
+      <div style={{ display: "inline-grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.bg }}>
+        {[{ value: true, label: "Active" }, { value: false, label: "Inactive" }].map((option) => {
+          const selected = value === option.value;
+          return (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => onChange(option.value)}
+              style={{
+                padding: "7px 12px",
+                borderRadius: 9,
+                border: "none",
+                background: selected ? (option.value ? C.pri : C.warn) : "transparent",
+                color: selected ? "#fff" : C.textSec,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Label({ children }) {
+  return (
+    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>
+      {children}
+    </div>
+  );
+}
+
+function FieldEditor({ field, value, onChange }) {
+  if (field.type === "date") {
+    return <CalendarPicker label={field.label} value={value || ""} onChange={onChange} reserveSpace />;
+  }
+
+  if (field.type === "computed") {
+    return (
+      <label style={{ display: "block" }}>
+        <Label>{field.label}</Label>
+        <input
+          value={value ?? ""}
+          readOnly
+          placeholder={field.placeholder || field.label}
+          style={{ ...INPUT_STYLE, background: C.bg, color: value ? C.text : C.textMut }}
+        />
+      </label>
+    );
+  }
+
+  if (field.type === "select") {
+    const options = field.options || [];
+    const selected = String(value || "");
+    return (
+      <label style={{ display: "block" }}>
+        <Label>{field.label}</Label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {options.map((option) => {
+            const active = selected === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onChange(option)}
+                style={{
+                  padding: "7px 10px",
+                  borderRadius: 9,
+                  border: `1.5px solid ${active ? C.pri : C.border}`,
+                  background: active ? C.pri : "#fff",
+                  color: active ? "#fff" : C.text,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
+        {field.allowCustom && (
+          <input
+            value={selected && !options.includes(selected) ? selected : ""}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Custom category"
+            style={{ ...INPUT_STYLE, marginTop: 8, padding: "8px 10px", borderRadius: 9 }}
+          />
+        )}
+      </label>
+    );
+  }
+
+  if (field.type === "textarea") {
+    return (
+      <label style={{ display: "block", gridColumn: "1 / -1" }}>
+        <Label>{field.label}</Label>
         <textarea
           value={value || ""}
-          onChange={(event) => onChange(event.target.value)}
           rows={3}
-          placeholder={`Add ${column.label.toLowerCase()}`}
-          style={{ ...inputStyle, minHeight: 92, resize: "vertical", lineHeight: 1.45 }}
-        />
-      ) : (
-        <input
-          type={column.type === "date" ? "date" : "text"}
-          value={value || ""}
           onChange={(event) => onChange(event.target.value)}
-          placeholder={column.type === "date" ? undefined : column.label}
-          style={inputStyle}
+          placeholder={field.placeholder}
+          style={{ ...INPUT_STYLE, minHeight: 86, resize: "vertical", lineHeight: 1.45 }}
         />
-      )}
+      </label>
+    );
+  }
+
+  return (
+    <label style={{ display: "block" }}>
+      <Label>{field.label}</Label>
+      <input
+        type={field.type === "number" ? "number" : field.type === "email" ? "email" : "text"}
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={field.placeholder || field.label}
+        style={INPUT_STYLE}
+      />
     </label>
   );
 }
 
-function TrackerRowCard({ sheet, row, index, onChange, onDelete }) {
-  const rowTitle = getRowTitle(sheet.id, row, index);
-  const rowMeta = getRowMeta(sheet.columns, row);
+function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCancel, onDelete }) {
+  const categoryId = categoryConfig.id;
+  const fields = FIELD_CONFIGS[categoryId] || [];
+  const getFieldValue = (field) => {
+    if (field.key === "cpl") return fmtCurrencyNumber(calculateGrassrootsCpl(draft.cost, draft.leads_captured));
+    return draft[field.key];
+  };
 
   return (
-    <Card
-      style={{
-        padding: 0,
-        overflow: "hidden",
-        border: `1px solid ${C.border}`,
-        boxShadow: "0 14px 32px rgba(15,23,42,0.07)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 14,
-          padding: "16px 18px",
-          background: `linear-gradient(135deg, ${C.bg} 0%, #ffffff 72%)`,
-          borderBottom: `1px solid ${C.borderLight}`,
-        }}
-      >
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
-          <div
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 12,
-              display: "grid",
-              placeItems: "center",
-              background: C.pri,
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 900,
-              boxShadow: "0 10px 22px rgba(20,83,45,0.18)",
-              flexShrink: 0,
-            }}
-          >
-            {index + 1}
+    <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)" }}>
+      <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt} 0%, #fff 70%)` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              {draft.isDraft ? `New ${categoryConfig.singular}` : `Edit ${categoryConfig.singular}`}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 13, color: C.textMut }}>
+              Save collapses this into the tracker row.
+            </div>
           </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 850, color: C.text, letterSpacing: "-0.01em" }}>
-              {rowTitle}
-            </div>
-            <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, lineHeight: 1.5 }}>
-              {rowMeta || "Fill the fields below. Autosave starts after your first edit."}
-            </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+            <Btn variant="primary" size="sm" onClick={onSave} disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </Btn>
           </div>
         </div>
-        <Btn
-          variant="ghost"
-          size="sm"
-          icon={<I.Trash />}
-          onClick={onDelete}
-          style={{
-            color: C.dan,
-            background: C.danLt,
-            flexShrink: 0,
-          }}
-        >
-          Delete
-        </Btn>
       </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 14,
-          padding: 18,
-        }}
-      >
-        {sheet.columns.map((column) => (
+      <div style={{ padding: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+        <FieldEditor
+          field={{ key: "name", label: categoryConfig.nameLabel, placeholder: categoryConfig.nameLabel }}
+          value={draft.name}
+          onChange={(value) => onChange("name", value)}
+        />
+        {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "outreach"} onChange={(value) => onChange("status", value)} />}
+        <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />
+        {fields.map((field) => (
           <FieldEditor
-            key={column.key}
-            column={column}
-            value={row[column.key]}
-            onChange={(value) => onChange(column.key, value)}
+            key={field.key}
+            field={field}
+            value={getFieldValue(field)}
+            onChange={(value) => onChange(field.key, value)}
           />
         ))}
+      </div>
+      {!draft.isDraft && (
+        <div style={{ padding: "12px 18px 16px", borderTop: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "flex-end" }}>
+          <Btn variant="ghost" size="sm" icon={<I.Trash />} onClick={onDelete} style={{ color: C.dan }}>
+            Delete
+          </Btn>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function StatusBadge({ status }) {
+  const colors = {
+    outreach: C.info,
+    corresponding: "#7C3AED",
+    closing: C.warn,
+    active: C.suc,
+  };
+  const color = colors[status] || C.textMut;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 10, background: `${color}12`, color, border: `1px solid ${color}30`, fontSize: 11, fontWeight: 900 }}>
+      {getGrassrootsStatusLabel(status)}
+    </span>
+  );
+}
+
+function BusinessCategoryBadge({ value }) {
+  const label = value || "Uncategorized";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", width: "fit-content", padding: "4px 10px", borderRadius: 10, background: value ? C.priLt : C.bg, color: value ? C.pri : C.textMut, border: `1px solid ${value ? `${C.pri}30` : C.borderLight}`, fontSize: 11, fontWeight: 900 }}>
+      {label}
+    </span>
+  );
+}
+
+function FilterIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  );
+}
+
+function HistoryList({ items, emptyText = "No history yet." }) {
+  const rows = [...(items || [])].sort(compareGrassrootsHistoryDesc);
+  if (rows.length === 0) {
+    return <div style={{ fontSize: 12, color: C.textMut }}>{emptyText}</div>;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {rows.map((entry) => (
+        <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "112px minmax(0, 1fr) 190px", gap: 10, alignItems: "start", fontSize: 12 }}>
+          <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
+            {historyEventLabel(entry.event_type)}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>
+              {entry.summary || historyEventLabel(entry.event_type)}
+            </div>
+            <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
+              {entry.target_name || "Untitled row"} · {historyActorName(entry)}
+            </div>
+          </div>
+          <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+            {fmtDateTime(entry.event_at || entry.created_at)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HistoryPanel({ items, categoryConfig }) {
+  return (
+    <Card style={{ padding: 0, borderRadius: 14, overflow: "hidden", marginBottom: 14 }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>History</div>
+          <div style={{ fontSize: 13, color: C.textMut, marginTop: 2 }}>{categoryConfig.label}</div>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 900, color: C.text }}>{items.length}</div>
+      </div>
+      <div style={{ padding: 16, maxHeight: 360, overflow: "auto" }}>
+        <HistoryList items={items} emptyText="No history for this view yet." />
       </div>
     </Card>
   );
 }
 
+function activityActorName(activity) {
+  return activity?.created_by_name || "Unknown user";
+}
+
+function ActivityList({ activities, categoryConfig }) {
+  const activityType = getGrassrootsActivityType(categoryConfig.id);
+  const rows = [...(activities || [])]
+    .filter((activity) => {
+      const rowType = activity.activity_type || activityType;
+      if (activityType === "development") {
+        return ["development", "event_update", "note"].includes(rowType);
+      }
+      return rowType === activityType;
+    })
+    .sort((a, b) => String(b.created_at || b.activity_date || "").localeCompare(String(a.created_at || a.activity_date || "")));
+
+  if (rows.length === 0) {
+    return <div style={{ fontSize: 12, color: C.textMut }}>No logged {categoryConfig.countLabel.toLowerCase()} yet.</div>;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      {rows.map((activity) => {
+        const personSpokenWith = activity.metadata?.person_spoken_with || activity.metadata?.person_interacted_with || "";
+        return (
+          <div
+            key={activity.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "112px minmax(0, 1fr) 190px",
+              gap: 10,
+              alignItems: "start",
+              fontSize: 12,
+            }}
+          >
+            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
+              {activityType === "drop" ? "Drop" : "Development"}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.45, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+                {activity.notes || "No notes entered."}
+              </div>
+              <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8, color: C.textMut, lineHeight: 1.35 }}>
+                <span>{fmtDate(activity.activity_date)} · {activityActorName(activity)}</span>
+                {personSpokenWith && <span>Spoke with {personSpokenWith}</span>}
+                {activity.next_contact_date && <span>Next: {fmtDate(activity.next_contact_date)}</span>}
+              </div>
+            </div>
+            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+              {fmtDateTime(activity.created_at)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TrackerHeader({ categoryConfig }) {
+  const gridColumns = getTrackerGridColumns(categoryConfig);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "0 14px 0", minHeight: 22, boxSizing: "border-box" }}>
+      <div />
+      <div style={HEADER_CELL_STYLE}>{categoryConfig.nameLabel}</div>
+      {usesBusinessCategoryColumn(categoryConfig) && <div style={HEADER_CELL_STYLE}>Category</div>}
+      {categoryConfig.usesStatus !== false && <div style={HEADER_CELL_STYLE}>Status</div>}
+      <div style={HEADER_CELL_STYLE}>{categoryConfig.id === "drops" ? "Next Drop" : "Next Contact"}</div>
+      <div style={{ ...HEADER_CELL_STYLE, textAlign: "center" }}>{categoryConfig.countLabel}</div>
+      <div style={{ ...HEADER_CELL_STYLE, textAlign: "left" }}>Actions</div>
+    </div>
+  );
+}
+
+const HEADER_CELL_STYLE = {
+  fontSize: 10,
+  fontWeight: 900,
+  color: C.textMut,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  whiteSpace: "nowrap",
+};
+
+function TrackerRow({ target, index, categoryConfig, activities, isExpanded, onToggleUpdates, onLog, onMove, onEdit }) {
+  const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
+  const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
+  const gridColumns = getTrackerGridColumns(categoryConfig);
+  const title = target.name || categoryConfig.emptyName;
+  const meta = [
+    target.address,
+    [target.first_name, target.last_name].filter(Boolean).join(" "),
+    target.contact_source,
+    target.event_start_date ? `Event ${fmtDate(target.event_start_date)}` : "",
+  ].filter(Boolean).slice(0, 2).join(" • ");
+
+  return (
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "10px 14px", minHeight: 58, boxSizing: "border-box" }}>
+        <div style={{ width: 30, height: 30, borderRadius: 10, display: "grid", placeItems: "center", background: target.is_active === false ? C.bg : C.pri, color: target.is_active === false ? C.textMut : "#fff", fontSize: 12, fontWeight: 900 }}>
+          {index + 1}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+          <div style={{ marginTop: 3, fontSize: 11, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta || categoryConfig.singular}</div>
+        </div>
+        {usesBusinessCategoryColumn(categoryConfig) && <BusinessCategoryBadge value={getGrassrootsBusinessCategory(target)} />}
+        {categoryConfig.usesStatus !== false && <StatusBadge status={target.status} />}
+        <div style={{ fontSize: 12, fontWeight: 800, color: nextDate ? (nextDate < todayStr() ? C.dan : C.text) : C.textMut }}>
+          {fmtDate(nextDate)}
+        </div>
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <button
+            type="button"
+            onClick={onToggleUpdates}
+            title={`${activityCount} ${categoryConfig.countLabel.toLowerCase()}; click for logged ${categoryConfig.countLabel.toLowerCase()}`}
+            style={{ width: 32, height: 32, borderRadius: 10, border: "none", background: activityCount > 0 ? C.pri : C.bg, color: activityCount > 0 ? "#fff" : C.textMut, fontSize: 13, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            {activityCount}
+          </button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start", gap: 6, flexWrap: "wrap" }}>
+          <Btn variant="secondary" size="sm" onClick={onLog}>{categoryConfig.logLabel}</Btn>
+          <Btn variant="ghost" size="sm" icon={<I.ChevronRight />} onClick={onMove}>Move</Btn>
+          <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={onEdit}>Edit</Btn>
+        </div>
+      </div>
+      {isExpanded && (
+        <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "12px 18px", background: C.bg }}>
+          <ActivityList activities={activities} categoryConfig={categoryConfig} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function MetricCard({ label, value, color }) {
+  return (
+    <Card style={{ padding: 16, borderRadius: 12 }}>
+      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 900, color }}>{value}</div>
+    </Card>
+  );
+}
+
+function filterNeedsValue(op) {
+  return !["empty", "notEmpty", "overdue", "today", "thisWeek", "hasDate", "noDate"].includes(op);
+}
+
 export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const locationId = profile?.location_id || "";
+  const actor = useMemo(() => ({
+    userId: normalizeOptionalUuid(profile?.user_id || profile?.id),
+    name: profile?.name || profile?.full_name || profile?.email || "Staff",
+  }), [profile?.email, profile?.full_name, profile?.id, profile?.name, profile?.user_id]);
+
   const [loading, setLoading] = useState(true);
+  const [schemaMissing, setSchemaMissing] = useState(false);
   const [saveState, setSaveState] = useState("idle");
-  const [activeSheet, setActiveSheet] = useState("events");
-  const [tracker, setTracker] = useState(() => Object.fromEntries(SHEETS.map((sheet) => [sheet.id, []])));
-  const loadedRef = useRef(false);
-  const lastSavedRef = useRef("");
-  const saveTimerRef = useRef(null);
-  const saveResetTimerRef = useRef(null);
+  const [activeCategory, setActiveCategory] = useState("corporatePartnerships");
+  const [targets, setTargets] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [newDraft, setNewDraft] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [expandedUpdates, setExpandedUpdates] = useState(new Set());
+  const [logPopover, setLogPopover] = useState(null);
+  const [movePopover, setMovePopover] = useState(null);
+  const [logNotes, setLogNotes] = useState("");
+  const [logDate, setLogDate] = useState("");
+  const [logContactName, setLogContactName] = useState("");
+  const [filters, setFilters] = useState(() => getGrassrootsDefaultFilters("corporatePartnerships"));
+  const [draftFilters, setDraftFilters] = useState(() => getGrassrootsDefaultFilters("corporatePartnerships"));
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [configuringFilterKey, setConfiguringFilterKey] = useState(null);
+  const [filterPickerReady, setFilterPickerReady] = useState(false);
+  const prevFilterOpen = useRef(false);
 
-  const activeSheetConfig = SHEETS.find((sheet) => sheet.id === activeSheet) || SHEETS[0];
-  const rows = tracker[activeSheet] || [];
-  const today = new Date().toISOString().slice(0, 10);
-  const thisWeekStart = startOfWeek(today);
-  const nextWeekStart = addDays(thisWeekStart, 7);
-  const nextWeekEnd = addDays(nextWeekStart, 6);
-  const thisWeekEnd = addDays(thisWeekStart, 6);
+  const activeConfig = getGrassrootsCategoryConfig(activeCategory);
+  const activitiesByTarget = useMemo(() => groupGrassrootsActivities(activities), [activities]);
+  const categoryTargets = useMemo(() => targets.filter((target) => target.category === activeConfig.dbValue), [activeConfig.dbValue, targets]);
+  const categoryHistory = useMemo(
+    () => history.filter((entry) => entry.category === activeConfig.dbValue).sort(compareGrassrootsHistoryDesc),
+    [activeConfig.dbValue, history],
+  );
+  const visibleTargets = useMemo(
+    () => applyGrassrootsFilters(categoryTargets, activitiesByTarget, filters, todayStr()),
+    [activitiesByTarget, categoryTargets, filters],
+  );
+  const metrics = useMemo(() => buildGrassrootsMetrics(visibleTargets, activitiesByTarget, todayStr()), [activitiesByTarget, visibleTargets]);
+  const usedFilterKeys = Object.keys(draftFilters || {});
+  const filterFields = useMemo(() => {
+    const keyed = new Map();
+    const baseFields = activeConfig.id === "drops"
+      ? BASE_FILTER_FIELDS.filter((field) => field.key !== "status")
+      : BASE_FILTER_FIELDS;
+    [...baseFields, ...(CATEGORY_FILTER_FIELDS[activeConfig.id] || [])].forEach((field) => keyed.set(field.key, field));
+    return [...keyed.values()];
+  }, [activeConfig.id]);
+  const availableFilterFields = filterFields.filter((field) => !usedFilterKeys.includes(field.key));
+  const filterSections = [...new Set(filterFields.map((field) => field.section))];
 
-  const eventSummary = useMemo(() => {
-    const eventRows = tracker.events || [];
-    const upcoming = eventRows.filter((row) => row.startDate && row.startDate >= today);
-    const thisWeek = eventRows.filter((row) => row.startDate && row.startDate >= thisWeekStart && row.startDate <= thisWeekEnd);
-    const nextWeek = eventRows.filter((row) => row.startDate && row.startDate >= nextWeekStart && row.startDate <= nextWeekEnd);
-    return {
-      total: eventRows.length,
-      upcoming: upcoming.length,
-      thisWeek: thisWeek.length,
-      nextWeek: nextWeek.length,
-    };
-  }, [nextWeekEnd, nextWeekStart, thisWeekEnd, thisWeekStart, today, tracker.events]);
+  const toast = useCallback((message, type = "success") => {
+    addGlobalToast(message, type);
+  }, [addGlobalToast]);
 
-  const loadTracker = useCallback(async () => {
+  const loadGrassroots = useCallback(async () => {
     if (!locationId) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    const { data, error } = await supabase
-      .from("lite_settings")
-      .select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", GRASSROOTS_SETTING_KEY)
-      .maybeSingle();
-    if (error) {
-      console.error("Failed to load grassroots tracker", error);
-      addGlobalToast("Failed to load grassroots tracker", "error");
+    setSchemaMissing(false);
+    const [targetResult, activityResult, historyResult] = await Promise.all([
+      supabase
+        .from("grassroots_targets")
+        .select("*")
+        .eq("location_id", locationId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("grassroots_activity")
+        .select("*")
+        .eq("location_id", locationId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("grassroots_history")
+        .select("*")
+        .eq("location_id", locationId)
+        .order("event_at", { ascending: false }),
+    ]);
+
+    if (targetResult.error || activityResult.error || historyResult.error) {
+      const error = targetResult.error || activityResult.error || historyResult.error;
+      if (error?.code === "42P01" || /grassroots_/.test(error?.message || "")) {
+        setSchemaMissing(true);
+      } else {
+        console.error("Failed to load grassroots tracker", error);
+        toast(error.message || "Failed to load grassroots tracker", "error");
+      }
+      setTargets([]);
+      setActivities([]);
+      setHistory([]);
       setLoading(false);
       return;
     }
-    const value = data?.setting_value || {};
-    const nextTracker = {
-      events: Array.isArray(value.events) ? value.events : [],
-      drops: Array.isArray(value.drops) ? value.drops : [],
-      corporatePartnerships: Array.isArray(value.corporatePartnerships) ? value.corporatePartnerships : [],
-      apartments: Array.isArray(value.apartments) ? value.apartments : [],
-      petProfessionalPartnerships: Array.isArray(value.petProfessionalPartnerships) ? value.petProfessionalPartnerships : [],
-    };
-    setTracker(nextTracker);
-    lastSavedRef.current = JSON.stringify(nextTracker);
-    loadedRef.current = true;
-    setSaveState("idle");
+
+    setTargets(targetResult.data || []);
+    setActivities(activityResult.data || []);
+    setHistory(historyResult.data || []);
     setLoading(false);
-  }, [addGlobalToast, locationId]);
+  }, [locationId, toast]);
 
   useEffect(() => {
-    loadTracker();
-  }, [loadTracker]);
+    loadGrassroots();
+  }, [loadGrassroots]);
 
-  const persistTracker = useCallback(async (nextTracker) => {
-    if (!locationId) return;
-    setSaveState("saving");
-    try {
-      const { error } = await supabase.from("lite_settings").upsert({
-        location_id: locationId,
-        setting_key: GRASSROOTS_SETTING_KEY,
-        setting_value: nextTracker,
-      }, { onConflict: "location_id,setting_key" });
-      if (error) throw error;
-      lastSavedRef.current = JSON.stringify(nextTracker);
-      setSaveState("saved");
-      if (saveResetTimerRef.current) window.clearTimeout(saveResetTimerRef.current);
-      saveResetTimerRef.current = window.setTimeout(() => {
-        setSaveState((prev) => (prev === "saved" ? "idle" : prev));
-        saveResetTimerRef.current = null;
-      }, 1800);
-    } catch (error) {
-      console.error("Failed to autosave grassroots tracker", error);
-      setSaveState("error");
-      addGlobalToast(error.message || "Failed to autosave grassroots tracker", "error");
+  useEffect(() => {
+    if (showFilterPanel && !prevFilterOpen.current) {
+      setDraftFilters({ ...filters });
+      setShowFilterPicker(false);
+      setConfiguringFilterKey(null);
     }
-  }, [addGlobalToast, locationId]);
+    prevFilterOpen.current = showFilterPanel;
+  }, [filters, showFilterPanel]);
 
   useEffect(() => {
-    if (!loadedRef.current || loading) return undefined;
-    const serialized = JSON.stringify(tracker);
-    if (serialized === lastSavedRef.current) return undefined;
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => {
-      persistTracker(tracker);
-      saveTimerRef.current = null;
-    }, 700);
-    return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-    };
-  }, [loading, persistTracker, tracker]);
+    setNewDraft(null);
+    setEditDraft(null);
+    setExpandedUpdates(new Set());
+    const defaults = getGrassrootsDefaultFilters(activeCategory);
+    setFilters(defaults);
+    setDraftFilters(defaults);
+    setShowFilterPanel(false);
+    setShowHistoryPanel(false);
+    setMovePopover(null);
+  }, [activeCategory]);
 
-  useEffect(() => () => {
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    if (saveResetTimerRef.current) window.clearTimeout(saveResetTimerRef.current);
-  }, []);
-
-  const updateCell = (sheetId, rowId, key, value) => {
-    setTracker((prev) => ({
-      ...prev,
-      [sheetId]: (prev[sheetId] || []).map((row) => (row.id === rowId ? { ...row, [key]: value } : row)),
-    }));
+  const updateDraft = (key, value) => {
+    if (editDraft) {
+      setEditDraft((prev) => ({ ...prev, [key]: value }));
+    } else {
+      setNewDraft((prev) => ({ ...prev, [key]: value }));
+    }
   };
 
-  const addRow = () => {
-    const nextRow = makeBlankRow(activeSheetConfig.columns);
-    setTracker((prev) => ({
-      ...prev,
-      [activeSheet]: [nextRow, ...(prev[activeSheet] || [])],
-    }));
+  const openNewDraft = () => {
+    setEditDraft(null);
+    setNewDraft(makeBlankGrassrootsTarget(activeCategory));
   };
 
-  const deleteRow = (sheetId, rowId) => {
-    setTracker((prev) => ({
-      ...prev,
-      [sheetId]: (prev[sheetId] || []).filter((row) => row.id !== rowId),
-    }));
+  const closeEditor = () => {
+    setNewDraft(null);
+    setEditDraft(null);
   };
 
-  const saveLabel = saveState === "saving"
-    ? "Saving..."
-    : saveState === "saved"
-      ? "Saved"
-      : saveState === "error"
-        ? "Autosave failed"
-        : "Autosave ready";
-  const saveTone = saveState === "saving"
-    ? C.info
-    : saveState === "saved"
-      ? C.suc
-      : saveState === "error"
-        ? C.dan
-        : C.textMut;
+  const saveDraft = async () => {
+    const draft = editDraft || newDraft;
+    if (!draft || !locationId) return;
+    if (!String(draft.name || "").trim()) {
+      toast(`${activeConfig.nameLabel} is required`, "error");
+      return;
+    }
+    setSavingDraft(true);
+    setSaveState("saving");
+    const payload = buildTargetPayload(draft, locationId, actor);
+    const query = draft.isDraft
+      ? supabase.from("grassroots_targets").insert(payload).select("*").single()
+      : supabase.from("grassroots_targets").update(payload).eq("id", draft.id).select("*").single();
+    const { data, error } = await query;
+    setSavingDraft(false);
+    if (error) {
+      console.error("Failed to save grassroots target", error);
+      setSaveState("error");
+      toast(error.message || "Failed to save row", "error");
+      return;
+    }
+    setTargets((prev) => draft.isDraft ? [data, ...prev] : prev.map((target) => (target.id === data.id ? data : target)));
+    closeEditor();
+    await loadGrassroots();
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+    toast("Grassroots row saved");
+  };
+
+  const deleteTarget = async (target) => {
+    if (!window.confirm(`Delete ${target.name || "this row"}? This also deletes its logged updates.`)) return;
+    setSaveState("saving");
+    const { error: stampError } = await supabase
+      .from("grassroots_targets")
+      .update({
+        updated_by_user_id: actor.userId,
+        updated_by_name: actor.name,
+      })
+      .eq("id", target.id);
+    if (stampError) {
+      setSaveState("error");
+      toast(stampError.message || "Failed to prepare delete history", "error");
+      return;
+    }
+    const { error } = await supabase.from("grassroots_targets").delete().eq("id", target.id);
+    if (error) {
+      setSaveState("error");
+      toast(error.message || "Failed to delete row", "error");
+      return;
+    }
+    setTargets((prev) => prev.filter((row) => row.id !== target.id));
+    setActivities((prev) => prev.filter((activity) => activity.target_id !== target.id));
+    closeEditor();
+    setLogPopover(null);
+    setMovePopover(null);
+    await loadGrassroots();
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+    toast("Grassroots row deleted");
+  };
+
+  const openLogPopover = (target, event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMovePopover(null);
+    setLogPopover({ target, x: rect.left, y: rect.bottom + 6 });
+    setLogNotes("");
+    setLogDate("");
+    setLogContactName("");
+  };
+
+  const openMovePopover = (target, event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setLogPopover(null);
+    setMovePopover({ target, x: rect.left, y: rect.bottom + 6 });
+  };
+
+  const moveTarget = async (target, nextConfig) => {
+    if (!target || !nextConfig || target.category === nextConfig.dbValue) {
+      setMovePopover(null);
+      return;
+    }
+    setSaveState("saving");
+    const { data, error } = await supabase
+      .from("grassroots_targets")
+      .update({
+        category: nextConfig.dbValue,
+        updated_by_user_id: actor.userId,
+        updated_by_name: actor.name,
+      })
+      .eq("id", target.id)
+      .select("*")
+      .single();
+    if (error) {
+      setSaveState("error");
+      toast(error.message || "Failed to move row", "error");
+      return;
+    }
+    setTargets((prev) => prev.map((row) => (row.id === data.id ? data : row)));
+    setExpandedUpdates((prev) => {
+      const next = new Set(prev);
+      next.delete(target.id);
+      return next;
+    });
+    setMovePopover(null);
+    setActiveCategory(nextConfig.id);
+    await loadGrassroots();
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+    toast(`Moved to ${nextConfig.label}`);
+  };
+
+  const saveLog = async () => {
+    if (!logPopover?.target) return;
+    if (!logNotes.trim() || !logDate) {
+      toast("Notes and next date are required", "error");
+      return;
+    }
+    const target = logPopover.target;
+    const category = getGrassrootsCategoryConfig(target.category).id;
+    const activityType = getGrassrootsActivityType(category);
+    if (activityType === "drop" && !logContactName.trim()) {
+      toast("Who did you speak with is required", "error");
+      return;
+    }
+    const activityDate = todayStr();
+    setSaveState("saving");
+    const { data: insertedActivity, error } = await supabase
+      .from("grassroots_activity")
+      .insert({
+        location_id: locationId,
+        target_id: target.id,
+        activity_type: activityType,
+        activity_date: activityDate,
+        notes: logNotes.trim(),
+        next_contact_date: logDate,
+        metadata: activityType === "drop" ? { person_spoken_with: logContactName.trim() } : {},
+        created_by_user_id: actor.userId,
+        created_by_name: actor.name,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      setSaveState("error");
+      toast(error.message || "Failed to log update", "error");
+      return;
+    }
+
+    setActivities((prev) => [insertedActivity, ...prev]);
+    await loadGrassroots();
+    setLogPopover(null);
+    setLogNotes("");
+    setLogDate("");
+    setLogContactName("");
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+    toast(activityType === "drop" ? "Drop logged" : "Development logged");
+  };
+
+  const removeFilter = (key) => {
+    setDraftFilters((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (configuringFilterKey === key) setConfiguringFilterKey(null);
+  };
+
+  const updateFilter = (key, field, value) => {
+    setDraftFilters((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+  };
+
+  const selectFilterField = (key) => {
+    const field = filterFields.find((candidate) => candidate.key === key);
+    if (!field) return;
+    setDraftFilters((prev) => ({ ...prev, [key]: { op: field.ops[0], val: "" } }));
+    setConfiguringFilterKey(key);
+  };
+
+  const clearFilters = () => {
+    const defaults = getGrassrootsDefaultFilters(activeCategory);
+    setDraftFilters(defaults);
+    setFilters(defaults);
+    setConfiguringFilterKey(null);
+    setShowFilterPicker(false);
+  };
+
+  const applyFilters = () => {
+    setFilters(draftFilters);
+    setShowFilterPanel(false);
+    setShowFilterPicker(false);
+    setConfiguringFilterKey(null);
+  };
+
+  const filterCount = Object.keys(filters || {}).length;
+  const saveLabel = saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : "";
+  const saveTone = saveState === "saving" ? C.info : saveState === "saved" ? C.suc : saveState === "error" ? C.dan : C.textMut;
 
   return (
-    <div style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 32 }}>
+    <div style={{ maxWidth: 1240, margin: "0 auto", paddingBottom: 32 }}>
+      <style>{`
+        @keyframes grassrootsSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
+        @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
+      `}</style>
       <div style={{
         display: "flex",
         alignItems: "center",
@@ -429,78 +1063,65 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         gap: 16,
         marginBottom: 20,
         padding: "16px 18px",
-        borderRadius: 18,
+        borderRadius: 16,
         border: `1px solid ${C.border}`,
         background: `linear-gradient(135deg, ${C.priLt} 0%, #ffffff 62%)`,
         boxShadow: "0 12px 28px rgba(15,23,42,0.06)",
       }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
             Tracker controls
           </div>
-          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Grassroots Tracking</h1>
-          <div style={{ fontSize: 13, color: C.textMut, marginTop: 4, lineHeight: 1.5 }}>
-            Add a row and keep typing. Changes autosave after a short pause, so the page never needs a manual save.
-          </div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: C.text }}>Grassroots Tracking</h1>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
-          <div style={{
-            minWidth: 108,
-            padding: "7px 11px",
-            borderRadius: 999,
-            border: `1px solid ${C.border}`,
-            background: "#fff",
-            color: saveTone,
-            fontSize: 12,
-            fontWeight: 800,
-            textAlign: "center",
-            boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
-          }}>
-            {saveLabel}
-          </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {saveState !== "idle" && (
+            <div style={{ minWidth: 116, padding: "7px 11px", borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: saveTone, fontSize: 12, fontWeight: 900, textAlign: "center" }}>
+              {saveLabel}
+            </div>
+          )}
           <Btn
-            variant="primary"
+            variant={showHistoryPanel ? "secondary" : "ghost"}
             size="lg"
-            icon={<I.Plus />}
-            onClick={addRow}
-            style={{
-              minWidth: 152,
-              justifyContent: "center",
-              whiteSpace: "nowrap",
-              boxShadow: "0 12px 24px rgba(20,83,45,0.18)",
-            }}
+            icon={<I.Clock />}
+            onClick={() => setShowHistoryPanel((current) => !current)}
+            style={{ whiteSpace: "nowrap" }}
           >
+            History{categoryHistory.length > 0 ? ` (${categoryHistory.length})` : ""}
+          </Btn>
+          <Btn
+            variant={showFilterPanel || filterCount > 0 ? "secondary" : "ghost"}
+            size="lg"
+            icon={<FilterIcon />}
+            onClick={() => setShowFilterPanel((current) => !current)}
+            style={{ whiteSpace: "nowrap" }}
+          >
+            Filter{filterCount > 0 ? ` (${filterCount})` : ""}
+          </Btn>
+          <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
             Add Row
           </Btn>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Events Total</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: C.pri }}>{eventSummary.total}</div>
-        </Card>
-        <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Upcoming Events</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#2563EB" }}>{eventSummary.upcoming}</div>
-        </Card>
-        <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>This Week</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#059669" }}>{eventSummary.thisWeek}</div>
-        </Card>
-        <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Next Week</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#8B5CF6" }}>{eventSummary.nextWeek}</div>
-        </Card>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <MetricCard label="Visible" value={metrics.total} color={C.pri} />
+        <MetricCard label="Active" value={metrics.active} color={C.suc} />
+        <MetricCard label="Inactive" value={metrics.inactive} color={C.warn} />
+        <MetricCard label={activeConfig.countLabel} value={metrics.activities} color={C.accDk} />
+        <MetricCard label="Upcoming" value={metrics.upcoming} color={C.info} />
+        <MetricCard label="Overdue" value={metrics.overdue} color={C.dan} />
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-        {SHEETS.map((sheet) => {
-          const active = sheet.id === activeSheet;
+        {GRASSROOTS_CATEGORY_CONFIGS.map((category) => {
+          const active = category.id === activeCategory;
+          const count = targets.filter((target) => target.category === category.dbValue).length;
           return (
             <button
-              key={sheet.id}
-              onClick={() => setActiveSheet(sheet.id)}
+              key={category.id}
+              type="button"
+              onClick={() => setActiveCategory(category.id)}
               style={{
                 padding: "8px 14px",
                 borderRadius: 999,
@@ -508,51 +1129,373 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 background: active ? C.pri : "#fff",
                 color: active ? "#fff" : C.text,
                 fontSize: 12,
-                fontWeight: 700,
+                fontWeight: 800,
                 cursor: "pointer",
                 fontFamily: "inherit",
               }}
             >
-              {sheet.label} ({(tracker[sheet.id] || []).length})
+              {category.label} ({count})
             </button>
           );
         })}
       </div>
 
-      {loading ? (
-        <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading tracker…</Card>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title={`No ${activeSheetConfig.label.toLowerCase()} yet`}
-          subtitle="Add the first row for this sheet. New entries appear immediately and autosave as you type."
-          action={(
-            <Btn
-              variant="primary"
-              size="lg"
-              icon={<I.Plus />}
-              onClick={addRow}
-              style={{
-                minWidth: 160,
-                justifyContent: "center",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Add Row
-            </Btn>
-          )}
-        />
+      {showHistoryPanel && <HistoryPanel items={categoryHistory} categoryConfig={activeConfig} />}
+
+      {showFilterPanel && (
+        <Card style={{ padding: 0, marginBottom: 16, borderRadius: 14, background: C.bg, boxShadow: "0 8px 40px rgba(15,23,42,0.08)", overflow: "hidden", animation: "grassrootsSlideIn 0.2s ease-out" }}>
+          <div style={{ padding: "14px 18px", minHeight: 48 }}>
+            {usedFilterKeys.length === 0 && !showFilterPicker && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", color: C.textMut, fontSize: 13, fontWeight: 700 }}>
+                <FilterIcon /> No filters active
+              </div>
+            )}
+
+            {usedFilterKeys.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: showFilterPicker ? 12 : 0 }}>
+                {usedFilterKeys.map((key, index) => {
+                  const field = filterFields.find((candidate) => candidate.key === key);
+                  const filter = draftFilters[key];
+                  if (!field || !filter) return null;
+                  const isConfiguring = configuringFilterKey === key;
+                  return (
+                    <div key={key} style={{ animation: `grassrootsChipIn 0.2s ease-out ${index * 0.04}s both` }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 0, borderRadius: 10, border: `1.5px solid ${isConfiguring ? C.pri : C.border}`, background: isConfiguring ? `${C.pri}06` : "#fff", overflow: "hidden" }}>
+                        <button type="button" onClick={() => { setConfiguringFilterKey(isConfiguring ? null : key); setShowFilterPicker(false); }} style={{ padding: "6px 10px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 900, color: C.pri, whiteSpace: "nowrap" }}>
+                          {field.label}
+                        </button>
+                        <span style={{ padding: "2px 8px", borderRadius: 6, background: `${C.pri}12`, fontSize: 10, fontWeight: 900, color: C.pri, whiteSpace: "nowrap" }}>
+                          {GRASSROOTS_FILTER_OP_LABELS[filter.op] || filter.op}
+                        </span>
+                        {filterNeedsValue(filter.op) && (
+                          <span style={{ padding: "6px 8px 6px 4px", fontSize: 11, fontWeight: 700, color: filter.val === "" ? C.dan : C.text, whiteSpace: "nowrap" }}>
+                            {filter.val === "" ? "set value" : String(filter.val)}
+                          </span>
+                        )}
+                        <button type="button" onClick={() => removeFilter(key)} style={{ padding: "6px 8px 6px 2px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", color: C.textMut }}>
+                          <I.X />
+                        </button>
+                      </div>
+
+                      {isConfiguring && (
+                        <div style={{ marginTop: 6, padding: "10px 14px", borderRadius: 10, background: "#fff", border: `1.5px solid ${C.pri}30`, boxShadow: "0 6px 24px rgba(20,83,45,0.1)", animation: "grassrootsFadeIn 0.2s ease-out" }}>
+                          <Label>Condition</Label>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: filterNeedsValue(filter.op) ? 10 : 0 }}>
+                            {field.ops.map((op, opIndex) => (
+                              <button
+                                key={op}
+                                type="button"
+                                onClick={() => {
+                                  updateFilter(key, "op", op);
+                                  if (!filterNeedsValue(op)) updateFilter(key, "val", "");
+                                }}
+                                style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${filter.op === op ? C.pri : C.borderLight}`, background: filter.op === op ? C.pri : "#fff", color: filter.op === op ? "#fff" : C.text, fontSize: 11, fontWeight: filter.op === op ? 900 : 600, cursor: "pointer", fontFamily: "inherit", animation: `grassrootsFadeIn 0.18s ease-out ${opIndex * 0.02}s both` }}
+                              >
+                                {GRASSROOTS_FILTER_OP_LABELS[op] || op}
+                              </button>
+                            ))}
+                          </div>
+                          {filterNeedsValue(filter.op) && (
+                            <>
+                              <Label>Value</Label>
+                              {field.type === "select" ? (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                  {(field.options || []).map((option) => (
+                                    <button
+                                      key={option}
+                                      type="button"
+                                      onClick={() => updateFilter(key, "val", option)}
+                                      style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${filter.val === option ? C.pri : C.borderLight}`, background: filter.val === option ? C.pri : "#fff", color: filter.val === option ? "#fff" : C.text, fontSize: 11, fontWeight: filter.val === option ? 900 : 600, cursor: "pointer", fontFamily: "inherit" }}
+                                    >
+                                      {field.key === "status" ? getGrassrootsStatusLabel(option) : option}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : field.type === "date" && filter.op !== "inLastDays" ? (
+                                <div style={{ maxWidth: 260 }}>
+                                  <MiniDatePicker
+                                    value={filter.val}
+                                    onChange={(value) => updateFilter(key, "val", value)}
+                                    recommendedDate={todayStr()}
+                                    recommendedHint="Use today unless you are filtering around a specific follow-up date."
+                                  />
+                                  <div style={{ marginTop: 8 }}>
+                                    <button type="button" onClick={() => setConfiguringFilterKey(null)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                  <input
+                                    type={field.type === "date" && filter.op !== "inLastDays" ? "date" : field.type === "number" || filter.op === "inLastDays" ? "number" : "text"}
+                                    value={filter.val}
+                                    onChange={(event) => updateFilter(key, "val", event.target.value)}
+                                    onKeyDown={(event) => { if (event.key === "Enter") setConfiguringFilterKey(null); }}
+                                    placeholder={filter.op === "inLastDays" ? "Number of days" : "Type a value..."}
+                                    autoFocus
+                                    style={{ ...INPUT_STYLE, maxWidth: 220, padding: "8px 12px", borderRadius: 8 }}
+                                  />
+                                  <button type="button" onClick={() => setConfiguringFilterKey(null)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!showFilterPicker ? (
+              <div style={{ marginTop: usedFilterKeys.length > 0 ? 8 : 0, animation: "grassrootsFadeIn 0.2s ease-out" }}>
+                <button
+                  type="button"
+                  onClick={() => { setShowFilterPicker(true); setFilterPickerReady(false); setConfiguringFilterKey(null); setTimeout(() => setFilterPickerReady(true), 10); }}
+                  disabled={availableFilterFields.length === 0}
+                  style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px dashed ${availableFilterFields.length > 0 ? C.pri : C.border}`, background: "transparent", color: availableFilterFields.length > 0 ? C.pri : C.textMut, fontSize: 12, fontWeight: 900, cursor: availableFilterFields.length > 0 ? "pointer" : "default", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <I.Plus /> Add Filter
+                </button>
+              </div>
+            ) : (
+              <div style={{ marginTop: usedFilterKeys.length > 0 ? 8 : 0, borderRadius: 12, border: `1.5px solid ${C.borderLight}`, background: "#fff", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", overflow: "hidden", animation: "grassrootsSlideIn 0.22s ease-out" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: C.text }}>Choose a filter</span>
+                  <button type="button" onClick={() => setShowFilterPicker(false)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }}><I.X /></button>
+                </div>
+                <div style={{ padding: "6px 0" }}>
+                  {filterSections.map((section, sectionIndex) => {
+                    const sectionFields = availableFilterFields.filter((field) => field.section === section);
+                    if (sectionFields.length === 0) return null;
+                    return (
+                      <div key={section}>
+                        <div style={{ padding: "8px 16px 4px", fontSize: 9, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.1em", animation: filterPickerReady ? `grassrootsFadeIn 0.18s ease-out ${sectionIndex * 0.05}s both` : "none" }}>
+                          {section}
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "4px 16px 8px" }}>
+                          {sectionFields.map((field, fieldIndex) => (
+                            <button
+                              key={field.key}
+                              type="button"
+                              onClick={() => { selectFilterField(field.key); setShowFilterPicker(false); }}
+                              style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.borderLight}`, background: "#fff", color: C.text, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", animation: filterPickerReady ? `grassrootsChipIn 0.22s ease-out ${sectionIndex * 0.05 + fieldIndex * 0.03}s both` : "none" }}
+                            >
+                              {field.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 18px", borderTop: `1px solid ${C.borderLight}`, background: C.surface }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button type="button" onClick={applyFilters} style={{ padding: "8px 20px", borderRadius: 10, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>
+                Apply{usedFilterKeys.length > 0 ? ` (${usedFilterKeys.length})` : ""}
+              </button>
+              <button type="button" onClick={clearFilters} style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Clear All
+              </button>
+              <button type="button" onClick={() => { setShowFilterPanel(false); setShowFilterPicker(false); setConfiguringFilterKey(null); }} style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.borderLight}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {schemaMissing ? (
+        <Card style={{ padding: 28, textAlign: "center", borderRadius: 14 }}>
+          <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 6 }}>Grassroots tables are not installed yet</div>
+          <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
+            The app is ready for the Grassroots tables, but the Supabase migration has not been applied to this environment.
+          </div>
+        </Card>
+      ) : loading ? (
+        <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
       ) : (
-        <div style={{ display: "grid", gap: 14 }}>
-          {rows.map((row, index) => (
-            <TrackerRowCard
-              key={row.id}
-              sheet={activeSheetConfig}
-              row={row}
-              index={index}
-              onChange={(key, value) => updateCell(activeSheet, row.id, key, value)}
-              onDelete={() => deleteRow(activeSheet, row.id)}
+        <div style={{ display: "grid", gap: 12 }}>
+          {newDraft && (
+            <TargetEditor
+              draft={newDraft}
+              categoryConfig={activeConfig}
+              saving={savingDraft}
+              onChange={updateDraft}
+              onSave={saveDraft}
+              onCancel={closeEditor}
             />
-          ))}
+          )}
+
+          {visibleTargets.length === 0 && !newDraft ? (
+            <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
+              <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
+              <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add Row</Btn>
+            </Card>
+          ) : (
+            <>
+              <TrackerHeader categoryConfig={activeConfig} />
+              {visibleTargets.map((target, index) => {
+                if (editDraft?.id === target.id) {
+                  return (
+                    <TargetEditor
+                      key={target.id}
+                      draft={editDraft}
+                      categoryConfig={activeConfig}
+                      saving={savingDraft}
+                      onChange={updateDraft}
+                      onSave={saveDraft}
+                      onCancel={closeEditor}
+                      onDelete={() => deleteTarget(editDraft)}
+                    />
+                  );
+                }
+                const rowActivities = activitiesByTarget[target.id] || [];
+                return (
+                  <TrackerRow
+                    key={target.id}
+                    target={target}
+                    index={index}
+                    categoryConfig={activeConfig}
+                    activities={rowActivities}
+                    isExpanded={expandedUpdates.has(target.id)}
+                    onToggleUpdates={() => setExpandedUpdates((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(target.id)) next.delete(target.id);
+                      else next.add(target.id);
+                      return next;
+                    })}
+                    onLog={(event) => openLogPopover(target, event)}
+                    onMove={(event) => openMovePopover(target, event)}
+                    onEdit={() => { setNewDraft(null); setEditDraft(buildEditorDraft(target)); }}
+                  />
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+
+      {movePopover && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => setMovePopover(null)}>
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              position: "fixed",
+              left: Math.min(movePopover.x || 300, window.innerWidth - 320),
+              top: movePopover.y || 200,
+              zIndex: 9999,
+              width: 300,
+              background: C.surface,
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 14,
+              boxShadow: "0 12px 40px rgba(15,23,42,0.18)",
+              padding: 12,
+            }}
+          >
+            <div style={{ padding: "4px 4px 10px", fontSize: 12, fontWeight: 900, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Move to
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {GRASSROOTS_CATEGORY_CONFIGS
+                .filter((category) => category.dbValue !== movePopover.target.category)
+                .map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => moveTarget(movePopover.target, category)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: `1.5px solid ${C.borderLight}`,
+                      background: "#fff",
+                      color: C.text,
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span>{category.label}</span>
+                    <I.ChevronRight />
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {logPopover && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => { setLogPopover(null); setLogNotes(""); setLogDate(""); setLogContactName(""); }}>
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              position: "fixed",
+              left: Math.min(logPopover.x || 300, window.innerWidth - 360),
+              top: logPopover.y || 200,
+              zIndex: 9999,
+              background: C.surface,
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 14,
+              padding: "16px 20px",
+              width: 330,
+              boxShadow: "0 12px 40px rgba(15,23,42,0.18)",
+            }}
+          >
+            {(() => {
+              const logCategoryId = getGrassrootsCategoryConfig(logPopover.target.category).id;
+              const isDropLog = logCategoryId === "drops";
+              return (
+                <>
+            <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>
+              {isDropLog ? "Log Drop" : "Log Development"}
+            </div>
+            {isDropLog && (
+              <label style={{ display: "block", marginBottom: 10 }}>
+                <Label>Who did you speak with?</Label>
+                <input
+                  value={logContactName}
+                  onChange={(event) => setLogContactName(event.target.value)}
+                  placeholder="Person's name"
+                  style={{ ...INPUT_STYLE, background: C.bg }}
+                  autoFocus
+                />
+              </label>
+            )}
+            <textarea
+              value={logNotes}
+              onChange={(event) => setLogNotes(event.target.value)}
+              placeholder={isDropLog ? "Notes about this drop..." : "Notes about this development..."}
+              rows={3}
+              style={{ ...INPUT_STYLE, minHeight: 88, resize: "vertical", background: C.bg, marginBottom: 10 }}
+              autoFocus={!isDropLog}
+            />
+            <div style={{ marginBottom: 10 }}>
+              <Label>{isDropLog ? "Next Drop Date" : "Next Follow-Up Date"}</Label>
+              <MiniDatePicker
+                value={logDate}
+                onChange={setLogDate}
+                recommendedDate={addDays(todayStr(), isDropLog ? 28 : 2)}
+                recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : "Recommended: +2 days unless the partner gave a specific callback date."}
+              />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn size="sm" variant="ghost" onClick={() => { setLogPopover(null); setLogNotes(""); setLogDate(""); setLogContactName(""); }}>Cancel</Btn>
+              <Btn size="sm" onClick={saveLog}>Done</Btn>
+            </div>
+                </>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>

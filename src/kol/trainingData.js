@@ -205,6 +205,21 @@ export function groupLaborEmployeeNotes(notes = []) {
   }, {});
 }
 
+export function splitLaborEmployeeName(fullName = "") {
+  const tokens = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { firstName: "", lastName: "" };
+  if (tokens.length === 1) return { firstName: tokens[0], lastName: "" };
+  return {
+    firstName: tokens.slice(0, -1).join(" "),
+    lastName: tokens[tokens.length - 1],
+  };
+}
+
+export function readLaborEmployeeContactValue(employee = {}, key) {
+  if (!employee || typeof employee !== "object") return "";
+  return String(employee?.metadata?.[key] || employee?.[key] || "").trim();
+}
+
 export function isLaborEmployeeActive(employee) {
   if (!employee || typeof employee !== "object") return false;
   const explicitStatus = String(employee.employment_status || "").trim().toLowerCase();
@@ -212,6 +227,104 @@ export function isLaborEmployeeActive(employee) {
   if (explicitStatus === "inactive" || explicitStatus === "terminated") return false;
   if (typeof employee.is_active === "boolean") return employee.is_active;
   return !employee.end_date;
+}
+
+function cleanContactText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function escapeVCardText(value) {
+  return cleanContactText(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,");
+}
+
+function foldVCardLine(line) {
+  const raw = String(line || "");
+  if (raw.length <= 75) return raw;
+  const chunks = [];
+  let remaining = raw;
+  while (remaining.length > 75) {
+    chunks.push(remaining.slice(0, 75));
+    remaining = remaining.slice(75);
+  }
+  chunks.push(remaining);
+  return chunks.map((chunk, index) => (index === 0 ? chunk : ` ${chunk}`)).join("\r\n");
+}
+
+function vCardDateTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function normalizeVCardPhone(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return raw;
+}
+
+function makeVCardLine(name, value) {
+  const cleaned = cleanContactText(value);
+  if (!cleaned) return null;
+  return foldVCardLine(`${name}:${escapeVCardText(cleaned)}`);
+}
+
+function makeVCardRawLine(name, value) {
+  const cleaned = String(value || "").trim();
+  if (!cleaned) return null;
+  return foldVCardLine(`${name}:${cleaned}`);
+}
+
+export function buildLaborEmployeeContactCard(employee = {}, { locationName = "K9 Operations", generatedAt = null } = {}) {
+  const fullName = cleanContactText(employee.full_name || employee.name || "");
+  const { firstName, lastName } = splitLaborEmployeeName(fullName);
+  const positionTitle = cleanContactText(employee.position_title || employee.role || "");
+  const cleanLocationName = cleanContactText(locationName || employee.location_name || "K9 Operations");
+  const email = cleanContactText(readLaborEmployeeContactValue(employee, "contact_email") || employee.email);
+  const phone = normalizeVCardPhone(readLaborEmployeeContactValue(employee, "contact_phone") || employee.phone);
+  const title = [positionTitle, cleanLocationName].filter(Boolean).join(" - ");
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    foldVCardLine(`N:${escapeVCardText(lastName)};${escapeVCardText(firstName)};;;`),
+    makeVCardLine("FN", fullName || "Employee"),
+    makeVCardLine("ORG", title || cleanLocationName || "K9 Operations"),
+    makeVCardLine("TITLE", title),
+    makeVCardRawLine("TEL;TYPE=CELL,VOICE", phone),
+    makeVCardRawLine("EMAIL;TYPE=INTERNET", email),
+    makeVCardLine("NOTE", employee.start_date ? `Start date: ${employee.start_date}` : ""),
+    makeVCardRawLine("UID", employee.id ? `k9-operations-labor-${employee.id}` : null),
+    makeVCardRawLine("REV", vCardDateTime(generatedAt)),
+    "END:VCARD",
+  ].filter(Boolean);
+
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+export function buildLaborEmployeeContactCardFile(employees = [], options = {}) {
+  return (Array.isArray(employees) ? employees : [])
+    .filter((employee) => employee && typeof employee === "object")
+    .map((employee) => buildLaborEmployeeContactCard(employee, options))
+    .join("\r\n");
+}
+
+export function buildLaborEmployeeContactCardFilename(employee = {}, { locationName = "K9 Operations", bulk = false } = {}) {
+  const base = bulk
+    ? `${locationName || "K9 Operations"} active employee contacts`
+    : `${employee.full_name || employee.name || "employee"} contact card`;
+  const slug = String(base || "labor-contact-card")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${slug || "labor-contact-card"}.vcf`;
 }
 
 function toDateOnly(value) {

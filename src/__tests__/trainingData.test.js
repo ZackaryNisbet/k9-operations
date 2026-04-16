@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCreateLaborEmployeeRpcArgs,
+  buildLaborEmployeeContactCard,
+  buildLaborEmployeeContactCardFile,
+  buildLaborEmployeeContactCardFilename,
   buildLaborDashboardMetrics,
   buildCreateTrainingRecordRpcArgs,
   buildUpdateLaborEmployeeRpcArgs,
@@ -198,6 +201,53 @@ describe("trainingData helpers", () => {
       ],
       e2: [{ id: "n3", labor_employee_id: "e2" }],
     });
+  });
+
+  it("builds an importable labor employee contact card with phone, email, title, and location", () => {
+    const card = buildLaborEmployeeContactCard({
+      id: "employee-1",
+      full_name: "Amber Teefy",
+      position_title: "Pet Care Technician",
+      start_date: "2026-04-01",
+      metadata: {
+        contact_phone: "(555) 123-4567",
+        contact_email: "amber@example.com",
+      },
+      manager_note: "discipline details should not export",
+    }, {
+      locationName: "Cherry Hill",
+      generatedAt: "2026-04-16T12:30:00Z",
+    });
+
+    expect(card).toContain("BEGIN:VCARD");
+    expect(card).toContain("VERSION:3.0");
+    expect(card).toContain("N:Teefy;Amber;;;");
+    expect(card).toContain("FN:Amber Teefy");
+    expect(card).toContain("TITLE:Pet Care Technician - Cherry Hill");
+    expect(card).toContain("ORG:Pet Care Technician - Cherry Hill");
+    expect(card).toContain("TEL;TYPE=CELL,VOICE:+15551234567");
+    expect(card).toContain("EMAIL;TYPE=INTERNET:amber@example.com");
+    expect(card).toContain("NOTE:Start date: 2026-04-01");
+    expect(card).not.toContain("K9 Operations labor contact");
+    expect(card).not.toContain("Status: Active");
+    expect(card).toContain("REV:20260416T123000Z");
+    expect(card).not.toContain("discipline");
+  });
+
+  it("builds a bulk active employee contact-card file and a safe filename", () => {
+    const file = buildLaborEmployeeContactCardFile([
+      { id: "e1", full_name: "Jane Smith", position_title: "CSR" },
+      { id: "e2", full_name: "Pat Lee", position_title: "Manager", end_date: "2026-04-01" },
+    ], {
+      locationName: "Cherry Hill",
+      generatedAt: "2026-04-16T12:30:00Z",
+    });
+
+    expect((file.match(/BEGIN:VCARD/g) || []).length).toBe(2);
+    expect(file).toContain("FN:Jane Smith");
+    expect(file).toContain("FN:Pat Lee");
+    expect(file).not.toContain("Status: Inactive");
+    expect(buildLaborEmployeeContactCardFilename({}, { locationName: "Cherry Hill", bulk: true })).toBe("cherry-hill-active-employee-contacts.vcf");
   });
 
   it("builds labor dashboard metrics using active employee and compliance rules", () => {

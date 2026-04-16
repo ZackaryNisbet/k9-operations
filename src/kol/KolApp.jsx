@@ -382,7 +382,8 @@ function LeanAppInner() {
 
   // Mock profile
   const profile = {
-    id: "mock-user",
+    id: user?.id || "mock-user",
+    user_id: user?.id || null,
     role: "owner",
     email: user?.email || "user@example.com",
     full_name: user?.user_metadata?.full_name || "Demo User",
@@ -591,7 +592,11 @@ function LeanAppInner() {
   const locSlug = useMemo(() => {
     const loc = allLocations.find(l => l.id === currentLocation);
     return loc?.slug || "cherry-hill";
-  }, [currentLocation]);
+  }, [allLocations, currentLocation]);
+  const currentLocationName = useMemo(() => {
+    const loc = allLocations.find(l => l.id === currentLocation);
+    return loc?.name || "K9 Operations";
+  }, [allLocations, currentLocation]);
 
   // Sync URL when page/params change
   const initialUrlSet = useRef(false);
@@ -973,7 +978,7 @@ function LeanAppInner() {
       case "enterprise-users":
         return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
       case "training":
-        return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationName={currentLocationName} />;
       case "client-management":
         return <ClientManagementPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "resources":
