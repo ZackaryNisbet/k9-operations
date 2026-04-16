@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { Btn, Card } from "../../shared/ui";
@@ -109,9 +109,12 @@ function EmptyState({ title, subtitle }) {
 export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const locationId = profile?.location_id || "";
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState("idle");
   const [activeSheet, setActiveSheet] = useState("events");
   const [tracker, setTracker] = useState(() => Object.fromEntries(SHEETS.map((sheet) => [sheet.id, []])));
+  const loadedRef = useRef(false);
+  const lastSavedRef = useRef("");
+  const saveTimerRef = useRef(null);
 
   const activeSheetConfig = SHEETS.find((sheet) => sheet.id === activeSheet) || SHEETS[0];
   const rows = tracker[activeSheet] || [];
@@ -153,13 +156,17 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return;
     }
     const value = data?.setting_value || {};
-    setTracker({
+    const nextTracker = {
       events: Array.isArray(value.events) ? value.events : [],
       drops: Array.isArray(value.drops) ? value.drops : [],
       corporatePartnerships: Array.isArray(value.corporatePartnerships) ? value.corporatePartnerships : [],
       apartments: Array.isArray(value.apartments) ? value.apartments : [],
       petProfessionalPartnerships: Array.isArray(value.petProfessionalPartnerships) ? value.petProfessionalPartnerships : [],
-    });
+    };
+    setTracker(nextTracker);
+    lastSavedRef.current = JSON.stringify(nextTracker);
+    loadedRef.current = true;
+    setSaveState("idle");
     setLoading(false);
   }, [addGlobalToast, locationId]);
 
@@ -168,16 +175,41 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   }, [loadTracker]);
 
   const persistTracker = useCallback(async (nextTracker) => {
-    setSaving(true);
-    const { error } = await supabase.from("lite_settings").upsert({
-      location_id: locationId,
-      setting_key: GRASSROOTS_SETTING_KEY,
-      setting_value: nextTracker,
-    }, { onConflict: "location_id,setting_key" });
-    setSaving(false);
-    if (error) throw error;
-    setTracker(nextTracker);
-  }, [locationId]);
+    if (!locationId) return;
+    setSaveState("saving");
+    try {
+      const { error } = await supabase.from("lite_settings").upsert({
+        location_id: locationId,
+        setting_key: GRASSROOTS_SETTING_KEY,
+        setting_value: nextTracker,
+      }, { onConflict: "location_id,setting_key" });
+      if (error) throw error;
+      lastSavedRef.current = JSON.stringify(nextTracker);
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState((prev) => (prev === "saved" ? "idle" : prev)), 1800);
+    } catch (error) {
+      console.error("Failed to autosave grassroots tracker", error);
+      setSaveState("error");
+      addGlobalToast(error.message || "Failed to autosave grassroots tracker", "error");
+    }
+  }, [addGlobalToast, locationId]);
+
+  useEffect(() => {
+    if (!loadedRef.current || loading) return undefined;
+    const serialized = JSON.stringify(tracker);
+    if (serialized === lastSavedRef.current) return undefined;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      persistTracker(tracker);
+      saveTimerRef.current = null;
+    }, 700);
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [loading, persistTracker, tracker]);
 
   const updateCell = (sheetId, rowId, key, value) => {
     setTracker((prev) => ({
@@ -201,15 +233,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }));
   };
 
-  const handleSave = async () => {
-    try {
-      await persistTracker(tracker);
-      addGlobalToast("Grassroots tracker saved", "success");
-    } catch (error) {
-      console.error("Failed to save grassroots tracker", error);
-      addGlobalToast(error.message || "Failed to save grassroots tracker", "error");
-    }
-  };
+  const saveLabel = saveState === "saving"
+    ? "Saving..."
+    : saveState === "saved"
+      ? "Saved"
+      : saveState === "error"
+        ? "Autosave failed"
+        : "Autosaves";
 
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 32 }}>
@@ -220,9 +250,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             Resort-level grassroots pipeline, event planning, partner outreach, and local marketing execution.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="secondary" onClick={addRow}>Add Row</Btn>
-          <Btn variant="primary" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save Tracker"}</Btn>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: saveState === "error" ? C.dan : saveState === "saved" ? C.suc : C.textMut }}>
+            {saveLabel}
+          </div>
+          <Btn variant="primary" onClick={addRow}>Add Row</Btn>
         </div>
       </div>
 
@@ -273,7 +305,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       {loading ? (
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading tracker…</Card>
       ) : rows.length === 0 ? (
-        <EmptyState title={`No ${activeSheetConfig.label.toLowerCase()} yet`} subtitle="Add your first row for this sheet, then save the tracker." />
+        <EmptyState title={`No ${activeSheetConfig.label.toLowerCase()} yet`} subtitle="Add your first row for this sheet. Changes autosave as you work." />
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>

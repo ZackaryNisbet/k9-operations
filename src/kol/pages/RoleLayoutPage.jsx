@@ -120,6 +120,63 @@ export function sanitizeLayoutState(items) {
   return { items: next, duplicateCount };
 }
 
+export function moveRoleLayoutItem(items, dragItem, targetRole, targetSection, targetIndex) {
+  if (!dragItem) return { items, moved: false, reason: "missing_drag_item" };
+
+  const { role: srcRole, section: srcSection, index: srcIndex, item } = dragItem;
+  const srcKey = cellKey(srcRole, srcSection);
+  const tgtKey = cellKey(targetRole, targetSection);
+  const sourceList = (items?.[srcKey] || []).map((entry) => ({ ...entry }));
+  const draggedItem = item || sourceList[srcIndex];
+
+  if (!draggedItem || srcIndex < 0 || srcIndex >= sourceList.length) {
+    return { items, moved: false, reason: "missing_source_item" };
+  }
+
+  const next = { ...(items || {}) };
+  const targetList = srcKey === tgtKey ? sourceList : (items?.[tgtKey] || []).map((entry) => ({ ...entry }));
+
+  if (srcKey !== tgtKey && targetList.some((existing) => existing.task_id === draggedItem.task_id)) {
+    return { items, moved: false, reason: "duplicate_target" };
+  }
+
+  sourceList.splice(srcIndex, 1);
+  const boundedIndex = targetIndex < 0
+    ? targetList.length
+    : Math.max(0, Math.min(targetIndex, targetList.length));
+  const insertIndex = srcKey === tgtKey && srcIndex < boundedIndex ? boundedIndex - 1 : boundedIndex;
+  const movedItem = {
+    ...draggedItem,
+    role: targetRole,
+    section: targetSection,
+  };
+
+  if (srcKey === tgtKey) {
+    sourceList.splice(insertIndex, 0, movedItem);
+    next[srcKey] = sourceList;
+  } else {
+    targetList.splice(insertIndex, 0, movedItem);
+    next[srcKey] = sourceList;
+    next[tgtKey] = targetList;
+  }
+
+  [srcKey, tgtKey].forEach((key) => {
+    (next[key] || []).forEach((entry, index) => {
+      entry.sort_order = index;
+      if (key === tgtKey) {
+        entry.role = targetRole;
+        entry.section = targetSection;
+      }
+      if (key === srcKey && key !== tgtKey) {
+        entry.role = srcRole;
+        entry.section = srcSection;
+      }
+    });
+  });
+
+  return { items: next, moved: true, movedItem };
+}
+
 function isMissingReplaceRoleLayoutRpc(error) {
   const msg = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
   return error?.code === "PGRST202" || msg.includes("replace_role_page_config") || msg.includes("could not find the function");
@@ -471,41 +528,15 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     e.stopPropagation();
     if (!dragItem) return;
 
-    const { role: srcRole, section: srcSection, index: srcIndex, item } = dragItem;
-    const srcKey = cellKey(srcRole, srcSection);
-    const tgtKey = cellKey(targetRole, targetSection);
-
     updateCellItems(prev => {
-      const next = { ...prev };
-      const srcList = [...(next[srcKey] || [])];
-      const tgtList = srcKey === tgtKey ? srcList : [...(next[tgtKey] || [])];
-
-      if (srcKey !== tgtKey && tgtList.some(existing => existing.task_id === item.task_id)) {
-        addGlobalToast?.(`${item.task_label} is already in ${ROLES.find(r => r.id === targetRole)?.label || targetRole} ${SECTIONS.find(s => s.id === targetSection)?.label || targetSection}.`, "info");
+      const result = moveRoleLayoutItem(prev, dragItem, targetRole, targetSection, targetIndex);
+      if (!result.moved) {
+        if (result.reason === "duplicate_target") {
+          addGlobalToast?.(`${dragItem.item?.task_label || "This item"} is already in ${ROLES.find(r => r.id === targetRole)?.label || targetRole} ${SECTIONS.find(s => s.id === targetSection)?.label || targetSection}.`, "info");
+        }
         return prev;
       }
-
-      // Remove from source
-      srcList.splice(srcIndex, 1);
-
-      // Insert at target
-      const insertIdx = targetIndex < 0 ? tgtList.length : (srcKey === tgtKey && srcIndex < targetIndex ? targetIndex - 1 : targetIndex);
-      const movedItem = { ...item, role: targetRole, section: targetSection };
-      if (srcKey === tgtKey) {
-        srcList.splice(insertIdx, 0, movedItem);
-        next[srcKey] = srcList;
-      } else {
-        tgtList.splice(insertIdx < 0 ? tgtList.length : insertIdx, 0, movedItem);
-        next[srcKey] = srcList;
-        next[tgtKey] = tgtList;
-      }
-
-      // Renumber sort_order
-      [srcKey, tgtKey].forEach(k => {
-        (next[k] || []).forEach((it, i) => { it.sort_order = i; });
-      });
-
-      return next;
+      return result.items;
     });
 
     setDragItem(null);

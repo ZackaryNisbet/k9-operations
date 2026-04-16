@@ -249,8 +249,8 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     prevMarkFilterOpen.current = showMarkFilterPanel;
   }, [markFilters, showMarkFilterPanel]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const locationId = await resolveTrainingLocationId(supabase, locationRef, actorUserId);
       if (!locationId) {
@@ -259,7 +259,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         setRosterSnapshot([]);
         setAttendanceIncidents([]);
         setAttendancePolicyActions([]);
-        setLoading(false);
+        if (!silent) setLoading(false);
         return;
       }
 
@@ -310,7 +310,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       console.error("Attendance load error:", error);
       addGlobalToast(`Failed to load attendance: ${error.message || "Unknown error"}`, "error");
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [actorUserId, addGlobalToast, locationRef]);
 
   useEffect(() => {
@@ -723,7 +723,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       }
       setShowEmployeeModal(false);
       resetEmployeeModal();
-      await loadData();
+      await loadData({ silent: true });
     } catch (error) {
       console.error("Attendance employee save error:", error);
       addGlobalToast(`Failed to save employee: ${error.message || "Unknown error"}`, "error");
@@ -786,7 +786,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         addGlobalToast("Attendance mark saved", "success");
       }
       closeIncidentComposer({ immediate: true });
-      await loadData();
+      await loadData({ silent: true });
     } catch (error) {
       console.error("Attendance mark save error:", error);
       addGlobalToast(`Failed to save attendance mark: ${error.message || "Unknown error"}`, "error");
@@ -818,7 +818,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       if (editingIncidentId === incident.id) {
         closeIncidentComposer({ immediate: true });
       }
-      await loadData();
+      await loadData({ silent: true });
       addGlobalToast("Attendance mark deleted", "success");
     } catch (error) {
       console.error("Attendance mark delete error:", error);
@@ -871,7 +871,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       }
       setShowPolicyActionModal(false);
       resetPolicyActionModal();
-      await loadData();
+      await loadData({ silent: true });
     } catch (error) {
       console.error("Attendance policy action save error:", error);
       addGlobalToast(`Failed to save policy action: ${error.message || "Unknown error"}`, "error");
@@ -904,7 +904,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         setShowPolicyActionModal(false);
         resetPolicyActionModal();
       }
-      await loadData();
+      await loadData({ silent: true });
       addGlobalToast("Policy action deleted", "success");
     } catch (error) {
       console.error("Policy action delete error:", error);

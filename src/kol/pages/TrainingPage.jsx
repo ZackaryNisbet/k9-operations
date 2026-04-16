@@ -63,6 +63,7 @@ const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
+const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
 
 const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "first_name", label: "First Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
@@ -70,7 +71,7 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "email", label: "Email", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
   { section: "Employee Info", key: "phone", label: "Phone", type: "text", ops: ["contains", "equals", "empty", "notEmpty"] },
   { section: "Employment", key: "position", label: "Position", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive"] },
+  { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
   { section: "Employment", key: "start_date", label: "Start Date", type: "date", ops: ["after", "before", "inLastDays"] },
   { section: "Compliance", key: "training", label: "Training", type: "select", ops: ["is", "isNot"], options: ["Compliant", "In Progress", "Non-Compliant"] },
   { section: "Reviews", key: "review30", label: "30-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
@@ -252,7 +253,7 @@ function getDueSoonLabel(value) {
   return normalized ? normalized.replace(/_/g, " ") : "Unknown";
 }
 
-function applyLaborRosterFilters(rows, filters) {
+export function applyLaborRosterFilters(rows, filters) {
   const keys = Object.keys(filters || {});
   if (keys.length === 0) return rows;
   const today = todayStr();
@@ -286,7 +287,9 @@ function applyLaborRosterFilters(rows, filters) {
     if (key === "phone") return matchText(row.contact_phone, op, val, { digitsOnly: true });
     if (key === "position") return matchText(row.position_title, op, val);
     if (key === "employment_status") {
-      const status = row.is_active ? "active" : "inactive";
+      const explicitStatus = String(row.employment_status || "").toLowerCase();
+      const status = explicitStatus || (row.is_active === false ? "inactive" : "active");
+      if (val === "all") return true;
       if (op === "is") return status === val;
       if (op === "isNot") return status !== val;
       return true;
@@ -380,6 +383,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [createTemplateClass, setCreateTemplateClass] = useState("training_plan");
   const [createTemplateRoleScopesText, setCreateTemplateRoleScopesText] = useState("");
   const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [templateStatusFilter, setTemplateStatusFilter] = useState("active");
+  const [templateManageStructure, setTemplateManageStructure] = useState(false);
 
   // New record form
   const [newLaborEmployeeId, setNewLaborEmployeeId] = useState("");
@@ -442,14 +447,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [noteFilterSource, setNoteFilterSource] = useState("all");
   const [noteFilterType, setNoteFilterType] = useState("all");
   const [noteFilterDateRange, setNoteFilterDateRange] = useState("all");
-  const [showInactiveRoster, setShowInactiveRoster] = useState(false);
   const [rosterSort, setRosterSort] = useState({ key: "hierarchy", direction: "asc" });
   const [showHierarchyManager, setShowHierarchyManager] = useState(false);
   const [savingHierarchy, setSavingHierarchy] = useState(false);
   const [hierarchyDraft, setHierarchyDraft] = useState([]);
   const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
-  const [rosterFilters, setRosterFilters] = useState({});
-  const [rosterDraftFilters, setRosterDraftFilters] = useState({});
+  const [rosterFilters, setRosterFilters] = useState(DEFAULT_ROSTER_FILTERS);
+  const [rosterDraftFilters, setRosterDraftFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [savedRosterViews, setSavedRosterViews] = useState([]);
   const [activeRosterViewId, setActiveRosterViewId] = useState(null);
   const [showRosterFilterPanel, setShowRosterFilterPanel] = useState(false);
@@ -802,6 +806,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       await loadSupportBundle(true, coreData);
     }
   }, [loadCoreData, loadSupportBundle, loadTrainingBundle]);
+  const refreshTemplateBundle = useCallback(async () => {
+    await loadTrainingBundle(true, laborLocationRef || null);
+  }, [laborLocationRef, loadTrainingBundle]);
 
   useEffect(() => { loadCoreData(); }, [loadCoreData]);
 
@@ -1036,6 +1043,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       name: template.name,
       role_scopes: template.role_scopes || [],
       template_class: template.template_class,
+      is_active: template.is_active !== false,
       version: allTemplateVersions.find((version) => version.template_id === template.id && version.is_current) || null,
       stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
     }));
@@ -1046,32 +1054,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       name: template.name,
       role_scopes: template.role_scopes || [],
       template_class: "performance_review",
+      is_active: template.is_active !== false,
       version: allReviewTemplateVersions.find((version) => version.template_id === template.id && version.is_current) || null,
       stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
     }));
     return [...trainingRows, ...reviewRows];
   }, [allReviewTemplateVersions, allTemplateVersions, reviewTemplateStats, reviewTemplates, templateStats, templates]);
+  const visibleTemplateRows = useMemo(() => {
+    return combinedTemplateRows.filter((row) => {
+      if (templateStatusFilter === "all") return true;
+      if (templateStatusFilter === "inactive") return row.is_active === false;
+      return row.is_active !== false;
+    });
+  }, [combinedTemplateRows, templateStatusFilter]);
   const templateGroups = useMemo(() => ([
     {
       key: "onboarding",
       label: "Onboarding & Training",
-      rows: combinedTemplateRows.filter((row) =>
+      rows: visibleTemplateRows.filter((row) =>
         row.kind === "training" && ["training_plan", "competency_guide", "master_dependency_checklist"].includes(row.template_class)
       ),
     },
     {
       key: "certifications",
       label: "Certifications",
-      rows: combinedTemplateRows.filter((row) =>
+      rows: visibleTemplateRows.filter((row) =>
         row.kind === "training" && !["training_plan", "competency_guide", "master_dependency_checklist"].includes(row.template_class)
       ),
     },
     {
       key: "reviews",
       label: "30/60/90 Reviews",
-      rows: combinedTemplateRows.filter((row) => row.kind === "review"),
+      rows: visibleTemplateRows.filter((row) => row.kind === "review"),
     },
-  ]), [combinedTemplateRows]);
+  ]), [visibleTemplateRows]);
 
   // Template preview data
   const previewTemplateVersionHistory = useMemo(() => {
@@ -1592,6 +1608,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setPreviewTemplateId(templateId);
     setPreviewTemplateVersionId(versionId);
     setExpandedSections({});
+    setTemplateManageStructure(false);
   }, []);
 
   const handleCreateTemplateDraft = useCallback(async () => {
@@ -1612,13 +1629,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const draftVersion = Array.isArray(data) ? data[0] : data;
-    await refreshLaborData();
+    await refreshTemplateBundle();
     if (draftVersion?.id) {
       setPreviewTemplateVersionId(draftVersion.id);
     }
     addGlobalToast("Template draft created", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
 
   const resetCreateTemplateModal = useCallback(() => {
     setShowCreateTemplateModal(false);
@@ -1709,7 +1726,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     }
 
     const createdDraft = Array.isArray(draftData) ? draftData[0] : draftData;
-    await refreshLaborData();
+    await refreshTemplateBundle();
     setPreviewTemplateKind(isReview ? "review" : "training");
     setPreviewTemplateId(insertedTemplate.id);
     setPreviewTemplateVersionId(createdDraft?.id || null);
@@ -1725,7 +1742,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     createTemplateName,
     createTemplateRoleScopesText,
     laborLocationRef,
-    refreshLaborData,
+    refreshTemplateBundle,
     resetCreateTemplateModal,
     reviewTemplates,
     templates,
@@ -1747,13 +1764,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const publishedVersion = Array.isArray(data) ? data[0] : data;
-    await refreshLaborData();
+    await refreshTemplateBundle();
     if (publishedVersion?.id) {
       setPreviewTemplateVersionId(publishedVersion.id);
     }
     addGlobalToast("Template version published", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshTemplateBundle]);
 
   const handleRestoreTemplateVersion = useCallback(async () => {
     if (!previewTemplateId || !previewTemplate?.version?.id) return;
@@ -1771,13 +1788,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
     const restoredVersion = Array.isArray(data) ? data[0] : data;
-    await refreshLaborData();
+    await refreshTemplateBundle();
     if (restoredVersion?.id) {
       setPreviewTemplateVersionId(restoredVersion.id);
     }
     addGlobalToast("Historical version restored into a new draft", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
 
   const handleUpdateTemplateName = useCallback(async (value) => {
     if (!previewTemplateId) return;
@@ -1798,9 +1815,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to update template name", "error");
       return;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     addGlobalToast("Template name updated", "success");
-  }, [actorUserId, addGlobalToast, previewTemplateId, previewTemplateKind, reviewTemplates, templates, refreshLaborData]);
+  }, [actorUserId, addGlobalToast, previewTemplateId, previewTemplateKind, reviewTemplates, templates, refreshTemplateBundle]);
 
   const handleUpdateTemplateSection = useCallback(async (sectionId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
@@ -1812,9 +1829,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to update section", "error");
       return false;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     return true;
-  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
+  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
 
   const handleUpdateTemplateItem = useCallback(async (itemId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
@@ -1826,9 +1843,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return false;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     return true;
-  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
+  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
 
   const handleAddTemplateSection = useCallback(async (parentSectionId = null) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -1866,9 +1883,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to add section", "error");
       return;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
-  }, [addGlobalToast, previewTemplate, previewTemplateKind, reviewSections, sections, refreshLaborData]);
+  }, [addGlobalToast, previewTemplate, previewTemplateKind, reviewSections, sections, refreshTemplateBundle]);
 
   const handleAddTemplateItem = useCallback(async (sectionId) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -1905,9 +1922,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
-  }, [addGlobalToast, items, previewTemplate, previewTemplateKind, reviewItems, refreshLaborData]);
+  }, [addGlobalToast, items, previewTemplate, previewTemplateKind, reviewItems, refreshTemplateBundle]);
 
   const handleDeleteTemplateItem = useCallback(async (itemId) => {
     const { error } = await supabase
@@ -1918,9 +1935,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
       return;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
-  }, [addGlobalToast, previewTemplateKind, refreshLaborData]);
+  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
 
   const handleDeleteTemplateSection = useCallback(async (sectionId) => {
     if (previewTemplateKind === "review") {
@@ -1943,7 +1960,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         addGlobalToast("Failed to delete review section", "error");
         return;
       }
-      await refreshLaborData();
+      await refreshTemplateBundle();
       addGlobalToast("Review section deleted", "success");
       return;
     }
@@ -1991,9 +2008,170 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       addGlobalToast("Failed to delete section", "error");
       return;
     }
-    await refreshLaborData();
+    await refreshTemplateBundle();
     addGlobalToast("Section deleted", "success");
-  }, [addGlobalToast, items, previewTemplateKind, reviewItems, sections, refreshLaborData]);
+  }, [addGlobalToast, items, previewTemplateKind, reviewItems, sections, refreshTemplateBundle]);
+
+  const handleToggleTemplateActive = useCallback(async () => {
+    if (!previewTemplateId || !previewTemplate) return;
+    const tableName = previewTemplateKind === "review" ? "review_templates" : "training_templates";
+    const nextActive = previewTemplate.is_active === false;
+    setSavingTemplateAction(nextActive ? "activate" : "deactivate");
+    const { error } = await supabase
+      .from(tableName)
+      .update({ is_active: nextActive, updated_by_user_id: actorUserId })
+      .eq("id", previewTemplateId);
+    if (error) {
+      addGlobalToast(nextActive ? "Failed to mark template active" : "Failed to mark template inactive", "error");
+      setSavingTemplateAction("");
+      return;
+    }
+    await refreshTemplateBundle();
+    addGlobalToast(nextActive ? "Template marked active" : "Template marked inactive", "success");
+    setSavingTemplateAction("");
+  }, [actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
+
+  const handleDeleteTemplateDraft = useCallback(async () => {
+    if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
+    if (!window.confirm("Delete this draft version? Published versions will not be changed.")) return;
+    setSavingTemplateAction("delete-draft");
+    const versionId = previewTemplate.version.id;
+    const versionSource = previewTemplateKind === "review" ? allReviewTemplateVersions : allTemplateVersions;
+    const currentVersion = versionSource.find((version) => version.template_id === previewTemplateId && version.is_current && version.id !== versionId) || null;
+
+    if (previewTemplateKind === "review") {
+      const draftSections = reviewSections.filter((section) => section.template_version_id === versionId);
+      const draftItems = reviewItems.filter((item) => item.template_version_id === versionId);
+      if (draftItems.length > 0) {
+        const { error } = await supabase.from("review_items").delete().in("id", draftItems.map((item) => item.id));
+        if (error) {
+          addGlobalToast("Failed to delete draft prompts", "error");
+          setSavingTemplateAction("");
+          return;
+        }
+      }
+      if (draftSections.length > 0) {
+        const { error } = await supabase.from("review_sections").delete().in("id", draftSections.map((section) => section.id));
+        if (error) {
+          addGlobalToast("Failed to delete draft sections", "error");
+          setSavingTemplateAction("");
+          return;
+        }
+      }
+      const { error } = await supabase.from("review_template_versions").delete().eq("id", versionId);
+      if (error) {
+        addGlobalToast("Failed to delete draft", "error");
+        setSavingTemplateAction("");
+        return;
+      }
+    } else {
+      const draftItems = items.filter((item) => item.template_version_id === versionId);
+      const draftSections = sections.filter((section) => section.template_version_id === versionId);
+      if (draftItems.length > 0) {
+        const { error } = await supabase.from("training_template_items").delete().in("id", draftItems.map((item) => item.id));
+        if (error) {
+          addGlobalToast("Failed to delete draft tasks", "error");
+          setSavingTemplateAction("");
+          return;
+        }
+      }
+      if (draftSections.length > 0) {
+        const { error } = await supabase.from("training_template_sections").delete().in("id", draftSections.map((section) => section.id));
+        if (error) {
+          addGlobalToast("Failed to delete draft sections", "error");
+          setSavingTemplateAction("");
+          return;
+        }
+      }
+      const { error } = await supabase.from("training_template_versions").delete().eq("id", versionId);
+      if (error) {
+        addGlobalToast("Failed to delete draft", "error");
+        setSavingTemplateAction("");
+        return;
+      }
+    }
+
+    setPreviewTemplateVersionId(currentVersion?.id || null);
+    await refreshTemplateBundle();
+    addGlobalToast("Draft deleted", "success");
+    setSavingTemplateAction("");
+  }, [addGlobalToast, allReviewTemplateVersions, allTemplateVersions, items, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle, reviewItems, reviewSections, sections]);
+
+  const resequenceRows = useCallback(async (tableName, rows) => {
+    const updates = rows.map((row, index) => supabase
+      .from(tableName)
+      .update({ sequence_order: (index + 1) * 10 })
+      .eq("id", row.id));
+    const results = await Promise.all(updates);
+    return results.find((result) => result.error)?.error || null;
+  }, []);
+
+  const handleMoveTemplateSection = useCallback(async (sectionId, direction) => {
+    const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
+    const source = previewTemplateKind === "review" ? reviewSections : sections;
+    const section = source.find((row) => row.id === sectionId);
+    if (!section) return;
+    const siblings = source
+      .filter((row) =>
+        row.template_version_id === section.template_version_id &&
+        (previewTemplateKind === "review" || (row.parent_section_id || null) === (section.parent_section_id || null))
+      )
+      .sort((a, b) => a.sequence_order - b.sequence_order);
+    const currentIndex = siblings.findIndex((row) => row.id === sectionId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= siblings.length) return;
+    const reordered = [...siblings];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(nextIndex, 0, moved);
+    const error = await resequenceRows(tableName, reordered);
+    if (error) {
+      addGlobalToast("Failed to reorder section", "error");
+      return;
+    }
+    await refreshTemplateBundle();
+  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewSections, sections]);
+
+  const handleMoveTemplateItemOrder = useCallback(async (itemId, direction) => {
+    const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
+    const source = previewTemplateKind === "review" ? reviewItems : items;
+    const item = source.find((row) => row.id === itemId);
+    if (!item) return;
+    const siblings = source
+      .filter((row) => previewTemplateKind === "review" ? row.review_section_id === item.review_section_id : row.template_section_id === item.template_section_id)
+      .sort((a, b) => a.sequence_order - b.sequence_order);
+    const currentIndex = siblings.findIndex((row) => row.id === itemId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= siblings.length) return;
+    const reordered = [...siblings];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(nextIndex, 0, moved);
+    const error = await resequenceRows(tableName, reordered);
+    if (error) {
+      addGlobalToast(`Failed to reorder ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+      return;
+    }
+    await refreshTemplateBundle();
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewItems]);
+
+  const handleMoveTemplateItemSection = useCallback(async (itemId, sectionId) => {
+    if (!sectionId) return;
+    const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
+    const source = previewTemplateKind === "review" ? reviewItems : items;
+    const item = source.find((row) => row.id === itemId);
+    if (!item) return;
+    const currentSectionId = previewTemplateKind === "review" ? item.review_section_id : item.template_section_id;
+    if (currentSectionId === sectionId) return;
+    const targetItems = source.filter((row) => previewTemplateKind === "review" ? row.review_section_id === sectionId : row.template_section_id === sectionId);
+    const patch = previewTemplateKind === "review"
+      ? { review_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 }
+      : { template_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 };
+    const { error } = await supabase.from(tableName).update(patch).eq("id", itemId);
+    if (error) {
+      addGlobalToast(`Failed to move ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+      return;
+    }
+    await refreshTemplateBundle();
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
 
   const openLaborEmployeeProfile = useCallback((employeeId) => {
     setSelectedRecordId(null);
@@ -2260,9 +2438,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const filteredRosterRows = useMemo(() => {
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
-  const visibleRosterRows = useMemo(() => {
-    return filteredRosterRows.filter((row) => showInactiveRoster || row.is_active);
-  }, [filteredRosterRows, showInactiveRoster]);
+	  const visibleRosterRows = useMemo(() => {
+	    return filteredRosterRows;
+	  }, [filteredRosterRows]);
   const positionHierarchyRows = useMemo(() => {
     const savedByTitle = Object.fromEntries(
       positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
@@ -2347,8 +2525,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     };
 
     return [...visibleRosterRows].sort((a, b) => {
-      const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
-      if (!showInactiveRoster && activeDelta !== 0) return activeDelta;
+	      const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
+	      if (activeDelta !== 0) return activeDelta;
 
       if (rosterSort.key === "hierarchy") {
         const leftIndex = getSortValue(a);
@@ -2361,7 +2539,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       const right = getSortValue(b);
       return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) * direction;
     });
-  }, [positionHierarchyIndex, rosterSort, showInactiveRoster, visibleRosterRows]);
+	  }, [positionHierarchyIndex, rosterSort, visibleRosterRows]);
   const hasRosterEmployeesInGraceWindow = useMemo(() => {
     return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
   }, [visibleRosterRows]);
@@ -2523,12 +2701,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const renderTemplatePreviewItem = useCallback((item, editable = false) => {
     const isReviewItem = previewTemplateKind === "review";
     const primaryLabel = isReviewItem ? item.prompt : item.label;
-    const secondaryText = isReviewItem
-      ? (item.item_type === "rating" && Array.isArray(item.options) && item.options.length > 0
-          ? `Options: ${item.options.join(", ")}`
-          : item.item_type.replace(/_/g, " "))
-      : item.description;
-    const linkUrl = isReviewItem ? null : item.policy_reference;
+	    const secondaryText = isReviewItem
+	      ? (item.item_type === "rating" && Array.isArray(item.options) && item.options.length > 0
+	          ? `Options: ${item.options.join(", ")}`
+	          : item.item_type.replace(/_/g, " "))
+	      : item.description;
+	    const linkUrl = isReviewItem ? null : item.policy_reference;
+      const sectionOptions = isReviewItem
+        ? (previewTemplate?.sections || []).map((section) => ({ value: section.id, label: section.title }))
+        : (previewTemplate?.sections || []).flatMap((section) => [
+            { value: section.id, label: section.title },
+            ...(section.children || []).map((child) => ({ value: child.id, label: `${section.title} / ${child.title}` })),
+          ]);
+      const currentSectionId = isReviewItem ? item.review_section_id : item.template_section_id;
     if (!editable) {
       return (
         <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
@@ -2566,9 +2751,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             placeholder={isReviewItem ? "Review prompt" : "Task label"}
             style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }}
           />
-          {isReviewItem ? (
-            <>
-              <CustomSelect
+	          {isReviewItem ? (
+	            <>
+	              <CustomSelect
                 value={item.item_type}
                 onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
                 options={[
@@ -2590,9 +2775,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                   }}
                   placeholder="Meets Expectations, Needs Improvement, Exceeds Expectations"
                 />
-              )}
-            </>
-          ) : (
+	              )}
+	            </>
+	          ) : (
             <>
               <textarea
                 defaultValue={item.description || ""}
@@ -2617,10 +2802,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 placeholder="Optional resource link"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit" }}
               />
-            </>
-          )}
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            {!isReviewItem ? (
+	            </>
+	          )}
+            {sectionOptions.length > 1 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, marginBottom: 6 }}>Move to section</div>
+                <CustomSelect
+                  value={currentSectionId || ""}
+                  onChange={(value) => handleMoveTemplateItemSection(item.id, value)}
+                  options={sectionOptions}
+                />
+              </div>
+            )}
+	          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+	            {!isReviewItem ? (
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textSec }}>
                 <input
                   type="checkbox"
@@ -2630,12 +2825,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 Required task
               </label>
             ) : <span />}
-            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete Task</Btn>
-          </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, -1)}>Move Up</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, 1)}>Move Down</Btn>
+	              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete {isReviewItem ? "Prompt" : "Task"}</Btn>
+              </div>
+	          </div>
         </div>
       </Card>
     );
-  }, [handleDeleteTemplateItem, handleUpdateTemplateItem, previewTemplateKind]);
+	  }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
   const laborEmployeeEditorModal = showLaborEmployeeEditor && editingLaborEmployeeId ? (
     <Modal
@@ -2977,7 +3176,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>
               <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeView.id, tab: "history" })}>Attendance</Btn>
               {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
-                <Btn variant="primary" size="sm" onClick={() => setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id)}>Open Active Training</Btn>
+                <Btn
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedLaborEmployeeId(null);
+                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
+                  }}
+                >
+                  Open Active Training
+                </Btn>
               ) : (
                 <Btn
                   variant="primary"
@@ -3198,6 +3406,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // RECORD DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
 
+  if (selectedRecordId && !selectedRecord) {
+    return (
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
+        <button onClick={() => { setSelectedRecordId(null); setExpandedSections({}); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
+          <I.Back /> Back to Labor
+        </button>
+        <Card style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+            {loading ? "Loading training record..." : "Training record unavailable"}
+          </div>
+          <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6 }}>
+            {loading ? "Labor is still loading the selected training record." : "The selected training record is not present in the current labor data set."}
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (selectedRecordId && selectedRecord) {
     return (
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
@@ -3216,7 +3442,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 <Badge color="default">Training Plan: {selectedRecord.template_name_snapshot}</Badge>
                 {selectedLaborEmployeeSnapshot?.employment_status && (
                   <Badge color={selectedLaborEmployeeSnapshot.is_active ? "success" : "warning"}>
-                    {selectedLaborEmployeeSnapshot.employment_status.replace(/_/g, " ")}
+                    {String(selectedLaborEmployeeSnapshot.employment_status).replace(/_/g, " ")}
                   </Badge>
                 )}
               </div>
@@ -3383,7 +3609,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const RecordRow = ({ rec }) => (
     <tr
-      onClick={() => setSelectedRecordId(rec.id)}
+      onClick={() => {
+        setSelectedLaborEmployeeId(null);
+        setSelectedRecordId(rec.id);
+      }}
       style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
       onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
@@ -3425,9 +3654,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setShowRosterFilterPicker(false);
     setConfiguringRosterKey(null);
   };
-  const clearRosterFilters = () => {
-    setRosterDraftFilters({});
-    setRosterFilters({});
+	  const clearRosterFilters = () => {
+	    setRosterDraftFilters(DEFAULT_ROSTER_FILTERS);
+	    setRosterFilters(DEFAULT_ROSTER_FILTERS);
     setActiveRosterViewId(null);
     setConfiguringRosterKey(null);
     setShowRosterFilterPicker(false);
@@ -3689,8 +3918,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 <button
                   onClick={() => {
                     setActiveRosterViewId(null);
-                    setRosterDraftFilters({});
-                    setRosterFilters({});
+                    setRosterDraftFilters(DEFAULT_ROSTER_FILTERS);
+                    setRosterFilters(DEFAULT_ROSTER_FILTERS);
                   }}
                   style={{ fontSize: 10, fontWeight: 600, color: C.dan, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", marginLeft: 4, opacity: 0.7 }}
                 >
@@ -3953,14 +4182,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               >
                 Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}
               </Btn>
-              <Btn
-                variant={showInactiveRoster ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setShowInactiveRoster((current) => !current)}
-              >
-                {showInactiveRoster ? "Hide Inactive" : "Show Inactive"}
-              </Btn>
-              {showInlineLaborEmployeeComposer ? (
+	              {showInlineLaborEmployeeComposer ? (
                 <Btn variant="ghost" size="sm" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
               ) : (
                 <Btn variant="secondary" size="sm" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
@@ -4373,6 +4595,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
       {!loading && tab === "templates" && !previewTemplateId && (
         <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                { id: "all", label: "All" },
+                { id: "active", label: "Active" },
+                { id: "inactive", label: "Inactive" },
+              ].map((option) => (
+                <Btn
+                  key={option.id}
+                  variant={templateStatusFilter === option.id ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setTemplateStatusFilter(option.id)}
+                >
+                  {option.label}
+                </Btn>
+              ))}
+            </div>
+            {canManageTemplates && (
+              <Btn variant="primary" size="sm" onClick={() => setShowCreateTemplateModal(true)}>New Template</Btn>
+            )}
+          </div>
           {templateGroups.map((group) => (
             <div key={group.key} style={{ marginBottom: 24 }}>
               <SectionHeader title={group.label} count={group.rows.length} />
@@ -4380,17 +4623,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 <EmptyState icon="FileText" title={`No ${group.label.toLowerCase()} yet`} subtitle="Templates will appear here." />
               ) : (
                 <Card style={{ padding: 0, overflow: "hidden" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr>
-                      <th style={tableHeaderStyle}>Name</th>
-                      <th style={tableHeaderStyle}>Class</th>
-                      <th style={tableHeaderStyle}>Roles</th>
-                      <th style={tableHeaderStyle}>Sections</th>
-                      <th style={tableHeaderStyle}>Items</th>
-                      <th style={tableHeaderStyle}>Version</th>
-                    </tr></thead>
-                    <tbody>
-                      {group.rows.map((row) => {
+	                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+	                    <thead><tr>
+	                      <th style={tableHeaderStyle}>Name</th>
+	                    </tr></thead>
+	                    <tbody>
+	                      {group.rows.map((row) => {
                         return (
                           <tr
                             key={`${row.kind}_${row.id}`}
@@ -4398,16 +4636,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
                             onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                          >
-                            <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 700, color: C.pri }}>{row.name}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.template_class.replace(/_/g, " ")}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.role_scopes.join(", ") || "All"}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{row.stats.sectionCount || 0}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{row.stats.itemCount || 0}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{row.version ? `v${row.version.version_no}` : "—"}</td>
-                          </tr>
-                        );
-                      })}
+	                          >
+	                            <td style={{ padding: "12px 14px", fontSize: 13, fontWeight: 700, color: C.pri }}>
+                                {row.name}
+                                {row.is_active === false && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>Inactive</span>}
+                              </td>
+	                          </tr>
+	                        );
+	                      })}
                     </tbody>
                   </table>
                 </Card>
@@ -4432,37 +4668,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                     onBlur={(event) => handleUpdateTemplateName(event.target.value)}
                     style={{ width: "100%", maxWidth: 420, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 22, fontWeight: 800, color: C.text, fontFamily: "inherit", marginBottom: 8 }}
                   />
-                ) : (
-                  <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{previewTemplate.name}</div>
-                )}
-                <div style={{ fontSize: 14, color: C.textSec, marginBottom: 8 }}>
-                  {(previewTemplate.kind === "review" ? "performance_review" : previewTemplate.template_class).replace(/_/g, " ")} — {previewTemplate.role_scopes.join(", ") || "All Roles"}
-                </div>
-                {previewTemplate.version && (
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
-                    <span>Version {previewTemplate.version.version_no}</span>
-                    <span>Status: {previewTemplate.version.status}</span>
-                    {previewTemplate.version.is_current && <span>Current live version</span>}
-                    {previewTemplate.version.published_at && <span>Published: {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                {previewTemplate.is_active ? <Badge color="green">Active</Badge> : <Badge color="default">Inactive</Badge>}
-                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{(templateStats[previewTemplate.id] || {}).sectionCount || 0} sections — {(templateStats[previewTemplate.id] || {}).itemCount || 0} items</div>
-                {canManageTemplates && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+	                ) : (
+	                  <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{previewTemplate.name}</div>
+	                )}
+	                {previewTemplate.version && (
+	                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
+	                    <span>Version {previewTemplate.version.version_no}</span>
+	                    {previewTemplate.version.published_at && <span>Published: {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
+	                  </div>
+	                )}
+	              </div>
+	              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+	                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{(templateStats[previewTemplate.id] || {}).sectionCount || 0} sections — {(templateStats[previewTemplate.id] || {}).itemCount || 0} items</div>
+	                {canManageTemplates && (
+	                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                     <Btn
                       variant="secondary"
                       size="sm"
                       onClick={handleCreateTemplateDraft}
                       disabled={savingTemplateAction === "draft"}
                     >
-                      {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-                    </Btn>
-                    {previewTemplate.version?.status === "draft" && (
-                      <Btn
-                        variant="primary"
+	                      {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
+	                    </Btn>
+	                    {previewTemplate.version?.status === "draft" && (
+	                      <Btn
+	                        variant="danger"
+	                        size="sm"
+	                        onClick={handleDeleteTemplateDraft}
+	                        disabled={savingTemplateAction === "delete-draft"}
+	                      >
+	                        {savingTemplateAction === "delete-draft" ? "Deleting..." : "Delete Draft"}
+	                      </Btn>
+	                    )}
+	                    {previewTemplate.version?.status === "draft" && (
+	                      <Btn
+	                        variant="primary"
                         size="sm"
                         onClick={handlePublishTemplateVersion}
                         disabled={savingTemplateAction === "publish"}
@@ -4477,12 +4717,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                         onClick={handleRestoreTemplateVersion}
                         disabled={savingTemplateAction === "restore"}
                       >
-                        {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
-                      </Btn>
-                    )}
-                  </div>
-                )}
-              </div>
+	                        {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
+	                      </Btn>
+	                    )}
+	                    <Btn
+	                      variant="ghost"
+	                      size="sm"
+	                      onClick={handleToggleTemplateActive}
+	                      disabled={savingTemplateAction === "activate" || savingTemplateAction === "deactivate"}
+	                    >
+	                      {previewTemplate.is_active === false
+	                        ? (savingTemplateAction === "activate" ? "Marking Active..." : "Mark Active")
+	                        : (savingTemplateAction === "deactivate" ? "Marking Inactive..." : "Mark Inactive")}
+	                    </Btn>
+	                  </div>
+	                )}
+	              </div>
             </div>
           </Card>
 
@@ -4527,13 +4777,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
           </Card>
 
-          <SectionHeader title={previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"} count={previewTemplate.sections.length}>
-            {canManageTemplates && previewTemplate.version?.status === "draft" && (
-              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
-            )}
-          </SectionHeader>
-          {previewTemplate.kind === "review" ? previewTemplate.sections.map((sec) => {
-            const isOpen = expandedSections[`review_${sec.id}`];
+	          <SectionHeader title={previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"} count={previewTemplate.sections.length}>
+	            {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Btn variant={templateManageStructure ? "secondary" : "ghost"} size="sm" onClick={() => setTemplateManageStructure((current) => !current)}>
+                    {templateManageStructure ? "Done Managing" : "Manage Structure"}
+                  </Btn>
+	                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
+                </div>
+	            )}
+	          </SectionHeader>
+	          {previewTemplate.kind === "review" ? previewTemplate.sections.map((sec) => {
+	            const isOpen = templateManageStructure || expandedSections[`review_${sec.id}`];
             const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
             return (
               <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
@@ -4579,10 +4834,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             rows={2}
                             style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
                           />
-                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
-                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
-                          </div>
+	                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+	                          </div>
                         </div>
                       </Card>
                     )}
@@ -4593,8 +4850,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 )}
               </Card>
             );
-          }) : previewTemplate.sections.map(sec => {
-            const isOpen = expandedSections[`tpl_${sec.id}`];
+	          }) : previewTemplate.sections.map(sec => {
+	            const isOpen = templateManageStructure || expandedSections[`tpl_${sec.id}`];
             const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
             const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
             return (
@@ -4642,10 +4899,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                             rows={2}
                             style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
                           />
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
-                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
-                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+	                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
+	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
+	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
                           </div>
                         </div>
                       </Card>
@@ -4678,10 +4937,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                                 rows={2}
                                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
                               />
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
-                                <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
-                              </div>
+	                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, -1)}>Move Up</Btn>
+	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, 1)}>Move Down</Btn>
+	                                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
+	                                <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
+	                              </div>
                               {child.items.map((item) => renderTemplatePreviewItem(item, true))}
                             </div>
                           </Card>

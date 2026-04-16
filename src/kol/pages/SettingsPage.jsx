@@ -179,14 +179,15 @@ function RoomCleaningSettingsTab({ profile, addGlobalToast }) {
   );
 }
 
-function SettingsPage({ profile: parentProfile, addGlobalToast }) {
-  const [tab, setTab] = useState(null); // null = show grid, set = show detail
-  const [searchQuery, setSearchQuery] = useState("");
-  const { profile: authProfile } = useAuth();
-  const profile = parentProfile || authProfile;
-  const data = useGingrData(profile?.location_id || "cherry-hill");
-  const save = useCallback(() => {}, []);
+const ANALYTICS_ONLY_SETTINGS = new Set([
+  "ignite-settings",
+  "ignite-parser",
+  "lapsed-thresholds",
+  "required-fields",
+  "checklist-templates",
+]);
 
+export function buildSettingsSections({ analyticsMode = false } = {}) {
   const sections = [
     {
       id: "dashboard",
@@ -254,6 +255,26 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
     },
   ];
 
+  if (analyticsMode) return sections;
+
+  return sections
+    .map((section) => ({
+      ...section,
+      cards: section.cards.filter((card) => !ANALYTICS_ONLY_SETTINGS.has(card.id)),
+    }))
+    .filter((section) => section.cards.length > 0);
+}
+
+function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = false }) {
+  const [tab, setTab] = useState(null); // null = show grid, set = show detail
+  const [searchQuery, setSearchQuery] = useState("");
+  const { profile: authProfile } = useAuth();
+  const profile = parentProfile || authProfile;
+  const data = useGingrData(profile?.location_id || "cherry-hill");
+  const save = useCallback(() => {}, []);
+
+  const sections = buildSettingsSections({ analyticsMode });
+
   // Filter cards by search
   const filteredSections = sections.map(section => ({
     ...section,
@@ -265,6 +286,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
 
   // Tab detail components
   const renderDetail = () => {
+    if (!analyticsMode && ANALYTICS_ONLY_SETTINGS.has(tab)) return null;
     switch (tab) {
       case "dashboard-refresh":
         return <DashboardRefreshTab />;
