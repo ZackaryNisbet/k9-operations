@@ -149,6 +149,26 @@ function AuthStatusScreen({ title, description, authError, onRetry }) {
   );
 }
 
+const PASSWORD_REQUIREMENT = 'Use at least 8 characters with one uppercase letter and one number.';
+
+function validatePermanentPassword(password) {
+  if (password.length < 8) return 'Password must be at least 8 characters.';
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.';
+  if (!/[0-9]/.test(password)) return 'Password must include at least one number.';
+  return '';
+}
+
+function formatPasswordUpdateError(error) {
+  const message = error?.message || '';
+  if (/weak|guess|known|leaked|breached|common/i.test(message)) {
+    return 'That password is too common. Choose a less obvious password that still has at least 8 characters, one uppercase letter, and one number.';
+  }
+  if (/8|characters|length/i.test(message)) {
+    return 'Password must be at least 8 characters.';
+  }
+  return message || 'Password could not be updated.';
+}
+
 function Root() {
   // Route detection — evaluated on each render so refreshes work correctly
   const path = window.location.pathname;
@@ -195,11 +215,12 @@ function Root() {
   const handleSetPassword = async (e) => {
     e.preventDefault();
     setPwError('');
-    if (newPassword.length < 6) { setPwError('Password must be at least 6 characters'); return; }
+    const passwordError = validatePermanentPassword(newPassword);
+    if (passwordError) { setPwError(passwordError); return; }
     if (newPassword !== confirmPassword) { setPwError('Passwords do not match'); return; }
     setPwLoading(true);
     const { error } = await updatePassword(newPassword);
-    if (error) { setPwError(error.message); setPwLoading(false); return; }
+    if (error) { setPwError(formatPasswordUpdateError(error)); setPwLoading(false); return; }
     setPwSuccess(true);
     setPwLoading(false);
     // After a brief moment, continue to the app
@@ -275,13 +296,16 @@ function Root() {
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#8B95A8', marginBottom: 6 }}>New Password</label>
                   <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                    placeholder="At least 6 characters" autoFocus
+                    placeholder="8+ chars, uppercase, number" autoFocus autoComplete="new-password"
                     style={{ width: '100%', padding: '12px 14px', border: '1.5px solid rgba(255,255,255,0.15)', borderRadius: 10, fontSize: 15, color: '#F0F2F5', background: 'rgba(255,255,255,0.08)', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <div style={{ marginTop: 7, fontSize: 12, color: 'rgba(255,255,255,0.58)', lineHeight: 1.45 }}>
+                    {PASSWORD_REQUIREMENT}
+                  </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#8B95A8', marginBottom: 6 }}>Confirm Password</label>
                   <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-                    placeholder="Type it again"
+                    placeholder="Type it again" autoComplete="new-password"
                     style={{ width: '100%', padding: '12px 14px', border: '1.5px solid rgba(255,255,255,0.15)', borderRadius: 10, fontSize: 15, color: '#F0F2F5', background: 'rgba(255,255,255,0.08)', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                 </div>
                 {pwError && <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#EF4444', fontSize: 13, fontWeight: 500 }}>{pwError}</div>}
