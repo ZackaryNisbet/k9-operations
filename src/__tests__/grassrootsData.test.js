@@ -1,0 +1,144 @@
+import { describe, expect, it } from "vitest";
+import {
+  applyGrassrootsFilters,
+  buildGrassrootsMetrics,
+  calculateGrassrootsCpl,
+  getGrassrootsActivityCount,
+  getGrassrootsDefaultFilters,
+  getGrassrootsNextDate,
+  groupGrassrootsHistory,
+  normalizeLegacyGrassrootsTracker,
+} from "../kol/grassrootsData.js";
+
+describe("grassrootsData", () => {
+  it("renames legacy Remy Calloway employees to local employees", () => {
+    const normalized = normalizeLegacyGrassrootsTracker({
+      corporatePartnerships: [
+        {
+          id: "corp-1",
+          corporation: "Happy Cat",
+          usEmployees: "1,200",
+          deerfieldEmployees: "42",
+          notes: "Initial note",
+        },
+      ],
+    });
+
+    expect(normalized.corporatePartnerships[0]).toMatchObject({
+      name: "Happy Cat",
+      us_employees: 1200,
+      local_employees: 42,
+    });
+  });
+
+  it("groups legacy drops by business and address while preserving each drop as activity", () => {
+    const normalized = normalizeLegacyGrassrootsTracker({
+      drops: [
+        { id: "drop-1", business: "Vet One", address: "10 Main", date: "2026-04-01", notes: "First drop" },
+        { id: "drop-2", business: " vet one ", address: "10 Main", date: "2026-04-08", notes: "Second drop" },
+        { id: "drop-3", business: "Vet Two", date: "2026-04-09", notes: "Other drop" },
+      ],
+    });
+
+    expect(normalized.drops).toHaveLength(2);
+    expect(normalized.drops.find((target) => target.name === "Vet One").legacyActivities).toHaveLength(2);
+    expect(normalized.drops.find((target) => target.name === "Vet Two").legacyActivities).toHaveLength(1);
+  });
+
+  it("sets event defaults to active records with no captured leads", () => {
+    const rows = [
+      { id: "todo", category: "events", is_active: true, leads_captured: 0 },
+      { id: "done", category: "events", is_active: true, leads_captured: 12 },
+      { id: "inactive", category: "events", is_active: false, leads_captured: 0 },
+    ];
+
+    expect(applyGrassrootsFilters(rows, {}, getGrassrootsDefaultFilters("events")).map((row) => row.id)).toEqual(["todo"]);
+  });
+
+  it("defaults filtering to active records and supports inactive/all visibility", () => {
+    const rows = [
+      { id: "active", is_active: true, status: "outreach" },
+      { id: "inactive", is_active: false, status: "outreach" },
+    ];
+
+    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "active" } }).map((row) => row.id)).toEqual(["active"]);
+    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "inactive" } }).map((row) => row.id)).toEqual(["inactive"]);
+    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "all" } }).map((row) => row.id)).toEqual(["active", "inactive"]);
+  });
+
+  it("filters by workflow status and computed activity count", () => {
+    const rows = [
+      { id: "a", category: "corporate_partnerships", status: "outreach", is_active: true },
+      { id: "b", category: "corporate_partnerships", status: "closing", is_active: true },
+    ];
+    const activities = {
+      a: [{ target_id: "a", activity_type: "development" }],
+      b: [
+        { target_id: "b", activity_type: "development" },
+        { target_id: "b", activity_type: "development" },
+      ],
+    };
+
+    expect(applyGrassrootsFilters(rows, activities, { status: { op: "is", val: "closing" } }).map((row) => row.id)).toEqual(["b"]);
+    expect(applyGrassrootsFilters(rows, activities, { activity_count: { op: ">=", val: "2" } }).map((row) => row.id)).toEqual(["b"]);
+    expect(getGrassrootsActivityCount(rows[1], activities)).toBe(2);
+  });
+
+  it("filters drops by business category", () => {
+    const rows = [
+      { id: "vet", category: "drops", business_category: "Veterinarian", is_active: true },
+      { id: "groomer", category: "drops", business_category: "Groomer", is_active: true },
+    ];
+
+    expect(applyGrassrootsFilters(rows, {}, { business_category: { op: "is", val: "Veterinarian" } }).map((row) => row.id)).toEqual(["vet"]);
+  });
+
+  it("filters pet professional partnerships by business category", () => {
+    const rows = [
+      { id: "vet", category: "pet_professional_partnerships", business_category: "Veterinarian", is_active: true },
+      { id: "retail", category: "pet_professional_partnerships", business_category: "Pet Retailer", is_active: true },
+    ];
+
+    expect(applyGrassrootsFilters(rows, {}, { business_category: { op: "is", val: "Pet Retailer" } }).map((row) => row.id)).toEqual(["retail"]);
+  });
+
+  it("calculates event CPL from cost and leads captured", () => {
+    expect(calculateGrassrootsCpl("125", "5")).toBe(25);
+    expect(calculateGrassrootsCpl("100", "3")).toBe(33.33);
+    expect(calculateGrassrootsCpl("100", "0")).toBeNull();
+  });
+
+  it("derives next contact dates and metrics from activity when target date is empty", () => {
+    const rows = [
+      { id: "a", category: "corporate_partnerships", is_active: true, next_contact_date: "" },
+      { id: "b", category: "drops", is_active: false, next_contact_date: "2026-04-10" },
+    ];
+    const activities = {
+      a: [{ target_id: "a", activity_type: "development", next_contact_date: "2026-04-18", created_at: "2026-04-16T12:00:00Z" }],
+      b: [{ target_id: "b", activity_type: "drop", next_contact_date: "2026-04-20", created_at: "2026-04-16T12:00:00Z" }],
+    };
+
+    expect(getGrassrootsNextDate(rows[0], activities)).toBe("2026-04-18");
+    expect(getGrassrootsNextDate(rows[1], activities)).toBe("2026-04-10");
+    expect(buildGrassrootsMetrics(rows, activities, "2026-04-16")).toMatchObject({
+      total: 2,
+      active: 1,
+      inactive: 1,
+      activities: 2,
+      upcoming: 1,
+      overdue: 1,
+    });
+  });
+
+  it("groups history by target newest-first", () => {
+    const grouped = groupGrassrootsHistory([
+      { id: "old", target_id: "a", event_at: "2026-04-15T10:00:00Z" },
+      { id: "ignored", event_at: "2026-04-16T11:00:00Z" },
+      { id: "new", target_id: "a", event_at: "2026-04-16T12:00:00Z" },
+      { id: "other", target_id: "b", event_at: "2026-04-16T09:00:00Z" },
+    ]);
+
+    expect(grouped.a.map((entry) => entry.id)).toEqual(["new", "old"]);
+    expect(grouped.b.map((entry) => entry.id)).toEqual(["other"]);
+  });
+});
