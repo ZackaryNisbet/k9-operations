@@ -695,7 +695,7 @@ async function buildNoteEntryFromRow(
     animal_gingr_id: subject.animalGingrId || null,
     subject_name: subject.name || (subject.kind === "dog" ? "Dog" : "Owner"),
     note_text: noteText,
-    note_title: noteType || (subject.kind === "dog" ? "Dog Note" : "Owner Note"),
+    note_title: noteType || (subject.kind === "dog" ? "Pet Notes" : "Owner Notes"),
     note_type_id: noteTypeId || null,
     note_type: noteType || null,
     note_date: noteDate,
@@ -904,6 +904,8 @@ Deno.serve(async (req: Request) => {
     const isToday = date === nowEtDate();
     const contextStartDate = addDaysToDateString(date, -45);
     const contextEndDate = addDaysToDateString(date, 45);
+    const selectedDayStart = `${date}T00:00:00`;
+    const selectedDayEndExclusive = `${addDaysToDateString(date, 1)}T00:00:00`;
 
     const [dateRangeReservationResult, contextReservationResult, checkedInReservationResult] = await Promise.all([
       gingrFetchV1(
@@ -938,7 +940,11 @@ Deno.serve(async (req: Request) => {
       .from("gingr_reservations")
       .select("gingr_id, owner_gingr_id, animal_gingr_id, owner_first_name, owner_last_name, animal_name, reservation_type_id, reservation_type_name, room_assignment, start_date, end_date, check_in_date, check_out_date, raw_data")
       .eq("location_id", canonicalLocationId)
-      .or(`and(start_date.lte.${date},end_date.gte.${date}),check_in_date.eq.${date},check_out_date.eq.${date}`);
+      .or([
+        `and(start_date.lt.${selectedDayEndExclusive},end_date.gte.${selectedDayStart})`,
+        `and(check_in_date.gte.${selectedDayStart},check_in_date.lt.${selectedDayEndExclusive})`,
+        `and(check_out_date.gte.${selectedDayStart},check_out_date.lt.${selectedDayEndExclusive})`,
+      ].join(","));
 
     if (cachedReservationError) throw cachedReservationError;
 
@@ -1005,6 +1011,7 @@ Deno.serve(async (req: Request) => {
       refreshed_at: new Date().toISOString(),
       location_id: canonicalLocationId,
       requested_location_id: requestedLocationId,
+      date,
       summary: buildSummary(uniqueEntries),
       note_types: noteTypes,
       reservation_groups: reservationGroupResult.groups,
