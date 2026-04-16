@@ -44,11 +44,11 @@
       "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "gingr-today-notes": {
-      "commit": "f7b9e18d1272ad7603c1f2e2158d0b899cdaaebe",
+      "commit": "9ea22749364f79733bf1b721ff0486b6d5407d50",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Use validated Gingr owner/animal note history routes for Today's Notes",
-      "updatedAt": "2026-04-16T17:42:27.692Z"
+      "note": "Clean Gingr note text and resolve location slug for Today's Notes",
+      "updatedAt": "2026-04-16T18:10:05.391Z"
     }
   }
 }
