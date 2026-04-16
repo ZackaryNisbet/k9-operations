@@ -160,23 +160,40 @@ function bearerToken(req: Request): string {
   return match?.[1]?.trim() || "";
 }
 
+async function isServiceRoleToken(token: string): Promise<boolean> {
+  if (!token) return false;
+  const adminClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    token,
+    { global: { headers: { Authorization: `Bearer ${token}` } } },
+  );
+  const { error } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1 });
+  return !error;
+}
+
 async function authenticateRequest(sb: any, req: Request): Promise<{ user: any | null; serviceRole: boolean } | Response> {
   const token = bearerToken(req);
+  if (!token) {
+    return jsonResponse({ error: "Authentication is required." }, 401);
+  }
+
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   if (serviceRoleKey && token === serviceRoleKey) {
     return { user: null, serviceRole: true };
   }
 
-  if (!token || token.startsWith("sb_")) {
-    return jsonResponse({ error: "Authentication is required." }, 401);
+  if (!token.startsWith("sb_")) {
+    const { data, error } = await sb.auth.getUser(token);
+    if (!error && data?.user) {
+      return { user: data.user, serviceRole: false };
+    }
   }
 
-  const { data, error } = await sb.auth.getUser(token);
-  if (error || !data?.user) {
-    return jsonResponse({ error: "Authentication is invalid or expired." }, 401);
+  if (await isServiceRoleToken(token)) {
+    return { user: null, serviceRole: true };
   }
 
-  return { user: data.user, serviceRole: false };
+  return jsonResponse({ error: "Authentication is invalid or expired." }, 401);
 }
 
 async function authorizeLocationAccess(sb: any, userId: string, locationId: string): Promise<Response | null> {
@@ -424,6 +441,68 @@ function isBoardingReservation(reservation: any, date: string): boolean {
   return reservationTouchesDate(reservation, date);
 }
 
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
+}
+
+function reservationCheckInValue(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return firstText(
+    reservation?.check_in_date,
+    reservation?.check_in_stamp,
+    raw?.check_in_date,
+    raw?.check_in_stamp,
+  );
+}
+
+function reservationCompletenessScore(reservation: any): number {
+  let score = 0;
+  if (reservationRoomFromReservation(reservation)) score += 8;
+  if (reservationCheckInValue(reservation)) score += 4;
+  if (reservationIdFromReservation(reservation)) score += 2;
+  if (hasMeaningfulValue(reservation?.raw_data)) score += 1;
+  return score;
+}
+
+function mergeReservationRecords(primary: any, incoming: any): any {
+  const primaryScore = reservationCompletenessScore(primary);
+  const incomingScore = reservationCompletenessScore(incoming);
+  const base = incomingScore > primaryScore ? incoming : primary;
+  const supplement = incomingScore > primaryScore ? primary : incoming;
+  const merged = { ...(base || {}) };
+  for (const [key, value] of Object.entries(supplement || {})) {
+    if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) {
+      merged[key] = value;
+    }
+  }
+
+  const baseRaw = base?.raw_data && typeof base.raw_data === "object" ? base.raw_data : {};
+  const supplementRaw = supplement?.raw_data && typeof supplement.raw_data === "object" ? supplement.raw_data : {};
+  const rawData = { ...baseRaw };
+  for (const [key, value] of Object.entries(supplementRaw)) {
+    if (!hasMeaningfulValue(rawData[key]) && hasMeaningfulValue(value)) {
+      rawData[key] = value;
+    }
+  }
+  if (hasMeaningfulValue(rawData)) merged.raw_data = rawData;
+
+  return merged;
+}
+
+function reservationStayMergeKey(reservation: any): string {
+  const ownerId = ownerIdFromReservation(reservation);
+  const animalId = animalIdFromReservation(reservation);
+  const startDate = reservationStartDate(reservation);
+  const endDate = reservationEndDate(reservation);
+  const reservationType = reservationTypeFromReservation(reservation).toLowerCase();
+  if (!ownerId || !animalId || !reservationType || (!startDate && !endDate)) return "";
+  return [ownerId, animalId, startDate, endDate, reservationType].join(":");
+}
+
 function mergeReservations(...collections: any[][]): any[] {
   const merged = new Map<string, any>();
   let fallbackIndex = 0;
@@ -438,11 +517,20 @@ function mergeReservations(...collections: any[][]): any[] {
         firstText(reservation?.end_date, reservation?.date_end, reservation?.check_out_date),
       ].filter(Boolean).join(":");
       const key = reservationId || fallbackKey || `reservation_${fallbackIndex++}`;
-      if (!merged.has(key)) merged.set(key, reservation);
+      merged.set(key, merged.has(key) ? mergeReservationRecords(merged.get(key), reservation) : reservation);
     }
   }
 
-  return Array.from(merged.values());
+  const mergedByStay = new Map<string, any>();
+  let stayFallbackIndex = 0;
+  for (const reservation of merged.values()) {
+    const key = reservationStayMergeKey(reservation)
+      || reservationIdFromReservation(reservation)
+      || `reservation_${stayFallbackIndex++}`;
+    mergedByStay.set(key, mergedByStay.has(key) ? mergeReservationRecords(mergedByStay.get(key), reservation) : reservation);
+  }
+
+  return Array.from(mergedByStay.values());
 }
 
 function addSubjectContext(
@@ -823,6 +911,64 @@ function buildReservationSummary(locationId: string, subdomain: string, reservat
   };
 }
 
+function reservationGroupScore(group: any): number {
+  let score = 0;
+  if (group?.room) score += 8;
+  if (group?.check_in_time) score += 4;
+  if (group?.reservation_gingr_id) score += 2;
+  return score;
+}
+
+function mergeReservationGroupRecords(primary: any, incoming: any): any {
+  const base = reservationGroupScore(incoming) > reservationGroupScore(primary) ? incoming : primary;
+  const supplement = base === incoming ? primary : incoming;
+  const merged = { ...(base || {}) };
+  for (const [key, value] of Object.entries(supplement || {})) {
+    if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) {
+      merged[key] = value;
+    }
+  }
+
+  const notesById = new Map<string, any>();
+  for (const note of [...(merged.notes || []), ...(supplement?.notes || [])]) {
+    if (note?.id) notesById.set(note.id, note);
+  }
+  merged.notes = Array.from(notesById.values())
+    .sort((left, right) => String(right.note_created_at || "").localeCompare(String(left.note_created_at || "")));
+  merged.note_count = merged.notes.length;
+  merged.is_checkout_today = Boolean(merged.is_checkout_today || supplement?.is_checkout_today);
+  return merged;
+}
+
+function dateRangesOverlap(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string): boolean {
+  if (!leftStart || !leftEnd || !rightStart || !rightEnd) return false;
+  return leftStart <= rightEnd && rightStart <= leftEnd;
+}
+
+function reservationGroupsRepresentSameStay(left: any, right: any): boolean {
+  if (!left?.owner_gingr_id || !left?.animal_gingr_id) return false;
+  if (String(left.owner_gingr_id) !== String(right?.owner_gingr_id || "")) return false;
+  if (String(left.animal_gingr_id) !== String(right?.animal_gingr_id || "")) return false;
+  const leftStart = left.check_in_date || left.check_out_date;
+  const leftEnd = left.check_out_date || left.check_in_date;
+  const rightStart = right.check_in_date || right.check_out_date;
+  const rightEnd = right.check_out_date || right.check_in_date;
+  return dateRangesOverlap(leftStart, leftEnd, rightStart, rightEnd);
+}
+
+function collapseReservationGroups(groups: any[]): any[] {
+  const collapsed: any[] = [];
+  for (const group of groups || []) {
+    const existingIndex = collapsed.findIndex((candidate) => reservationGroupsRepresentSameStay(candidate, group));
+    if (existingIndex === -1) {
+      collapsed.push(group);
+      continue;
+    }
+    collapsed[existingIndex] = mergeReservationGroupRecords(collapsed[existingIndex], group);
+  }
+  return collapsed;
+}
+
 function noteBelongsToReservation(note: any, reservation: any): boolean {
   const ownerId = ownerIdFromReservation(reservation);
   const animalId = animalIdFromReservation(reservation);
@@ -846,8 +992,9 @@ function buildReservationGroups(locationId: string, subdomain: string, reservati
       .sort((left, right) => String(right.note_created_at || "").localeCompare(String(left.note_created_at || "")));
     return { ...summary, notes, note_count: notes.length };
   });
+  const collapsedGroups = collapseReservationGroups(groups);
 
-  const groupsWithNotes = groups
+  const groupsWithNotes = collapsedGroups
     .filter((group) => group.note_count > 0)
     .sort((left, right) => {
       if (left.is_checkout_today !== right.is_checkout_today) return left.is_checkout_today ? -1 : 1;
@@ -859,10 +1006,10 @@ function buildReservationGroups(locationId: string, subdomain: string, reservati
   return {
     groups: groupsWithNotes,
     summary: {
-      total_reservations: groups.length,
+      total_reservations: collapsedGroups.length,
       reservations_with_notes: groupsWithNotes.length,
-      reservations_without_notes: Math.max(0, groups.length - groupsWithNotes.length),
-      checkout_today_count: groups.filter((group) => group.is_checkout_today).length,
+      reservations_without_notes: Math.max(0, collapsedGroups.length - groupsWithNotes.length),
+      checkout_today_count: collapsedGroups.filter((group) => group.is_checkout_today).length,
       checkout_today_with_notes: groupsWithNotes.filter((group) => group.is_checkout_today).length,
     },
   };
