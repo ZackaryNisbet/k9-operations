@@ -111,7 +111,7 @@ function normalizeLaborContactPhone(value) {
 }
 
 function readLaborEmployeeContact(employee, key) {
-  return String(employee?.metadata?.[key] || "").trim();
+  return String(employee?.metadata?.[key] || employee?.[key] || "").trim();
 }
 
 function buildUpdatedLaborMetadata(existingMetadata = {}, { email, phone }) {
@@ -193,6 +193,21 @@ export function toObjectRows(rows = []) {
 export function getLaborEmployeeRowId(row = {}) {
   if (!isObjectRow(row)) return null;
   return row.labor_employee_id || row.employee_id || row.id || null;
+}
+
+export function getTrainingRecordEmployeeId(record = {}) {
+  if (!isObjectRow(record)) return null;
+  return record.labor_employee_id || record.employee_id || null;
+}
+
+export function isTrainingRecordForEmployee(record = {}, employee = {}) {
+  const employeeId = getLaborEmployeeRowId(employee);
+  const recordEmployeeId = getTrainingRecordEmployeeId(record);
+  if (employeeId && recordEmployeeId) return employeeId === recordEmployeeId;
+
+  const employeeName = normalizeEmployeeName(employee.full_name);
+  const recordName = normalizeEmployeeName(record.employee_full_name);
+  return Boolean(employeeName && recordName && employeeName === recordName);
 }
 
 export function safeTrainingProgress(value) {
@@ -949,9 +964,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || selectedLaborEmployeeSeed?.position_title || "",
       start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || selectedLaborEmployeeSeed?.start_date || null,
       end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || selectedLaborEmployeeSeed?.end_date || null,
+      contact_email: selectedLaborEmployeeSnapshot?.contact_email || selectedLaborEmployeeSeed?.contact_email || "",
+      contact_phone: selectedLaborEmployeeSnapshot?.contact_phone || selectedLaborEmployeeSeed?.contact_phone || "",
       metadata: employeeMetadata,
     };
   }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedLaborEmployeeSnapshot, selectedRecord, selectedRecordEmployeeId]);
+  const hasSelectedLaborEmployee = Boolean(selectedLaborEmployeeId || selectedLaborEmployeeSeed);
   const laborEmployeeMap = useMemo(() => Object.fromEntries(toObjectRows(laborEmployees).map((employee) => [employee.id, employee])), [laborEmployees]);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const selectedVersion = useMemo(() => {
@@ -2412,6 +2430,69 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     addGlobalToast("Review completed", "success");
   }, [actorName, actorUserId, addGlobalToast, selectedReviewInstanceId, refreshLaborData]);
 
+  const saveHierarchy = useCallback(async () => {
+    if (!resolvedLaborLocationId || hierarchyDraft.length === 0) {
+      setShowHierarchyManager(false);
+      return;
+    }
+    if (!hierarchyPersistenceAvailable) {
+      addGlobalToast("Hierarchy saving requires the labor hierarchy database migration", "warning");
+      setShowHierarchyManager(false);
+      return;
+    }
+    setSavingHierarchy(true);
+    try {
+      const existingByTitle = Object.fromEntries(
+        positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
+      );
+      const updates = hierarchyDraft.map((row, index) => ({
+        existing: existingByTitle[row.normalized_title] || null,
+        position_title: row.position_title,
+        sort_order: (index + 1) * 10,
+      }));
+
+      const mutationResults = await Promise.all(updates.map((entry) => {
+        if (entry.existing?.id) {
+          return supabase
+            .from("labor_position_hierarchy")
+            .update({
+              position_title: entry.position_title,
+              sort_order: entry.sort_order,
+              updated_by_user_id: actorUserId,
+              updated_by_name: actorName,
+            })
+            .eq("id", entry.existing.id);
+        }
+        return supabase.from("labor_position_hierarchy").insert({
+          location_id: resolvedLaborLocationId,
+          position_title: entry.position_title,
+          sort_order: entry.sort_order,
+          created_by_user_id: actorUserId,
+          created_by_name: actorName,
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+        });
+      }));
+      const failedMutation = mutationResults.find((result) => result.error);
+      if (failedMutation?.error) throw failedMutation.error;
+
+      const { data: hierarchyRes, error } = await supabase
+        .from("labor_position_hierarchy")
+        .select("*")
+        .eq("location_id", resolvedLaborLocationId)
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      setPositionHierarchy(hierarchyRes || []);
+      setRosterSort({ key: "hierarchy", direction: "asc" });
+      setShowHierarchyManager(false);
+      addGlobalToast("Roster hierarchy updated", "success");
+    } catch (error) {
+      console.error("Failed to save labor position hierarchy", error);
+      addGlobalToast(error.message || "Failed to save roster hierarchy", "error");
+    }
+    setSavingHierarchy(false);
+  }, [actorName, actorUserId, addGlobalToast, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
+
   // ── Section toggle ──
   const toggleSection = useCallback((sectionId) => {
     setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
@@ -2956,7 +3037,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // EMPLOYEE DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  if (selectedLaborEmployeeId && !selectedLaborEmployeeView) {
+  if (hasSelectedLaborEmployee && !selectedLaborEmployeeView) {
     return (
       <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
         <button
@@ -2983,10 +3064,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     );
   }
 
-  if (selectedLaborEmployeeId && selectedLaborEmployeeView) {
-    const employeeTrainingRecords = records
-      .filter((record) => isObjectRow(record) && record.labor_employee_id === selectedLaborEmployeeView.id)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (hasSelectedLaborEmployee && selectedLaborEmployeeView) {
+    const selectedLaborEmployeeKey = getLaborEmployeeRowId(selectedLaborEmployeeView);
+    const selectedLaborEmployeeIsActive = selectedLaborEmployeeSnapshot?.is_active ?? isLaborEmployeeActive(selectedLaborEmployeeView);
+    const employeeTrainingRecords = toObjectRows(records)
+      .filter((record) => isTrainingRecordForEmployee(record, selectedLaborEmployeeView))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     const currentCprCertification = selectedEmployeeCertifications[0] || null;
     const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
     const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
@@ -3222,8 +3305,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 4 }}>{selectedLaborEmployeeView.full_name}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                 <Badge color="primary">{selectedLaborEmployeeView.position_title}</Badge>
-                <Badge color={selectedLaborEmployeeSnapshot?.is_active ? "success" : "warning"}>
-                  {selectedLaborEmployeeSnapshot?.is_active ? "Active Employee" : "Inactive Employee"}
+                <Badge color={selectedLaborEmployeeIsActive ? "success" : "warning"}>
+                  {selectedLaborEmployeeIsActive ? "Active Employee" : "Inactive Employee"}
                 </Badge>
                 {selectedLaborEmployeeSnapshot?.active_training_status && (
                   <Badge color="info">Training: {String(selectedLaborEmployeeSnapshot.active_training_status).replace(/_/g, " ")}</Badge>
@@ -3243,7 +3326,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
               <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>
-              <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeView.id, tab: "history" })}>Attendance</Btn>
+              <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeKey, tab: "history" })} disabled={!selectedLaborEmployeeKey}>Attendance</Btn>
               {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
                 <Btn
                   variant="primary"
@@ -3261,7 +3344,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                   variant="primary"
                   size="sm"
                   onClick={() => {
-                    setNewLaborEmployeeId(selectedLaborEmployeeView.id);
+                    setNewLaborEmployeeId(selectedLaborEmployeeKey || "");
                     setNewEmployeeName(selectedLaborEmployeeView.full_name || "");
                     setNewTargetRole(selectedLaborEmployeeView.position_title || "");
                     setNewHireDate(selectedLaborEmployeeView.start_date || "");
@@ -3819,68 +3902,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setHierarchyDraft(reordered);
     setDraggingHierarchyTitle("");
   };
-  const saveHierarchy = useCallback(async () => {
-    if (!resolvedLaborLocationId || hierarchyDraft.length === 0) {
-      setShowHierarchyManager(false);
-      return;
-    }
-    if (!hierarchyPersistenceAvailable) {
-      addGlobalToast("Hierarchy saving requires the labor hierarchy database migration", "warning");
-      setShowHierarchyManager(false);
-      return;
-    }
-    setSavingHierarchy(true);
-    try {
-      const existingByTitle = Object.fromEntries(
-        positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
-      );
-      const updates = hierarchyDraft.map((row, index) => ({
-        existing: existingByTitle[row.normalized_title] || null,
-        position_title: row.position_title,
-        sort_order: (index + 1) * 10,
-      }));
-
-      const mutationResults = await Promise.all(updates.map((entry) => {
-        if (entry.existing?.id) {
-          return supabase
-            .from("labor_position_hierarchy")
-            .update({
-              position_title: entry.position_title,
-              sort_order: entry.sort_order,
-              updated_by_user_id: actorUserId,
-              updated_by_name: actorName,
-            })
-            .eq("id", entry.existing.id);
-        }
-        return supabase.from("labor_position_hierarchy").insert({
-          location_id: resolvedLaborLocationId,
-          position_title: entry.position_title,
-          sort_order: entry.sort_order,
-          created_by_user_id: actorUserId,
-          created_by_name: actorName,
-          updated_by_user_id: actorUserId,
-          updated_by_name: actorName,
-        });
-      }));
-      const failedMutation = mutationResults.find((result) => result.error);
-      if (failedMutation?.error) throw failedMutation.error;
-
-      const { data: hierarchyRes, error } = await supabase
-        .from("labor_position_hierarchy")
-        .select("*")
-        .eq("location_id", resolvedLaborLocationId)
-        .order("sort_order", { ascending: true });
-      if (error) throw error;
-      setPositionHierarchy(hierarchyRes || []);
-      setRosterSort({ key: "hierarchy", direction: "asc" });
-      setShowHierarchyManager(false);
-      addGlobalToast("Roster hierarchy updated", "success");
-    } catch (error) {
-      console.error("Failed to save labor position hierarchy", error);
-      addGlobalToast(error.message || "Failed to save roster hierarchy", "error");
-    }
-    setSavingHierarchy(false);
-  }, [actorName, actorUserId, addGlobalToast, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
   const rosterSectionIcons = {
     "Employee Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
     Employment: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M16 20V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16"/><rect x="6" y="6" width="4" height="4"/><path d="M18 7h4v13h-4"/><path d="M6 14h4"/><path d="M6 18h4"/></svg>,

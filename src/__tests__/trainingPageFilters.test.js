@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyLaborRosterFilters, getLaborEmployeeRowId, safeTrainingProgress, toObjectRows } from "../kol/pages/TrainingPage.jsx";
+import {
+  applyLaborRosterFilters,
+  getLaborEmployeeRowId,
+  getTrainingRecordEmployeeId,
+  isTrainingRecordForEmployee,
+  safeTrainingProgress,
+  toObjectRows,
+} from "../kol/pages/TrainingPage.jsx";
 import { isLaborEmployeeActive } from "../kol/trainingData.js";
 
 describe("applyLaborRosterFilters", () => {
@@ -37,8 +44,37 @@ describe("applyLaborRosterFilters", () => {
     expect(getLaborEmployeeRowId({ id: "employee-from-rpc" })).toBe("employee-from-rpc");
     expect(getLaborEmployeeRowId({ employee_id: "employee-id" })).toBe("employee-id");
     expect(getLaborEmployeeRowId({ labor_employee_id: "labor-id" })).toBe("labor-id");
+    expect(getTrainingRecordEmployeeId({ labor_employee_id: "labor-id" })).toBe("labor-id");
+    expect(getTrainingRecordEmployeeId({ employee_id: "legacy-id" })).toBe("legacy-id");
     expect(safeTrainingProgress("not-a-number")).toBe(0);
     expect(safeTrainingProgress(125)).toBe(100);
+  });
+
+  it("matches employee training history by canonical id or exact normalized name", () => {
+    expect(
+      isTrainingRecordForEmployee(
+        { labor_employee_id: "labor-id", employee_full_name: "Different Person" },
+        { labor_employee_id: "labor-id", full_name: "Zackary Nisbet" }
+      )
+    ).toBe(true);
+    expect(
+      isTrainingRecordForEmployee(
+        { employee_id: "legacy-id" },
+        { labor_employee_id: "legacy-id", full_name: "Zackary Nisbet" }
+      )
+    ).toBe(true);
+    expect(
+      isTrainingRecordForEmployee(
+        { employee_full_name: "  Zackary   Nisbet " },
+        { full_name: "Zackary Nisbet" }
+      )
+    ).toBe(true);
+    expect(
+      isTrainingRecordForEmployee(
+        { employee_full_name: "Zack Nisbet" },
+        { full_name: "Zackary Nisbet" }
+      )
+    ).toBe(false);
   });
 
   it("uses canonical active/inactive fields before falling back to end date", () => {
