@@ -22,6 +22,15 @@ export function parseCookieValue(cookieHeaders: string[], name: string): string 
   return "";
 }
 
+export function parseLastCookieValue(cookieHeaders: string[], name: string): string {
+  let value = "";
+  for (const header of cookieHeaders) {
+    const match = header.match(new RegExp(`${name}=([^;]+)`));
+    if (match) value = match[1];
+  }
+  return value;
+}
+
 function looksLikeHtml(body: string): boolean {
   const trimmed = body.trim().toLowerCase();
   return trimmed.startsWith("<!doctype") || trimmed.startsWith("<html") || trimmed.startsWith("<body");
@@ -37,7 +46,7 @@ export async function gingrWebLogin(subdomain: string, apiKey: string): Promise<
   const step1Cookies = extractSetCookies(loginPageResp);
   const loginHtml = await loginPageResp.text();
 
-  const sessionVal = parseCookieValue(step1Cookies, "gingr_ci_session");
+  const sessionVal = parseLastCookieValue(step1Cookies, "gingr_ci_session");
   const csrfCookieVal = parseCookieValue(step1Cookies, "gingr_csrf_cookie_name");
   const csrfMatch = loginHtml.match(/name="gingr_csrf_token"\s+value="([^"]+)"/);
   const csrfToken = csrfMatch?.[1] || "";
@@ -66,11 +75,7 @@ export async function gingrWebLogin(subdomain: string, apiKey: string): Promise<
 
   const step2Cookies = extractSetCookies(loginResp);
 
-  let authSessionVal = "";
-  for (const header of step2Cookies) {
-    const match = header.match(/gingr_ci_session=([^;]+)/);
-    if (match) authSessionVal = match[1];
-  }
+  const authSessionVal = parseLastCookieValue(step2Cookies, "gingr_ci_session");
   const authCsrfVal = parseCookieValue(step2Cookies, "gingr_csrf_cookie_name");
 
   const parts: string[] = [];
@@ -94,6 +99,13 @@ export async function gingrWebGetJson(
   const url = new URL(`https://${subdomain}.gingrapp.com/${path.replace(/^\/+/, "")}`);
   for (const [key, value] of Object.entries(params)) {
     if (value == null || value === "") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item == null || item === "") continue;
+        url.searchParams.append(`${key}[]`, String(item));
+      }
+      continue;
+    }
     url.searchParams.set(key, String(value));
   }
 
