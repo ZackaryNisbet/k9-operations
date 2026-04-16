@@ -44,11 +44,11 @@
       "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "gingr-today-notes": {
-      "commit": "48cdb0faf0034dc388718544fae08004f29deaf3",
+      "commit": "3f042a4f3fe1b4104242dc5d546d93319a0be303",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Allow scheduled today notes cache warming and preserve cached historical reads",
-      "updatedAt": "2026-04-16T20:17:05.677Z"
+      "note": "Deduplicate same-stay reservation shadows and preserve room assignments",
+      "updatedAt": "2026-04-16T20:31:06.004Z"
     }
   }
 }
