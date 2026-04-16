@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card } from "../../shared/ui";
+
+const LIVE_POLL_MS = 20000;
 
 function EmptyState({ title, subtitle }) {
   return (
@@ -10,6 +12,20 @@ function EmptyState({ title, subtitle }) {
       {subtitle ? <div style={{ fontSize: 13 }}>{subtitle}</div> : null}
     </Card>
   );
+}
+
+function formatNoteTimestamp(entry) {
+  const value = entry?.note_created_at || entry?.created_at;
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () => {} }) {
@@ -21,7 +37,12 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
   const [liveRefreshAvailable, setLiveRefreshAvailable] = useState(true);
   const [entries, setEntries] = useState([]);
   const [refreshedAt, setRefreshedAt] = useState("");
+  const refreshInFlightRef = useRef(false);
   const isToday = selectedDate === today;
+  const notesRowId = useMemo(() => {
+    if (!locationId || !selectedDate) return "";
+    return `ops_gingr_notes_${locationId}_${selectedDate}`;
+  }, [locationId, selectedDate]);
 
   const summary = useMemo(() => {
     const ownerNotes = entries.filter((entry) => entry.note_source === "owner_note").length;
@@ -33,6 +54,12 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     };
   }, [entries]);
 
+  const applyComputedItems = useCallback((computedItems = {}) => {
+    const nextEntries = Array.isArray(computedItems?.entries) ? computedItems.entries : [];
+    setEntries(nextEntries);
+    setRefreshedAt(computedItems?.refreshed_at || "");
+  }, []);
+
   const loadCached = useCallback(async () => {
     if (!locationId) return;
     const { data } = await supabase
@@ -42,10 +69,8 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       .eq("date", selectedDate)
       .eq("type_sub", "gingr_notes")
       .maybeSingle();
-    const cachedEntries = Array.isArray(data?.computed_items?.entries) ? data.computed_items.entries : [];
-    setEntries(cachedEntries);
-    setRefreshedAt(data?.computed_items?.refreshed_at || "");
-  }, [locationId, selectedDate]);
+    applyComputedItems(data?.computed_items || {});
+  }, [applyComputedItems, locationId, selectedDate]);
 
   const refreshLive = useCallback(async () => {
     if (!locationId) {
@@ -56,15 +81,18 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       setLoading(false);
       return;
     }
+    if (refreshInFlightRef.current) {
+      setLoading(false);
+      return;
+    }
+    refreshInFlightRef.current = true;
     setRefreshing(true);
     try {
       const { data, error } = await supabase.functions.invoke("gingr-today-notes", {
         body: { location_id: locationId, date: selectedDate },
       });
       if (error) throw error;
-      const nextEntries = Array.isArray(data?.entries) ? data.entries : [];
-      setEntries(nextEntries);
-      setRefreshedAt(data?.refreshed_at || new Date().toISOString());
+      applyComputedItems(data || { refreshed_at: new Date().toISOString() });
     } catch (error) {
       console.error("Failed to refresh Gingr notes", error);
       const unavailable = error?.name === "FunctionsHttpError"
@@ -75,10 +103,30 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       } else {
         addGlobalToast(error.message || "Failed to refresh Gingr notes", "error");
       }
+    } finally {
+      refreshInFlightRef.current = false;
+      setRefreshing(false);
+      setLoading(false);
     }
-    setRefreshing(false);
-    setLoading(false);
-  }, [addGlobalToast, liveRefreshAvailable, locationId, selectedDate]);
+  }, [addGlobalToast, applyComputedItems, liveRefreshAvailable, locationId, selectedDate]);
+
+  useEffect(() => {
+    if (!notesRowId) return undefined;
+    const channel = supabase
+      .channel(`gingr-notes-${notesRowId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "lite_daily_ops", filter: `id=eq.${notesRowId}` },
+        (payload) => {
+          if (payload?.new?.computed_items) applyComputedItems(payload.new.computed_items);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [applyComputedItems, notesRowId]);
 
   useEffect(() => {
     let mounted = true;
@@ -91,7 +139,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     const interval = liveRefreshAvailable && isToday
       ? window.setInterval(() => {
           refreshLive();
-        }, 60000)
+        }, LIVE_POLL_MS)
       : null;
     return () => {
       mounted = false;
@@ -131,7 +179,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text }}>{isToday ? "Today's Notes" : "Gingr Notes"}</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.textMut }}>
-            {fmtDate(selectedDate)} · {liveRefreshAvailable ? (isToday ? "polling Gingr every 60 seconds for owner and dog notes." : "showing the selected day's owner and dog notes from Gingr/cache.") : "showing cached notes because live sync is unavailable in this environment."}
+            {fmtDate(selectedDate)} · {liveRefreshAvailable ? (isToday ? "watching Gingr for owner and dog notes." : "showing the selected day's owner and dog notes from Gingr/cache.") : "showing cached notes because live sync is unavailable in this environment."}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -195,10 +243,18 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
                     <Badge color={entry.note_source === "owner_note" ? "warning" : "primary"}>
                       {entry.note_source === "owner_note" ? "Owner Note" : "Dog Note"}
                     </Badge>
+                    {(entry.note_type || entry.note_title) ? (
+                      <Badge color="neutral">{entry.note_type || entry.note_title}</Badge>
+                    ) : null}
                   </div>
                   <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
                     {entry.dog_name ? `Dog: ${entry.dog_name}` : null}
                     {entry.owner_name ? `${entry.dog_name ? " · " : ""}Owner: ${entry.owner_name}` : null}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
+                    {formatNoteTimestamp(entry) || entry.note_date || "Date unavailable"}
+                    {entry.created_by_name ? ` · By ${entry.created_by_name}` : ""}
+                    {entry.created_by_gingr_id ? ` · Gingr user #${entry.created_by_gingr_id}` : ""}
                   </div>
                 </div>
                 {entry.reservation_gingr_id ? (
