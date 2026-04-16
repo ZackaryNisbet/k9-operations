@@ -108,10 +108,33 @@ function cleanNoteText(value) {
   text = decodeHtmlEntities(decodeHtmlEntities(text)).replace(/\u00a0/g, " ");
   return text
     .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .map((line) => line
+      .replace(/[ \t]+/g, " ")
+      .replace(/^\s*(?:>\s*)+/, "")
+      .replace(/\s*(?:>\s*)+$/, "")
+      .replace(/\s+>\s*(?=[A-Za-z0-9])/g, " ")
+      .trim())
     .filter(Boolean)
     .join("\n")
     .trim();
+}
+
+async function describeFunctionError(error) {
+  const fallback = error?.message || "Failed to refresh Gingr notes";
+  const response = error?.context;
+  if (!response || typeof response.clone !== "function") return fallback;
+  try {
+    const body = await response.clone().json();
+    const detail = body?.error || body?.message || body?.details;
+    return detail ? `Live sync failed (${response.status}): ${detail}` : `Live sync failed (${response.status}): ${fallback}`;
+  } catch (_jsonError) {
+    try {
+      const text = await response.clone().text();
+      return text ? `Live sync failed (${response.status}): ${text.slice(0, 220)}` : `Live sync failed (${response.status}): ${fallback}`;
+    } catch (_textError) {
+      return `Live sync failed (${response.status}): ${fallback}`;
+    }
+  }
 }
 
 function noteTypeLabel(entry) {
@@ -604,6 +627,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
   const [reservationSummary, setReservationSummary] = useState({});
   const [refreshedAt, setRefreshedAt] = useState("");
   const [diagnostics, setDiagnostics] = useState({});
+  const [refreshError, setRefreshError] = useState("");
   const [viewMode, setViewMode] = useState("daily");
   const [activeNoteType, setActiveNoteType] = useState(ALL_TAB);
   const [flagRows, setFlagRows] = useState([]);
@@ -644,6 +668,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
 
   useEffect(() => {
     setLiveRefreshAvailable(true);
+    setRefreshError("");
     setActiveNoteType(ALL_TAB);
     setExpandedReservations({});
   }, [locationId, selectedDate]);
@@ -693,6 +718,8 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     }
     refreshInFlightRef.current = true;
     setRefreshing(true);
+    setRefreshError("");
+    setLiveRefreshAvailable(true);
     try {
       const { data, error } = await supabase.functions.invoke("gingr-today-notes", {
         body: { location_id: locationId, date: selectedDate },
@@ -701,13 +728,15 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       applyComputedItems(data || { refreshed_at: new Date().toISOString() });
     } catch (error) {
       console.error("Failed to refresh Gingr notes", error);
+      const message = await describeFunctionError(error);
+      setRefreshError(message);
       const unavailable = error?.name === "FunctionsHttpError"
         || /Edge Function/i.test(error?.message || "")
         || /non-2xx/i.test(error?.message || "");
       if (unavailable) {
         setLiveRefreshAvailable(false);
       } else {
-        addGlobalToast(error.message || "Failed to refresh Gingr notes", "error");
+        addGlobalToast(message, "error");
       }
     } finally {
       refreshInFlightRef.current = false;
@@ -935,10 +964,13 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
           <p style={{ margin: "5px 0 0", fontSize: 13, color: C.textMut, lineHeight: 1.45 }}>
             {viewMode === "flagged"
               ? "Flagged owner and dog notes that still need follow-up."
-              : `${fmtDate(selectedDate)} - ${liveRefreshAvailable ? "syncing owner and dog note history from Gingr." : "showing cached notes because live sync is unavailable."}`}
+              : `${fmtDate(selectedDate)} - ${liveRefreshAvailable ? "syncing owner and dog note history from Gingr." : "showing cached notes while live sync needs attention."}`}
           </p>
           {refreshedAt && viewMode !== "flagged" ? (
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 7 }}>Last refreshed {formatTimestamp(refreshedAt)}</div>
+          ) : null}
+          {refreshError && viewMode !== "flagged" ? (
+            <div style={{ fontSize: 11, color: C.dan, marginTop: 7, maxWidth: 620, lineHeight: 1.45 }}>{refreshError}</div>
           ) : null}
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
@@ -946,8 +978,8 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
           {viewMode !== "flagged" ? (
             <>
               <button type="button" onClick={loadCached} style={{ border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Cached</button>
-              <button type="button" onClick={refreshLive} disabled={refreshing || !liveRefreshAvailable} style={{ border: "none", background: liveRefreshAvailable ? C.pri : C.textMut, color: "#fff", borderRadius: 10, padding: "9px 14px", fontSize: 12, fontWeight: 900, cursor: refreshing || !liveRefreshAvailable ? "default" : "pointer", opacity: refreshing || !liveRefreshAvailable ? 0.65 : 1, fontFamily: "inherit" }}>
-                {liveRefreshAvailable ? (refreshing ? "Refreshing" : "Refresh Now") : "Cached Only"}
+              <button type="button" onClick={refreshLive} disabled={refreshing} style={{ border: "none", background: liveRefreshAvailable ? C.pri : C.warn, color: "#fff", borderRadius: 10, padding: "9px 14px", fontSize: 12, fontWeight: 900, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.65 : 1, fontFamily: "inherit" }}>
+                {refreshing ? "Refreshing" : liveRefreshAvailable ? "Refresh Now" : "Retry Live"}
               </button>
             </>
           ) : null}
@@ -986,7 +1018,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
           onToggleFlag={toggleFlag}
           emptyTitle={entries.length === 0 ? "No notes found for this date" : "No notes in this type"}
           emptySubtitle={entries.length === 0
-            ? `The sync checked ${diagnostics.active_reservation_count || 0} reservation context${diagnostics.active_reservation_count === 1 ? "" : "s"} for this date. Use Refresh Now to re-check Gingr.`
+            ? `The sync checked ${diagnostics.active_reservation_count || 0} reservation context${diagnostics.active_reservation_count === 1 ? "" : "s"} for this date. Use ${liveRefreshAvailable ? "Refresh Now" : "Retry Live"} to re-check Gingr.`
             : "Switch to All or another note type tab."}
         />
       ) : viewMode === "boarding" ? (

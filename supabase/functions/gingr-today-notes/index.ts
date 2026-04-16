@@ -131,7 +131,12 @@ function cleanGingrNoteText(value: unknown): string {
 
   return text
     .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .map((line) => line
+      .replace(/[ \t]+/g, " ")
+      .replace(/^\s*(?:>\s*)+/, "")
+      .replace(/\s*(?:>\s*)+$/, "")
+      .replace(/\s+>\s*(?=[A-Za-z0-9])/g, " ")
+      .trim())
     .filter(Boolean)
     .join("\n")
     .trim();
@@ -139,6 +144,63 @@ function cleanGingrNoteText(value: unknown): string {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function jsonResponse(payload: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function bearerToken(req: Request): string {
+  const header = req.headers.get("Authorization") || "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
+async function authenticateRequest(sb: any, req: Request): Promise<{ user: any } | Response> {
+  const token = bearerToken(req);
+  if (!token || token.startsWith("sb_")) {
+    return jsonResponse({ error: "Authentication is required." }, 401);
+  }
+
+  const { data, error } = await sb.auth.getUser(token);
+  if (error || !data?.user) {
+    return jsonResponse({ error: "Authentication is invalid or expired." }, 401);
+  }
+
+  return { user: data.user };
+}
+
+async function authorizeLocationAccess(sb: any, userId: string, locationId: string): Promise<Response | null> {
+  const [profileResult, liteProfileResult, profileLocationsResult] = await Promise.all([
+    sb.from("profiles").select("id, role, location_id").eq("id", userId).maybeSingle(),
+    sb.from("lite_profiles").select("id, role, location_id, is_active").eq("user_id", userId).eq("is_active", true),
+    sb.from("profile_locations").select("location_id").eq("profile_id", userId),
+  ]);
+
+  for (const result of [profileResult, liteProfileResult, profileLocationsResult]) {
+    if (result?.error) throw result.error;
+  }
+
+  const rows = [
+    profileResult.data,
+    ...(Array.isArray(liteProfileResult.data) ? liteProfileResult.data : []),
+  ].filter(Boolean);
+  const fullAccessRoles = new Set(["owner", "role_owner", "developer", "enterprise_admin"]);
+  if (rows.some((row: any) => fullAccessRoles.has(String(row?.role || "")))) return null;
+
+  const locationIds = new Set<string>();
+  for (const row of rows) {
+    if (row?.location_id) locationIds.add(String(row.location_id));
+  }
+  for (const row of profileLocationsResult.data || []) {
+    if (row?.location_id) locationIds.add(String(row.location_id));
+  }
+
+  if (locationIds.has(String(locationId))) return null;
+  return jsonResponse({ error: "You do not have access to this location." }, 403);
 }
 
 function buildStableId(parts: string[]) {
@@ -819,8 +881,14 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const authResult = await authenticateRequest(sb, req);
+    if (authResult instanceof Response) return authResult;
+
     const requestedLocationId = String(location_id);
     const { canonicalLocationId, gingrConfig } = await resolveLocationConfig(sb, requestedLocationId);
+    const accessError = await authorizeLocationAccess(sb, authResult.user.id, canonicalLocationId);
+    if (accessError) return accessError;
+
     if (!gingrConfig?.api_key || !gingrConfig?.subdomain) {
       return new Response(JSON.stringify({ error: "Gingr is not configured for this location." }), {
         status: 400,

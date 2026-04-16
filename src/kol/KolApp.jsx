@@ -98,6 +98,7 @@ const LITE_PAGE_SLUGS = {
   "reports": "reports",
   "refunds": "refunds",
   "photos": "photos",
+  "checkout-notes": "checkout-notes",
   "checkout-tv": "checkout-tv",
   "settings": "settings",
   "inventory": "inventory",
