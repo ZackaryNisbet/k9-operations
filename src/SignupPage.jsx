@@ -40,6 +40,26 @@ const PRIVACY_SECTIONS = [
   { t: "3. Contact", b: "For privacy inquiries: zack.nisbet@k9operations.com" },
 ];
 
+const PASSWORD_REQUIREMENT = 'Use at least 8 characters with one uppercase letter and one number.';
+
+function validatePassword(password) {
+  if (password.length < 8) return 'Password must be at least 8 characters.';
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.';
+  if (!/[0-9]/.test(password)) return 'Password must include at least one number.';
+  return '';
+}
+
+function formatSignupError(error) {
+  const message = error?.message || '';
+  if (/weak|guess|known|leaked|breached|common/i.test(message)) {
+    return 'That password is too common. Choose a less obvious password that still has at least 8 characters, one uppercase letter, and one number.';
+  }
+  if (/8|characters|length/i.test(message)) {
+    return 'Password must be at least 8 characters.';
+  }
+  return message || 'Account could not be created.';
+}
+
 function LegalModal({ type, onClose }) {
   const isTos = type === 'tos';
   const title = isTos ? 'Terms of Service' : 'Privacy Policy';
@@ -106,14 +126,15 @@ export default function SignupPage() {
     // Validation
     if (!fullName.trim()) { setError('Please enter your full name'); return; }
     if (!email.trim()) { setError('Please enter your email address'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    const passwordError = validatePassword(password);
+    if (passwordError) { setError(passwordError); return; }
     if (password !== confirmPassword) { setError('Passwords do not match'); return; }
     if (!agreedToTerms) { setError('Please agree to the Terms of Service and Privacy Policy'); return; }
 
     setLoading(true);
     const { error: signUpError } = await signUp(email, password, fullName);
     if (signUpError) {
-      setError(signUpError.message);
+      setError(formatSignupError(signUpError));
       setLoading(false);
       return;
     }
@@ -239,7 +260,10 @@ export default function SignupPage() {
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Password</label>
                   <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                    placeholder="At least 6 characters" style={inputStyle} autoComplete="new-password" required />
+                    placeholder="8+ chars, uppercase, number" style={inputStyle} autoComplete="new-password" required />
+                  <div style={{ marginTop: 7, fontSize: 12, color: C.textMut, lineHeight: 1.45 }}>
+                    {PASSWORD_REQUIREMENT}
+                  </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Confirm Password</label>
