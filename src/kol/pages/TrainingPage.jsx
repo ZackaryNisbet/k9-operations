@@ -136,7 +136,7 @@ function StatusBadge({ status }) {
 }
 
 function ProgressBar({ percent, height = 6 }) {
-  const p = Math.min(100, Math.max(0, percent || 0));
+  const p = safeTrainingProgress(percent);
   const color = p >= 100 ? C.suc : p > 50 ? C.acc : C.info;
   return (
     <div style={{ width: "100%", height, borderRadius: height / 2, background: C.borderLight, overflow: "hidden" }}>
@@ -180,6 +180,21 @@ function splitEmployeeName(fullName = "") {
 
 function isObjectRow(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function toObjectRows(rows = []) {
+  return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
+}
+
+export function getLaborEmployeeRowId(row = {}) {
+  if (!isObjectRow(row)) return null;
+  return row.labor_employee_id || row.employee_id || row.id || null;
+}
+
+export function safeTrainingProgress(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) return 0;
+  return Math.min(100, Math.max(0, percent));
 }
 
 function slugifyTemplateName(value = "") {
@@ -734,8 +749,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     try {
       const employeeSource = Array.isArray(seedData?.laborEmployees) ? seedData.laborEmployees : laborEmployees;
       const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
-      const employeeIds = employeeSource.map((employee) => employee.id);
-      const recordIds = recordSource.map((record) => record.id);
+      const employeeIds = toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean);
+      const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
       const [noteRes, documentRes, attendanceIncidentRes, reviewInstanceRes, certificationRes] = await Promise.all([
         employeeIds.length > 0
@@ -840,11 +855,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }, [selectedRecordId]);
 
   // ── Derived data ──
-  const activeRecords = useMemo(() => records.filter(r => ACTIVE_TRAINING_RECORD_STATUSES.includes(r.overall_status)), [records]);
-  const completedRecords = useMemo(() => records.filter(r => COMPLETED_TRAINING_RECORD_STATUSES.includes(r.overall_status)), [records]);
-  const activeTemplates = useMemo(() => templates.filter(t => t.is_active), [templates]);
-  const activeLaborEmployees = useMemo(() => rosterSnapshot.filter((row) => isLaborEmployeeActive(row)), [rosterSnapshot]);
-  const laborNotesByEmployee = useMemo(() => groupLaborEmployeeNotes(laborEmployeeNotes), [laborEmployeeNotes]);
+  const activeRecords = useMemo(() => toObjectRows(records).filter((record) => ACTIVE_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [records]);
+  const completedRecords = useMemo(() => toObjectRows(records).filter((record) => COMPLETED_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [records]);
+  const activeTemplates = useMemo(() => toObjectRows(templates).filter((template) => template.is_active), [templates]);
+  const activeLaborEmployees = useMemo(() => toObjectRows(rosterSnapshot).filter((row) => isLaborEmployeeActive(row)), [rosterSnapshot]);
+  const laborNotesByEmployee = useMemo(() => groupLaborEmployeeNotes(toObjectRows(laborEmployeeNotes)), [laborEmployeeNotes]);
   const fallbackDashboardMetrics = useMemo(() => {
     return buildLaborDashboardMetrics({
       rosterSnapshot,
@@ -882,20 +897,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     return fallbackDashboardMetrics;
   }, [fallbackDashboardMetrics, serverDashboardMetrics]);
 
-  const selectedRecord = useMemo(() => records.find(r => r.id === selectedRecordId), [records, selectedRecordId]);
+  const selectedRecord = useMemo(() => toObjectRows(records).find((record) => record.id === selectedRecordId) || null, [records, selectedRecordId]);
   const selectedLaborEmployee = useMemo(() => {
     const employeeId = selectedLaborEmployeeId || selectedRecord?.labor_employee_id;
     if (!employeeId) return null;
-    return laborEmployees.find((employee) => employee.id === employeeId) || null;
+    return toObjectRows(laborEmployees).find((employee) => employee.id === employeeId) || null;
   }, [laborEmployees, selectedLaborEmployeeId, selectedRecord]);
   const selectedLaborEmployeeSnapshot = useMemo(() => {
     const employeeId = selectedLaborEmployeeId || selectedRecord?.labor_employee_id;
     if (!employeeId) return null;
-    return rosterSnapshot.find((row) => row.labor_employee_id === employeeId) || null;
+    return toObjectRows(rosterSnapshot).find((row) => getLaborEmployeeRowId(row) === employeeId) || null;
   }, [rosterSnapshot, selectedLaborEmployeeId, selectedRecord]);
   const selectedLaborEmployeeView = useMemo(() => {
     if (!selectedLaborEmployee && !selectedLaborEmployeeSnapshot) return null;
-    const employeeId = selectedLaborEmployee?.id || selectedLaborEmployeeSnapshot?.labor_employee_id || null;
+    const employeeId = selectedLaborEmployee?.id
+      || getLaborEmployeeRowId(selectedLaborEmployeeSnapshot)
+      || selectedLaborEmployeeId
+      || selectedRecord?.labor_employee_id
+      || null;
+    const employeeMetadata = isObjectRow(selectedLaborEmployee?.metadata) ? selectedLaborEmployee.metadata : {};
     return {
       ...(selectedLaborEmployeeSnapshot || {}),
       ...(selectedLaborEmployee || {}),
@@ -905,31 +925,31 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || "",
       start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || null,
       end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || null,
-      metadata: selectedLaborEmployee?.metadata || {},
+      metadata: employeeMetadata,
     };
-  }, [selectedLaborEmployee, selectedLaborEmployeeSnapshot]);
-  const laborEmployeeMap = useMemo(() => Object.fromEntries(laborEmployees.map((employee) => [employee.id, employee])), [laborEmployees]);
-  const recordMap = useMemo(() => Object.fromEntries(records.map((record) => [record.id, record])), [records]);
+  }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSnapshot, selectedRecord]);
+  const laborEmployeeMap = useMemo(() => Object.fromEntries(toObjectRows(laborEmployees).map((employee) => [employee.id, employee])), [laborEmployees]);
+  const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const selectedVersion = useMemo(() => {
     if (!selectedRecord) return null;
-    return templateVersions.find(v => v.id === selectedRecord.template_version_id);
+    return toObjectRows(templateVersions).find((version) => version.id === selectedRecord.template_version_id) || null;
   }, [selectedRecord, templateVersions]);
   const groupedNotes = useMemo(() => groupTrainingNotes(notes), [notes]);
   const selectedEmployeeNotes = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return (laborNotesByEmployee[selectedLaborEmployeeView.id] || []).filter(isObjectRow);
+    return toObjectRows(laborNotesByEmployee[selectedLaborEmployeeView.id] || []);
   }, [laborNotesByEmployee, selectedLaborEmployeeView]);
   const selectedEmployeeDocuments = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return laborEmployeeDocuments.filter((document) => isObjectRow(document) && document.labor_employee_id === selectedLaborEmployeeView.id);
+    return toObjectRows(laborEmployeeDocuments).filter((document) => document.labor_employee_id === selectedLaborEmployeeView.id);
   }, [laborEmployeeDocuments, selectedLaborEmployeeView]);
   const selectedEmployeeReviewInstances = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return reviewInstances.filter((instance) => isObjectRow(instance) && instance.labor_employee_id === selectedLaborEmployeeView.id);
+    return toObjectRows(reviewInstances).filter((instance) => instance.labor_employee_id === selectedLaborEmployeeView.id);
   }, [reviewInstances, selectedLaborEmployeeView]);
   const selectedEmployeeCertifications = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
-    return employeeCertifications.filter((row) => isObjectRow(row) && row.labor_employee_id === selectedLaborEmployeeView.id);
+    return toObjectRows(employeeCertifications).filter((row) => row.labor_employee_id === selectedLaborEmployeeView.id);
   }, [employeeCertifications, selectedLaborEmployeeView]);
   const selectedEmployeeNotes30d = useMemo(() => {
     const now = Date.now();
@@ -941,8 +961,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const selectedEmployeeAttendanceIncidents30d = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     const now = Date.now();
-    return laborAttendanceIncidents.filter((incident) => {
-      if (!isObjectRow(incident)) return false;
+    return toObjectRows(laborAttendanceIncidents).filter((incident) => {
       if (incident.labor_employee_id !== selectedLaborEmployeeView.id) return false;
       const incidentDate = incident?.incident_date ? new Date(`${incident.incident_date}T12:00:00`).getTime() : NaN;
       return Number.isFinite(incidentDate) && now - incidentDate <= 30 * 24 * 60 * 60 * 1000;
@@ -950,56 +969,56 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }, [laborAttendanceIncidents, selectedLaborEmployeeView]);
   const selectedReviewInstance = useMemo(() => {
     if (!selectedReviewInstanceId) return null;
-    return reviewInstances.find((instance) => instance.id === selectedReviewInstanceId) || null;
+    return toObjectRows(reviewInstances).find((instance) => instance.id === selectedReviewInstanceId) || null;
   }, [reviewInstances, selectedReviewInstanceId]);
   const selectedReviewTemplateVersion = useMemo(() => {
     if (!selectedReviewInstance?.template_version_id) return null;
-    return allReviewTemplateVersions.find((version) => version.id === selectedReviewInstance.template_version_id) || null;
+    return toObjectRows(allReviewTemplateVersions).find((version) => version.id === selectedReviewInstance.template_version_id) || null;
   }, [allReviewTemplateVersions, selectedReviewInstance]);
   const selectedReviewTemplate = useMemo(() => {
     if (!selectedReviewInstance?.template_id) return null;
-    return reviewTemplates.find((template) => template.id === selectedReviewInstance.template_id) || null;
+    return toObjectRows(reviewTemplates).find((template) => template.id === selectedReviewInstance.template_id) || null;
   }, [reviewTemplates, selectedReviewInstance]);
   const selectedReviewSections = useMemo(() => {
     if (!selectedReviewTemplateVersion?.id) return [];
-    return reviewSections
+    return toObjectRows(reviewSections)
       .filter((section) => section.template_version_id === selectedReviewTemplateVersion.id)
       .sort((a, b) => a.sequence_order - b.sequence_order)
       .map((section) => ({
         ...section,
         items: reviewItems
-          .filter((item) => item.review_section_id === section.id)
+          .filter((item) => isObjectRow(item) && item.review_section_id === section.id)
           .sort((a, b) => a.sequence_order - b.sequence_order),
       }));
   }, [reviewItems, reviewSections, selectedReviewTemplateVersion]);
 
   const recordSections = useMemo(() => {
     if (!selectedRecord) return [];
-    return sections.filter(s => s.template_version_id === selectedRecord.template_version_id && !s.parent_section_id).sort((a, b) => a.sequence_order - b.sequence_order);
+    return toObjectRows(sections).filter((section) => section.template_version_id === selectedRecord.template_version_id && !section.parent_section_id).sort((a, b) => a.sequence_order - b.sequence_order);
   }, [selectedRecord, sections]);
 
   const getChildSections = useCallback((parentId) => {
-    return sections.filter(s => s.parent_section_id === parentId).sort((a, b) => a.sequence_order - b.sequence_order);
+    return toObjectRows(sections).filter((section) => section.parent_section_id === parentId).sort((a, b) => a.sequence_order - b.sequence_order);
   }, [sections]);
 
   const getSectionItems = useCallback((sectionId) => {
-    return items.filter(i => i.template_section_id === sectionId).sort((a, b) => a.sequence_order - b.sequence_order);
+    return toObjectRows(items).filter((item) => item.template_section_id === sectionId).sort((a, b) => a.sequence_order - b.sequence_order);
   }, [items]);
 
   const getItemResult = useCallback((itemId) => {
-    return itemResults.find(r => r.template_item_id === itemId);
+    return toObjectRows(itemResults).find((result) => result.template_item_id === itemId) || null;
   }, [itemResults]);
 
-  const getItemById = useCallback((itemId) => items.find((item) => item.id === itemId), [items]);
-  const getSectionById = useCallback((sectionId) => sections.find((section) => section.id === sectionId), [sections]);
+  const getItemById = useCallback((itemId) => toObjectRows(items).find((item) => item.id === itemId) || null, [items]);
+  const getSectionById = useCallback((sectionId) => toObjectRows(sections).find((section) => section.id === sectionId) || null, [sections]);
   const getItemNotes = useCallback((itemId) => groupedNotes.itemNotes[itemId] || [], [groupedNotes.itemNotes]);
 
   const laborEmployeeOptions = useMemo(() => {
-    const suggestedRoster = rosterSnapshot
+    const suggestedRoster = toObjectRows(rosterSnapshot)
       .filter((row) => isLaborEmployeeActive(row) && Number(row.open_training_record_count || 0) === 0)
-      .map((row) => laborEmployees.find((employee) => employee.id === row.labor_employee_id))
+      .map((row) => toObjectRows(laborEmployees).find((employee) => employee.id === getLaborEmployeeRowId(row)))
       .filter(Boolean);
-    const fallbackEmployees = laborEmployees.filter((employee) => !suggestedRoster.some((entry) => entry.id === employee.id));
+    const fallbackEmployees = toObjectRows(laborEmployees).filter((employee) => !suggestedRoster.some((entry) => entry.id === employee.id));
     return [...suggestedRoster, ...fallbackEmployees].map((employee) => ({
       value: employee.id,
       label: `${employee.full_name} (${employee.position_title})`,
@@ -1009,11 +1028,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // Template stats: section and item counts per template
   const templateStats = useMemo(() => {
     const stats = {};
-    templates.forEach(t => {
-      const v = allTemplateVersions.find(tv => tv.template_id === t.id && tv.is_current);
+    toObjectRows(templates).forEach((t) => {
+      const v = toObjectRows(allTemplateVersions).find((tv) => tv.template_id === t.id && tv.is_current);
       if (!v) { stats[t.id] = { sectionCount: 0, itemCount: 0 }; return; }
-      const tSections = sections.filter(s => s.template_version_id === v.id && !s.parent_section_id);
-      const tItems = items.filter(i => i.template_version_id === v.id);
+      const tSections = toObjectRows(sections).filter((section) => section.template_version_id === v.id && !section.parent_section_id);
+      const tItems = toObjectRows(items).filter((item) => item.template_version_id === v.id);
       stats[t.id] = { sectionCount: tSections.length, itemCount: tItems.length };
     });
     return stats;
@@ -1021,41 +1040,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const reviewTemplateStats = useMemo(() => {
     const stats = {};
-    reviewTemplates.forEach((template) => {
-      const version = allReviewTemplateVersions.find((row) => row.template_id === template.id && row.is_current);
+    toObjectRows(reviewTemplates).forEach((template) => {
+      const version = toObjectRows(allReviewTemplateVersions).find((row) => row.template_id === template.id && row.is_current);
       if (!version) {
         stats[template.id] = { sectionCount: 0, itemCount: 0 };
         return;
       }
       stats[template.id] = {
-        sectionCount: reviewSections.filter((section) => section.template_version_id === version.id).length,
-        itemCount: reviewItems.filter((item) => item.template_version_id === version.id).length,
+        sectionCount: toObjectRows(reviewSections).filter((section) => section.template_version_id === version.id).length,
+        itemCount: toObjectRows(reviewItems).filter((item) => item.template_version_id === version.id).length,
       };
     });
     return stats;
   }, [allReviewTemplateVersions, reviewItems, reviewSections, reviewTemplates]);
 
   const combinedTemplateRows = useMemo(() => {
-    const trainingRows = templates.map((template) => ({
+    const trainingRows = toObjectRows(templates).map((template) => ({
       id: template.id,
       kind: "training",
       slug: template.slug,
       name: template.name,
-      role_scopes: template.role_scopes || [],
+      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
       template_class: template.template_class,
       is_active: template.is_active !== false,
-      version: allTemplateVersions.find((version) => version.template_id === template.id && version.is_current) || null,
+      version: toObjectRows(allTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
       stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
     }));
-    const reviewRows = reviewTemplates.map((template) => ({
+    const reviewRows = toObjectRows(reviewTemplates).map((template) => ({
       id: template.id,
       kind: "review",
       slug: template.slug,
       name: template.name,
-      role_scopes: template.role_scopes || [],
+      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
       template_class: "performance_review",
       is_active: template.is_active !== false,
-      version: allReviewTemplateVersions.find((version) => version.template_id === template.id && version.is_current) || null,
+      version: toObjectRows(allReviewTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
       stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
     }));
     return [...trainingRows, ...reviewRows];
@@ -1092,7 +1111,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // Template preview data
   const previewTemplateVersionHistory = useMemo(() => {
     if (!previewTemplateId) return [];
-    const versionSource = previewTemplateKind === "review" ? allReviewTemplateVersions : allTemplateVersions;
+    const versionSource = previewTemplateKind === "review" ? toObjectRows(allReviewTemplateVersions) : toObjectRows(allTemplateVersions);
     return versionSource
       .filter((version) => version.template_id === previewTemplateId)
       .sort((a, b) => b.version_no - a.version_no);
@@ -1101,40 +1120,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const previewTemplate = useMemo(() => {
     if (!previewTemplateId) return null;
     if (previewTemplateKind === "review") {
-      const template = reviewTemplates.find((row) => row.id === previewTemplateId);
+      const template = toObjectRows(reviewTemplates).find((row) => row.id === previewTemplateId);
       if (!template) return null;
       const version = previewTemplateVersionId
-        ? allReviewTemplateVersions.find((row) => row.id === previewTemplateVersionId && row.template_id === template.id)
-        : allReviewTemplateVersions.find((row) => row.template_id === template.id && row.is_current);
+        ? toObjectRows(allReviewTemplateVersions).find((row) => row.id === previewTemplateVersionId && row.template_id === template.id)
+        : toObjectRows(allReviewTemplateVersions).find((row) => row.template_id === template.id && row.is_current);
       if (!version) return { ...template, kind: "review", version: null, sections: [] };
-      const sectionData = reviewSections
+      const sectionData = toObjectRows(reviewSections)
         .filter((section) => section.template_version_id === version.id)
         .sort((a, b) => a.sequence_order - b.sequence_order)
         .map((section) => ({
           ...section,
           items: reviewItems
-            .filter((item) => item.review_section_id === section.id)
+            .filter((item) => isObjectRow(item) && item.review_section_id === section.id)
             .sort((a, b) => a.sequence_order - b.sequence_order),
         }));
       return { ...template, kind: "review", version, sections: sectionData };
     }
 
-    const template = templates.find((row) => row.id === previewTemplateId);
+    const template = toObjectRows(templates).find((row) => row.id === previewTemplateId);
     if (!template) return null;
     const version = previewTemplateVersionId
-      ? allTemplateVersions.find((row) => row.id === previewTemplateVersionId && row.template_id === template.id)
-      : allTemplateVersions.find((row) => row.template_id === template.id && row.is_current);
+      ? toObjectRows(allTemplateVersions).find((row) => row.id === previewTemplateVersionId && row.template_id === template.id)
+      : toObjectRows(allTemplateVersions).find((row) => row.template_id === template.id && row.is_current);
     if (!version) return { ...template, kind: "training", version: null, sections: [] };
-    const templateSections = sections.filter((section) => section.template_version_id === version.id && !section.parent_section_id)
+    const templateSections = toObjectRows(sections).filter((section) => section.template_version_id === version.id && !section.parent_section_id)
       .sort((a, b) => a.sequence_order - b.sequence_order);
     const sectionData = templateSections.map((section) => {
-      const childSections = sections.filter((row) => row.parent_section_id === section.id)
+      const childSections = toObjectRows(sections).filter((row) => row.parent_section_id === section.id)
         .sort((a, b) => a.sequence_order - b.sequence_order);
-      const directItems = items.filter((item) => item.template_section_id === section.id)
+      const directItems = toObjectRows(items).filter((item) => item.template_section_id === section.id)
         .sort((a, b) => a.sequence_order - b.sequence_order);
       const childData = childSections.map((childSection) => ({
         ...childSection,
-        items: items.filter((item) => item.template_section_id === childSection.id)
+        items: toObjectRows(items).filter((item) => item.template_section_id === childSection.id)
           .sort((a, b) => a.sequence_order - b.sequence_order),
       }));
       return { ...section, children: childData, directItems };
@@ -1142,7 +1161,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     return { ...template, kind: "training", version, sections: sectionData };
   }, [allReviewTemplateVersions, allTemplateVersions, items, previewTemplateId, previewTemplateKind, previewTemplateVersionId, reviewItems, reviewSections, reviewTemplates, sections, templates]);
   const globalNotesFeed = useMemo(() => {
-    const employeeNotesFeed = laborEmployeeNotes.map((note) => {
+    const employeeNotesFeed = toObjectRows(laborEmployeeNotes).map((note) => {
       const employee = laborEmployeeMap[note.labor_employee_id];
       return {
         id: `employee_${note.id}`,
@@ -1157,7 +1176,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         noteText: note.note_text,
       };
     });
-    const trainingNotesFeed = allTrainingNotes.map((note) => {
+    const trainingNotesFeed = toObjectRows(allTrainingNotes).map((note) => {
       const record = recordMap[note.record_id];
       const employee = laborEmployeeMap[record?.labor_employee_id];
       const item = note.template_item_id ? getItemById(note.template_item_id) : null;
@@ -1199,11 +1218,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   // Role-filtered template options for new record
   const templateOptions = useMemo(() => {
     return activeTemplates
-      .filter(t => t.template_class === "training_plan")
-      .map(t => {
-        const v = templateVersions.find(tv => tv.template_id === t.id);
+      .filter((t) => t.template_class === "training_plan")
+      .map((t) => {
+        const v = toObjectRows(templateVersions).find((tv) => tv.template_id === t.id);
         const stats = templateStats[t.id] || {};
-        return { value: t.id, label: `${t.name} (${t.role_scopes.join(", ")})`, versionId: v?.id, roleScopes: t.role_scopes, stats };
+        const roleScopes = Array.isArray(t.role_scopes) ? t.role_scopes : [];
+        return { value: t.id, label: `${t.name} (${roleScopes.join(", ")})`, versionId: v?.id, roleScopes, stats };
       });
   }, [activeTemplates, templateVersions, templateStats]);
 
@@ -1271,7 +1291,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   // ── Toggle item completion ──
   const handleToggleItem = useCallback(async (itemId) => {
-    const result = itemResults.find(r => r.template_item_id === itemId);
+    const result = toObjectRows(itemResults).find((row) => row.template_item_id === itemId);
     if (!result) return;
     const newStatus = result.status === "complete" ? "not_started" : "complete";
     const { data, error } = await supabase.rpc("set_training_item_status", {
@@ -1484,7 +1504,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     setSavingLaborEmployee(true);
 
     if (editingLaborEmployeeId) {
-      const employeeBeforeUpdate = laborEmployees.find((employee) => employee.id === editingLaborEmployeeId) || null;
+      const employeeBeforeUpdate = toObjectRows(laborEmployees).find((employee) => employee.id === editingLaborEmployeeId) || null;
       const { error } = await supabase.rpc("update_labor_employee", buildUpdateLaborEmployeeRpcArgs({
         employeeId: editingLaborEmployeeId,
         fullName: laborEmployeeName,
@@ -1666,7 +1686,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         .filter(Boolean)
     ));
     const existingSlugs = new Set(
-      (createTemplateKind === "review" ? reviewTemplates : templates)
+      toObjectRows(createTemplateKind === "review" ? reviewTemplates : templates)
         .map((template) => String(template.slug || "").trim())
         .filter(Boolean)
     );
@@ -1802,7 +1822,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     if (!nextName) return;
     const templateSource = previewTemplateKind === "review" ? reviewTemplates : templates;
     const tableName = previewTemplateKind === "review" ? "review_templates" : "training_templates";
-    const currentTemplate = templateSource.find((template) => template.id === previewTemplateId);
+    const currentTemplate = toObjectRows(templateSource).find((template) => template.id === previewTemplateId);
     if (!currentTemplate || currentTemplate.name === nextName) return;
     const { error } = await supabase
       .from(tableName)
@@ -1849,7 +1869,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleAddTemplateSection = useCallback(async (parentSectionId = null) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
-    const sectionSource = previewTemplateKind === "review" ? reviewSections : sections;
+    const sectionSource = previewTemplateKind === "review" ? toObjectRows(reviewSections) : toObjectRows(sections);
     const siblingSections = sectionSource
       .filter((section) =>
         section.template_version_id === previewTemplate.version.id &&
@@ -1889,7 +1909,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleAddTemplateItem = useCallback(async (sectionId) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
-    const itemSource = previewTemplateKind === "review" ? reviewItems : items;
+    const itemSource = previewTemplateKind === "review" ? toObjectRows(reviewItems) : toObjectRows(items);
     const sectionItems = itemSource
       .filter((item) => (previewTemplateKind === "review" ? item.review_section_id === sectionId : item.template_section_id === sectionId))
       .sort((a, b) => a.sequence_order - b.sequence_order);
@@ -1941,7 +1961,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleDeleteTemplateSection = useCallback(async (sectionId) => {
     if (previewTemplateKind === "review") {
-      const sectionItems = reviewItems.filter((item) => item.review_section_id === sectionId);
+      const sectionItems = toObjectRows(reviewItems).filter((item) => item.review_section_id === sectionId);
       if (sectionItems.length > 0) {
         const { error: deleteItemsError } = await supabase
           .from("review_items")
@@ -1965,9 +1985,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return;
     }
 
-    const childSections = sections.filter((section) => section.parent_section_id === sectionId);
+    const childSections = toObjectRows(sections).filter((section) => section.parent_section_id === sectionId);
     for (const child of childSections) {
-      const childItems = items.filter((item) => item.template_section_id === child.id);
+      const childItems = toObjectRows(items).filter((item) => item.template_section_id === child.id);
       if (childItems.length > 0) {
         const { error: deleteChildItemsError } = await supabase
           .from("training_template_items")
@@ -1988,7 +2008,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       }
     }
 
-    const directItems = items.filter((item) => item.template_section_id === sectionId);
+    const directItems = toObjectRows(items).filter((item) => item.template_section_id === sectionId);
     if (directItems.length > 0) {
       const { error: deleteItemsError } = await supabase
         .from("training_template_items")
@@ -2036,12 +2056,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     if (!window.confirm("Delete this draft version? Published versions will not be changed.")) return;
     setSavingTemplateAction("delete-draft");
     const versionId = previewTemplate.version.id;
-    const versionSource = previewTemplateKind === "review" ? allReviewTemplateVersions : allTemplateVersions;
-    const currentVersion = versionSource.find((version) => version.template_id === previewTemplateId && version.is_current && version.id !== versionId) || null;
+    const versionSource = previewTemplateKind === "review" ? toObjectRows(allReviewTemplateVersions) : toObjectRows(allTemplateVersions);
+    const currentVersion = toObjectRows(versionSource).find((version) => version.template_id === previewTemplateId && version.is_current && version.id !== versionId) || null;
 
     if (previewTemplateKind === "review") {
-      const draftSections = reviewSections.filter((section) => section.template_version_id === versionId);
-      const draftItems = reviewItems.filter((item) => item.template_version_id === versionId);
+      const draftSections = toObjectRows(reviewSections).filter((section) => section.template_version_id === versionId);
+      const draftItems = toObjectRows(reviewItems).filter((item) => item.template_version_id === versionId);
       if (draftItems.length > 0) {
         const { error } = await supabase.from("review_items").delete().in("id", draftItems.map((item) => item.id));
         if (error) {
@@ -2065,8 +2085,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         return;
       }
     } else {
-      const draftItems = items.filter((item) => item.template_version_id === versionId);
-      const draftSections = sections.filter((section) => section.template_version_id === versionId);
+      const draftItems = toObjectRows(items).filter((item) => item.template_version_id === versionId);
+      const draftSections = toObjectRows(sections).filter((section) => section.template_version_id === versionId);
       if (draftItems.length > 0) {
         const { error } = await supabase.from("training_template_items").delete().in("id", draftItems.map((item) => item.id));
         if (error) {
@@ -2108,10 +2128,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleMoveTemplateSection = useCallback(async (sectionId, direction) => {
     const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
-    const source = previewTemplateKind === "review" ? reviewSections : sections;
-    const section = source.find((row) => row.id === sectionId);
+    const source = previewTemplateKind === "review" ? toObjectRows(reviewSections) : toObjectRows(sections);
+    const section = toObjectRows(source).find((row) => row.id === sectionId);
     if (!section) return;
-    const siblings = source
+    const siblings = toObjectRows(source)
       .filter((row) =>
         row.template_version_id === section.template_version_id &&
         (previewTemplateKind === "review" || (row.parent_section_id || null) === (section.parent_section_id || null))
@@ -2133,10 +2153,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleMoveTemplateItemOrder = useCallback(async (itemId, direction) => {
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
-    const source = previewTemplateKind === "review" ? reviewItems : items;
-    const item = source.find((row) => row.id === itemId);
+    const source = previewTemplateKind === "review" ? toObjectRows(reviewItems) : toObjectRows(items);
+    const item = toObjectRows(source).find((row) => row.id === itemId);
     if (!item) return;
-    const siblings = source
+    const siblings = toObjectRows(source)
       .filter((row) => previewTemplateKind === "review" ? row.review_section_id === item.review_section_id : row.template_section_id === item.template_section_id)
       .sort((a, b) => a.sequence_order - b.sequence_order);
     const currentIndex = siblings.findIndex((row) => row.id === itemId);
@@ -2156,12 +2176,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const handleMoveTemplateItemSection = useCallback(async (itemId, sectionId) => {
     if (!sectionId) return;
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
-    const source = previewTemplateKind === "review" ? reviewItems : items;
-    const item = source.find((row) => row.id === itemId);
+    const source = previewTemplateKind === "review" ? toObjectRows(reviewItems) : toObjectRows(items);
+    const item = toObjectRows(source).find((row) => row.id === itemId);
     if (!item) return;
     const currentSectionId = previewTemplateKind === "review" ? item.review_section_id : item.template_section_id;
     if (currentSectionId === sectionId) return;
-    const targetItems = source.filter((row) => previewTemplateKind === "review" ? row.review_section_id === sectionId : row.template_section_id === sectionId);
+    const targetItems = toObjectRows(source).filter((row) => previewTemplateKind === "review" ? row.review_section_id === sectionId : row.template_section_id === sectionId);
     const patch = previewTemplateKind === "review"
       ? { review_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 }
       : { template_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 };
@@ -2278,9 +2298,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const handleCreateReviewInstance = useCallback(async (reviewCycle) => {
     if (!selectedLaborEmployeeView?.id) return;
-    const matchingTemplate = reviewTemplates.find((template) =>
-      (template.role_scopes || []).some((scope) => scope.toUpperCase() === String(selectedLaborEmployeeView.position_title || "").toUpperCase())
-    ) || reviewTemplates[0];
+    const matchingTemplate = toObjectRows(reviewTemplates).find((template) =>
+      (Array.isArray(template.role_scopes) ? template.role_scopes : []).some((scope) => scope.toUpperCase() === String(selectedLaborEmployeeView.position_title || "").toUpperCase())
+    ) || toObjectRows(reviewTemplates)[0];
 
     if (!matchingTemplate?.id) {
       addGlobalToast("No review template is available for this role", "error");
@@ -2307,7 +2327,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const getReviewResponse = useCallback((reviewItemId) => {
     if (!selectedReviewInstanceId) return null;
-    return reviewResponses.find((response) => response.review_instance_id === selectedReviewInstanceId && response.review_item_id === reviewItemId) || null;
+    return toObjectRows(reviewResponses).find((response) => response.review_instance_id === selectedReviewInstanceId && response.review_item_id === reviewItemId) || null;
   }, [reviewResponses, selectedReviewInstanceId]);
 
   const handleReviewDraftChange = useCallback((reviewItemId, field, value) => {
@@ -2417,13 +2437,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     }));
   }, [laborEmployees, rosterSnapshot]);
   const preparedRosterRows = useMemo(() => {
-    return rosterRows.map((row) => {
-      const contactEmployee = laborEmployeeMap[row.labor_employee_id] || null;
+    return toObjectRows(rosterRows).map((row) => {
+      const employeeId = getLaborEmployeeRowId(row);
+      const contactEmployee = laborEmployeeMap[employeeId] || null;
       const contactEmail = readLaborEmployeeContact(contactEmployee, "contact_email");
       const contactPhone = readLaborEmployeeContact(contactEmployee, "contact_phone");
-      const { firstName, lastName } = splitEmployeeName(row.full_name);
+      const fullName = row.full_name || contactEmployee?.full_name || "";
+      const { firstName, lastName } = splitEmployeeName(fullName);
+      const endDate = row.end_date || contactEmployee?.end_date || null;
+      const isActive = row.is_active ?? !endDate;
       return {
         ...row,
+        id: employeeId || row.id,
+        labor_employee_id: employeeId,
+        full_name: fullName,
+        position_title: row.position_title || contactEmployee?.position_title || "",
+        start_date: row.start_date || contactEmployee?.start_date || null,
+        end_date: endDate,
+        is_active: isActive,
+        employment_status: row.employment_status || (isActive ? "active" : "inactive"),
         first_name: firstName,
         last_name: lastName,
         contact_email: contactEmail,
@@ -2598,6 +2630,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }, [getItemById, getSectionById, notes]);
 
   const renderRecordItem = useCallback((item) => {
+    if (!isObjectRow(item) || !item.id) return null;
+    const itemLabel = String(item.label || item.prompt || "").trim() || "Untitled task";
     const result = getItemResult(item.id);
     const isDone = result && (result.status === "complete" || result.status === "passed");
     const itemNotes = getItemNotes(item.id);
@@ -2616,7 +2650,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: isDone ? C.textMut : C.text, textDecoration: isDone ? "line-through" : "none" }}>
-                  {item.label}
+                  {itemLabel}
                 </div>
                 {(item.description || item.policy_reference) && (
                   <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -2699,21 +2733,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }, [expandedItemNotes, formatTrainingTimestamp, getItemNotes, getItemResult, handleAddItemNote, handleToggleItem, itemNoteDrafts, savingItemNoteId, toggleItemNotes]);
 
   const renderTemplatePreviewItem = useCallback((item, editable = false) => {
+    if (!isObjectRow(item) || !item.id) return null;
     const isReviewItem = previewTemplateKind === "review";
-    const primaryLabel = isReviewItem ? item.prompt : item.label;
-	    const secondaryText = isReviewItem
-	      ? (item.item_type === "rating" && Array.isArray(item.options) && item.options.length > 0
-	          ? `Options: ${item.options.join(", ")}`
-	          : item.item_type.replace(/_/g, " "))
-	      : item.description;
-	    const linkUrl = isReviewItem ? null : item.policy_reference;
-      const sectionOptions = isReviewItem
-        ? (previewTemplate?.sections || []).map((section) => ({ value: section.id, label: section.title }))
-        : (previewTemplate?.sections || []).flatMap((section) => [
-            { value: section.id, label: section.title },
-            ...(section.children || []).map((child) => ({ value: child.id, label: `${section.title} / ${child.title}` })),
-          ]);
-      const currentSectionId = isReviewItem ? item.review_section_id : item.template_section_id;
+    const itemType = String(item.item_type || "").trim();
+    const primaryLabel = String(isReviewItem ? item.prompt : item.label || "").trim() || "Untitled";
+    const secondaryText = isReviewItem
+      ? (itemType === "rating" && Array.isArray(item.options) && item.options.length > 0
+          ? `Options: ${item.options.join(", ")}`
+          : itemType.replace(/_/g, " "))
+      : item.description;
+    const linkUrl = isReviewItem ? null : item.policy_reference;
+    const sectionOptions = isReviewItem
+      ? (previewTemplate?.sections || []).filter(isObjectRow).map((section) => ({ value: section.id, label: section.title }))
+      : (previewTemplate?.sections || []).filter(isObjectRow).flatMap((section) => [
+          { value: section.id, label: section.title },
+          ...(Array.isArray(section.children) ? section.children.filter(isObjectRow).map((child) => ({ value: child.id, label: `${section.title} / ${child.title}` })) : []),
+        ]);
+    const currentSectionId = isReviewItem ? item.review_section_id : item.template_section_id;
     if (!editable) {
       return (
         <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
@@ -2834,7 +2870,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         </div>
       </Card>
     );
-	  }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
+  }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
   const laborEmployeeEditorModal = showLaborEmployeeEditor && editingLaborEmployeeId ? (
     <Modal
@@ -2960,9 +2996,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       ), 0);
       const reviewPercent = reviewItemTotal > 0 ? Math.round((answeredReviewItems / reviewItemTotal) * 100) : 0;
       const reviewCycleLabel = String(selectedReviewInstance.review_cycle || "").replace(/_/g, " ");
-      const reviewStatusColor = selectedReviewInstance.status === "completed"
+      const reviewStatus = String(selectedReviewInstance.status || "not_started");
+      const reviewStatusColor = reviewStatus === "completed"
         ? "success"
-        : selectedReviewInstance.status === "overdue"
+        : reviewStatus === "overdue"
           ? "danger"
           : "warning";
 
@@ -2985,7 +3022,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Badge color={reviewStatusColor}>{String(selectedReviewInstance.status).replace(/_/g, " ")}</Badge>
+              <Badge color={reviewStatusColor}>{reviewStatus.replace(/_/g, " ")}</Badge>
               {selectedReviewInstance.due_date && <Badge color="default">Due {formatLaborDate(selectedReviewInstance.due_date)}</Badge>}
               {selectedReviewInstance.completed_at && <Badge color="success">Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</Badge>}
             </div>
@@ -3011,7 +3048,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Cycle Status</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: reviewStatusColor === "success" ? C.suc : reviewStatusColor === "danger" ? C.dan : C.warn }}>
-                {String(selectedReviewInstance.status).replace(/_/g, " ")}
+                {reviewStatus.replace(/_/g, " ")}
               </div>
               <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>
                 {selectedReviewInstance.due_date ? `Due ${formatLaborDate(selectedReviewInstance.due_date)}` : "Due date not set"}
@@ -3347,12 +3384,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 </tr>
               </thead>
               <tbody>
-                {employeeTrainingRecords.map((record) => (
-                  <tr key={record.id} onClick={() => setSelectedRecordId(record.id)} style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}>
+	                {employeeTrainingRecords.map((record) => (
+	                  <tr
+	                    key={record.id}
+	                    onClick={() => {
+	                      setSelectedLaborEmployeeId(null);
+	                      setSelectedRecordId(record.id);
+	                    }}
+	                    style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
+	                  >
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{record.target_role}</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
                     <td style={{ padding: "10px 12px" }}><StatusBadge status={record.overall_status} /></td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{Math.round(record.progress_percent || 0)}%</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? formatLaborDate(record.target_end_date) : "—"}</td>
                   </tr>
                 ))}
@@ -3425,6 +3469,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   }
 
   if (selectedRecordId && selectedRecord) {
+    const recordProgress = safeTrainingProgress(selectedRecord.progress_percent);
+    const requiredCompletedCount = Number.isFinite(Number(selectedRecord.required_item_completed_count))
+      ? Number(selectedRecord.required_item_completed_count)
+      : 0;
+    const requiredItemCount = Number.isFinite(Number(selectedRecord.required_item_count))
+      ? Number(selectedRecord.required_item_count)
+      : 0;
+    const recordEmployeeName = selectedRecord.employee_full_name || selectedLaborEmployeeView?.full_name || "Employee";
+    const recordTargetRole = selectedRecord.target_role || selectedLaborEmployeeView?.position_title || "Employee";
+    const recordTemplateName = selectedRecord.template_name_snapshot || selectedVersion?.name || "Training Plan";
+
     return (
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
         {/* Back button */}
@@ -3436,13 +3491,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         <Card style={{ padding: 24, marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
             <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{selectedRecord.employee_full_name}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{recordEmployeeName}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                <Badge color="primary">Position: {selectedRecord.target_role}</Badge>
-                <Badge color="default">Training Plan: {selectedRecord.template_name_snapshot}</Badge>
+                <Badge color="primary">Position: {recordTargetRole}</Badge>
+                <Badge color="default">Training Plan: {recordTemplateName}</Badge>
                 {selectedLaborEmployeeSnapshot?.employment_status && (
-                  <Badge color={selectedLaborEmployeeSnapshot.is_active ? "success" : "warning"}>
-                    {String(selectedLaborEmployeeSnapshot.employment_status).replace(/_/g, " ")}
+                  <Badge color={selectedLaborEmployeeSnapshot?.is_active ? "success" : "warning"}>
+                    {String(selectedLaborEmployeeSnapshot?.employment_status || "inactive").replace(/_/g, " ")}
                   </Badge>
                 )}
               </div>
@@ -3454,19 +3509,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             </div>
             <div style={{ textAlign: "right" }}>
               <StatusBadge status={selectedRecord.overall_status} />
-              <div style={{ marginTop: 8, fontSize: 24, fontWeight: 800, color: C.pri }}>{Math.round(selectedRecord.progress_percent)}%</div>
-              <div style={{ fontSize: 11, color: C.textMut }}>{selectedRecord.required_item_completed_count} / {selectedRecord.required_item_count} items</div>
+              <div style={{ marginTop: 8, fontSize: 24, fontWeight: 800, color: C.pri }}>{Math.round(recordProgress)}%</div>
+              <div style={{ fontSize: 11, color: C.textMut }}>{requiredCompletedCount} / {requiredItemCount} items</div>
               <div style={{ marginTop: 10 }}>
                 <Btn variant="secondary" size="sm" onClick={openRecordConfigModal}>Edit Configuration</Btn>
               </div>
             </div>
           </div>
-          <div style={{ marginTop: 12 }}><ProgressBar percent={selectedRecord.progress_percent} height={8} /></div>
+          <div style={{ marginTop: 12 }}><ProgressBar percent={recordProgress} height={8} /></div>
         </Card>
 
         {/* Sections */}
         <SectionHeader title="Training Plan" count={recordSections.length} />
-        {recordSections.map(sec => {
+        {recordSections.length === 0 ? (
+          <Card style={{ padding: 18, marginBottom: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 6 }}>
+              {trainingBundleLoading ? "Loading training plan..." : "Training plan unavailable"}
+            </div>
+            <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
+              {trainingBundleLoading
+                ? "The record is open while its template sections are still loading."
+                : "This record references a template version that is not present in the loaded training bundle. The record details are still available above."}
+            </div>
+          </Card>
+        ) : recordSections.map(sec => {
           const isOpen = expandedSections[sec.id];
           const comp = sectionCompletionMap[sec.id] || { total: 0, done: 0 };
           const childSecs = getChildSections(sec.id);
@@ -3564,7 +3630,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 value={configLaborEmployeeId}
                 onChange={(value) => {
                   setConfigLaborEmployeeId(value);
-                  const employee = laborEmployees.find((entry) => entry.id === value);
+                  const employee = toObjectRows(laborEmployees).find((entry) => entry.id === value);
                   if (!employee) return;
                   setConfigEmployeeName(employee.full_name || "");
                   setConfigTargetRole(employee.position_title || "");
@@ -4434,12 +4500,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                     </tr>
                   )}
                   {sortedRosterRows.map((row) => {
+                    const rowEmployeeId = getLaborEmployeeRowId(row);
                     return (
                       <tr
-                        key={row.labor_employee_id}
+                        key={rowEmployeeId || row.full_name || row.position_title}
                         style={{
                           borderBottom: `1px solid ${C.borderLight}`,
-                          animation: row.labor_employee_id === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
+                          animation: rowEmployeeId === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
                         }}
                       >
                         <td style={{ padding: "9px 8px", fontSize: 12, color: C.text }}>{row.first_name || "—"}</td>
@@ -4486,7 +4553,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                           </td>
                         ))}
                         <td style={{ padding: "9px 8px" }}>
-                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(row.labor_employee_id)}>View Record</Btn>
+                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(rowEmployeeId)} disabled={!rowEmployeeId}>View Record</Btn>
                         </td>
                       </tr>
                     );
@@ -5115,7 +5182,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               value={newLaborEmployeeId}
               onChange={(value) => {
                 setNewLaborEmployeeId(value);
-                const employee = laborEmployees.find((entry) => entry.id === value);
+                const employee = toObjectRows(laborEmployees).find((entry) => entry.id === value);
                 if (!employee) return;
                 setNewEmployeeName(employee.full_name || "");
                 setNewTargetRole(employee.position_title || "");

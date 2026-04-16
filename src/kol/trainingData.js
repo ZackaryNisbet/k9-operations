@@ -206,7 +206,12 @@ export function groupLaborEmployeeNotes(notes = []) {
 }
 
 export function isLaborEmployeeActive(employee) {
-  return !employee?.end_date;
+  if (!employee || typeof employee !== "object") return false;
+  const explicitStatus = String(employee.employment_status || "").trim().toLowerCase();
+  if (explicitStatus === "active") return true;
+  if (explicitStatus === "inactive" || explicitStatus === "terminated") return false;
+  if (typeof employee.is_active === "boolean") return employee.is_active;
+  return !employee.end_date;
 }
 
 function toDateOnly(value) {
