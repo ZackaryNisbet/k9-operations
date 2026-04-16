@@ -16,6 +16,46 @@ const AuthContext = createContext({});
 
 export const useAuth = () => useContext(AuthContext);
 
+const LITE_ROLE_RANK = Object.freeze({
+  pct: 10,
+  csr: 20,
+  supervisor: 30,
+  manager: 40,
+  location_admin: 50,
+  enterprise_admin: 60,
+});
+
+function pickLiteProfile(rows = []) {
+  return [...rows]
+    .filter(row => row?.is_active !== false)
+    .sort((a, b) => {
+      const aHasLocation = a?.location_id ? 1 : 0;
+      const bHasLocation = b?.location_id ? 1 : 0;
+      if (aHasLocation !== bHasLocation) return bHasLocation - aHasLocation;
+      return (LITE_ROLE_RANK[b?.role] || 0) - (LITE_ROLE_RANK[a?.role] || 0);
+    })[0] || null;
+}
+
+function mergeLiteProfile(baseProfile, liteProfile, userId, authUser) {
+  const base = baseProfile || {};
+  const fullName = liteProfile?.full_name
+    || base.full_name
+    || authUser?.user_metadata?.full_name
+    || '';
+
+  return {
+    ...base,
+    id: userId,
+    user_id: userId,
+    lite_profile_id: liteProfile?.id || base.lite_profile_id || null,
+    email: liteProfile?.email || base.email || authUser?.email || '',
+    full_name: fullName,
+    name: fullName,
+    role: liteProfile?.role || base.role || 'staff',
+    location_id: liteProfile?.location_id ?? base.location_id ?? null,
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -48,11 +88,41 @@ export function AuthProvider({ children }) {
   }, [isRunActive]);
 
   const fetchProfile = useCallback(async (userId) => {
-    const profileResult = await withAuthTimeout(
-      () => supabase.rpc('get_my_profile'),
+    const authUserResult = await withAuthTimeout(
+      () => supabase.auth.getUser(),
+      { stage: 'profile_bootstrap', ms: AUTH_TIMEOUTS.profileBootstrap }
+    );
+    if (authUserResult?.error) {
+      throw classifyAuthFailure(authUserResult.error, { stage: 'profile_bootstrap' });
+    }
+
+    const authUser = authUserResult?.data?.user;
+    const liteResult = await withAuthTimeout(
+      () => supabase
+        .from('lite_profiles')
+        .select('id,user_id,email,full_name,role,location_id,is_active')
+        .eq('user_id', userId)
+        .eq('is_active', true),
       { stage: 'get_my_profile', ms: AUTH_TIMEOUTS.getProfile }
     );
-    if (profileResult?.error) {
+    if (liteResult?.error) {
+      throw classifyAuthFailure(liteResult.error, { stage: 'get_my_profile' });
+    }
+
+    const liteProfile = pickLiteProfile(liteResult?.data || []);
+
+    let profileResult = null;
+    try {
+      profileResult = await withAuthTimeout(
+        () => supabase.rpc('get_my_profile'),
+        { stage: 'get_my_profile', ms: AUTH_TIMEOUTS.getProfile }
+      );
+    } catch (error) {
+      if (!liteProfile) throw error;
+      console.warn('Could not load legacy profile; using Lite profile:', error);
+    }
+
+    if (profileResult?.error && !liteProfile) {
       throw classifyAuthFailure(profileResult.error, { stage: 'get_my_profile' });
     }
 
@@ -64,19 +134,16 @@ export function AuthProvider({ children }) {
       const now = new Date().toISOString();
       supabase.from('profiles').update({ last_accessed_at: now }).eq('id', userId).then(() => {});
       supabase.from('lite_profiles').update({ last_active: now }).eq('user_id', userId).eq('is_active', true).then(() => {});
-      return existing;
+      return mergeLiteProfile(existing, liteProfile, userId, authUser);
+    }
+
+    if (liteProfile) {
+      const now = new Date().toISOString();
+      supabase.from('lite_profiles').update({ last_active: now }).eq('user_id', userId).eq('is_active', true).then(() => {});
+      return mergeLiteProfile(null, liteProfile, userId, authUser);
     }
 
     // No profile yet — auto-create one (for new sign-ups)
-    const authUserResult = await withAuthTimeout(
-      () => supabase.auth.getUser(),
-      { stage: 'profile_bootstrap', ms: AUTH_TIMEOUTS.profileBootstrap }
-    );
-    if (authUserResult?.error) {
-      throw classifyAuthFailure(authUserResult.error, { stage: 'profile_bootstrap' });
-    }
-
-    const authUser = authUserResult?.data?.user;
     const newProfile = {
       id: userId,
       email: authUser?.email || '',
@@ -92,17 +159,17 @@ export function AuthProvider({ children }) {
     const { data: created, error: insertErr } = insertResult;
 
     if (created) {
-      return created;
+      return mergeLiteProfile(created, null, userId, authUser);
     }
     // If insert fails (e.g. RLS policy not set up), use a minimal profile
     console.warn('Could not auto-create profile:', insertErr);
-    return {
+    return mergeLiteProfile({
       id: userId,
       email: authUser?.email || '',
       full_name: authUser?.user_metadata?.full_name || '',
       role: 'staff',
       location_id: null,
-    };
+    }, null, userId, authUser);
   }, []);
 
   const hydrateUser = useCallback(async (nextUser, runId = runIdRef.current) => {
@@ -272,14 +339,7 @@ export function AuthProvider({ children }) {
 
   const refreshProfile = async () => {
     if (!user) return;
-    const result = await withAuthTimeout(
-      () => supabase.rpc('get_my_profile'),
-      { stage: 'get_my_profile', ms: AUTH_TIMEOUTS.getProfile }
-    );
-    if (result?.error) {
-      throw classifyAuthFailure(result.error, { stage: 'get_my_profile' });
-    }
-    const updated = result?.data?.[0] || null;
+    const updated = await fetchProfile(user.id);
     if (updated) setProfile(updated);
   };
 
