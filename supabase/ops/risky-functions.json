@@ -20,7 +20,7 @@
       "verifyJwt": true
     },
     "gingr-today-notes": {
-      "verifyJwt": true
+      "verifyJwt": false
     }
   }
 }
