@@ -260,9 +260,11 @@ function TabButton({ active, children, onClick, count }) {
         gap: 7,
         alignItems: "center",
         whiteSpace: "nowrap",
+        maxWidth: 280,
+        minHeight: 38,
       }}
     >
-      <span>{children}</span>
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
       {typeof count === "number" ? (
         <span style={{
           minWidth: 20,
@@ -276,9 +278,20 @@ function TabButton({ active, children, onClick, count }) {
           justifyContent: "center",
           fontSize: 11,
           fontWeight: 900,
+          flexShrink: 0,
         }}>{count}</span>
       ) : null}
     </button>
+  );
+}
+
+function hasCachedNotesPayload(computedItems) {
+  return Boolean(
+    computedItems?.refreshed_at
+      || computedItems?.date
+      || Array.isArray(computedItems?.entries)
+      || Array.isArray(computedItems?.note_types)
+      || Array.isArray(computedItems?.reservation_groups),
   );
 }
 
@@ -702,7 +715,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
   }, [locationId, selectedDate]);
 
   const loadCached = useCallback(async () => {
-    if (!locationId) return;
+    if (!locationId) return null;
     const requestKey = `${locationId}|${selectedDate}`;
     const { data } = await supabase
       .from("lite_daily_ops")
@@ -711,8 +724,10 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       .eq("date", selectedDate)
       .eq("type_sub", "gingr_notes")
       .maybeSingle();
-    if (activeSelectionRef.current !== requestKey) return;
-    applyComputedItems(data?.computed_items || {}, selectedDate, locationId);
+    if (activeSelectionRef.current !== requestKey) return null;
+    const computedItems = data?.computed_items || {};
+    applyComputedItems(computedItems, selectedDate, locationId);
+    return hasCachedNotesPayload(computedItems) ? computedItems : null;
   }, [applyComputedItems, locationId, selectedDate]);
 
   const refreshLive = useCallback(async () => {
@@ -757,7 +772,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
         setLoading(false);
       }
     }
-  }, [addGlobalToast, applyComputedItems, liveRefreshAvailable, locationId, selectedDate]);
+  }, [addGlobalToast, applyComputedItems, locationId, selectedDate]);
 
   const loadFlags = useCallback(async () => {
     if (!locationId) return;
@@ -823,9 +838,29 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
     let mounted = true;
     setLoading(true);
     (async () => {
-      await loadCached();
-      if (mounted && liveRefreshAvailable) await refreshLive();
-      if (mounted && !liveRefreshAvailable) setLoading(false);
+      const cachedPayload = await loadCached();
+      if (!mounted) return;
+
+      if (cachedPayload) setLoading(false);
+      if (!liveRefreshAvailable) {
+        setLoading(false);
+        return;
+      }
+
+      if (isToday) {
+        if (cachedPayload) {
+          void refreshLive();
+        } else {
+          await refreshLive();
+        }
+        return;
+      }
+
+      if (!cachedPayload) {
+        await refreshLive();
+      } else {
+        setLoading(false);
+      }
     })();
     const interval = liveRefreshAvailable && isToday
       ? window.setInterval(() => {
@@ -1015,7 +1050,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
       </div>
 
       {viewMode === "daily" ? (
-        <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "0 0 12px", marginBottom: 4 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
           <TabButton active={activeNoteType === ALL_TAB} onClick={() => setActiveNoteType(ALL_TAB)} count={entries.length}>All</TabButton>
           {noteTypeTabs.map((label) => (
             <TabButton key={label} active={activeNoteType === label} onClick={() => setActiveNoteType(label)} count={noteTypeCounts.get(label) || 0}>{label}</TabButton>
