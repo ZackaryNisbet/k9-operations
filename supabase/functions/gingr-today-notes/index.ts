@@ -21,6 +21,8 @@ interface GingrCredentials {
 interface SubjectContext {
   kind: SubjectKind;
   gingrId: string;
+  ownerGingrId: string;
+  animalGingrId: string;
   name: string;
   dogName: string;
   ownerName: string;
@@ -42,6 +44,12 @@ function formatEtDate(date: Date) {
 
 function nowEtDate() {
   return formatEtDate(new Date());
+}
+
+function addDaysToDateString(date: string, days: number): string {
+  const parsed = new Date(`${date}T12:00:00`);
+  parsed.setDate(parsed.getDate() + days);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function normalizeReservationCollection(result: any): any[] {
@@ -240,6 +248,114 @@ function dogNameFromReservation(reservation: any): string {
   );
 }
 
+function reservationTypeFromReservation(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return firstText(
+    reservation?.reservation_type,
+    reservation?.reservation_type_name,
+    reservation?.type,
+    reservation?.type_name,
+    raw?.reservation_type,
+    raw?.reservation_type_name,
+    raw?.type,
+    raw?.type_name,
+  );
+}
+
+function reservationRoomFromReservation(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return firstText(
+    reservation?.room_assignment,
+    reservation?.room,
+    reservation?.run,
+    reservation?.run_name,
+    reservation?.kennel,
+    reservation?.area_name,
+    raw?.room_assignment,
+    raw?.room,
+    raw?.run,
+    raw?.run_name,
+    raw?.kennel,
+    raw?.area_name,
+  );
+}
+
+function reservationStartDate(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return dateOnlyFromValue(
+    reservation?.check_in_date,
+    reservation?.check_in_stamp,
+    reservation?.start_date,
+    reservation?.date_start,
+    raw?.check_in_date,
+    raw?.check_in_stamp,
+    raw?.start_date,
+    raw?.date_start,
+  );
+}
+
+function reservationEndDate(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return dateOnlyFromValue(
+    reservation?.check_out_date,
+    reservation?.check_out_stamp,
+    reservation?.end_date,
+    reservation?.date_end,
+    raw?.check_out_date,
+    raw?.check_out_stamp,
+    raw?.end_date,
+    raw?.date_end,
+  );
+}
+
+function reservationCheckInTime(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return timeFromValue(
+    reservation?.check_in_time,
+    reservation?.check_in_stamp,
+    reservation?.start_time,
+    raw?.check_in_time,
+    raw?.check_in_stamp,
+    raw?.start_time,
+  );
+}
+
+function reservationCheckOutTime(reservation: any): string {
+  const raw = reservation?.raw_data || {};
+  return timeFromValue(
+    reservation?.check_out_time,
+    reservation?.check_out_stamp,
+    reservation?.end_time,
+    raw?.check_out_time,
+    raw?.check_out_stamp,
+    raw?.end_time,
+  );
+}
+
+function isDateWithinInclusive(date: string, startDate: string, endDate: string): boolean {
+  if (!date) return false;
+  if (startDate && date < startDate) return false;
+  if (endDate && date > endDate) return false;
+  return true;
+}
+
+function reservationTouchesDate(reservation: any, date: string): boolean {
+  const startDate = reservationStartDate(reservation);
+  const endDate = reservationEndDate(reservation) || startDate;
+  if (startDate || endDate) return isDateWithinInclusive(date, startDate, endDate);
+  return true;
+}
+
+function isBoardingReservation(reservation: any, date: string): boolean {
+  const type = reservationTypeFromReservation(reservation).toLowerCase();
+  const startDate = reservationStartDate(reservation);
+  const endDate = reservationEndDate(reservation);
+  if (startDate && endDate && endDate > startDate) return true;
+  if (type.includes("daycare") || type.includes("day care") || type.includes("evaluation") || type.includes("tour")) return false;
+  if (type.includes("boarding") || type.includes("lodging") || type.includes("overnight") || type.includes("suite")) return true;
+  return reservationTouchesDate(reservation, date);
+}
+
 function mergeReservations(...collections: any[][]): any[] {
   const merged = new Map<string, any>();
   let fallbackIndex = 0;
@@ -265,6 +381,8 @@ function addSubjectContext(
   subjects: Map<string, SubjectContext>,
   kind: SubjectKind,
   gingrId: string,
+  ownerGingrId: string,
+  animalGingrId: string,
   name: string,
   dogName: string,
   ownerName: string,
@@ -281,6 +399,8 @@ function addSubjectContext(
     if ((!existing.name || existing.name === placeholderName) && name && name !== placeholderName) existing.name = name;
     if (!existing.dogName && dogName) existing.dogName = dogName;
     if (!existing.ownerName && ownerName) existing.ownerName = ownerName;
+    if (!existing.ownerGingrId && ownerGingrId) existing.ownerGingrId = ownerGingrId;
+    if (!existing.animalGingrId && animalGingrId) existing.animalGingrId = animalGingrId;
     existing.rawReservations.push(reservation);
     return;
   }
@@ -288,6 +408,8 @@ function addSubjectContext(
   subjects.set(key, {
     kind,
     gingrId,
+    ownerGingrId,
+    animalGingrId,
     name: name || (kind === "dog" ? "Dog" : "Owner"),
     dogName,
     ownerName,
@@ -306,8 +428,8 @@ function buildSubjectContexts(reservations: any[]): SubjectContext[] {
     const ownerName = ownerNameFromReservation(reservation);
     const dogName = dogNameFromReservation(reservation);
 
-    addSubjectContext(subjects, "dog", animalId, dogName, dogName, ownerName, reservationId, reservation);
-    addSubjectContext(subjects, "owner", ownerId, ownerName, dogName, ownerName, reservationId, reservation);
+    addSubjectContext(subjects, "dog", animalId, ownerId, animalId, dogName, dogName, ownerName, reservationId, reservation);
+    addSubjectContext(subjects, "owner", ownerId, ownerId, animalId, ownerName, dogName, ownerName, reservationId, reservation);
   }
 
   return Array.from(subjects.values());
@@ -323,6 +445,28 @@ function dateFromGingrTimestamp(value: unknown): Date | null {
     : new Date(raw);
 
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateOnlyFromValue(...values: unknown[]): string {
+  const raw = firstText(...values);
+  if (!raw) return "";
+  const direct = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (direct) return direct[1];
+  return noteDateOnlyEt(raw);
+}
+
+function timeFromValue(...values: unknown[]): string {
+  const raw = firstText(...values);
+  if (!raw) return "";
+  const direct = raw.match(/\b(\d{1,2}:\d{2})(?::\d{2})?\b/);
+  if (direct) return direct[1];
+  const date = dateFromGingrTimestamp(raw);
+  if (!date) return "";
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: ET_TIMEZONE,
+  });
 }
 
 function noteDateOnlyEt(value: unknown): string {
@@ -343,6 +487,62 @@ function buildNoteTypeLookup(noteTypes: any[]): Map<string, string> {
     if (id && label) lookup.set(id, label);
   }
   return lookup;
+}
+
+function normalizeNoteTypeRows(noteTypes: any[], subjectKind: SubjectKind): any[] {
+  return (noteTypes || []).map((noteType) => {
+    const id = firstText(noteType?.id, noteType?.note_type_id);
+    const label = firstText(noteType?.type, noteType?.note_type, noteType?.name, noteType?.label);
+    if (!label && !id) return null;
+    return {
+      id: id || null,
+      label: label || id,
+      note_type: label || id,
+      subject_kind: subjectKind,
+      note_source: subjectKind === "owner" ? "owner_note" : "dog_note",
+      is_owner_type: subjectKind === "owner",
+      is_animal_type: subjectKind === "dog",
+    };
+  }).filter(Boolean);
+}
+
+function mergeNoteTypes(noteResults: SubjectNotesResult[], entries: any[]): any[] {
+  const merged = new Map<string, any>();
+
+  for (const result of noteResults || []) {
+    for (const noteType of normalizeNoteTypeRows(result.noteTypes, result.subject.kind)) {
+      const key = `${noteType.subject_kind}:${noteType.id || noteType.label}`;
+      if (!merged.has(key)) merged.set(key, noteType);
+    }
+  }
+
+  for (const entry of entries || []) {
+    const label = firstText(entry?.note_type, entry?.note_title);
+    if (!label) continue;
+    const key = `${entry.subject_kind}:${entry.note_type_id || label}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        id: entry.note_type_id || null,
+        label,
+        note_type: label,
+        subject_kind: entry.subject_kind,
+        note_source: entry.note_source,
+        is_owner_type: entry.subject_kind === "owner",
+        is_animal_type: entry.subject_kind === "dog",
+      });
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function gingrUrls(subdomain: string, ownerId: string, animalId: string, reservationId: string) {
+  const baseUrl = `https://${subdomain}.gingrapp.com`;
+  return {
+    owner: ownerId ? `${baseUrl}/owners/view/id/${ownerId}` : "",
+    animal: animalId ? `${baseUrl}/animals/view/id/${animalId}` : "",
+    reservation: reservationId ? `${baseUrl}/reservations/edit/id/${reservationId}` : "",
+  };
 }
 
 async function fetchSubjectNotes(
@@ -394,7 +594,8 @@ async function fetchSubjectNotes(
 
 async function buildNoteEntryFromRow(
   locationId: string,
-  date: string,
+  date: string | null,
+  subdomain: string,
   subject: SubjectContext,
   row: any,
   noteTypes: any[],
@@ -404,13 +605,16 @@ async function buildNoteEntryFromRow(
   const createdAtRaw = firstText(row?.created_at, row?.date_created, row?.created);
   const noteDate = noteDateOnlyEt(createdAtRaw);
 
-  if (!noteText || noteDate !== date) return null;
+  if (!noteText || !noteDate) return null;
+  if (date && noteDate !== date) return null;
 
   const noteTypeLookup = buildNoteTypeLookup(noteTypes);
   const noteTypeId = firstText(row?.note_type_id, row?.type_id);
   const noteType = firstText(row?.note_type, row?.type, row?.type_name, noteTypeId ? noteTypeLookup.get(noteTypeId) : "");
   const createdAtIso = noteCreatedAtIso(createdAtRaw);
   const reservationIds = Array.from(subject.reservationIds).filter(Boolean);
+  const primaryReservationId = reservationIds[0] || "";
+  const urls = gingrUrls(subdomain, subject.ownerGingrId, subject.animalGingrId, primaryReservationId);
 
   return {
     id: await buildStableId([
@@ -425,6 +629,8 @@ async function buildNoteEntryFromRow(
     note_source: subject.kind === "owner" ? "owner_note" : "dog_note",
     subject_kind: subject.kind,
     subject_gingr_id: subject.gingrId,
+    owner_gingr_id: subject.ownerGingrId || null,
+    animal_gingr_id: subject.animalGingrId || null,
     subject_name: subject.name || (subject.kind === "dog" ? "Dog" : "Owner"),
     note_text: noteText,
     note_title: noteType || (subject.kind === "dog" ? "Dog Note" : "Owner Note"),
@@ -436,16 +642,19 @@ async function buildNoteEntryFromRow(
     created_at: createdAtIso || null,
     created_by_gingr_id: firstText(row?.created_by) || null,
     created_by_name: firstText(row?.username, row?.created_by_name) || null,
-    reservation_gingr_id: reservationIds[0] || "",
+    reservation_gingr_id: primaryReservationId,
     reservation_gingr_ids: reservationIds,
     dog_name: subject.dogName,
     owner_name: subject.ownerName,
+    gingr_urls: urls,
     source,
     raw_data: {
       note: row,
       subject: {
         kind: subject.kind,
         gingr_id: subject.gingrId,
+        owner_gingr_id: subject.ownerGingrId,
+        animal_gingr_id: subject.animalGingrId,
         name: subject.name,
         dog_name: subject.dogName,
         owner_name: subject.ownerName,
@@ -516,6 +725,81 @@ async function resolveLocationConfig(sb: any, requestedLocationId: string) {
   };
 }
 
+function buildReservationSummary(locationId: string, subdomain: string, reservation: any, date: string) {
+  const reservationId = reservationIdFromReservation(reservation);
+  const ownerId = ownerIdFromReservation(reservation);
+  const animalId = animalIdFromReservation(reservation);
+  const dogName = dogNameFromReservation(reservation);
+  const ownerName = ownerNameFromReservation(reservation);
+  const startDate = reservationStartDate(reservation);
+  const endDate = reservationEndDate(reservation);
+  const urls = gingrUrls(subdomain, ownerId, animalId, reservationId);
+
+  return {
+    id: reservationId || `${animalId || ownerId || "reservation"}_${startDate || date}`,
+    location_id: locationId,
+    reservation_gingr_id: reservationId,
+    owner_gingr_id: ownerId || null,
+    animal_gingr_id: animalId || null,
+    dog_name: dogName,
+    owner_name: ownerName,
+    subject_name: dogName || ownerName || "Reservation",
+    room: reservationRoomFromReservation(reservation),
+    reservation_type: reservationTypeFromReservation(reservation),
+    check_in_date: startDate,
+    check_in_time: reservationCheckInTime(reservation),
+    check_out_date: endDate,
+    check_out_time: reservationCheckOutTime(reservation),
+    is_checkout_today: Boolean(endDate && endDate === date),
+    gingr_urls: urls,
+  };
+}
+
+function noteBelongsToReservation(note: any, reservation: any): boolean {
+  const ownerId = ownerIdFromReservation(reservation);
+  const animalId = animalIdFromReservation(reservation);
+  if (note.subject_kind === "dog" && animalId && String(note.animal_gingr_id || note.subject_gingr_id) === String(animalId)) return true;
+  if (note.subject_kind === "owner" && ownerId && String(note.owner_gingr_id || note.subject_gingr_id) === String(ownerId)) return true;
+  return false;
+}
+
+function buildReservationGroups(locationId: string, subdomain: string, reservations: any[], allEntries: any[], date: string) {
+  const boardingReservations = mergeReservations(reservations)
+    .filter((reservation) => reservationTouchesDate(reservation, date))
+    .filter((reservation) => isBoardingReservation(reservation, date));
+
+  const groups = boardingReservations.map((reservation) => {
+    const summary = buildReservationSummary(locationId, subdomain, reservation, date);
+    const stayStart = summary.check_in_date || date;
+    const stayEnd = summary.check_out_date || date;
+    const notes = (allEntries || [])
+      .filter((entry) => noteBelongsToReservation(entry, reservation))
+      .filter((entry) => isDateWithinInclusive(entry.note_date, stayStart, stayEnd || date))
+      .sort((left, right) => String(right.note_created_at || "").localeCompare(String(left.note_created_at || "")));
+    return { ...summary, notes, note_count: notes.length };
+  });
+
+  const groupsWithNotes = groups
+    .filter((group) => group.note_count > 0)
+    .sort((left, right) => {
+      if (left.is_checkout_today !== right.is_checkout_today) return left.is_checkout_today ? -1 : 1;
+      const checkoutComparison = String(left.check_out_date || "").localeCompare(String(right.check_out_date || ""));
+      if (checkoutComparison !== 0) return checkoutComparison;
+      return String(left.dog_name || "").localeCompare(String(right.dog_name || ""));
+    });
+
+  return {
+    groups: groupsWithNotes,
+    summary: {
+      total_reservations: groups.length,
+      reservations_with_notes: groupsWithNotes.length,
+      reservations_without_notes: Math.max(0, groups.length - groupsWithNotes.length),
+      checkout_today_count: groups.filter((group) => group.is_checkout_today).length,
+      checkout_today_with_notes: groupsWithNotes.filter((group) => group.is_checkout_today).length,
+    },
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -550,13 +834,21 @@ Deno.serve(async (req: Request) => {
     };
     const gingrLocationId = firstText(gingrConfig.gingr_location_id, "1");
     const isToday = date === nowEtDate();
+    const contextStartDate = addDaysToDateString(date, -45);
+    const contextEndDate = addDaysToDateString(date, 45);
 
-    const [dateRangeReservationResult, checkedInReservationResult] = await Promise.all([
+    const [dateRangeReservationResult, contextReservationResult, checkedInReservationResult] = await Promise.all([
       gingrFetchV1(
         credentials,
         "reservations",
         "POST",
         { start_date: date, end_date: date },
+      ),
+      gingrFetchV1(
+        credentials,
+        "reservations",
+        "POST",
+        { start_date: contextStartDate, end_date: contextEndDate },
       ),
       isToday
         ? gingrFetchV1(
@@ -569,18 +861,22 @@ Deno.serve(async (req: Request) => {
     ]);
 
     const dateRangeReservations = normalizeReservationCollection(dateRangeReservationResult);
+    const contextReservations = normalizeReservationCollection(contextReservationResult);
     const checkedInReservations = normalizeReservationCollection(checkedInReservationResult);
-    const liveReservations = mergeReservations(dateRangeReservations, checkedInReservations);
+    const liveReservations = mergeReservations(dateRangeReservations, contextReservations, checkedInReservations)
+      .filter((reservation) => reservationTouchesDate(reservation, date));
 
     const { data: cachedReservations, error: cachedReservationError } = await sb
       .from("gingr_reservations")
-      .select("gingr_id, owner_gingr_id, animal_gingr_id, owner_first_name, owner_last_name, animal_name, start_date, end_date, check_in_date, check_out_date, raw_data")
+      .select("gingr_id, owner_gingr_id, animal_gingr_id, owner_first_name, owner_last_name, animal_name, reservation_type_id, reservation_type_name, room_assignment, start_date, end_date, check_in_date, check_out_date, raw_data")
       .eq("location_id", canonicalLocationId)
       .or(`and(start_date.lte.${date},end_date.gte.${date}),check_in_date.eq.${date},check_out_date.eq.${date}`);
 
     if (cachedReservationError) throw cachedReservationError;
 
-    const subjectContexts = buildSubjectContexts([...liveReservations, ...(cachedReservations || [])]);
+    const activeReservationPool = mergeReservations(liveReservations, cachedReservations || [])
+      .filter((reservation) => reservationTouchesDate(reservation, date));
+    const subjectContexts = buildSubjectContexts(activeReservationPool);
     const cookies = subjectContexts.length > 0 ? await gingrWebLogin(credentials.subdomain, credentials.apiKey) : "";
     const noteResults = cookies
       ? await mapWithConcurrency(
@@ -590,7 +886,8 @@ Deno.serve(async (req: Request) => {
       )
       : [];
 
-    const noteEntries: any[] = [];
+    const dailyNoteEntries: any[] = [];
+    const allSubjectNoteEntries: any[] = [];
     const noteFetchErrors: any[] = [];
     let rawNoteCount = 0;
 
@@ -609,13 +906,17 @@ Deno.serve(async (req: Request) => {
       for (const row of result.rows) {
         const entry = await buildNoteEntryFromRow(
           canonicalLocationId,
-          date,
+          null,
+          credentials.subdomain,
           result.subject,
           row,
           result.noteTypes,
           "gingr_browser_employee_notes",
         );
-        if (entry) noteEntries.push(entry);
+        if (entry) {
+          allSubjectNoteEntries.push(entry);
+          if (entry.note_date === date) dailyNoteEntries.push(entry);
+        }
       }
     }
 
@@ -623,23 +924,33 @@ Deno.serve(async (req: Request) => {
       throw new Error(`Failed to fetch Gingr notes for all ${noteResults.length} subjects. First error: ${noteFetchErrors[0]?.error || "unknown error"}`);
     }
 
-    const uniqueEntries = Array.from(new Map(noteEntries.map((entry) => [entry.id, entry])).values())
+    const uniqueEntries = Array.from(new Map(dailyNoteEntries.map((entry) => [entry.id, entry])).values())
       .sort((left, right) => {
         const createdComparison = String(right.note_created_at || "").localeCompare(String(left.note_created_at || ""));
         if (createdComparison !== 0) return createdComparison;
         return String(left.subject_name || "").localeCompare(String(right.subject_name || ""));
       });
+    const uniqueAllSubjectEntries = Array.from(new Map(allSubjectNoteEntries.map((entry) => [entry.id, entry])).values());
+    const reservationGroupResult = buildReservationGroups(canonicalLocationId, credentials.subdomain, activeReservationPool, uniqueAllSubjectEntries, date);
+    const noteTypes = mergeNoteTypes(noteResults as SubjectNotesResult[], uniqueEntries);
     const payload = {
       refreshed_at: new Date().toISOString(),
       location_id: canonicalLocationId,
       requested_location_id: requestedLocationId,
       summary: buildSummary(uniqueEntries),
+      note_types: noteTypes,
+      reservation_groups: reservationGroupResult.groups,
+      reservation_group_summary: reservationGroupResult.summary,
       diagnostics: {
         source: "gingr_browser_employee_notes",
+        context_start_date: contextStartDate,
+        context_end_date: contextEndDate,
         date_range_reservation_count: dateRangeReservations.length,
+        context_reservation_count: contextReservations.length,
         checked_in_reservation_count: checkedInReservations.length,
         live_reservation_count: liveReservations.length,
         cached_reservation_count: (cachedReservations || []).length,
+        active_reservation_count: activeReservationPool.length,
         subject_count: subjectContexts.length,
         dog_subject_count: subjectContexts.filter((subject) => subject.kind === "dog").length,
         owner_subject_count: subjectContexts.filter((subject) => subject.kind === "owner").length,
