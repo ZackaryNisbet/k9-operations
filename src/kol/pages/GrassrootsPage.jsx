@@ -77,6 +77,15 @@ const SHEETS = [
   },
 ];
 
+const LONG_TEXT_KEYS = new Set(["notes", "proposal", "nextStep"]);
+const TITLE_KEYS_BY_SHEET = {
+  events: ["event", "organizer", "type"],
+  drops: ["business", "personInteractedWith"],
+  corporatePartnerships: ["corporation", "firstName", "lastName"],
+  apartments: ["apartmentComplex", "status"],
+  petProfessionalPartnerships: ["business", "firstName", "lastName"],
+};
+
 function makeBlankRow(columns) {
   return columns.reduce((acc, column) => {
     acc[column.key] = "";
@@ -108,6 +117,153 @@ function EmptyState({ title, subtitle, action }) {
           {action}
         </div>
       )}
+    </Card>
+  );
+}
+
+function getRowTitle(sheetId, row, index) {
+  const titleKeys = TITLE_KEYS_BY_SHEET[sheetId] || [];
+  const title = titleKeys
+    .map((key) => String(row?.[key] || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return title || `New ${String(sheetId || "entry").replace(/([A-Z])/g, " $1").toLowerCase()} #${index + 1}`;
+}
+
+function getRowMeta(columns, row) {
+  return columns
+    .filter((column) => !LONG_TEXT_KEYS.has(column.key))
+    .map((column) => String(row?.[column.key] || "").trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" • ");
+}
+
+function FieldEditor({ column, value, onChange }) {
+  const longText = LONG_TEXT_KEYS.has(column.key);
+  const inputStyle = {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "11px 12px",
+    borderRadius: 12,
+    border: `1px solid ${C.border}`,
+    background: "#fff",
+    color: C.text,
+    fontSize: 14,
+    fontFamily: "inherit",
+    outline: "none",
+    boxShadow: "inset 0 1px 2px rgba(15,23,42,0.04)",
+  };
+
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 7, gridColumn: longText ? "1 / -1" : "auto" }}>
+      <span style={{ fontSize: 11, fontWeight: 800, color: C.textMut, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        {column.label}
+      </span>
+      {longText ? (
+        <textarea
+          value={value || ""}
+          onChange={(event) => onChange(event.target.value)}
+          rows={3}
+          placeholder={`Add ${column.label.toLowerCase()}`}
+          style={{ ...inputStyle, minHeight: 92, resize: "vertical", lineHeight: 1.45 }}
+        />
+      ) : (
+        <input
+          type={column.type === "date" ? "date" : "text"}
+          value={value || ""}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={column.type === "date" ? undefined : column.label}
+          style={inputStyle}
+        />
+      )}
+    </label>
+  );
+}
+
+function TrackerRowCard({ sheet, row, index, onChange, onDelete }) {
+  const rowTitle = getRowTitle(sheet.id, row, index);
+  const rowMeta = getRowMeta(sheet.columns, row);
+
+  return (
+    <Card
+      style={{
+        padding: 0,
+        overflow: "hidden",
+        border: `1px solid ${C.border}`,
+        boxShadow: "0 14px 32px rgba(15,23,42,0.07)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 14,
+          padding: "16px 18px",
+          background: `linear-gradient(135deg, ${C.bg} 0%, #ffffff 72%)`,
+          borderBottom: `1px solid ${C.borderLight}`,
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 12,
+              display: "grid",
+              placeItems: "center",
+              background: C.pri,
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 900,
+              boxShadow: "0 10px 22px rgba(20,83,45,0.18)",
+              flexShrink: 0,
+            }}
+          >
+            {index + 1}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 850, color: C.text, letterSpacing: "-0.01em" }}>
+              {rowTitle}
+            </div>
+            <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, lineHeight: 1.5 }}>
+              {rowMeta || "Fill the fields below. Autosave starts after your first edit."}
+            </div>
+          </div>
+        </div>
+        <Btn
+          variant="ghost"
+          size="sm"
+          icon={<I.Trash />}
+          onClick={onDelete}
+          style={{
+            color: C.dan,
+            background: C.danLt,
+            flexShrink: 0,
+          }}
+        >
+          Delete
+        </Btn>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 14,
+          padding: 18,
+        }}
+      >
+        {sheet.columns.map((column) => (
+          <FieldEditor
+            key={column.key}
+            column={column}
+            value={row[column.key]}
+            onChange={(value) => onChange(column.key, value)}
+          />
+        ))}
+      </div>
     </Card>
   );
 }
@@ -238,7 +394,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     const nextRow = makeBlankRow(activeSheetConfig.columns);
     setTracker((prev) => ({
       ...prev,
-      [activeSheet]: [...(prev[activeSheet] || []), nextRow],
+      [activeSheet]: [nextRow, ...(prev[activeSheet] || [])],
     }));
   };
 
@@ -386,52 +542,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           )}
         />
       ) : (
-        <Card style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: Math.max(760, activeSheetConfig.columns.length * 170) }}>
-              <thead>
-                <tr style={{ background: C.bg }}>
-                  {activeSheetConfig.columns.map((column) => (
-                    <th key={column.key} style={{ padding: "12px 14px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, textAlign: "left" }}>
-                      {column.label}
-                    </th>
-                  ))}
-                  <th style={{ padding: "12px 14px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, textAlign: "left" }}>
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id}>
-                    {activeSheetConfig.columns.map((column) => (
-                      <td key={column.key} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, verticalAlign: "top" }}>
-                        {column.label === "Notes" || column.label === "Proposal" || column.label === "Next Step" ? (
-                          <textarea
-                            value={row[column.key] || ""}
-                            onChange={(event) => updateCell(activeSheet, row.id, column.key, event.target.value)}
-                            rows={3}
-                            style={{ width: "100%", minWidth: 180, padding: "9px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical" }}
-                          />
-                        ) : (
-                          <input
-                            type={column.type === "date" ? "date" : "text"}
-                            value={row[column.key] || ""}
-                            onChange={(event) => updateCell(activeSheet, row.id, column.key, event.target.value)}
-                            style={{ width: "100%", minWidth: 140, padding: "9px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }}
-                          />
-                        )}
-                      </td>
-                    ))}
-                    <td style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, verticalAlign: "top" }}>
-                      <Btn variant="ghost" onClick={() => deleteRow(activeSheet, row.id)} style={{ color: C.dan }}>Delete</Btn>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <div style={{ display: "grid", gap: 14 }}>
+          {rows.map((row, index) => (
+            <TrackerRowCard
+              key={row.id}
+              sheet={activeSheetConfig}
+              row={row}
+              index={index}
+              onChange={(key, value) => updateCell(activeSheet, row.id, key, value)}
+              onDelete={() => deleteRow(activeSheet, row.id)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
