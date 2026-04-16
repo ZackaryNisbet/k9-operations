@@ -3,8 +3,13 @@
 import { readFileSync } from "fs";
 
 const SUPABASE_URL = "https://xuzvqcpthqikyroqhypw.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_secret_4TuMsmxryVzBR0ojYhF7Tg_uUb5v_eN";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const LOCATION_ID = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
+
+if (!SUPABASE_KEY) {
+  console.error("SUPABASE_SERVICE_ROLE_KEY is required to seed inventory_catalog.");
+  process.exit(1);
+}
 
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
