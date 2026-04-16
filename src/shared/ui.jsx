@@ -339,7 +339,7 @@ function Inp({label,value,onChange,type="text",placeholder,required,style={},opt
   return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
 }
 
-function CalendarPicker({ label, value, onChange, required, disabled, min, max, extraContent }) {
+function CalendarPicker({ label, value, onChange, required, disabled, min, max, extraContent, reserveSpace = false }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState("days");
   const [typedVal, setTypedVal] = useState("");
@@ -408,7 +408,8 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
     if (e.key === "Escape") { setIsTyping(false); setTypedVal(""); inputRef.current?.blur(); }
   };
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref}>
+      <div style={{ position: "relative" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>{label}{required && <span style={{ color: C.dan }}> *</span>}</div>
       <div style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${open || isTyping ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border 0.15s", boxSizing: "border-box", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
@@ -461,6 +462,8 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
           </>}
         </div>
       )}
+      </div>
+      {open && reserveSpace && <div aria-hidden="true" style={{ height: 330 }} />}
     </div>
   );
 }

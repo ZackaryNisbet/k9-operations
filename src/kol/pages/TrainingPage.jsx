@@ -13,6 +13,8 @@ import {
   COMPLETED_TRAINING_RECORD_STATUSES,
   buildCreateLaborEmployeeRpcArgs,
   buildCreateTrainingRecordRpcArgs,
+  buildLaborEmployeeContactCardFile,
+  buildLaborEmployeeContactCardFilename,
   buildLaborDashboardMetrics,
   buildUpdateLaborEmployeeRpcArgs,
   buildUpdateTrainingRecordConfigArgs,
@@ -23,6 +25,7 @@ import {
   groupTrainingNotes,
   isLaborEmployeeActive,
   normalizeOptionalUuid,
+  readLaborEmployeeContactValue,
   resolveTrainingLocationId,
 } from "../trainingData";
 import AttendanceTrackerPage from "./AttendancePage";
@@ -111,7 +114,7 @@ function normalizeLaborContactPhone(value) {
 }
 
 function readLaborEmployeeContact(employee, key) {
-  return String(employee?.metadata?.[key] || employee?.[key] || "").trim();
+  return readLaborEmployeeContactValue(employee, key);
 }
 
 function buildUpdatedLaborMetadata(existingMetadata = {}, { email, phone }) {
@@ -198,6 +201,18 @@ export function getLaborEmployeeRowId(row = {}) {
 export function getTrainingRecordEmployeeId(record = {}) {
   if (!isObjectRow(record)) return null;
   return record.labor_employee_id || record.employee_id || null;
+}
+
+function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 export function isTrainingRecordForEmployee(record = {}, employee = {}) {
@@ -361,7 +376,7 @@ export function applyLaborRosterFilters(rows, filters) {
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export default function TrainingPage({ data, save, nav, profile, addGlobalToast }) {
+export default function TrainingPage({ data, save, nav, profile, addGlobalToast, locationName }) {
   const [tab, setTab] = useState("home");
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
@@ -478,6 +493,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [globalNoteType, setGlobalNoteType] = useState("general");
   const [globalNoteText, setGlobalNoteText] = useState("");
   const [savingGlobalNote, setSavingGlobalNote] = useState(false);
+  const [contactCardDownloadKey, setContactCardDownloadKey] = useState("");
   const [noteFilterEmployeeId, setNoteFilterEmployeeId] = useState("");
   const [noteFilterSource, setNoteFilterSource] = useState("all");
   const [noteFilterType, setNoteFilterType] = useState("all");
@@ -508,6 +524,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
 
   const locationRef = profile?.location_id || data?.locationId || "";
   const laborLocationRef = resolvedLaborLocationId || locationRef || "";
+  const laborContactLocationName = String(locationName || data?.locationName || profile?.location_name || "K9 Operations").trim();
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const canManageTemplates = hasLeanPermission(profile, "Checklist Templates");
@@ -2683,6 +2700,116 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
       return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) * direction;
     });
 	  }, [positionHierarchyIndex, rosterSort, visibleRosterRows]);
+  const activeContactCardEmployees = useMemo(() => {
+    const seen = new Set();
+    return preparedRosterRows
+      .filter((row) => isLaborEmployeeActive(row))
+      .map((row) => {
+        const employeeId = getLaborEmployeeRowId(row);
+        const canonicalEmployee = laborEmployeeMap[employeeId] || {};
+        return {
+          ...canonicalEmployee,
+          ...row,
+          id: employeeId || row.id,
+          labor_employee_id: employeeId || row.labor_employee_id,
+          metadata: canonicalEmployee.metadata || row.metadata || {},
+        };
+      })
+      .filter((employee) => {
+        const key = getLaborEmployeeRowId(employee) || normalizeEmployeeName(employee.full_name);
+        if (!key || seen.has(key) || !String(employee.full_name || "").trim()) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [laborEmployeeMap, preparedRosterRows]);
+  const recordLaborContactCardDownload = useCallback(async ({ employees = [], mode = "single" }) => {
+    const employeeRows = toObjectRows(employees);
+    if (!laborLocationRef || employeeRows.length === 0) {
+      return { error: new Error("Missing employee or location for contact-card audit") };
+    }
+
+    const employeeNames = employeeRows
+      .map((employee) => String(employee.full_name || employee.name || "").trim())
+      .filter(Boolean);
+    const detailRows = [
+      { field: "Export Format", oldVal: "—", newVal: "VCF contact card" },
+      { field: "Export Scope", oldVal: "—", newVal: mode === "bulk" ? "All active employees" : "Single employee" },
+      { field: "Employee Count", oldVal: "—", newVal: String(employeeRows.length) },
+      { field: "Location", oldVal: "—", newVal: laborContactLocationName || "K9 Operations" },
+      { field: "Included Fields", oldVal: "—", newVal: "Name, phone, email, position, location, start date, active status" },
+    ];
+    if (employeeNames.length > 0) {
+      detailRows.push({
+        field: mode === "bulk" ? "Employees" : "Employee",
+        oldVal: "—",
+        newVal: mode === "bulk" && employeeNames.length > 12
+          ? `${employeeNames.slice(0, 12).join(", ")} and ${employeeNames.length - 12} more`
+          : employeeNames.join(", "),
+      });
+    }
+
+    return supabase.from("lite_audit_log").insert({
+      location_id: laborLocationRef,
+      timestamp: new Date().toISOString(),
+      user_id: actorUserId,
+      user_name: actorName,
+      action: mode === "bulk" ? "Bulk Downloaded Labor Contact Cards" : "Downloaded Labor Contact Card",
+      resource_type: mode === "bulk" ? "labor_employee_bulk_export" : "labor_employee",
+      resource_id: mode === "bulk" ? null : getLaborEmployeeRowId(employeeRows[0]),
+      details: detailRows,
+    });
+  }, [actorName, actorUserId, laborContactLocationName, laborLocationRef]);
+  const handleDownloadLaborContactCard = useCallback(async (employee) => {
+    const employeeRow = employee || selectedLaborEmployeeView;
+    if (!employeeRow || !String(employeeRow.full_name || "").trim()) {
+      addGlobalToast("No employee contact card is available for this record", "error");
+      return;
+    }
+    const employeeKey = getLaborEmployeeRowId(employeeRow) || normalizeEmployeeName(employeeRow.full_name);
+    setContactCardDownloadKey(`single:${employeeKey}`);
+    const { error } = await recordLaborContactCardDownload({ employees: [employeeRow], mode: "single" });
+    if (error) {
+      console.error("Labor contact-card audit failed:", error);
+      addGlobalToast("Contact card was not downloaded because audit logging failed", "error");
+      setContactCardDownloadKey("");
+      return;
+    }
+
+    const content = buildLaborEmployeeContactCardFile([employeeRow], {
+      locationName: laborContactLocationName,
+    });
+    const filename = buildLaborEmployeeContactCardFilename(employeeRow, {
+      locationName: laborContactLocationName,
+    });
+    downloadTextFile(filename, content, "text/vcard;charset=utf-8");
+    setContactCardDownloadKey("");
+    addGlobalToast("Contact card downloaded", "success");
+  }, [addGlobalToast, laborContactLocationName, recordLaborContactCardDownload, selectedLaborEmployeeView]);
+  const handleDownloadActiveLaborContactCards = useCallback(async () => {
+    if (activeContactCardEmployees.length === 0) {
+      addGlobalToast("No active employees are available to export", "error");
+      return;
+    }
+    setContactCardDownloadKey("bulk");
+    const { error } = await recordLaborContactCardDownload({ employees: activeContactCardEmployees, mode: "bulk" });
+    if (error) {
+      console.error("Labor bulk contact-card audit failed:", error);
+      addGlobalToast("Active contact cards were not downloaded because audit logging failed", "error");
+      setContactCardDownloadKey("");
+      return;
+    }
+
+    const content = buildLaborEmployeeContactCardFile(activeContactCardEmployees, {
+      locationName: laborContactLocationName,
+    });
+    const filename = buildLaborEmployeeContactCardFilename({}, {
+      locationName: laborContactLocationName,
+      bulk: true,
+    });
+    downloadTextFile(filename, content, "text/vcard;charset=utf-8");
+    setContactCardDownloadKey("");
+    addGlobalToast(`${activeContactCardEmployees.length} active contact card${activeContactCardEmployees.length === 1 ? "" : "s"} downloaded`, "success");
+  }, [activeContactCardEmployees, addGlobalToast, laborContactLocationName, recordLaborContactCardDownload]);
   const hasRosterEmployeesInGraceWindow = useMemo(() => {
     return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
   }, [visibleRosterRows]);
@@ -3325,6 +3452,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <Btn
+                variant="secondary"
+                size="sm"
+                icon={<I.Download />}
+                onClick={() => handleDownloadLaborContactCard(selectedLaborEmployeeView)}
+                disabled={contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}`}
+              >
+                {contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}` ? "Downloading..." : "Download Contact Card"}
+              </Btn>
               <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>
               <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeKey, tab: "history" })} disabled={!selectedLaborEmployeeKey}>Attendance</Btn>
               {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
@@ -4303,6 +4439,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                 onClick={() => setShowRosterFilterPanel((current) => !current)}
               >
                 Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}
+              </Btn>
+              <Btn
+                variant="secondary"
+                size="sm"
+                icon={<I.Download />}
+                onClick={handleDownloadActiveLaborContactCards}
+                disabled={contactCardDownloadKey === "bulk" || activeContactCardEmployees.length === 0}
+              >
+                {contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}
               </Btn>
 	              {showInlineLaborEmployeeComposer ? (
                 <Btn variant="ghost" size="sm" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
