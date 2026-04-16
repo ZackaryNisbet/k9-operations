@@ -44,11 +44,11 @@
       "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "gingr-today-notes": {
-      "commit": "e6e0c33cb0cc862073dc3f1069adc5cad159ea07",
+      "commit": "4154ad5d381d52b159bec53d71f0c7c11e0c72d1",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Disable gateway JWT verification and validate Gingr notes auth in-function",
-      "updatedAt": "2026-04-16T19:27:42.710Z"
+      "note": "Fix historical Gingr notes date scoping and stale refresh state",
+      "updatedAt": "2026-04-16T19:38:02.054Z"
     }
   }
 }
