@@ -113,6 +113,7 @@ function cleanNoteText(value) {
       .replace(/^\s*(?:>\s*)+/, "")
       .replace(/\s*(?:>\s*)+$/, "")
       .replace(/\s+>\s*(?=[A-Za-z0-9])/g, " ")
+      .replace(/\s+>\s*(?=[,.;:!?)]|$)/g, "")
       .trim())
     .filter(Boolean)
     .join("\n")
