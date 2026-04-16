@@ -44,11 +44,11 @@
       "updatedAt": "2026-04-14T02:46:41.138Z"
     },
     "gingr-today-notes": {
-      "commit": "e9ccb13948b7df6dedd83d174b6c0c87576fee4a",
+      "commit": "48cdb0faf0034dc388718544fae08004f29deaf3",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Strip remaining isolated Gingr note quote markers",
-      "updatedAt": "2026-04-16T19:40:56.112Z"
+      "note": "Allow scheduled today notes cache warming and preserve cached historical reads",
+      "updatedAt": "2026-04-16T20:17:05.677Z"
     }
   }
 }

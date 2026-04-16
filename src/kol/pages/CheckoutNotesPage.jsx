@@ -1013,7 +1013,7 @@ export default function CheckoutNotesPage({ nav, profile, addGlobalToast = () =>
           <p style={{ margin: "5px 0 0", fontSize: 13, color: C.textMut, lineHeight: 1.45 }}>
             {viewMode === "flagged"
               ? "Flagged owner and dog notes that still need follow-up."
-              : `${fmtDate(selectedDate)} - ${liveRefreshAvailable ? "syncing owner and dog note history from Gingr." : "showing cached notes while live sync needs attention."}`}
+              : `${fmtDate(selectedDate)} - ${liveRefreshAvailable ? `${refreshing ? "syncing" : "showing"} owner and dog note history from Gingr.` : "showing cached notes while live sync needs attention."}`}
           </p>
           {refreshedAt && viewMode !== "flagged" ? (
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 7 }}>Last refreshed {formatTimestamp(refreshedAt)}</div>
