@@ -16,6 +16,13 @@
       "payload": { "sync_type": "today-sync", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
     },
     {
+      "jobname": "gingr-today-notes-refresh",
+      "schedule": "*/5 * * * *",
+      "auth": "vault",
+      "function": "gingr-today-notes",
+      "payload": { "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
+    },
+    {
       "jobname": "gingr-incremental-sync",
       "schedule": "*/15 * * * *",
       "auth": "vault",
