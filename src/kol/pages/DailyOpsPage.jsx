@@ -1343,7 +1343,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const dogs = (bathingEntry.computed_items.dogs || []).map(d => {
         const resId = `g${d.gingrReservationId}`;
         const info = newCompleted[resId] || null;
-        return { ...d, isDone: !!info || !!d.isDone, completedBy: info?.by || d.completedBy || "", completedAt: info?.at || d.completedAt || "" };
+        return { ...d, isDone: !!info, completedBy: info?.by || "", completedAt: info?.at || "" };
       });
       const completedCount = dogs.filter(d => d.isDone).length;
       await supabase.from("lite_daily_ops").update({
@@ -2656,6 +2656,54 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         }
       });
   }, [sub, svcName, viewDate, profile?.location_id, getGenericServiceSettingKey]);
+
+  useEffect(() => {
+    if (!profile?.location_id || !viewDate) return undefined;
+
+    const applyBelongingsValue = (value) => {
+      const nextValue = value || {};
+      setBelongingsCompleted(nextValue);
+      const mText = {};
+      Object.entries(nextValue).forEach(([key, completion]) => {
+        if (completion && completion.missingItems) mText[key] = completion.missingItems;
+      });
+      setMissingItemsText(mText);
+    };
+
+    const handlers = new Map([
+      [`ops_bathing_${viewDate}`, (value) => setBathCompleted(value || {})],
+      [`ops_pamper_${viewDate}`, (value) => setPamperCompleted(value || {})],
+      [`ops_belongings_completions_${viewDate}`, applyBelongingsValue],
+      [`ops_collars_completions_${viewDate}`, (value) => setCollarsCompleted(value || {})],
+      [`ops_lodging_transfer_completions_${viewDate}`, (value) => setTransfersCompleted(value || {})],
+    ]);
+
+    if (svcName) {
+      handlers.set(getGenericServiceSettingKey(svcName, viewDate), (value) => setGenericSvcCompleted(value || {}));
+    }
+
+    const channel = supabase
+      .channel(`daily-ops-settings-${profile.location_id}-${viewDate}-${sub || "all"}-${svcName || ""}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "lite_settings",
+          filter: `location_id=eq.${profile.location_id}`,
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old;
+          const handler = handlers.get(row?.setting_key);
+          if (handler) handler(payload?.new?.setting_value || {});
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.location_id, viewDate, sub, svcName, getGenericServiceSettingKey]);
 
   const saveGenericSvcCompleted = async (newCompleted) => {
     setGenericSvcCompleted(newCompleted);
