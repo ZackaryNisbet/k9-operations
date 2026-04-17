@@ -82,6 +82,10 @@ export interface RoomCleaningOccupant {
   reservation_type: string;
   start_date: string;
   end_date: string;
+  scheduled_check_in_at: string;
+  scheduled_check_out_at: string;
+  check_in_at: string | null;
+  check_out_at: string | null;
   day_number: number;
   total_nights: number;
   photo_url: string | null;
@@ -224,6 +228,10 @@ interface ReservationContext {
   reservationType: string;
   startDate: string;
   endDate: string;
+  startDateTime: string;
+  endDateTime: string;
+  checkInDateTime: string | null;
+  checkOutDateTime: string | null;
   checkOutDate: string | null;
   totalNights: number;
   dayNumber: number;
@@ -586,6 +594,10 @@ function buildOccupant(ctx: ReservationContext): RoomCleaningOccupant {
     reservation_type: ctx.reservationType,
     start_date: ctx.startDate,
     end_date: ctx.endDate,
+    scheduled_check_in_at: ctx.startDateTime || ctx.startDate,
+    scheduled_check_out_at: ctx.endDateTime || ctx.endDate,
+    check_in_at: ctx.checkInDateTime || ctx.startDateTime || ctx.startDate,
+    check_out_at: ctx.checkOutDateTime || ctx.endDateTime || ctx.endDate,
     day_number: ctx.dayNumber,
     total_nights: ctx.totalNights,
     photo_url: ctx.photoUrl,
@@ -593,6 +605,19 @@ function buildOccupant(ctx: ReservationContext): RoomCleaningOccupant {
     suggested_bowl_size: ctx.suggestedBowlSize,
     setup_reason: ctx.setupReason,
     room_resolution_status: ctx.resolvedRoom?.resolutionStatus || "not_assigned_in_gingr",
+  };
+}
+
+function buildReservationTimingSupport(ctx: ReservationContext) {
+  return {
+    start_date: ctx.startDate,
+    end_date: ctx.endDate,
+    scheduled_check_in_at: ctx.startDateTime || ctx.startDate,
+    scheduled_check_out_at: ctx.endDateTime || ctx.endDate,
+    check_in_at: ctx.checkInDateTime || ctx.startDateTime || ctx.startDate,
+    check_out_at: ctx.checkOutDateTime || ctx.endDateTime || ctx.endDate,
+    actual_check_in_at: ctx.checkInDateTime,
+    actual_check_out_at: ctx.checkOutDateTime,
   };
 }
 
@@ -856,6 +881,10 @@ export function buildRoomCleaningPayload(
       reservationType: assignment.reservation_type_name,
       startDate,
       endDate,
+      startDateTime: assignment.start_date || startDate,
+      endDateTime: assignment.end_date || endDate,
+      checkInDateTime: assignment.check_in_date || null,
+      checkOutDateTime: assignment.check_out_date || null,
       checkOutDate: normalizeDate(assignment.check_out_date),
       totalNights,
       dayNumber,
@@ -977,6 +1006,10 @@ export function buildRoomCleaningPayload(
           occupant_count: occupants.length,
           start_date: occupants[0]?.start_date || "",
           end_date: occupants[0]?.end_date || "",
+          scheduled_check_in_at: occupants[0]?.scheduled_check_in_at || "",
+          scheduled_check_out_at: occupants[0]?.scheduled_check_out_at || "",
+          check_in_at: occupants[0]?.check_in_at || null,
+          check_out_at: occupants[0]?.check_out_at || null,
           room_scope: true,
         },
         setup_reason: null,
@@ -1015,6 +1048,10 @@ export function buildRoomCleaningPayload(
           occupant_count: occupants.length,
           start_date: occupants[0]?.start_date || "",
           end_date: occupants[0]?.end_date || "",
+          scheduled_check_in_at: occupants[0]?.scheduled_check_in_at || "",
+          scheduled_check_out_at: occupants[0]?.scheduled_check_out_at || "",
+          check_in_at: occupants[0]?.check_in_at || null,
+          check_out_at: occupants[0]?.check_out_at || null,
           room_scope: true,
         },
         setup_reason: null,
@@ -1058,8 +1095,7 @@ export function buildRoomCleaningPayload(
         classification_bucket: classificationBucket,
         rationale: buildTaskRationale("setup", [occupant], blockedByTaskId),
         supporting_data: {
-          start_date: ctx.startDate,
-          end_date: ctx.endDate,
+          ...buildReservationTimingSupport(ctx),
           check_out_date: ctx.checkOutDate,
           reservation_type: ctx.reservationType,
           reservation_status: ctx.sameDayStay
@@ -1109,8 +1145,7 @@ export function buildRoomCleaningPayload(
           classification_bucket: classificationBucket,
           rationale: buildTaskRationale("sanitize", [occupant], null),
           supporting_data: {
-            start_date: ctx.startDate,
-            end_date: ctx.endDate,
+            ...buildReservationTimingSupport(ctx),
             check_out_date: ctx.checkOutDate,
             reservation_type: ctx.reservationType,
             reservation_status: "departing_today",
