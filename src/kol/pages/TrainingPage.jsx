@@ -11,23 +11,41 @@ import { hasLeanPermission } from "../../shared/permissions";
 import {
   ACTIVE_TRAINING_RECORD_STATUSES,
   COMPLETED_TRAINING_RECORD_STATUSES,
+  LABOR_EMPLOYEE_ATTACHMENT_ACCEPT,
+  LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+  LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
+  LABOR_TRAINING_REQUIREMENT_SLUGS,
+  buildEmployeeTrainingRequirementRows,
   buildCreateLaborEmployeeRpcArgs,
   buildCreateTrainingRecordRpcArgs,
+  buildEmployeeRecordMetricCards,
   buildLaborEmployeeContactCardFile,
   buildLaborEmployeeContactCardFilename,
+  buildLaborEmployeeAttachmentPath,
+  buildLaborEmployeeRequirementEvidencePath,
   buildLaborDashboardMetrics,
   buildUpdateLaborEmployeeRpcArgs,
   buildUpdateTrainingRecordConfigArgs,
   buildTrainingTemplateScopeClause,
+  formatLaborAttachmentFileSize,
   formatTrainingTimeRange,
   formatTrainingTimestamp,
+  getLaborAttachmentPreviewKind,
+  groupLaborEmployeeDocumentsByNote,
   groupLaborEmployeeNotes,
   groupTrainingNotes,
+  inferLaborAttachmentMimeType,
+  inferLaborTrainingRequirementEvidenceMimeType,
+  isLaborEmployeeDocumentDeleted,
   isLaborEmployeeActive,
   normalizeOptionalUuid,
   readLaborEmployeeContactValue,
   resolveTrainingLocationId,
+  summarizeEmployeeTrainingRequirementCompliance,
+  validateLaborEmployeeAttachmentFiles,
+  validateLaborTrainingRequirementEvidenceFile,
 } from "../trainingData";
+import { getAttendanceIncidentLabel } from "../attendanceData";
 import AttendanceTrackerPage from "./AttendancePage";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -248,6 +266,14 @@ function getDaysSince(dateValue) {
   return Math.floor((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+function addDaysToDateString(dateValue, days) {
+  if (!dateValue || !Number.isFinite(Number(days))) return "";
+  const date = new Date(`${dateValue}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setDate(date.getDate() + Number(days));
+  return date.toISOString().slice(0, 10);
+}
+
 function getTrainingComplianceState(row) {
   const cprCompliant = ["current", "due_soon"].includes(String(row?.cpr_status || ""));
   const completedTraining = Number(row?.completed_training_record_count || 0) > 0
@@ -293,13 +319,29 @@ function getReviewStatusPresentation(row, reviewKey) {
   return { label: formatLaborDate(dueDate), tone: C.suc, background: C.sucLt };
 }
 
-function getDueSoonLabel(value) {
-  const normalized = String(value || "").toLowerCase();
-  if (normalized === "current") return "Current";
-  if (normalized === "due_soon") return "Due Soon";
-  if (normalized === "expired") return "Expired";
-  if (normalized === "not_started") return "Not Started";
-  return normalized ? normalized.replace(/_/g, " ") : "Unknown";
+export function noteMatchesSearch(note = {}, query = "") {
+  const cleanQuery = String(query || "").trim().toLowerCase();
+  if (!cleanQuery) return true;
+  const searchableText = [
+    note.noteText,
+    note.note_text,
+    note.noteType,
+    note.note_type,
+    note.employeeName,
+    note.employee_name,
+    note.sourceLabel,
+    note.source_label,
+    note.sourceModule,
+    note.source_module,
+    note.createdByName,
+    note.created_by_name,
+    note.createdAt,
+    note.created_at,
+  ]
+    .filter((value) => value != null)
+    .join(" ")
+    .toLowerCase();
+  return searchableText.includes(cleanQuery);
 }
 
 export function applyLaborRosterFilters(rows, filters) {
@@ -408,6 +450,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [reviewInstances, setReviewInstances] = useState([]);
   const [reviewResponses, setReviewResponses] = useState([]);
   const [employeeCertifications, setEmployeeCertifications] = useState([]);
+  const [certificationRequirements, setCertificationRequirements] = useState([]);
   const [allTrainingNotes, setAllTrainingNotes] = useState([]);
   const [serverDashboardMetrics, setServerDashboardMetrics] = useState(null);
   const [resolvedLaborLocationId, setResolvedLaborLocationId] = useState("");
@@ -476,15 +519,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [newRosterEmployeeEndDate, setNewRosterEmployeeEndDate] = useState("");
   const [savingInlineLaborEmployee, setSavingInlineLaborEmployee] = useState(false);
   const [justCreatedLaborEmployeeId, setJustCreatedLaborEmployeeId] = useState(null);
+  const [employeeRecordTab, setEmployeeRecordTab] = useState("training");
   const [employeeNoteText, setEmployeeNoteText] = useState("");
   const [employeeNoteType, setEmployeeNoteType] = useState("general");
+  const [employeeNoteSearchText, setEmployeeNoteSearchText] = useState("");
+  const [employeeNoteFiles, setEmployeeNoteFiles] = useState([]);
+  const [employeeNoteFileErrors, setEmployeeNoteFileErrors] = useState([]);
   const [savingEmployeeNote, setSavingEmployeeNote] = useState(false);
-  const [showCprEditor, setShowCprEditor] = useState(false);
-  const [cprCompletedOn, setCprCompletedOn] = useState("");
-  const [cprExpiresOn, setCprExpiresOn] = useState("");
-  const [cprDocumentUrl, setCprDocumentUrl] = useState("");
-  const [cprSourceNote, setCprSourceNote] = useState("");
-  const [savingCpr, setSavingCpr] = useState(false);
+  const employeeNoteFileInputRef = useRef(null);
+  const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [previewingAttachmentId, setPreviewingAttachmentId] = useState(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
+  const [trainingRequirementEditor, setTrainingRequirementEditor] = useState(null);
+  const [trainingRequirementCompletedOn, setTrainingRequirementCompletedOn] = useState("");
+  const [trainingRequirementExpiresOn, setTrainingRequirementExpiresOn] = useState("");
+  const [trainingRequirementDocumentUrl, setTrainingRequirementDocumentUrl] = useState("");
+  const [trainingRequirementSourceNote, setTrainingRequirementSourceNote] = useState("");
+  const [trainingRequirementEvidenceFile, setTrainingRequirementEvidenceFile] = useState(null);
+  const [trainingRequirementEvidenceError, setTrainingRequirementEvidenceError] = useState("");
+  const [savingTrainingRequirement, setSavingTrainingRequirement] = useState(false);
+  const trainingRequirementFileInputRef = useRef(null);
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [savingReviewItemId, setSavingReviewItemId] = useState(null);
   const [completingReview, setCompletingReview] = useState(false);
@@ -498,6 +552,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [noteFilterSource, setNoteFilterSource] = useState("all");
   const [noteFilterType, setNoteFilterType] = useState("all");
   const [noteFilterDateRange, setNoteFilterDateRange] = useState("all");
+  const [noteSearchText, setNoteSearchText] = useState("");
   const [rosterSort, setRosterSort] = useState({ key: "hierarchy", direction: "asc" });
   const [showHierarchyManager, setShowHierarchyManager] = useState(false);
   const [savingHierarchy, setSavingHierarchy] = useState(false);
@@ -789,7 +844,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const employeeIds = toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean);
       const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
-      const [noteRes, documentRes, attendanceIncidentRes, reviewInstanceRes, certificationRes] = await Promise.all([
+      const [noteRes, documentRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
         employeeIds.length > 0
           ? supabase.from("labor_employee_notes").select("*").in("labor_employee_id", employeeIds).order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
@@ -805,6 +860,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         employeeIds.length > 0
           ? supabase.from("employee_certifications").select("*").in("labor_employee_id", employeeIds).order("completed_on", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
+        supabase
+          .from("certification_requirements")
+          .select("*")
+          .in("slug", Object.values(LABOR_TRAINING_REQUIREMENT_SLUGS))
+          .order("name", { ascending: true }),
       ]);
 
       if (noteRes.error) throw noteRes.error;
@@ -812,6 +872,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (attendanceIncidentRes.error) throw attendanceIncidentRes.error;
       if (reviewInstanceRes.error) throw reviewInstanceRes.error;
       if (certificationRes.error) throw certificationRes.error;
+      if (requirementRes.error) throw requirementRes.error;
 
       const reviewInstanceIds = (reviewInstanceRes.data || []).map((instance) => instance.id);
       const [responseRes, trainingNoteRes] = await Promise.all([
@@ -835,11 +896,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (trainingNoteRes.error) throw trainingNoteRes.error;
 
       setLaborEmployeeNotes(noteRes.data || []);
-      setLaborEmployeeDocuments(documentRes.data || []);
+      setLaborEmployeeDocuments((documentRes.data || []).filter((document) => !isLaborEmployeeDocumentDeleted(document)));
       setLaborAttendanceIncidents(attendanceIncidentRes.data || []);
       setReviewInstances(reviewInstanceRes.data || []);
       setReviewResponses(responseRes.data || []);
       setEmployeeCertifications(certificationRes.data || []);
+      setCertificationRequirements(requirementRes.data || []);
       setAllTrainingNotes(trainingNoteRes.data || []);
       setSupportBundleLoaded(true);
     } catch (err) {
@@ -871,10 +933,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [loadTrainingBundle, previewTemplateId, selectedRecordId, selectedReviewInstanceId, showNewRecord, tab]);
 
   useEffect(() => {
-    if (tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
+    if (tab === "home" || tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
       loadSupportBundle();
     }
   }, [loadSupportBundle, selectedLaborEmployeeId, selectedReviewInstanceId, tab]);
+
+  useEffect(() => {
+    setEmployeeRecordTab("training");
+    setEmployeeNoteText("");
+    setEmployeeNoteType("general");
+    setEmployeeNoteSearchText("");
+    setEmployeeNoteFiles([]);
+    setEmployeeNoteFileErrors([]);
+    setAttachmentPreview(null);
+    if (employeeNoteFileInputRef.current) employeeNoteFileInputRef.current.value = "";
+  }, [selectedLaborEmployeeId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [tab]);
 
   // Load record detail data when a record is selected
   useEffect(() => {
@@ -998,10 +1076,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (!selectedLaborEmployeeView?.id) return [];
     return toObjectRows(laborNotesByEmployee[selectedLaborEmployeeView.id] || []);
   }, [laborNotesByEmployee, selectedLaborEmployeeView]);
+  const filteredSelectedEmployeeNotes = useMemo(() => {
+    return selectedEmployeeNotes.filter((note) => noteMatchesSearch(note, employeeNoteSearchText));
+  }, [employeeNoteSearchText, selectedEmployeeNotes]);
   const selectedEmployeeDocuments = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     return toObjectRows(laborEmployeeDocuments).filter((document) => document.labor_employee_id === selectedLaborEmployeeView.id);
   }, [laborEmployeeDocuments, selectedLaborEmployeeView]);
+  const selectedEmployeeDocumentsByNote = useMemo(() => {
+    return groupLaborEmployeeDocumentsByNote(selectedEmployeeDocuments);
+  }, [selectedEmployeeDocuments]);
+  const selectedEmployeeUnlinkedDocuments = useMemo(() => {
+    return toObjectRows(selectedEmployeeDocumentsByNote.__unlinked__ || []);
+  }, [selectedEmployeeDocumentsByNote]);
   const selectedEmployeeReviewInstances = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     return toObjectRows(reviewInstances).filter((instance) => instance.labor_employee_id === selectedLaborEmployeeView.id);
@@ -1010,13 +1097,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (!selectedLaborEmployeeView?.id) return [];
     return toObjectRows(employeeCertifications).filter((row) => row.labor_employee_id === selectedLaborEmployeeView.id);
   }, [employeeCertifications, selectedLaborEmployeeView]);
-  const selectedEmployeeNotes30d = useMemo(() => {
-    const now = Date.now();
-    return selectedEmployeeNotes.filter((note) => {
-      const createdAt = note?.created_at ? new Date(note.created_at).getTime() : NaN;
-      return Number.isFinite(createdAt) && now - createdAt <= 30 * 24 * 60 * 60 * 1000;
+  const employeeCertificationsByEmployee = useMemo(() => {
+    return toObjectRows(employeeCertifications).reduce((acc, certification) => {
+      if (!certification?.labor_employee_id) return acc;
+      if (!acc[certification.labor_employee_id]) acc[certification.labor_employee_id] = [];
+      acc[certification.labor_employee_id].push(certification);
+      return acc;
+    }, {});
+  }, [employeeCertifications]);
+  const laborEmployeeDocumentsByEmployee = useMemo(() => {
+    return toObjectRows(laborEmployeeDocuments).reduce((acc, document) => {
+      if (!document?.labor_employee_id) return acc;
+      if (!acc[document.labor_employee_id]) acc[document.labor_employee_id] = [];
+      acc[document.labor_employee_id].push(document);
+      return acc;
+    }, {});
+  }, [laborEmployeeDocuments]);
+  const selectedEmployeeTrainingRequirementRows = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return [];
+    return buildEmployeeTrainingRequirementRows({
+      employee: selectedLaborEmployeeView,
+      certifications: selectedEmployeeCertifications,
+      requirements: certificationRequirements,
+      documents: selectedEmployeeDocuments,
     });
-  }, [selectedEmployeeNotes]);
+  }, [certificationRequirements, selectedEmployeeCertifications, selectedEmployeeDocuments, selectedLaborEmployeeView]);
+  const selectedEmployeeTrainingRequirementSummary = useMemo(() => {
+    return summarizeEmployeeTrainingRequirementCompliance(selectedEmployeeTrainingRequirementRows);
+  }, [selectedEmployeeTrainingRequirementRows]);
   const selectedEmployeeAttendanceIncidents30d = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     const now = Date.now();
@@ -1259,6 +1367,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const filteredGlobalNotes = useMemo(() => {
     const now = new Date();
     return globalNotesFeed.filter((note) => {
+      if (!noteMatchesSearch(note, noteSearchText)) return false;
       if (noteFilterEmployeeId && note.employeeId !== noteFilterEmployeeId) return false;
       if (noteFilterSource !== "all" && note.sourceModule !== noteFilterSource) return false;
       if (noteFilterType !== "all" && note.noteType !== noteFilterType) return false;
@@ -1272,7 +1381,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
       return true;
     });
-  }, [globalNotesFeed, noteFilterDateRange, noteFilterEmployeeId, noteFilterSource, noteFilterType]);
+  }, [globalNotesFeed, noteFilterDateRange, noteFilterEmployeeId, noteFilterSource, noteFilterType, noteSearchText]);
 
   // Role-filtered template options for new record
   const templateOptions = useMemo(() => {
@@ -1297,6 +1406,310 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       p_actor_name: actorName,
     });
   }, [actorName, actorUserId]);
+
+  const handleEmployeeNoteFileChange = useCallback((event) => {
+    const { acceptedFiles, errors } = validateLaborEmployeeAttachmentFiles(event.target.files);
+    setEmployeeNoteFiles(acceptedFiles);
+    setEmployeeNoteFileErrors(errors);
+    if (errors.length > 0) {
+      addGlobalToast(errors[0], "error");
+    }
+  }, [addGlobalToast]);
+
+  const handleRemoveEmployeeNoteFile = useCallback((fileIndex) => {
+    setEmployeeNoteFiles((prev) => prev.filter((_, index) => index !== fileIndex));
+    setEmployeeNoteFileErrors([]);
+    if (employeeNoteFileInputRef.current) employeeNoteFileInputRef.current.value = "";
+  }, []);
+
+  const uploadEmployeeNoteAttachments = useCallback(async ({ laborEmployeeId, noteId, files }) => {
+    const createdDocuments = [];
+    for (const file of files) {
+      const mimeType = inferLaborAttachmentMimeType(file);
+      const storagePath = buildLaborEmployeeAttachmentPath({
+        laborEmployeeId,
+        noteId,
+        fileName: file.name,
+      });
+
+      const { error: uploadError } = await supabase
+        .storage
+        .from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET)
+        .upload(storagePath, file, {
+          cacheControl: "3600",
+          contentType: mimeType,
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: insertedDocument, error: documentError } = await supabase
+        .from("labor_employee_documents")
+        .insert({
+          labor_employee_id: laborEmployeeId,
+          labor_employee_note_id: noteId,
+          document_type: "employee_note_attachment",
+          file_name: file.name || "attachment",
+          storage_bucket: LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+          storage_path: storagePath,
+          external_url: null,
+          mime_type: mimeType,
+          file_size_bytes: Number(file.size || 0),
+          metadata: {
+            source_module: "employee_notes",
+            original_file_name: file.name || "attachment",
+          },
+          uploaded_by_user_id: actorUserId,
+          uploaded_by_name: actorName,
+        })
+        .select("*")
+        .single();
+
+      if (documentError) throw documentError;
+      if (insertedDocument) createdDocuments.push(insertedDocument);
+    }
+    return createdDocuments;
+  }, [actorName, actorUserId]);
+
+  const handlePreviewEmployeeDocument = useCallback(async (document) => {
+    if (!document) return;
+    const previewKind = getLaborAttachmentPreviewKind(document);
+    if (previewKind === "unsupported") {
+      addGlobalToast("This attachment type cannot be previewed in the app", "error");
+      return;
+    }
+
+    setPreviewingAttachmentId(document.id);
+    try {
+      let previewUrl = document.external_url || "";
+      if (document.storage_path) {
+        const bucket = document.storage_bucket || LABOR_EMPLOYEE_ATTACHMENT_BUCKET;
+        const { data: signed, error } = await supabase
+          .storage
+          .from(bucket)
+          .createSignedUrl(document.storage_path, 300);
+        if (error) throw error;
+        previewUrl = signed?.signedUrl || "";
+      }
+
+      if (!previewUrl) {
+        addGlobalToast("Attachment preview is unavailable", "error");
+        return;
+      }
+
+      setAttachmentPreview({
+        document,
+        kind: previewKind,
+        url: previewUrl,
+      });
+    } catch (error) {
+      console.error("Employee attachment preview error:", error);
+      addGlobalToast("Failed to open attachment preview", "error");
+    } finally {
+      setPreviewingAttachmentId(null);
+    }
+  }, [addGlobalToast]);
+
+  const handleDeleteEmployeeDocument = useCallback(async (document) => {
+    if (!document?.id || String(document.id).startsWith("requirement-url-")) return;
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm("Remove this attachment from the active employee record? The historical upload record will stay in the audit trail.");
+    if (!confirmed) return;
+
+    setDeletingAttachmentId(document.id);
+    try {
+      const { error } = await supabase
+        .from("labor_employee_documents")
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by_user_id: actorUserId,
+          deleted_by_name: actorName,
+          delete_reason: "Removed from employee record",
+        })
+        .eq("id", document.id)
+        .is("deleted_at", null);
+
+      if (error) throw error;
+
+      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      setAttachmentPreview((current) => (current?.document?.id === document.id ? null : current));
+      setTrainingRequirementEditor((current) => (
+        current?.evidenceDocument?.id === document.id
+          ? { ...current, evidenceDocument: null, hasEvidence: false, isComplete: false, status: current.certification?.completed_on ? "needs_evidence" : current.status }
+          : current
+      ));
+      addGlobalToast("Attachment removed from the active record; history was retained", "success");
+    } catch (error) {
+      console.error("Employee attachment delete error:", error);
+      addGlobalToast("Failed to remove attachment", "error");
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  }, [actorName, actorUserId, addGlobalToast, refreshLaborData]);
+
+  const openTrainingRequirementEditor = useCallback((requirementRow) => {
+    if (!requirementRow) return;
+    const certification = requirementRow.certification || {};
+    setTrainingRequirementEditor(requirementRow);
+    setTrainingRequirementCompletedOn(certification.completed_on || todayStr());
+    setTrainingRequirementExpiresOn(certification.expires_on || "");
+    setTrainingRequirementDocumentUrl(certification.external_document_url || "");
+    setTrainingRequirementSourceNote(certification.source_note || "");
+    setTrainingRequirementEvidenceFile(null);
+    setTrainingRequirementEvidenceError("");
+    if (trainingRequirementFileInputRef.current) trainingRequirementFileInputRef.current.value = "";
+  }, []);
+
+  const handleTrainingRequirementEvidenceFileChange = useCallback((event) => {
+    const file = event.target.files?.[0] || null;
+    const { acceptedFile, error } = validateLaborTrainingRequirementEvidenceFile(file);
+    setTrainingRequirementEvidenceFile(acceptedFile);
+    setTrainingRequirementEvidenceError(error);
+    if (error) addGlobalToast(error, "error");
+  }, [addGlobalToast]);
+
+  const uploadTrainingRequirementEvidence = useCallback(async ({ laborEmployeeId, requirementRow, file }) => {
+    const mimeType = inferLaborTrainingRequirementEvidenceMimeType(file);
+    const storagePath = buildLaborEmployeeRequirementEvidencePath({
+      laborEmployeeId,
+      requirementSlug: requirementRow.slug,
+      fileName: file.name,
+    });
+
+    const { error: uploadError } = await supabase
+      .storage
+      .from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET)
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: insertedDocument, error: documentError } = await supabase
+      .from("labor_employee_documents")
+      .insert({
+        labor_employee_id: laborEmployeeId,
+        document_type: "training_requirement_evidence",
+        file_name: file.name || "training-evidence.pdf",
+        storage_bucket: LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+        storage_path: storagePath,
+        external_url: null,
+        mime_type: mimeType,
+        file_size_bytes: Number(file.size || 0),
+        metadata: {
+          source_module: "training_requirements",
+          requirement_slug: requirementRow.slug,
+          requirement_id: requirementRow.requirementId,
+          original_file_name: file.name || "training-evidence.pdf",
+        },
+        uploaded_by_user_id: actorUserId,
+        uploaded_by_name: actorName,
+      })
+      .select("*")
+      .single();
+
+    if (documentError) throw documentError;
+    return insertedDocument || null;
+  }, [actorName, actorUserId]);
+
+  const handleSaveTrainingRequirement = useCallback(async () => {
+    const requirementRow = trainingRequirementEditor;
+    if (!selectedLaborEmployeeView?.id || !requirementRow) return;
+    if (!requirementRow.requirementId) {
+      addGlobalToast("Training requirement setup needs the pending Supabase migration", "error");
+      return;
+    }
+    if (!trainingRequirementCompletedOn) {
+      addGlobalToast("Completion date is required", "error");
+      return;
+    }
+
+    const existingDocumentId = requirementRow.certification?.labor_employee_document_id || requirementRow.evidenceDocument?.id || null;
+    const hasEvidenceFile = Boolean(trainingRequirementEvidenceFile);
+    const cprUrl = String(trainingRequirementDocumentUrl || "").trim();
+    const allowsUrl = requirementRow.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR;
+    const hasAcceptedEvidence = hasEvidenceFile || existingDocumentId || (allowsUrl && cprUrl);
+
+    if (!hasAcceptedEvidence) {
+      addGlobalToast(
+        allowsUrl ? "Upload a CPR PDF or paste the certificate link" : "Upload a PDF before saving this requirement",
+        "error"
+      );
+      return;
+    }
+
+    setSavingTrainingRequirement(true);
+    try {
+      let evidenceDocument = null;
+      if (trainingRequirementEvidenceFile) {
+        evidenceDocument = await uploadTrainingRequirementEvidence({
+          laborEmployeeId: selectedLaborEmployeeView.id,
+          requirementRow,
+          file: trainingRequirementEvidenceFile,
+        });
+      }
+
+      const documentId = evidenceDocument?.id || existingDocumentId || null;
+      const resolvedExpiresOn = requirementRow.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR
+        ? (trainingRequirementExpiresOn || addDaysToDateString(trainingRequirementCompletedOn, 365) || null)
+        : null;
+      const payload = {
+        labor_employee_id: selectedLaborEmployeeView.id,
+        requirement_id: requirementRow.requirementId,
+        completed_on: trainingRequirementCompletedOn,
+        expires_on: resolvedExpiresOn,
+        labor_employee_document_id: documentId,
+        external_document_url: allowsUrl ? (cprUrl || null) : null,
+        source_note: trainingRequirementSourceNote.trim() || null,
+        metadata: {
+          ...(requirementRow.certification?.metadata || {}),
+          requirement_slug: requirementRow.slug,
+        },
+        updated_by_user_id: actorUserId,
+      };
+
+      const response = requirementRow.certification?.id
+        ? await supabase
+            .from("employee_certifications")
+            .update(payload)
+            .eq("id", requirementRow.certification.id)
+        : await supabase
+            .from("employee_certifications")
+            .insert({
+              ...payload,
+              created_by_user_id: actorUserId,
+            });
+
+      if (response.error) throw response.error;
+
+      await refreshLaborData();
+      setTrainingRequirementEditor(null);
+      setTrainingRequirementEvidenceFile(null);
+      setTrainingRequirementEvidenceError("");
+      if (trainingRequirementFileInputRef.current) trainingRequirementFileInputRef.current.value = "";
+      addGlobalToast(`${requirementRow.label} updated`, "success");
+    } catch (error) {
+      console.error("Training requirement save error:", error);
+      addGlobalToast("Failed to save training requirement", "error");
+    } finally {
+      setSavingTrainingRequirement(false);
+    }
+  }, [
+    actorUserId,
+    addGlobalToast,
+    refreshLaborData,
+    selectedLaborEmployeeView,
+    trainingRequirementCompletedOn,
+    trainingRequirementDocumentUrl,
+    trainingRequirementEditor,
+    trainingRequirementEvidenceFile,
+    trainingRequirementExpiresOn,
+    trainingRequirementSourceNote,
+    uploadTrainingRequirementEvidence,
+  ]);
 
   // ── Create record ──
   const handleCreateRecord = useCallback(async () => {
@@ -2271,7 +2684,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const handleAddEmployeeNote = useCallback(async () => {
     if (!selectedLaborEmployeeView?.id || !employeeNoteText.trim()) return;
     setSavingEmployeeNote(true);
-    const { error } = await appendEmployeeNote({
+    const { data, error } = await appendEmployeeNote({
       laborEmployeeId: selectedLaborEmployeeView.id,
       noteText: employeeNoteText,
       noteType: employeeNoteType,
@@ -2281,12 +2694,38 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setSavingEmployeeNote(false);
       return;
     }
+
+    const createdNote = Array.isArray(data) ? data[0] : data;
+    let attachmentError = null;
+    if (employeeNoteFiles.length > 0) {
+      if (!createdNote?.id) {
+        attachmentError = new Error("Employee note did not return an id for attachments");
+      } else {
+        try {
+          await uploadEmployeeNoteAttachments({
+            laborEmployeeId: selectedLaborEmployeeView.id,
+            noteId: createdNote.id,
+            files: employeeNoteFiles,
+          });
+        } catch (uploadError) {
+          console.error("Employee note attachment upload error:", uploadError);
+          attachmentError = uploadError;
+        }
+      }
+    }
+
     setEmployeeNoteText("");
     setEmployeeNoteType("general");
+    setEmployeeNoteFiles([]);
+    setEmployeeNoteFileErrors([]);
+    if (employeeNoteFileInputRef.current) employeeNoteFileInputRef.current.value = "";
     await refreshLaborData();
     setSavingEmployeeNote(false);
-    addGlobalToast("Employee note added", "success");
-  }, [addGlobalToast, appendEmployeeNote, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData]);
+    addGlobalToast(
+      attachmentError ? "Employee note saved, but one or more attachments failed" : "Employee note added",
+      attachmentError ? "error" : "success"
+    );
+  }, [addGlobalToast, appendEmployeeNote, employeeNoteFiles, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData, uploadEmployeeNoteAttachments]);
 
   const handleAddGlobalEmployeeNote = useCallback(async () => {
     if (!globalNoteEmployeeId || !globalNoteText.trim()) {
@@ -2312,54 +2751,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setSavingGlobalNote(false);
     addGlobalToast("Employee note added", "success");
   }, [addGlobalToast, appendEmployeeNote, globalNoteEmployeeId, globalNoteText, globalNoteType, refreshLaborData]);
-
-  const openCprEditor = useCallback(() => {
-    const currentCertification = selectedEmployeeCertifications[0];
-    setCprCompletedOn(currentCertification?.completed_on || "");
-    setCprExpiresOn(currentCertification?.expires_on || "");
-    setCprDocumentUrl(currentCertification?.external_document_url || "");
-    setCprSourceNote(currentCertification?.source_note || "");
-    setShowCprEditor(true);
-  }, [selectedEmployeeCertifications]);
-
-  const handleSaveCprCertification = useCallback(async () => {
-    if (!selectedLaborEmployeeView?.id || !cprCompletedOn) {
-      addGlobalToast("CPR completion date is required", "error");
-      return;
-    }
-    setSavingCpr(true);
-    const { data: requirement, error: requirementError } = await supabase
-      .from("certification_requirements")
-      .select("id")
-      .eq("slug", "dog_cpr_annual")
-      .limit(1)
-      .maybeSingle();
-    if (requirementError || !requirement?.id) {
-      addGlobalToast("Failed to load CPR requirement", "error");
-      setSavingCpr(false);
-      return;
-    }
-    const currentCertification = selectedEmployeeCertifications[0];
-    const { error } = await supabase.rpc("upsert_employee_certification", {
-      p_certification_id: currentCertification?.id || null,
-      p_labor_employee_id: selectedLaborEmployeeView.id,
-      p_requirement_id: requirement.id,
-      p_completed_on: cprCompletedOn,
-      p_expires_on: cprExpiresOn || null,
-      p_external_document_url: cprDocumentUrl.trim() || null,
-      p_source_note: cprSourceNote.trim() || null,
-      p_actor_user_id: actorUserId,
-    });
-    if (error) {
-      addGlobalToast("Failed to save CPR status", "error");
-      setSavingCpr(false);
-      return;
-    }
-    await refreshLaborData();
-    setSavingCpr(false);
-    setShowCprEditor(false);
-    addGlobalToast("CPR certification updated", "success");
-  }, [actorUserId, addGlobalToast, cprCompletedOn, cprDocumentUrl, cprExpiresOn, cprSourceNote, selectedEmployeeCertifications, selectedLaborEmployeeView, refreshLaborData]);
 
   const handleCreateReviewInstance = useCallback(async (reviewCycle) => {
     if (!selectedLaborEmployeeView?.id) return;
@@ -2574,6 +2965,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const { firstName, lastName } = splitEmployeeName(fullName);
       const endDate = row.end_date || contactEmployee?.end_date || null;
       const isActive = row.is_active ?? !endDate;
+      const supportNoteCount = toObjectRows(laborNotesByEmployee[employeeId] || []).length;
+      const snapshotNoteCount = Number(row.employee_note_count ?? row.note_count ?? row.recent_employee_note_count_7d ?? 0);
+      const mergedEmployee = {
+        ...row,
+        ...(contactEmployee || {}),
+        id: employeeId || row.id,
+        labor_employee_id: employeeId,
+        full_name: fullName,
+        position_title: row.position_title || contactEmployee?.position_title || "",
+      };
+      const requirementRows = buildEmployeeTrainingRequirementRows({
+        employee: mergedEmployee,
+        certifications: employeeCertificationsByEmployee[employeeId] || [],
+        requirements: certificationRequirements,
+        documents: laborEmployeeDocumentsByEmployee[employeeId] || [],
+      });
+      const requirementSummary = summarizeEmployeeTrainingRequirementCompliance(requirementRows);
+      let trainingCompliance = requirementRows.length > 0
+        ? { label: requirementSummary.label, color: requirementSummary.color, inProgress: false }
+        : getTrainingComplianceState(row);
+      const daysSinceStart = getDaysSince(row?.start_date || contactEmployee?.start_date);
+      if (!requirementSummary.isCompliant && daysSinceStart != null && daysSinceStart < TRAINING_GRACE_PERIOD_DAYS) {
+        trainingCompliance = { label: "In Progress", color: "warning", inProgress: true };
+      }
       return {
         ...row,
         id: employeeId || row.id,
@@ -2588,13 +3003,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         last_name: lastName,
         contact_email: contactEmail,
         contact_phone: contactPhone,
-        training_compliance: getTrainingComplianceState(row),
+        training_compliance: trainingCompliance,
+        training_requirement_rows: requirementRows,
+        training_requirement_summary: requirementSummary,
         review30: getReviewStatusPresentation(row, "review_30"),
         review60: getReviewStatusPresentation(row, "review_60"),
         review90: getReviewStatusPresentation(row, "review_90"),
+        employee_note_count: supportNoteCount || snapshotNoteCount,
       };
     });
-  }, [laborEmployeeMap, rosterRows]);
+  }, [certificationRequirements, employeeCertificationsByEmployee, laborEmployeeDocumentsByEmployee, laborEmployeeMap, laborNotesByEmployee, rosterRows]);
+  const displayedDashboardMetrics = useMemo(() => {
+    const activeRows = preparedRosterRows.filter((row) => isLaborEmployeeActive(row));
+    if (activeRows.length === 0) return dashboardMetrics;
+    const hasRequirementRows = activeRows.some((row) => Array.isArray(row.training_requirement_rows) && row.training_requirement_rows.length > 0);
+    if (!hasRequirementRows) return dashboardMetrics;
+    const numerator = activeRows.filter((row) => row.training_requirement_summary?.isCompliant).length;
+    const denominator = activeRows.length;
+    return {
+      ...dashboardMetrics,
+      trainingComplianceNumerator: numerator,
+      trainingComplianceDenominator: denominator,
+      trainingComplianceScore: denominator > 0 ? Math.round((numerator / denominator) * 100) : 0,
+    };
+  }, [dashboardMetrics, preparedRosterRows]);
   const filteredRosterRows = useMemo(() => {
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
@@ -2677,10 +3109,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return String(row.review_30_due_date || "");
         case "review60":
           return String(row.review_60_due_date || "");
-        case "review90":
-          return String(row.review_90_due_date || "");
-        default:
-          return String(row.last_name || row.full_name || "");
+	        case "review90":
+	          return String(row.review_90_due_date || "");
+	        case "notes":
+	          return String(Number(row.employee_note_count || 0)).padStart(6, "0");
+	        default:
+	          return String(row.last_name || row.full_name || "");
       }
     };
 
@@ -3197,7 +3631,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const employeeTrainingRecords = toObjectRows(records)
       .filter((record) => isTrainingRecordForEmployee(record, selectedLaborEmployeeView))
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-    const currentCprCertification = selectedEmployeeCertifications[0] || null;
     const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
     const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
     const reviewCycleRows = [
@@ -3413,45 +3846,157 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       );
     }
 
+    const employeeDetailTableHeaderStyle = {
+      padding: "9px 12px",
+      fontSize: 11,
+      fontWeight: 800,
+      color: C.textMut,
+      textTransform: "uppercase",
+      letterSpacing: "0.04em",
+      borderBottom: `1px solid ${C.border}`,
+      textAlign: "left",
+    };
+    const employeeRecordMetricCards = buildEmployeeRecordMetricCards({
+      employeeSnapshot: {
+        ...(selectedLaborEmployeeSnapshot || {}),
+        training_compliance_flag: selectedEmployeeTrainingRequirementSummary.isCompliant,
+      },
+      reviewCycleRows,
+      attendanceIncidentCount30d: selectedEmployeeAttendanceIncidents30d.length,
+    }).map((metric) => {
+      if (metric.id !== "next_review" || !metric.helper?.startsWith("Due ")) return metric;
+      return { ...metric, helper: `Due ${formatLaborDate(metric.helper.replace("Due ", ""))}` };
+    });
+    const metricColorByTone = { success: C.suc, warning: C.warn, danger: C.dan, default: C.text };
+    const requirementStatusColor = {
+      complete: "success",
+      expired: "danger",
+      needs_evidence: "warning",
+      missing: "danger",
+    };
+    const trainingRequirementDocumentIds = new Set(
+      selectedEmployeeTrainingRequirementRows.map((row) => row.evidenceDocument?.id).filter(Boolean)
+    );
+    const otherEmployeeDocuments = selectedEmployeeUnlinkedDocuments.filter((document) =>
+      !trainingRequirementDocumentIds.has(document.id) && document.document_type !== "training_requirement_evidence"
+    );
+    const employeeRecordTabOptions = [
+      { id: "training", label: "Training" },
+      { id: "reviews", label: "Performance" },
+      { id: "attendance", label: "Attendance" },
+      { id: "notes", label: `Notes (${selectedEmployeeNotes.length})` },
+    ];
+    const selectedEmployeeAttendanceRows = toObjectRows(laborAttendanceIncidents)
+      .filter((incident) => incident.labor_employee_id === selectedLaborEmployeeView.id)
+      .sort((a, b) => new Date(b.incident_date || 0) - new Date(a.incident_date || 0))
+      .slice(0, 10);
+    const renderEmployeeDocumentButton = (document) => {
+      const documentId = document?.id || `${document?.file_name || "attachment"}-${document?.storage_path || document?.external_url || "preview"}`;
+      const previewKind = getLaborAttachmentPreviewKind(document);
+      const isPreviewable = previewKind !== "unsupported";
+      const isSyntheticDocument = String(document?.id || "").startsWith("requirement-url-");
+      const canDeleteDocument = Boolean(document?.id && !isSyntheticDocument);
+      return (
+        <span
+          key={documentId}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            maxWidth: "100%",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => handlePreviewEmployeeDocument(document)}
+            disabled={!isPreviewable || previewingAttachmentId === document.id}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+              maxWidth: "100%",
+              padding: "7px 10px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: isPreviewable ? "#fff" : C.bg,
+              color: isPreviewable ? C.text : C.textMut,
+              cursor: isPreviewable ? "pointer" : "not-allowed",
+              fontFamily: "inherit",
+              fontSize: 10.5,
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            <I.Eye />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{document.file_name || "Attachment"}</span>
+            {document.file_size_bytes ? <span style={{ color: C.textMut, fontWeight: 600 }}>{formatLaborAttachmentFileSize(document.file_size_bytes)}</span> : null}
+          </button>
+          {canDeleteDocument && (
+            <button
+              type="button"
+              title="Remove attachment"
+              aria-label={`Remove ${document.file_name || "attachment"}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleDeleteEmployeeDocument(document);
+              }}
+              disabled={deletingAttachmentId === document.id}
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: deletingAttachmentId === document.id ? C.bg : "#fff",
+                color: C.dan,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: deletingAttachmentId === document.id ? "wait" : "pointer",
+              }}
+            >
+              <I.Trash />
+            </button>
+          )}
+        </span>
+      );
+    };
+
     return (
-      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}>
+      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "24px 16px 48px" }}>
         <button
-	          onClick={() => {
-	            setSelectedLaborEmployeeId(null);
-	            setSelectedLaborEmployeeSeed(null);
-	            setSelectedReviewInstanceId(null);
-	          }}
-          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}
+          onClick={() => {
+            setSelectedLaborEmployeeId(null);
+            setSelectedLaborEmployeeSeed(null);
+            setSelectedReviewInstanceId(null);
+          }}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}
         >
           <I.Back /> Back to Labor
         </button>
 
-        <Card style={{ padding: 24, marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 4 }}>{selectedLaborEmployeeView.full_name}</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <Badge color="primary">{selectedLaborEmployeeView.position_title}</Badge>
+        <Card style={{ padding: 24, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <div style={{ minWidth: 280, flex: "1 1 420px" }}>
+              <div style={{ fontSize: 28, lineHeight: 1.1, fontWeight: 900, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
+              <div style={{ fontSize: 15, color: C.textSec, fontWeight: 700, marginBottom: 10 }}>{selectedLaborEmployeeView.position_title || "Employee"}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
                 <Badge color={selectedLaborEmployeeIsActive ? "success" : "warning"}>
                   {selectedLaborEmployeeIsActive ? "Active Employee" : "Inactive Employee"}
                 </Badge>
                 {selectedLaborEmployeeSnapshot?.active_training_status && (
-                  <Badge color="info">Training: {String(selectedLaborEmployeeSnapshot.active_training_status).replace(/_/g, " ")}</Badge>
+                  <Badge color="info">Training {String(selectedLaborEmployeeSnapshot.active_training_status).replace(/_/g, " ")}</Badge>
                 )}
-                <Badge color={selectedLaborEmployeeSnapshot?.cpr_status === "current" ? "success" : selectedLaborEmployeeSnapshot?.cpr_status === "due_soon" ? "warning" : "danger"}>
-                  CPR: {String(selectedLaborEmployeeSnapshot?.cpr_status || "not_started").replace(/_/g, " ")}
-                </Badge>
               </div>
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: C.textMut, fontWeight: 600 }}>
                 {selectedLaborEmployeeView.start_date && <span>Start: {formatLaborDate(selectedLaborEmployeeView.start_date)}</span>}
                 {selectedLaborEmployeeView.end_date && <span>End: {formatLaborDate(selectedLaborEmployeeView.end_date)}</span>}
                 {employeePhone && <span>{fmtPhoneInput(employeePhone)}</span>}
                 {employeeEmail && <span>{employeeEmail}</span>}
-                <span>{selectedEmployeeNotes.length} employee note{selectedEmployeeNotes.length !== 1 ? "s" : ""}</span>
-                <span>{employeeTrainingRecords.length} training record{employeeTrainingRecords.length !== 1 ? "s" : ""}</span>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap", justifyContent: "flex-end" }}>
               <Btn
                 variant="secondary"
                 size="sm"
@@ -3459,19 +4004,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 onClick={() => handleDownloadLaborContactCard(selectedLaborEmployeeView)}
                 disabled={contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}`}
               >
-                {contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}` ? "Downloading..." : "Download Contact Card"}
+                {contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}` ? "Downloading..." : "Contact Card"}
               </Btn>
               <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>
-              <Btn variant="ghost" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeKey, tab: "history" })} disabled={!selectedLaborEmployeeKey}>Attendance</Btn>
               {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
                 <Btn
                   variant="primary"
                   size="sm"
-	                  onClick={() => {
-	                    setSelectedLaborEmployeeId(null);
-	                    setSelectedLaborEmployeeSeed(null);
-	                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
-	                  }}
+                  onClick={() => {
+                    setSelectedLaborEmployeeId(null);
+                    setSelectedLaborEmployeeSeed(null);
+                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
+                  }}
                 >
                   Open Active Training
                 </Btn>
@@ -3498,198 +4042,383 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </div>
         </Card>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Training Compliance</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: selectedLaborEmployeeSnapshot?.training_compliance_flag ? C.suc : C.warn }}>
-              {selectedLaborEmployeeSnapshot?.training_compliance_flag ? "Compliant" : "Not Complete"}
-            </div>
-          </Card>
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>CPR Status</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: selectedLaborEmployeeSnapshot?.cpr_status === "current" ? C.suc : selectedLaborEmployeeSnapshot?.cpr_status === "due_soon" ? C.warn : C.dan }}>
-              {String(selectedLaborEmployeeSnapshot?.cpr_status || "not_started").replace(/_/g, " ")}
-            </div>
-            {currentCprCertification?.expires_on && (
-              <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>Expires {formatLaborDate(currentCprCertification.expires_on)}</div>
-            )}
-          </Card>
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Notes In 30 Days</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: C.pri }}>{selectedEmployeeNotes30d.length}</div>
-          </Card>
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Attendance Marks</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{selectedEmployeeAttendanceIncidents30d.length}</div>
-            <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>Last 30 days</div>
-          </Card>
-        </div>
-
-        <SectionHeader title="Employee Notes" count={selectedEmployeeNotes.length} />
-        <Card style={{ padding: 16, marginBottom: 20 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, marginBottom: 12 }}>
-            <Inp
-              label="Note Type"
-              type="select"
-              value={employeeNoteType}
-              onChange={setEmployeeNoteType}
-              options={[
-                { value: "general", label: "General" },
-                { value: "personal", label: "Personal" },
-                { value: "performance", label: "Performance" },
-                { value: "attendance", label: "Attendance" },
-                { value: "training", label: "Training" },
-                { value: "hr", label: "HR" },
-              ]}
-            />
-            <Inp
-              label="New Employee Note"
-              type="textarea"
-              rows={3}
-              value={employeeNoteText}
-              onChange={setEmployeeNoteText}
-              placeholder="Add a manager-facing note for this employee"
-            />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-            <Btn variant="primary" size="sm" onClick={handleAddEmployeeNote} disabled={savingEmployeeNote}>
-              {savingEmployeeNote ? "Saving..." : "Add Employee Note"}
-            </Btn>
-          </div>
-          {selectedEmployeeNotes.length === 0 ? (
-            <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No employee notes yet</div>
-          ) : (
-            selectedEmployeeNotes.map((note) => (
-              <div key={note.id} style={{ padding: "10px 0", borderTop: `1px solid ${C.borderLight}` }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{note.created_by_name || "Staff"}</span>
-                  <Badge color="default">{String(note.note_type || "general").replace(/_/g, " ")}</Badge>
-                  <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
-                </div>
-                <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>{note.note_text}</div>
-              </div>
-            ))
-          )}
-        </Card>
-
-        <SectionHeader title="CPR Certification" count={selectedEmployeeCertifications.length}>
-          <Btn variant="secondary" size="sm" onClick={openCprEditor}>Update CPR</Btn>
-        </SectionHeader>
-        <Card style={{ padding: 16, marginBottom: 20 }}>
-          {currentCprCertification ? (
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-                Completed {formatLaborDate(currentCprCertification.completed_on)}
-              </div>
-              {currentCprCertification.expires_on && (
-                <div style={{ fontSize: 12, color: C.textMut, marginBottom: 6 }}>Expires {formatLaborDate(currentCprCertification.expires_on)}</div>
-              )}
-              {currentCprCertification.external_document_url && (
-                <a href={currentCprCertification.external_document_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>
-                  Open diploma / document
-                </a>
-              )}
-              {currentCprCertification.source_note && (
-                <div style={{ fontSize: 12, color: C.textSec, marginTop: 8 }}>{currentCprCertification.source_note}</div>
-              )}
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No CPR certification recorded yet</div>
-          )}
-        </Card>
-
-        <SectionHeader title="Performance Reviews" count={selectedEmployeeReviewInstances.length} />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 20 }}>
-          {reviewCycleRows.map((cycle) => (
-            <Card key={cycle.id} style={{ padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>{cycle.label}</div>
-              <div style={{ fontSize: 12, color: C.textMut, marginBottom: 8 }}>
-                Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}
-              </div>
-              <Badge color={cycle.status === "completed" ? "success" : cycle.status === "overdue" ? "danger" : "warning"}>
-                {String(cycle.status).replace(/_/g, " ")}
-              </Badge>
-              <div style={{ marginTop: 12 }}>
-                {cycle.instance ? (
-                  <Btn variant="ghost" size="sm" onClick={() => setSelectedReviewInstanceId(cycle.instance.id)}>Open Review</Btn>
-                ) : (
-                  <Btn variant="secondary" size="sm" onClick={() => handleCreateReviewInstance(cycle.id)}>Start Review</Btn>
-                )}
-              </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
+          {employeeRecordMetricCards.map((metric) => (
+            <Card key={metric.id} style={{ padding: 16 }}>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 7 }}>{metric.label}</div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: metricColorByTone[metric.tone] || C.text }}>{metric.value}</div>
+              {metric.helper && <div style={{ fontSize: 12, color: C.textMut, marginTop: 7, fontWeight: 600 }}>{metric.helper}</div>}
             </Card>
           ))}
         </div>
 
-        <SectionHeader title="Training History" count={employeeTrainingRecords.length} />
-        {employeeTrainingRecords.length === 0 ? (
-          <EmptyState icon="GraduationCap" title="No training records yet" subtitle="Create a training record from the roster or training tab" />
-        ) : (
-          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={tableHeaderStyle}>Position</th>
-                  <th style={tableHeaderStyle}>Training Plan</th>
-                  <th style={tableHeaderStyle}>Status</th>
-                  <th style={tableHeaderStyle}>Progress</th>
-                  <th style={tableHeaderStyle}>Target</th>
-                </tr>
-              </thead>
-              <tbody>
-	                {employeeTrainingRecords.map((record) => (
-	                  <tr
-	                    key={record.id}
-		                    onClick={() => {
-		                      setSelectedLaborEmployeeId(null);
-		                      setSelectedLaborEmployeeSeed(null);
-		                      setSelectedRecordId(record.id);
-		                    }}
-	                    style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
-	                  >
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.text }}>{record.target_role}</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
-                    <td style={{ padding: "10px 12px" }}><StatusBadge status={record.overall_status} /></td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? formatLaborDate(record.target_end_date) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+        <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surfaceHover, marginBottom: 18, overflowX: "auto" }}>
+          {employeeRecordTabOptions.map((option) => {
+            const selected = employeeRecordTab === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setEmployeeRecordTab(option.id)}
+                style={{
+                  minWidth: 132,
+                  padding: "9px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: selected ? "#fff" : "transparent",
+                  color: selected ? C.text : C.textSec,
+                  boxShadow: selected ? "0 1px 3px rgba(15,23,42,0.10)" : "none",
+                  fontFamily: "inherit",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {employeeRecordTab === "training" && (
+          <>
+            <Card style={{ padding: 18, marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>Training Requirements</div>
+                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>{selectedEmployeeTrainingRequirementSummary.helper}</div>
+                </div>
+                <Badge color={selectedEmployeeTrainingRequirementSummary.color}>{selectedEmployeeTrainingRequirementSummary.label}</Badge>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {selectedEmployeeTrainingRequirementRows.map((requirementRow) => {
+                  const externalDocument = requirementRow.externalUrl
+                    ? {
+                        id: `requirement-url-${requirementRow.slug}-${requirementRow.certification?.id || "external"}`,
+                        file_name: `${requirementRow.label} link`,
+                        external_url: requirementRow.externalUrl,
+                        mime_type: "application/pdf",
+                      }
+                    : null;
+                  const statusLabel = requirementRow.status === "needs_evidence"
+                    ? "Needs Evidence"
+                    : requirementRow.status === "missing"
+                      ? "Missing"
+                      : requirementRow.status === "expired"
+                        ? "Expired"
+                        : "Complete";
+                  return (
+                    <div
+                      key={requirementRow.slug}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(190px, 1.1fr) minmax(150px, 0.8fr) minmax(220px, 1fr) auto",
+                        gap: 12,
+                        alignItems: "center",
+                        padding: "13px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${C.borderLight}`,
+                        background: "#fff",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{requirementRow.label}</div>
+                        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 650, marginTop: 3 }}>{requirementRow.helper}</div>
+                      </div>
+                      <div>
+                        <Badge color={requirementStatusColor[requirementRow.status] || "default"}>{statusLabel}</Badge>
+                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 5, fontWeight: 650 }}>
+                          {requirementRow.certification?.completed_on ? `Completed ${formatLaborDate(requirementRow.certification.completed_on)}` : "No completion date"}
+                          {requirementRow.certification?.expires_on ? ` · Expires ${formatLaborDate(requirementRow.certification.expires_on)}` : ""}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                        {requirementRow.evidenceDocument ? renderEmployeeDocumentButton(requirementRow.evidenceDocument) : null}
+                        {externalDocument ? renderEmployeeDocumentButton(externalDocument) : null}
+                        {!requirementRow.evidenceDocument && !externalDocument ? (
+                          <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                            Evidence required
+                          </span>
+                        ) : null}
+                      </div>
+                      <Btn variant="secondary" size="sm" onClick={() => openTrainingRequirementEditor(requirementRow)}>
+                        Update
+                      </Btn>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <SectionHeader title="Training History" count={employeeTrainingRecords.length} />
+            {employeeTrainingRecords.length === 0 ? (
+              <EmptyState icon="GraduationCap" title="No training records yet" subtitle="Create a training record from the roster or training tab" />
+            ) : (
+              <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={employeeDetailTableHeaderStyle}>Position</th>
+                      <th style={employeeDetailTableHeaderStyle}>Training Plan</th>
+                      <th style={employeeDetailTableHeaderStyle}>Status</th>
+                      <th style={employeeDetailTableHeaderStyle}>Progress</th>
+                      <th style={employeeDetailTableHeaderStyle}>Target</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {employeeTrainingRecords.map((record) => (
+                      <tr
+                        key={record.id}
+                        onClick={() => {
+                          setSelectedLaborEmployeeId(null);
+                          setSelectedLaborEmployeeSeed(null);
+                          setSelectedRecordId(record.id);
+                        }}
+                        style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
+                      >
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{record.target_role}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
+                        <td style={{ padding: "11px 12px" }}><StatusBadge status={record.overall_status} /></td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? formatLaborDate(record.target_end_date) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </>
         )}
 
-        {selectedEmployeeDocuments.length > 0 && (
+        {employeeRecordTab === "reviews" && (
           <>
-            <SectionHeader title="Documents" count={selectedEmployeeDocuments.length} />
-            <Card style={{ padding: 16 }}>
-              {selectedEmployeeDocuments.map((document) => (
-                <div key={document.id} style={{ padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{document.file_name}</div>
-                  <div style={{ fontSize: 11, color: C.textMut }}>{document.document_type}</div>
-                  {document.external_url && (
-                    <a href={document.external_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>
-                      Open document
-                    </a>
+            <SectionHeader title="Performance Reviews" count={selectedEmployeeReviewInstances.length} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 20 }}>
+              {reviewCycleRows.map((cycle) => (
+                <Card key={cycle.id} style={{ padding: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: C.text, marginBottom: 5 }}>{cycle.label}</div>
+                      <div style={{ fontSize: 12, color: C.textMut }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
+                    </div>
+                    <Badge color={cycle.status === "completed" ? "success" : cycle.status === "overdue" ? "danger" : "warning"}>
+                      {String(cycle.status).replace(/_/g, " ")}
+                    </Badge>
+                  </div>
+                  {cycle.instance ? (
+                    <Btn variant="primary" size="sm" onClick={() => setSelectedReviewInstanceId(cycle.instance.id)}>Open Review</Btn>
+                  ) : (
+                    <Btn variant="secondary" size="sm" onClick={() => handleCreateReviewInstance(cycle.id)}>Start Review</Btn>
                   )}
-                </div>
+                </Card>
               ))}
+            </div>
+          </>
+        )}
+
+        {employeeRecordTab === "notes" && (
+          <>
+            <Card style={{ padding: 18, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+                <Inp
+                  label="Note Type"
+                  type="select"
+                  value={employeeNoteType}
+                  onChange={setEmployeeNoteType}
+                  options={[
+                    { value: "general", label: "General" },
+                    { value: "personal", label: "Personal" },
+                    { value: "performance", label: "Performance" },
+                    { value: "attendance", label: "Attendance" },
+                    { value: "training", label: "Training" },
+                    { value: "hr", label: "HR" },
+                  ]}
+                />
+                <Inp
+                  label="New Employee Note"
+                  type="textarea"
+                  rows={3}
+                  value={employeeNoteText}
+                  onChange={setEmployeeNoteText}
+                  placeholder="Add a manager-facing note for this employee"
+                />
+              </div>
+              <input
+                ref={employeeNoteFileInputRef}
+                type="file"
+                multiple
+                accept={LABOR_EMPLOYEE_ATTACHMENT_ACCEPT}
+                onChange={handleEmployeeNoteFileChange}
+                style={{ display: "none" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={() => employeeNoteFileInputRef.current?.click()}>
+                    Attach PDF/Image
+                  </Btn>
+                  {employeeNoteFiles.map((file, index) => (
+                    <span key={`${file.name}-${index}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, color: C.textSec, fontWeight: 700 }}>
+                      {file.name}
+                      <button type="button" onClick={() => handleRemoveEmployeeNoteFile(index)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", padding: 0, display: "flex" }}>
+                        <I.X />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <Btn variant="primary" size="sm" onClick={handleAddEmployeeNote} disabled={savingEmployeeNote || !employeeNoteText.trim()}>
+                  {savingEmployeeNote ? "Saving..." : "Add Employee Note"}
+                </Btn>
+              </div>
+              {employeeNoteFileErrors.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: C.dan, fontWeight: 700 }}>
+                  {employeeNoteFileErrors.join(" ")}
+                </div>
+              )}
+	            </Card>
+
+	            <SectionHeader title="Employee Notes" count={filteredSelectedEmployeeNotes.length} />
+	            <Card style={{ padding: 14, marginBottom: 12 }}>
+	              <Inp
+	                label="Search Notes"
+	                value={employeeNoteSearchText}
+	                onChange={setEmployeeNoteSearchText}
+	                placeholder="Search note text, type, author, or date"
+	              />
+	            </Card>
+	            <Card style={{ padding: 16, marginBottom: 20 }}>
+	              {filteredSelectedEmployeeNotes.length === 0 ? (
+	                <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>
+	                  {employeeNoteSearchText.trim() ? "No employee notes match this search" : "No employee notes yet"}
+	                </div>
+	              ) : (
+	                filteredSelectedEmployeeNotes.map((note) => {
+                  const noteDocuments = toObjectRows(selectedEmployeeDocumentsByNote[note.id] || []);
+                  return (
+                    <div key={note.id} style={{ padding: "13px 0", borderTop: `1px solid ${C.borderLight}` }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 5 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{note.created_by_name || "Staff"}</span>
+                        <Badge color="default">{String(note.note_type || "general").replace(/_/g, " ")}</Badge>
+                        <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{note.note_text}</div>
+                      {noteDocuments.length > 0 && (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                          {noteDocuments.map((document) => renderEmployeeDocumentButton(document))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+              {otherEmployeeDocuments.length > 0 && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 8 }}>Other Documents</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {otherEmployeeDocuments.map((document) => renderEmployeeDocumentButton(document))}
+                  </div>
+                </div>
+              )}
             </Card>
           </>
         )}
 
-        {showCprEditor && (
-          <Modal title="Update CPR Certification" onClose={() => setShowCprEditor(false)}>
+        {employeeRecordTab === "attendance" && (
+          <>
+            <SectionHeader title="Attendance Marks" count={selectedEmployeeAttendanceRows.length}>
+              <Btn variant="secondary" size="sm" onClick={() => nav("attendance", { employeeId: selectedLaborEmployeeKey, tab: "history" })} disabled={!selectedLaborEmployeeKey}>Open Attendance</Btn>
+            </SectionHeader>
+            {selectedEmployeeAttendanceRows.length === 0 ? (
+              <Card style={{ padding: 18, color: C.textMut, fontSize: 13 }}>No attendance marks recorded for this employee.</Card>
+            ) : (
+              <Card style={{ padding: 0, overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={employeeDetailTableHeaderStyle}>Date</th>
+                      <th style={employeeDetailTableHeaderStyle}>Mark</th>
+                      <th style={employeeDetailTableHeaderStyle}>Detail</th>
+                      <th style={employeeDetailTableHeaderStyle}>Logged By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedEmployeeAttendanceRows.map((incident) => (
+                      <tr key={incident.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{incident.incident_date ? formatLaborDate(incident.incident_date) : "—"}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{getAttendanceIncidentLabel(incident.incident_type)}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{incident.detail || "—"}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut }}>{incident.created_by_name || "Staff"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </>
+        )}
+
+        {trainingRequirementEditor && (
+          <Modal title={`Update ${trainingRequirementEditor.label}`} onClose={() => setTrainingRequirementEditor(null)}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <Inp label="Completed On" type="date" value={cprCompletedOn} onChange={setCprCompletedOn} required />
-              <Inp label="Expires On" type="date" value={cprExpiresOn} onChange={setCprExpiresOn} />
-              <Inp label="Diploma / Document URL" value={cprDocumentUrl} onChange={setCprDocumentUrl} />
-              <Inp label="Source Note" type="textarea" rows={3} value={cprSourceNote} onChange={setCprSourceNote} />
+              <Inp label="Completed On" type="date" value={trainingRequirementCompletedOn} onChange={setTrainingRequirementCompletedOn} required />
+              {trainingRequirementEditor.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR && (
+                <>
+                  <Inp label="Expires On" type="date" value={trainingRequirementExpiresOn} onChange={setTrainingRequirementExpiresOn} />
+                  <Inp label="Certification URL" value={trainingRequirementDocumentUrl} onChange={setTrainingRequirementDocumentUrl} />
+                </>
+              )}
+              <input
+                ref={trainingRequirementFileInputRef}
+                type="file"
+                accept={LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT}
+                onChange={handleTrainingRequirementEvidenceFileChange}
+                style={{ display: "none" }}
+              />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={() => trainingRequirementFileInputRef.current?.click()}>
+                  Upload PDF
+                </Btn>
+                {trainingRequirementEvidenceFile ? (
+                  <span style={{ fontSize: 12, color: C.textSec, fontWeight: 800 }}>
+                    {trainingRequirementEvidenceFile.name}
+                  </span>
+                ) : trainingRequirementEditor.evidenceDocument ? (
+                  renderEmployeeDocumentButton(trainingRequirementEditor.evidenceDocument)
+                ) : null}
+              </div>
+              {trainingRequirementEvidenceError && (
+                <div style={{ fontSize: 12, color: C.dan, fontWeight: 800 }}>{trainingRequirementEvidenceError}</div>
+              )}
+              <Inp label="Source Note" type="textarea" rows={3} value={trainingRequirementSourceNote} onChange={setTrainingRequirementSourceNote} />
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <Btn variant="ghost" onClick={() => setShowCprEditor(false)}>Cancel</Btn>
-                <Btn variant="primary" onClick={handleSaveCprCertification} disabled={savingCpr}>
-                  {savingCpr ? "Saving..." : "Save CPR"}
+                <Btn variant="ghost" onClick={() => setTrainingRequirementEditor(null)}>Cancel</Btn>
+                <Btn variant="primary" onClick={handleSaveTrainingRequirement} disabled={savingTrainingRequirement || !trainingRequirementCompletedOn}>
+                  {savingTrainingRequirement ? "Saving..." : "Save Requirement"}
                 </Btn>
               </div>
+            </div>
+          </Modal>
+        )}
+
+        {attachmentPreview && (
+          <Modal
+            title={attachmentPreview.document?.file_name || "Attachment Preview"}
+            onClose={() => setAttachmentPreview(null)}
+            fullWidth
+          >
+            <div style={{ height: "calc(100vh - 180px)", minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
+              {attachmentPreview.kind === "image" ? (
+                <img
+                  src={attachmentPreview.url}
+                  alt={attachmentPreview.document?.file_name || "Employee attachment"}
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                />
+              ) : (
+                <iframe
+                  title={attachmentPreview.document?.file_name || "Employee attachment"}
+                  src={attachmentPreview.url}
+                  style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
+                />
+              )}
             </div>
           </Modal>
         )}
@@ -3951,7 +4680,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </tr>
   );
 
-  const tableHeaderStyle = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: `2px solid ${C.border}`, textAlign: "left" };
+	  const tableHeaderStyle = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
+	  const rosterCellStyle = { padding: "12px 10px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "middle" };
+	  const rosterSecondaryCellStyle = { ...rosterCellStyle, color: C.textSec, fontWeight: 650 };
   const rosterUsedKeys = Object.keys(rosterDraftFilters);
   const rosterAvailableFields = LABOR_ROSTER_FILTER_FIELDS.filter((field) => !rosterUsedKeys.includes(field.key));
   const rosterFilterSections = [...new Set(LABOR_ROSTER_FILTER_FIELDS.map((field) => field.section))];
@@ -4078,8 +4809,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   return (
     <div style={{ maxWidth: 1340, margin: "0 auto", padding: "20px 10px" }}>
-      <style>{`
-        @keyframes laborRosterComposerIn {
+	      <style>{`
+        html { scrollbar-gutter: stable; }
+        body { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+        body::-webkit-scrollbar { width: 0; height: 0; }
+	        @keyframes laborRosterComposerIn {
           0% { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(4px); }
           65% { opacity: 1; transform: translateY(2px) scale(1.002); filter: blur(0); }
           100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
@@ -4125,17 +4859,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "home" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
-            <MetricCard label="Active Employees" value={dashboardMetrics.activeEmployeeCount} color={C.pri} />
-            <MetricCard label="Notes In 30 Days" value={dashboardMetrics.employeeNoteCount30d} color={C.acc} />
-            <MetricCard label="New Hires In 30 Days" value={dashboardMetrics.newHireCount30d} color={C.suc} />
-            <MetricCard label="Terminations In 30 Days" value={dashboardMetrics.terminationCount30d} color={C.dan} />
-            <MetricCard label="Active Trainees" value={dashboardMetrics.activeTraineeCount} color={C.warn} />
-            <MetricCard label="Attendance Marks In 30 Days" value={dashboardMetrics.attendanceMarkCount30d} color={C.text} />
+            <MetricCard label="Active Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.pri} />
+            <MetricCard label="Notes In 30 Days" value={displayedDashboardMetrics.employeeNoteCount30d} color={C.acc} />
+            <MetricCard label="New Hires In 30 Days" value={displayedDashboardMetrics.newHireCount30d} color={C.suc} />
+            <MetricCard label="Terminations In 30 Days" value={displayedDashboardMetrics.terminationCount30d} color={C.dan} />
+            <MetricCard label="Active Trainees" value={displayedDashboardMetrics.activeTraineeCount} color={C.warn} />
+            <MetricCard label="Attendance Marks In 30 Days" value={displayedDashboardMetrics.attendanceMarkCount30d} color={C.text} />
             <MetricCard
               label="Training Compliance"
-              value={`${dashboardMetrics.trainingComplianceScore}%`}
-              helper={`${dashboardMetrics.trainingComplianceNumerator}/${dashboardMetrics.trainingComplianceDenominator || 0} active employees compliant`}
-              color={dashboardMetrics.trainingComplianceScore === 100 ? C.suc : C.warn}
+              value={`${displayedDashboardMetrics.trainingComplianceScore}%`}
+              helper={`${displayedDashboardMetrics.trainingComplianceNumerator}/${displayedDashboardMetrics.trainingComplianceDenominator || 0} active employees compliant`}
+              color={displayedDashboardMetrics.trainingComplianceScore === 100 ? C.suc : C.warn}
             />
           </div>
 
@@ -4460,7 +5194,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: "12px 14px", marginBottom: 12, background: C.warnLt, border: `1px solid ${C.warn}33` }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.warn, marginBottom: 4 }}>Training grace period active</div>
               <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55 }}>
-                Employees hired within the last {TRAINING_GRACE_PERIOD_DAYS} days show as <strong>In Progress</strong> while training and CPR requirements are being completed.
+                Employees hired within the last {TRAINING_GRACE_PERIOD_DAYS} days show as <strong>In Progress</strong> while training requirements are being completed.
               </div>
             </Card>
           )}
@@ -4468,20 +5202,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
             <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <table style={{ width: "100%", minWidth: 1460, borderCollapse: "collapse" }}>
                 <thead><tr>
-                  {[
-                    { key: "first_name", label: "First Name" },
-                    { key: "last_name", label: "Last Name" },
-                    { key: "start_date", label: "Start Date" },
-                    { key: "email", label: "Email" },
-                    { key: "phone", label: "Phone" },
-                    { key: "position", label: "Position" },
-                    { key: "training", label: "Training" },
-                    { key: "review30", label: "30-Day" },
-                    { key: "review60", label: "60-Day" },
-                    { key: "review90", label: "90-Day" },
-                  ].map((column) => (
+	                  {[
+	                    { key: "first_name", label: "First Name" },
+	                    { key: "last_name", label: "Last Name" },
+	                    { key: "phone", label: "Phone" },
+	                    { key: "email", label: "Email" },
+	                    { key: "position", label: "Position" },
+	                    { key: "start_date", label: "Start Date" },
+	                    { key: "review30", label: "30-Day" },
+	                    { key: "review60", label: "60-Day" },
+	                    { key: "review90", label: "90-Day" },
+	                    { key: "training", label: "Training" },
+	                    { key: "notes", label: "Notes" },
+	                  ].map((column) => (
                     <th key={column.key} style={tableHeaderStyle}>
                       <button
                         type="button"
@@ -4510,8 +5245,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </button>
                     </th>
                   ))}
-                  <th style={tableHeaderStyle}>Record</th>
-                </tr></thead>
+	                </tr></thead>
                 <tbody>
                   {showInlineLaborEmployeeComposer && (
                     <tr>
@@ -4703,39 +5437,48 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   {sortedRosterRows.map((row) => {
                     const rowEmployeeId = getLaborEmployeeRowId(row);
                     return (
-                      <tr
-                        key={rowEmployeeId || row.full_name || row.position_title}
-                        style={{
-                          borderBottom: `1px solid ${C.borderLight}`,
-                          animation: rowEmployeeId === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
-                        }}
-                      >
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.text }}>{row.first_name || "—"}</td>
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.text }}>{row.last_name || "—"}</td>
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.textSec, whiteSpace: "nowrap" }}>
-                          {formatLaborDate(row.start_date)}
-                          {!row.is_active && row.end_date ? (
-                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap" }}>Inactive since {formatLaborDate(row.end_date)}</div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: row.contact_email ? C.textSec : C.textMut, whiteSpace: "normal", wordBreak: "break-word", minWidth: 168 }}>
+	                      <tr
+	                        key={rowEmployeeId || row.full_name || row.position_title}
+	                        role="button"
+	                        tabIndex={rowEmployeeId ? 0 : -1}
+	                        aria-label={`Open ${row.full_name || "employee"} record`}
+	                        onClick={() => { if (rowEmployeeId) openLaborEmployeeProfile(rowEmployeeId, row); }}
+	                        onKeyDown={(event) => {
+	                          if (event.key === "Enter" || event.key === " ") {
+	                            event.preventDefault();
+	                            if (rowEmployeeId) openLaborEmployeeProfile(rowEmployeeId, row);
+	                          }
+	                        }}
+	                        onMouseEnter={(event) => { event.currentTarget.style.background = C.surfaceHover; }}
+	                        onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+	                        style={{
+	                          borderBottom: `1px solid ${C.borderLight}`,
+	                          animation: rowEmployeeId === justCreatedLaborEmployeeId ? "laborRosterFreshRow 1.8s ease-out" : "none",
+	                          cursor: rowEmployeeId ? "pointer" : "default",
+	                          transition: "background 0.15s ease",
+	                        }}
+	                      >
+	                        <td style={rosterCellStyle}>{row.first_name || "—"}</td>
+	                        <td style={rosterCellStyle}>{row.last_name || "—"}</td>
+	                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap", minWidth: 118, color: row.contact_phone ? C.textSec : C.textMut }}>
+	                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
+	                        </td>
+                        <td
+                          title={row.contact_email || ""}
+                          style={{ ...rosterSecondaryCellStyle, color: row.contact_email ? C.textSec : C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 220 }}
+                        >
                           {row.contact_email || "—"}
                         </td>
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: row.contact_phone ? C.textSec : C.textMut, whiteSpace: "nowrap", minWidth: 118 }}>
-                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
-                        </td>
-                        <td style={{ padding: "9px 8px", fontSize: 12, color: C.textSec, minWidth: 152 }}>{row.position_title || "—"}</td>
-                        <td style={{ padding: "9px 8px" }}>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
-                            <div style={{ fontSize: 11, color: C.textMut }}>
-                              CPR: {getDueSoonLabel(row.cpr_status)}
-                            </div>
-                          </div>
-                        </td>
-                        {["review30", "review60", "review90"].map((reviewKey) => (
-                          <td key={reviewKey} style={{ padding: "9px 8px" }}>
-                            <div
+	                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 152 }}>{row.position_title || "—"}</td>
+	                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>
+	                          {formatLaborDate(row.start_date)}
+	                          {!row.is_active && row.end_date ? (
+	                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap", fontWeight: 700 }}>Inactive since {formatLaborDate(row.end_date)}</div>
+	                          ) : null}
+	                        </td>
+	                        {["review30", "review60", "review90"].map((reviewKey) => (
+	                          <td key={reviewKey} style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10 }}>
+	                            <div
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
@@ -4749,14 +5492,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 fontWeight: 700,
                               }}
                             >
-                              {row[reviewKey].label}
-                            </div>
-                          </td>
-	                        ))}
-	                        <td style={{ padding: "9px 8px" }}>
-	                          <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(rowEmployeeId, row)}>View Record</Btn>
+	                              {row[reviewKey].label}
+	                            </div>
+	                          </td>
+		                        ))}
+	                        <td style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10 }}>
+	                          <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
 	                        </td>
-                      </tr>
+	                        <td style={{ ...rosterCellStyle, color: C.text, textAlign: "center", fontWeight: 900 }}>
+	                          {Number(row.employee_note_count || 0)}
+	                        </td>
+	                      </tr>
                     );
                   })}
                   {sortedRosterRows.length === 0 && showInlineLaborEmployeeComposer && (
@@ -5240,10 +5986,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <SectionHeader title="Global Notes Feed" count={filteredGlobalNotes.length}>
             <Btn variant="secondary" size="sm" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>
           </SectionHeader>
-          <Card style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-              <Inp
-                label="Employee"
+	          <Card style={{ padding: 16, marginBottom: 16 }}>
+	            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+	              <Inp
+	                label="Search Notes"
+	                value={noteSearchText}
+	                onChange={setNoteSearchText}
+	                placeholder="Search note text, employee, author, source"
+	              />
+	              <Inp
+	                label="Employee"
                 type="select"
                 value={noteFilterEmployeeId}
                 onChange={setNoteFilterEmployeeId}
