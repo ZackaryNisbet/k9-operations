@@ -104,6 +104,40 @@ describe("employee record attachment helpers", () => {
     });
   });
 
+  it("surfaces employee note edits as history events", () => {
+    const timeline = buildEmployeeHistoryTimeline({
+      historyEvents: [
+        {
+          id: "history-1",
+          labor_employee_id: EMPLOYEE_ID,
+          event_category: "notes",
+          event_type: "employee_note_updated",
+          source_table: "labor_employee_notes",
+          source_id: NOTE_ID,
+          title: "Employee note edited",
+          summary: "Updated note text",
+          old_values: { note_type: "general", note_text: "Original note text" },
+          new_values: { note_type: "performance", note_text: "Updated note text" },
+          actor_name: "Zack Nisbet",
+          occurred_at: "2026-04-17T13:00:00Z",
+        },
+      ],
+    });
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      category: "notes",
+      type: "employee_note_updated",
+      title: "Employee note edited",
+      summary: "Updated note text",
+      actorName: "Zack Nisbet",
+      oldValue: "",
+      newValue: "",
+    });
+    expect(timeline[0].raw.old_values.note_type).toBe("general");
+    expect(timeline[0].raw.new_values.note_type).toBe("performance");
+  });
+
   it("identifies in-app preview kinds for supported evidence files", () => {
     expect(getLaborAttachmentPreviewKind({ mime_type: "application/pdf" })).toBe("pdf");
     expect(getLaborAttachmentPreviewKind({ mime_type: "image/jpeg" })).toBe("image");
