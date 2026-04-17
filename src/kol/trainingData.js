@@ -14,6 +14,63 @@ export const COMPLETED_TRAINING_RECORD_STATUSES = [
   "archived",
 ];
 
+export const LABOR_EMPLOYEE_ATTACHMENT_BUCKET = "labor-employee-attachments";
+export const LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES = 5;
+export const LABOR_EMPLOYEE_ATTACHMENT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+export const LABOR_EMPLOYEE_ATTACHMENT_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+];
+export const LABOR_EMPLOYEE_ATTACHMENT_ACCEPT = LABOR_EMPLOYEE_ATTACHMENT_MIME_TYPES.join(",");
+
+export const LABOR_TRAINING_REQUIREMENT_SLUGS = {
+  INCITE: "incite_modules",
+  CPR: "dog_cpr_annual",
+  PPBC_LEVEL_1: "ppbc_level_1",
+  PPBC_LEVEL_2: "ppbc_level_2",
+};
+
+export const LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT = "application/pdf";
+
+export const LABOR_TRAINING_REQUIREMENT_DEFINITIONS = [
+  {
+    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE,
+    label: "Incite Modules",
+    helper: "Manual completion with uploaded PDF evidence.",
+    evidenceMode: "pdf",
+    frequency: "one_time",
+    order: 10,
+  },
+  {
+    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.CPR,
+    label: "CPR Certification",
+    helper: "Annual certification with a PDF upload or certificate link.",
+    evidenceMode: "pdf_or_url",
+    frequency: "annual",
+    order: 20,
+  },
+  {
+    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_1,
+    label: "PPBC Level 1",
+    helper: "Online certification required for non-PCT and non-CSR positions.",
+    evidenceMode: "pdf",
+    frequency: "one_time",
+    ppbcOnly: true,
+    order: 30,
+  },
+  {
+    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_2,
+    label: "PPBC Level 2",
+    helper: "Online certification required for non-PCT and non-CSR positions.",
+    evidenceMode: "pdf",
+    frequency: "one_time",
+    ppbcOnly: true,
+    order: 40,
+  },
+];
+
 export function isUuid(value) {
   return UUID_RE.test(String(value || "").trim());
 }
@@ -21,6 +78,359 @@ export function isUuid(value) {
 export function normalizeOptionalUuid(value) {
   const trimmed = String(value || "").trim();
   return isUuid(trimmed) ? trimmed : null;
+}
+
+export function inferLaborAttachmentMimeType(file = {}) {
+  const explicitType = String(file?.type || "").trim().toLowerCase();
+  if (LABOR_EMPLOYEE_ATTACHMENT_MIME_TYPES.includes(explicitType)) return explicitType;
+
+  const name = String(file?.name || "").trim().toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".webp")) return "image/webp";
+  return explicitType || "application/octet-stream";
+}
+
+export function sanitizeLaborAttachmentFilename(value = "") {
+  const rawName = String(value || "attachment")
+    .split(/[\\/]/)
+    .pop()
+    .trim();
+  const withoutControlChars = rawName.replace(/[\x00-\x1F\x7F]/g, "");
+  const safe = withoutControlChars
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^\.+/, "")
+    .replace(/[._-]+$/, "")
+    .slice(0, 120);
+  return safe || "attachment";
+}
+
+export function buildLaborEmployeeAttachmentPath({
+  laborEmployeeId,
+  noteId,
+  fileName,
+  randomId,
+} = {}) {
+  const employeeId = normalizeOptionalUuid(laborEmployeeId);
+  const cleanNoteId = normalizeOptionalUuid(noteId);
+  if (!employeeId) throw new Error("Valid labor employee id is required");
+  if (!cleanNoteId) throw new Error("Valid employee note id is required");
+
+  const uniqueId = String(
+    randomId
+    || globalThis.crypto?.randomUUID?.()
+    || Date.now()
+  )
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    || "attachment";
+
+  return `${employeeId}/${cleanNoteId}/${uniqueId}-${sanitizeLaborAttachmentFilename(fileName)}`;
+}
+
+export function normalizeLaborTrainingPosition(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+export function requiresPpbcTrainingForPosition(positionTitle = "") {
+  const normalized = normalizeLaborTrainingPosition(positionTitle);
+  if (!normalized) return false;
+  return !/(pet\s*care\s*technician|\bpct\b|customer\s*service\s*representative|\bcsr\b)/i.test(normalized);
+}
+
+export function getLaborTrainingRequirementDefinitionsForEmployee(employee = {}) {
+  const positionTitle = employee?.position_title || employee?.position || employee?.target_role || "";
+  const ppbcRequired = requiresPpbcTrainingForPosition(positionTitle);
+  return LABOR_TRAINING_REQUIREMENT_DEFINITIONS
+    .filter((definition) => !definition.ppbcOnly || ppbcRequired)
+    .sort((a, b) => a.order - b.order);
+}
+
+export function inferLaborTrainingRequirementEvidenceMimeType(file = {}) {
+  const explicitType = String(file?.type || "").trim().toLowerCase();
+  if (explicitType === "application/pdf") return explicitType;
+  const name = String(file?.name || "").trim().toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  return explicitType || "application/octet-stream";
+}
+
+export function validateLaborTrainingRequirementEvidenceFile(file) {
+  if (!file) return { acceptedFile: null, error: "" };
+  const mimeType = inferLaborTrainingRequirementEvidenceMimeType(file);
+  const fileName = String(file?.name || "training evidence").trim() || "training evidence";
+  const fileSize = Number(file?.size || 0);
+
+  if (mimeType !== "application/pdf") {
+    return { acceptedFile: null, error: `${fileName} must be a PDF file.` };
+  }
+
+  if (fileSize > LABOR_EMPLOYEE_ATTACHMENT_MAX_FILE_SIZE_BYTES) {
+    return { acceptedFile: null, error: `${fileName} is larger than 20 MB.` };
+  }
+
+  return { acceptedFile: file, error: "" };
+}
+
+export function buildLaborEmployeeRequirementEvidencePath({
+  laborEmployeeId,
+  requirementSlug,
+  fileName,
+  randomId,
+} = {}) {
+  const employeeId = normalizeOptionalUuid(laborEmployeeId);
+  if (!employeeId) throw new Error("Valid labor employee id is required");
+
+  const cleanSlug = String(requirementSlug || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!cleanSlug) throw new Error("Valid training requirement slug is required");
+
+  const uniqueId = String(
+    randomId
+    || globalThis.crypto?.randomUUID?.()
+    || Date.now()
+  )
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    || "training-evidence";
+
+  return `${employeeId}/requirements/${cleanSlug}/${uniqueId}-${sanitizeLaborAttachmentFilename(fileName)}`;
+}
+
+export function validateLaborEmployeeAttachmentFiles(files = []) {
+  const fileList = Array.from(files || []);
+  const errors = [];
+  const acceptedFiles = [];
+
+  if (fileList.length > LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES) {
+    errors.push(`Attach up to ${LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES} files per note.`);
+  }
+
+  fileList.slice(0, LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES).forEach((file) => {
+    const mimeType = inferLaborAttachmentMimeType(file);
+    const fileName = String(file?.name || "attachment").trim() || "attachment";
+    const fileSize = Number(file?.size || 0);
+
+    if (!LABOR_EMPLOYEE_ATTACHMENT_MIME_TYPES.includes(mimeType)) {
+      errors.push(`${fileName} must be a PDF, PNG, JPG, or WEBP file.`);
+      return;
+    }
+
+    if (fileSize > LABOR_EMPLOYEE_ATTACHMENT_MAX_FILE_SIZE_BYTES) {
+      errors.push(`${fileName} is larger than 20 MB.`);
+      return;
+    }
+
+    acceptedFiles.push(file);
+  });
+
+  return { acceptedFiles, errors };
+}
+
+export function formatLaborAttachmentFileSize(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+export function getLaborAttachmentPreviewKind(document = {}) {
+  const mimeType = String(document?.mime_type || document?.metadata?.mime_type || "").toLowerCase();
+  const name = String(document?.file_name || "").toLowerCase();
+  if (mimeType === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (mimeType.startsWith("image/") || /\.(png|jpe?g|webp)$/.test(name)) return "image";
+  return "unsupported";
+}
+
+export function isLaborEmployeeDocumentDeleted(document = {}) {
+  return Boolean(document?.deleted_at);
+}
+
+export function groupLaborEmployeeDocumentsByNote(documents = []) {
+  return documents.reduce((acc, document) => {
+    if (!document || typeof document !== "object") return acc;
+    if (isLaborEmployeeDocumentDeleted(document)) return acc;
+    const key = document.labor_employee_note_id || "__unlinked__";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(document);
+    acc[key].sort((a, b) => new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0));
+    return acc;
+  }, {});
+}
+
+function getIsoDateKey(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 10);
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function findCertificationForRequirement(certifications = [], requirement = {}, definition = {}) {
+  const requirementId = requirement?.id;
+  const slug = definition?.slug || requirement?.slug || "";
+  const matchingRows = (Array.isArray(certifications) ? certifications : [])
+    .filter((certification) => {
+      if (!certification || typeof certification !== "object") return false;
+      if (requirementId && certification.requirement_id === requirementId) return true;
+      return String(certification.requirement_slug || certification.metadata?.requirement_slug || "") === slug;
+    })
+    .sort((a, b) => new Date(b.completed_on || b.created_at || 0) - new Date(a.completed_on || a.created_at || 0));
+  return matchingRows[0] || null;
+}
+
+function findRequirementDocument({ certification = {}, documents = [], requirementSlug = "" } = {}) {
+  const rows = (Array.isArray(documents) ? documents : []).filter((document) => !isLaborEmployeeDocumentDeleted(document));
+  if (certification?.labor_employee_document_id) {
+    const directMatch = rows.find((document) => document?.id === certification.labor_employee_document_id);
+    if (directMatch) return directMatch;
+  }
+
+  return rows
+    .filter((document) => {
+      if (!document || typeof document !== "object") return false;
+      if (String(document.document_type || "") !== "training_requirement_evidence") return false;
+      return String(document.metadata?.requirement_slug || "") === requirementSlug;
+    })
+    .sort((a, b) => new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0))[0] || null;
+}
+
+export function buildEmployeeTrainingRequirementRows({
+  employee = {},
+  certifications = [],
+  requirements = [],
+  documents = [],
+  today = new Date(),
+} = {}) {
+  const todayKey = getIsoDateKey(today) || getIsoDateKey(new Date());
+  const requirementRowsBySlug = Object.fromEntries(
+    (Array.isArray(requirements) ? requirements : []).map((requirement) => [requirement.slug, requirement])
+  );
+
+  return getLaborTrainingRequirementDefinitionsForEmployee(employee).map((definition) => {
+    const requirement = requirementRowsBySlug[definition.slug] || null;
+    const certification = findCertificationForRequirement(certifications, requirement, definition);
+    const evidenceDocument = findRequirementDocument({
+      certification,
+      documents,
+      requirementSlug: definition.slug,
+    });
+    const externalUrl = String(certification?.external_document_url || "").trim();
+    const hasDocumentEvidence = Boolean(evidenceDocument);
+    const hasEvidence = definition.evidenceMode === "pdf_or_url"
+      ? Boolean(hasDocumentEvidence || externalUrl)
+      : hasDocumentEvidence;
+    const isExpired = Boolean(certification?.expires_on && getIsoDateKey(certification.expires_on) < todayKey);
+    const isComplete = Boolean(certification?.completed_on && hasEvidence && !isExpired);
+    const status = isComplete
+      ? "complete"
+      : isExpired
+        ? "expired"
+        : certification?.completed_on
+          ? "needs_evidence"
+          : "missing";
+
+    return {
+      ...definition,
+      requirement,
+      requirementId: requirement?.id || null,
+      certification,
+      evidenceDocument,
+      externalUrl,
+      hasEvidence,
+      isComplete,
+      status,
+    };
+  });
+}
+
+export function summarizeEmployeeTrainingRequirementCompliance(rows = []) {
+  const requirementRows = Array.isArray(rows) ? rows : [];
+  const incompleteRows = requirementRows.filter((row) => !row?.isComplete);
+  const expiredRows = requirementRows.filter((row) => row?.status === "expired");
+  const needsEvidenceRows = requirementRows.filter((row) => row?.status === "needs_evidence");
+
+  if (requirementRows.length > 0 && incompleteRows.length === 0) {
+    return {
+      isCompliant: true,
+      label: "Compliant",
+      color: "success",
+      missingCount: 0,
+      helper: "All required training evidence is current.",
+    };
+  }
+
+  const helper = expiredRows.length > 0
+    ? `${expiredRows.length} expired requirement${expiredRows.length === 1 ? "" : "s"}`
+    : needsEvidenceRows.length > 0
+      ? `${needsEvidenceRows.length} requirement${needsEvidenceRows.length === 1 ? "" : "s"} need evidence`
+      : `${incompleteRows.length || requirementRows.length} requirement${(incompleteRows.length || requirementRows.length) === 1 ? "" : "s"} incomplete`;
+
+  return {
+    isCompliant: false,
+    label: "Non-Compliant",
+    color: "danger",
+    missingCount: incompleteRows.length || requirementRows.length,
+    helper,
+  };
+}
+
+export function getNextEmployeeReviewCycle(reviewCycleRows = []) {
+  const cleanRows = (Array.isArray(reviewCycleRows) ? reviewCycleRows : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => String(row.status || "").toLowerCase() !== "completed");
+
+  if (cleanRows.length === 0) return null;
+
+  const rowsWithDueDates = cleanRows
+    .filter((row) => row.dueDate)
+    .map((row) => ({ ...row, dueTime: new Date(`${row.dueDate}T12:00:00`).getTime() }))
+    .filter((row) => Number.isFinite(row.dueTime))
+    .sort((a, b) => a.dueTime - b.dueTime);
+
+  return rowsWithDueDates[0] || cleanRows[0] || null;
+}
+
+export function buildEmployeeRecordMetricCards({
+  employeeSnapshot = {},
+  reviewCycleRows = [],
+  attendanceIncidentCount30d = 0,
+} = {}) {
+  const nextReview = getNextEmployeeReviewCycle(reviewCycleRows);
+  return [
+    {
+      id: "training_compliance",
+      label: "Training Compliance",
+      value: employeeSnapshot?.training_compliance_flag ? "Compliant" : "Not Complete",
+      tone: employeeSnapshot?.training_compliance_flag ? "success" : "warning",
+    },
+    {
+      id: "next_review",
+      label: "Next Review",
+      value: nextReview?.label || "No Open Reviews",
+      helper: nextReview?.dueDate ? `Due ${nextReview.dueDate}` : "No due date",
+      tone: nextReview?.status === "overdue" ? "danger" : "default",
+    },
+    {
+      id: "attendance_marks",
+      label: "Attendance Marks",
+      value: Number(attendanceIncidentCount30d || 0),
+      helper: "Last 30 days",
+      tone: Number(attendanceIncidentCount30d || 0) > 0 ? "warning" : "default",
+    },
+  ];
 }
 
 export function buildTrainingTemplateScopeClause(locationId) {
