@@ -36,6 +36,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
   const [rcFilter, setRcFilter] = useState("all"); // all | incomplete | setup | refresh | disinfect | asNeeded
   const [recentlyCompleted, setRecentlyCompleted] = useState(new Set()); // room keys with grace period
+  const roomCleaningOnDemandAttemptRef = useRef(new Set());
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
   const meta = OPS_TYPES[sub] || OPS_TYPES.opening;
   const isTemplate = !!meta.key;
@@ -192,6 +193,50 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     setDirty(false);
   }, [viewDate, sub, data.dailyOps]);
 
+  useEffect(() => {
+    if (sub !== "room_cleaning" || !profile?.location_id) return;
+    const roomEntryId = `ops_room_cleaning_${viewDate}`;
+    const roomEntry = allOps.find(e => e.id === roomEntryId);
+    const hasTasks = Array.isArray(roomEntry?.computed_items?.task_instances)
+      ? roomEntry.computed_items.task_instances.length > 0
+      : (Array.isArray(roomEntry?.computed_items?.rooms) && roomEntry.computed_items.rooms.length > 0);
+    if (hasTasks) return;
+
+    const attemptKey = `${profile.location_id}:${viewDate}`;
+    if (roomCleaningOnDemandAttemptRef.current.has(attemptKey)) return;
+    roomCleaningOnDemandAttemptRef.current.add(attemptKey);
+
+    let cancelled = false;
+    supabase.functions.invoke("ops-compute-ondemand", {
+      body: { location_id: profile.location_id, date: viewDate, kind: "room_cleaning" },
+    }).then(({ data: response, error }) => {
+      if (cancelled) return;
+      if (error || !response?.room_cleaning) {
+        if (error) console.error("[room_cleaning] on-demand compute failed:", error);
+        return;
+      }
+
+      const entries = [...(data.dailyOps || [])];
+      const idx = entries.findIndex(e => e.id === roomEntryId);
+      const existingEntry = idx >= 0 ? entries[idx] : {};
+      const entry = {
+        ...existingEntry,
+        id: roomEntryId,
+        location_id: profile.location_id,
+        type: "room_cleaning",
+        type_sub: "room_cleaning",
+        date: viewDate,
+        locked: false,
+        items: existingEntry.items || {},
+        computed_items: response.room_cleaning,
+      };
+      if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+      save({ ...data, dailyOps: entries });
+    });
+
+    return () => { cancelled = true; };
+  }, [sub, viewDate, profile?.location_id, data, allOps, save]);
+
   const toggleItem = (key, field, val) => {
     if (isLocked) return;
     const userName = profile?.full_name || "";
@@ -207,6 +252,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, disinfectBy: userName, disinfectInitials: initials, disinfectAt: now } };
     } else if (field === "setupDone" && val === true) {
       newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, setupDoneBy: userName, setupInitials: initials, setupAt: now } };
+    } else if (field === "completed" && val === true) {
+      newItems = { ...items, [key]: { ...(items[key] || {}), completed: true, completedAt: now, completedBy: initials, initials } };
+    } else if (field === "completed" && val === false) {
+      newItems = { ...items, [key]: { ...(items[key] || {}), completed: false, completedAt: "", completedBy: "", initials: "" } };
     } else if (field === "asNeeded" && val === true) {
       newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now, asNeededNote: "" } };
     } else if (field === "asNeeded" && val === false) {
@@ -218,10 +267,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     }
 
     // Toast with undo for completion actions
-    const isCompletion = val === true && ["checked", "refresh", "disinfect", "setupDone", "asNeededDone"].includes(field);
+    const isCompletion = val === true && ["checked", "refresh", "disinfect", "setupDone", "asNeededDone", "completed"].includes(field);
     if (isCompletion && addGlobalToast) {
       const prevItemState = items[key] ? { ...items[key] } : {};
-      const labels = { checked: "Task", refresh: "Refresh", disinfect: "Disinfect", setupDone: "Setup", asNeededDone: "As Needed" };
+      const labels = { checked: "Task", refresh: "Refresh", disinfect: "Disinfect", setupDone: "Setup", asNeededDone: "As Needed", completed: "Task" };
       addGlobalToast({
         message: `${labels[field] || "Task"} marked done`,
         type: "success",
@@ -450,6 +499,34 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     return `${hr > 12 ? hr - 12 : hr || 12}:${m} ${hr >= 12 ? "PM" : "AM"}`;
   };
   const sanitizeRoomKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
+  const roomTaskTypes = ["room_refresh", "full_disinfect", "setup", "sanitize"];
+  const getRoomTaskLabel = (taskType) => {
+    switch (taskType) {
+      case "room_refresh": return "Room Refresh";
+      case "full_disinfect": return "Full Disinfect";
+      case "setup": return "Set Up";
+      case "sanitize": return "Sanitize";
+      default: return titleCase(String(taskType || "Task").replace(/_/g, " "));
+    }
+  };
+  const getRoomTaskAccent = (taskType) => {
+    switch (taskType) {
+      case "room_refresh": return "#D97706";
+      case "full_disinfect": return C.dan;
+      case "setup": return "#14532D";
+      case "sanitize": return C.acc;
+      default: return C.pri;
+    }
+  };
+  const isRoomTaskCompletedFromLegacyState = (task, state) => {
+    if (!state || typeof state !== "object") return false;
+    if (state.completed || state.checked || state.done) return true;
+    if (task?.task_type === "room_refresh" && state.refresh) return true;
+    if (task?.task_type === "full_disinfect" && state.disinfect) return true;
+    if (task?.task_type === "setup" && state.setupDone) return true;
+    if (task?.task_type === "sanitize" && (state.asNeededDone || state.sanitizeDone)) return true;
+    return false;
+  };
   const renderRoomCleaning = () => {
     const roomItems = items;
 
@@ -483,6 +560,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
     // ─── Server-computed room data (primary source) ───
     const rcEntry = allOps.find(e => e.id === `ops_room_cleaning_${viewDate}`);
+    const canonicalTasks = Array.isArray(rcEntry?.computed_items?.task_instances) ? rcEntry.computed_items.task_instances : [];
+    const hasCanonicalTasks = canonicalTasks.length > 0;
     const computedRooms = rcEntry?.computed_items?.rooms || [];
     const hasComputedData = computedRooms.length > 0;
 
@@ -547,6 +626,193 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const bowlSizeOptions = ["Small", "Medium", "Large"];
     const bowlTypeOptions = ["Regular", "Raised Feeder", "Non-Flip"];
     const gridCols = "minmax(140px, 1.2fr) 1fr 1fr minmax(120px, 1fr) minmax(100px, auto)";
+
+    const getCanonicalTaskState = (task) => {
+      const taskState = roomItems[task.task_id];
+      if (taskState && typeof taskState === "object") return taskState;
+      const legacyState = roomItems[task.room_key] || roomItems[task.room] || {};
+      return {
+        ...legacyState,
+        completed: isRoomTaskCompletedFromLegacyState(task, legacyState),
+        completedAt: legacyState.completedAt || legacyState.refreshAt || legacyState.disinfectAt || legacyState.setupAt || legacyState.asNeededDoneAt,
+        completedBy: legacyState.completedBy || legacyState.refreshBy || legacyState.disinfectBy || legacyState.setupDoneBy || legacyState.asNeededDoneBy,
+        initials: legacyState.initials || legacyState.refreshInitials || legacyState.disinfectInitials || legacyState.setupInitials,
+      };
+    };
+
+    const canonicalSummary = hasCanonicalTasks ? canonicalTasks.reduce((acc, task) => {
+      const type = roomTaskTypes.includes(task.task_type) ? task.task_type : "sanitize";
+      const state = getCanonicalTaskState(task);
+      acc.byType[type].total += 1;
+      acc.total += 1;
+      if (state.completed) {
+        acc.byType[type].completed += 1;
+        acc.completed += 1;
+      }
+      return acc;
+    }, {
+      completed: 0,
+      total: 0,
+      byType: roomTaskTypes.reduce((acc, type) => ({ ...acc, [type]: { completed: 0, total: 0 } }), {}),
+    }) : null;
+
+    const filteredCanonicalTasks = hasCanonicalTasks ? canonicalTasks.filter((task) => {
+      const state = getCanonicalTaskState(task);
+      if (rcFilter === "incomplete") return !state.completed || recentlyCompleted.has(task.task_id);
+      if (rcFilter === "setup") return task.task_type === "setup";
+      if (rcFilter === "refresh") return task.task_type === "room_refresh";
+      if (rcFilter === "disinfect") return task.task_type === "full_disinfect";
+      if (rcFilter === "asNeeded") return task.task_type === "sanitize";
+      return true;
+    }) : [];
+
+    const groupedCanonicalTasks = filteredCanonicalTasks.reduce((acc, task) => {
+      const key = task.room_type || task.area_name || "Other";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(task);
+      return acc;
+    }, {});
+
+    const isCanonicalTaskBlocked = (task) => {
+      if (!task?.blocked_by_task_id) return false;
+      return !roomItems[task.blocked_by_task_id]?.completed;
+    };
+
+    const renderCanonicalTaskRow = (task, i, totalRows) => {
+      const state = getCanonicalTaskState(task);
+      const blocked = isCanonicalTaskBlocked(task);
+      const accent = getRoomTaskAccent(task.task_type);
+      const completedAt = state.completedAt ? formatTime(state.completedAt) : "";
+      const disabled = isLocked || blocked;
+
+      return (
+        <div key={task.task_id} style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) minmax(110px, 0.8fr) minmax(150px, 1.2fr) minmax(180px, 1.4fr) minmax(120px, auto)", gap: 12, padding: "10px 12px", borderBottom: i < totalRows - 1 ? `1px solid ${C.border}` : "none", alignItems: "center", opacity: blocked ? 0.55 : 1 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: accent }}>{getRoomTaskLabel(task.task_type)}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 2 }}>{task.room || "Unassigned room"}</div>
+            {blocked && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", marginTop: 2 }}>Blocked until disinfect is complete</div>}
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: C.textMut }}>Room Type</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{task.room_type || task.area_name || "Other"}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{task.animal_name || "No dog assigned"}</div>
+            {task.owner_last_name && <div style={{ fontSize: 11, color: C.textMut }}>{task.owner_last_name}</div>}
+          </div>
+          <div>
+            {task.task_type === "setup" ? (
+              <div>
+                <div style={{ fontSize: 10, color: C.textMut, marginBottom: 4 }}>
+                  {task.dog_weight != null ? `${task.dog_weight} lbs` : "No weight"} · {task.suggested_bowl_size || "Unknown bowl"}
+                </div>
+                <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
+                  {bowlSizeOptions.map((size) => (
+                    <button key={size} disabled={disabled} onClick={() => toggleItem(task.task_id, "bowlSize", size)}
+                      style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${state.bowlSize === size ? "#14532D" : C.border}`, background: state.bowlSize === size ? "#14532D" : "#fff", color: state.bowlSize === size ? "#fff" : C.text, fontSize: 10, fontWeight: state.bowlSize === size ? 700 : 500, cursor: disabled ? "default" : "pointer", fontFamily: "Outfit, sans-serif", opacity: disabled ? 0.6 : 1 }}
+                    >{size}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 3 }}>
+                  {bowlTypeOptions.map((type) => (
+                    <button key={type} disabled={disabled} onClick={() => toggleItem(task.task_id, "bowlType", type)}
+                      style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${(state.bowlType || "Regular") === type ? "#14532D" : C.border}`, background: (state.bowlType || "Regular") === type ? "#14532D" : "#fff", color: (state.bowlType || "Regular") === type ? "#fff" : C.text, fontSize: 9, fontWeight: (state.bowlType || "Regular") === type ? 700 : 500, cursor: disabled ? "default" : "pointer", fontFamily: "Outfit, sans-serif", opacity: disabled ? 0.6 : 1 }}
+                    >{type}</button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: C.textSec, lineHeight: 1.35 }}>{task.rationale || task.classification_bucket || "Canonical room-cleaning task"}</div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <K9Check checked={!!state.completed} disabled={disabled} onChange={e => toggleItem(task.task_id, "completed", e.target.checked)} color={accent} />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: state.completed ? C.suc : (blocked ? C.textMut : accent) }}>{state.completed ? "Done" : "Required"}</div>
+              {state.completed && <div style={{ fontSize: 10, color: C.textMut }}>{state.initials || state.completedBy || ""}{completedAt ? ` · ${completedAt}` : ""}</div>}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    if (hasCanonicalTasks) {
+      const asNeededTotal = canonicalSummary.byType.sanitize.total;
+      const asNeededCompleted = canonicalSummary.byType.sanitize.completed;
+      return (
+        <div>
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{canonicalSummary.completed}/{canonicalSummary.total}</span>
+              <span style={{ fontSize: 12, color: C.textSec }}>Total Tasks</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: "#D97706" }}>{canonicalSummary.byType.room_refresh.completed}/{canonicalSummary.byType.room_refresh.total}</span>
+              <span style={{ fontSize: 12, color: C.textSec }}>Refreshes Done</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: C.dan }}>{canonicalSummary.byType.full_disinfect.completed}/{canonicalSummary.byType.full_disinfect.total}</span>
+              <span style={{ fontSize: 12, color: C.textSec }}>Disinfects Done</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: "#14532D" }}>{canonicalSummary.byType.setup.completed}/{canonicalSummary.byType.setup.total}</span>
+              <span style={{ fontSize: 12, color: C.textSec }}>Setups Done</span>
+            </div>
+            {asNeededTotal > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: C.acc }}>{asNeededCompleted}/{asNeededTotal}</span>
+              <span style={{ fontSize: 12, color: C.textSec }}>Sanitize Done</span>
+            </div>}
+          </div>
+          {canonicalSummary.total > 0 && <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ width: `${(canonicalSummary.completed / canonicalSummary.total) * 100}%`, height: "100%", background: canonicalSummary.completed === canonicalSummary.total ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: canonicalSummary.completed === canonicalSummary.total ? C.suc : C.text }}>{canonicalSummary.completed}/{canonicalSummary.total}</span>
+            </div>
+          </div>}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            {[
+              { key: "all", label: "All" },
+              { key: "incomplete", label: "Incomplete", count: canonicalSummary.total - canonicalSummary.completed },
+              { key: "setup", label: "Setups", count: canonicalSummary.byType.setup.total },
+              { key: "refresh", label: "Refreshes", count: canonicalSummary.byType.room_refresh.total },
+              { key: "disinfect", label: "Disinfects", count: canonicalSummary.byType.full_disinfect.total },
+              { key: "asNeeded", label: "Sanitize", count: canonicalSummary.byType.sanitize.total },
+            ].map(f => (
+              <button key={f.key} onClick={() => setRcFilter(f.key)} style={{
+                padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: rcFilter === f.key ? 700 : 500,
+                fontFamily: "Outfit, sans-serif", cursor: "pointer", transition: "all 0.15s ease",
+                border: `1.5px solid ${rcFilter === f.key ? "#14532D" : C.border}`,
+                background: rcFilter === f.key ? "#14532D" : "#fff",
+                color: rcFilter === f.key ? "#fff" : C.text,
+              }}>
+                {f.label}{f.count != null ? ` (${f.count})` : ""}
+              </button>
+            ))}
+          </div>
+          {Object.keys(groupedCanonicalTasks).length > 0 ? Object.entries(groupedCanonicalTasks).map(([group, groupTasks]) => (
+            <div key={group} style={{ marginBottom: 20 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{group} <Badge color="default" size="sm">{groupTasks.length} tasks</Badge></h3>
+              <Card>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) minmax(110px, 0.8fr) minmax(150px, 1.2fr) minmax(180px, 1.4fr) minmax(120px, auto)", gap: 12, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>TASK / ROOM</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM TYPE</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>DOG / OWNER</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>DETAILS</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>COMPLETED</div>
+                </div>
+                {groupTasks.map((task, index) => renderCanonicalTaskRow(task, index, groupTasks.length))}
+              </Card>
+            </div>
+          )) : (
+            <Card style={{ padding: 32, textAlign: "center" }}>
+              <div style={{ color: C.textSec, fontSize: 14 }}>No tasks match the current filter.</div>
+            </Card>
+          )}
+        </div>
+      );
+    }
 
     // ─── Render a single room row (shared by both computed and fallback paths) ───
     const renderRoomRow = (rm, ri, crData, i, totalRows, displayName) => {
@@ -2367,10 +2633,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   // ─── Generic Service Report ─────────────────────────────────────────────────
   const [genericSvcCompleted, setGenericSvcCompleted] = useState({});
   const svcName = typeof params === "object" ? params.svcName : null;
+  const getGenericServiceSettingKey = useCallback((name, date) => {
+    const lower = String(name || "").toLowerCase();
+    const keyName = lower.includes("ice cream") || lower.includes("gourmet")
+      ? "Ice_Cream"
+      : String(name || "").replace(/[^a-zA-Z0-9]/g, "_");
+    return `ops_svc_${keyName}_${date}`;
+  }, []);
 
   useEffect(() => {
     if (!sub?.startsWith?.("svc") || !svcName || !profile?.location_id) return;
-    const entryId = `ops_svc_${svcName.replace(/[^a-zA-Z0-9]/g, "_")}_${viewDate}`;
+    const entryId = getGenericServiceSettingKey(svcName, viewDate);
     supabase.from("lite_settings").select("setting_value")
       .eq("location_id", profile.location_id)
       .eq("setting_key", entryId)
@@ -2382,12 +2655,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           setGenericSvcCompleted({});
         }
       });
-  }, [sub, svcName, viewDate, profile?.location_id]);
+  }, [sub, svcName, viewDate, profile?.location_id, getGenericServiceSettingKey]);
 
   const saveGenericSvcCompleted = async (newCompleted) => {
     setGenericSvcCompleted(newCompleted);
     if (!profile?.location_id || !svcName) return;
-    const entryId = `ops_svc_${svcName.replace(/[^a-zA-Z0-9]/g, "_")}_${viewDate}`;
+    const entryId = getGenericServiceSettingKey(svcName, viewDate);
     await supabase.from("lite_settings").upsert({
       location_id: profile.location_id,
       setting_key: entryId,
@@ -2403,7 +2676,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     // Use server-computed data from ops-compute when available (preserves historical data
     // including daycare dogs that may have checked out)
     const svcEntry = allOps.find(e => e.id === `ops_svc_${viewDate}`);
-    const computedDogs = svcEntry?.computed_items?.dogs || [];
+    const isEnrichmentService = svcName.toLowerCase() === "enrichment";
+    const computedDogs = isEnrichmentService ? (svcEntry?.computed_items?.dogs || []) : [];
 
     if (computedDogs.length > 0) {
       // Server-computed path: use the snapshot (includes daycare + boarding + suggested)
@@ -2436,7 +2710,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       inHouse.forEach(res => {
         const names = getSvcNames(res._services);
         // For enrichment, use case-insensitive includes to match variants like "Enrichment Activity"
-        const isEnrichmentSvc = svcName.toLowerCase() === "enrichment";
+        const isEnrichmentSvc = isEnrichmentService;
         const matchCount = isEnrichmentSvc
           ? names.filter(n => n.toLowerCase().includes("enrichment")).length
           : names.filter(n => n === svcName).length;
