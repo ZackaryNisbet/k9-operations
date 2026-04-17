@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "d4a91ed7c94449a51d0fbc4aabfaa5c5fbed4227",
+      "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room occupancy lodging only",
-      "updatedAt": "2026-04-15T18:10:51.977Z"
+      "note": "room cleaning task timing support",
+      "updatedAt": "2026-04-17T12:24:31.302Z"
     },
     "ops-compute-ondemand": {
-      "commit": "d4a91ed7c94449a51d0fbc4aabfaa5c5fbed4227",
+      "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room occupancy lodging only",
-      "updatedAt": "2026-04-15T18:10:51.977Z"
+      "note": "room cleaning task timing support",
+      "updatedAt": "2026-04-17T12:24:31.302Z"
     },
     "scheduling-audit": {
       "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
