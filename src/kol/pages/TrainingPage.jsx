@@ -866,7 +866,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         ...(Array.isArray(seedData?.rosterSnapshot) ? seedData.rosterSnapshot : rosterSnapshot),
       ];
       const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
-      const employeeIds = Array.from(new Set(toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean)));
+      let employeeRowsForBundle = toObjectRows(employeeSource);
+      if (employeeRowsForBundle.length === 0) {
+        const { data: fallbackEmployees, error: fallbackEmployeeError } = await supabase
+          .from("labor_employees")
+          .select("id, full_name, position_title, start_date, end_date, employment_status, metadata")
+          .eq("location_id", locationIdForBundle)
+          .order("full_name", { ascending: true });
+        if (fallbackEmployeeError) throw fallbackEmployeeError;
+        employeeRowsForBundle = toObjectRows(fallbackEmployees);
+        if (employeeRowsForBundle.length > 0 && toObjectRows(laborEmployees).length === 0) {
+          setLaborEmployees(employeeRowsForBundle);
+        }
+      }
+      const employeeIds = Array.from(new Set(employeeRowsForBundle.map(getLaborEmployeeRowId).filter(Boolean)));
       const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
       const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
