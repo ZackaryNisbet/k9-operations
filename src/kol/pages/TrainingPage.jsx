@@ -15,6 +15,7 @@ import {
   LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
   LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
   LABOR_TRAINING_REQUIREMENT_SLUGS,
+  buildEmployeeHistoryTimeline,
   buildEmployeeTrainingRequirementRows,
   buildCreateLaborEmployeeRpcArgs,
   buildCreateTrainingRecordRpcArgs,
@@ -36,6 +37,7 @@ import {
   groupTrainingNotes,
   inferLaborAttachmentMimeType,
   inferLaborTrainingRequirementEvidenceMimeType,
+  isLaborEmployeeNoteDeleted,
   isLaborEmployeeDocumentDeleted,
   isLaborEmployeeActive,
   normalizeOptionalUuid,
@@ -446,12 +448,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [recordEvents, setRecordEvents] = useState([]);
   const [laborEmployeeNotes, setLaborEmployeeNotes] = useState([]);
   const [laborEmployeeDocuments, setLaborEmployeeDocuments] = useState([]);
+  const [laborEmployeeHistoryEvents, setLaborEmployeeHistoryEvents] = useState([]);
   const [laborAttendanceIncidents, setLaborAttendanceIncidents] = useState([]);
   const [reviewInstances, setReviewInstances] = useState([]);
   const [reviewResponses, setReviewResponses] = useState([]);
   const [employeeCertifications, setEmployeeCertifications] = useState([]);
   const [certificationRequirements, setCertificationRequirements] = useState([]);
   const [allTrainingNotes, setAllTrainingNotes] = useState([]);
+  const [allTrainingEvents, setAllTrainingEvents] = useState([]);
   const [serverDashboardMetrics, setServerDashboardMetrics] = useState(null);
   const [resolvedLaborLocationId, setResolvedLaborLocationId] = useState("");
   const [positionHierarchy, setPositionHierarchy] = useState([]);
@@ -530,6 +534,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [previewingAttachmentId, setPreviewingAttachmentId] = useState(null);
   const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
+  const [deletingEmployeeNoteId, setDeletingEmployeeNoteId] = useState(null);
   const [trainingRequirementEditor, setTrainingRequirementEditor] = useState(null);
   const [trainingRequirementCompletedOn, setTrainingRequirementCompletedOn] = useState("");
   const [trainingRequirementExpiresOn, setTrainingRequirementExpiresOn] = useState("");
@@ -844,12 +849,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const employeeIds = toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean);
       const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
-      const [noteRes, documentRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
+      const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
         employeeIds.length > 0
           ? supabase.from("labor_employee_notes").select("*").in("labor_employee_id", employeeIds).order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
         employeeIds.length > 0
           ? supabase.from("labor_employee_documents").select("*").in("labor_employee_id", employeeIds).order("uploaded_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        employeeIds.length > 0
+          ? supabase.from("labor_employee_history_events").select("*").in("labor_employee_id", employeeIds).order("occurred_at", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
         employeeIds.length > 0
           ? supabase.from("attendance_incidents").select("*").in("labor_employee_id", employeeIds).order("incident_date", { ascending: false })
@@ -869,13 +877,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       if (noteRes.error) throw noteRes.error;
       if (documentRes.error) throw documentRes.error;
+      if (historyEventRes.error) throw historyEventRes.error;
       if (attendanceIncidentRes.error) throw attendanceIncidentRes.error;
       if (reviewInstanceRes.error) throw reviewInstanceRes.error;
       if (certificationRes.error) throw certificationRes.error;
       if (requirementRes.error) throw requirementRes.error;
 
       const reviewInstanceIds = (reviewInstanceRes.data || []).map((instance) => instance.id);
-      const [responseRes, trainingNoteRes] = await Promise.all([
+      const [responseRes, trainingNoteRes, trainingEventRes] = await Promise.all([
         reviewInstanceIds.length > 0
           ? supabase
               .from("employee_review_responses")
@@ -890,19 +899,29 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               .in("record_id", recordIds)
               .order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
+        recordIds.length > 0
+          ? supabase
+              .from("training_record_events")
+              .select("*")
+              .in("record_id", recordIds)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (responseRes.error) throw responseRes.error;
       if (trainingNoteRes.error) throw trainingNoteRes.error;
+      if (trainingEventRes.error) throw trainingEventRes.error;
 
       setLaborEmployeeNotes(noteRes.data || []);
-      setLaborEmployeeDocuments((documentRes.data || []).filter((document) => !isLaborEmployeeDocumentDeleted(document)));
+      setLaborEmployeeDocuments(documentRes.data || []);
+      setLaborEmployeeHistoryEvents(historyEventRes.data || []);
       setLaborAttendanceIncidents(attendanceIncidentRes.data || []);
       setReviewInstances(reviewInstanceRes.data || []);
       setReviewResponses(responseRes.data || []);
       setEmployeeCertifications(certificationRes.data || []);
       setCertificationRequirements(requirementRes.data || []);
       setAllTrainingNotes(trainingNoteRes.data || []);
+      setAllTrainingEvents(trainingEventRes.data || []);
       setSupportBundleLoaded(true);
     } catch (err) {
       console.error("Labor support bundle load error:", err);
@@ -1067,11 +1086,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hasSelectedLaborEmployee = Boolean(selectedLaborEmployeeId || selectedLaborEmployeeSeed);
   const laborEmployeeMap = useMemo(() => Object.fromEntries(toObjectRows(laborEmployees).map((employee) => [employee.id, employee])), [laborEmployees]);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
+  const trainingItemMap = useMemo(() => Object.fromEntries(toObjectRows(items).map((item) => [item.id, item])), [items]);
+  const activeEmployeeDocumentsByNote = useMemo(() => groupLaborEmployeeDocumentsByNote(laborEmployeeDocuments), [laborEmployeeDocuments]);
   const selectedVersion = useMemo(() => {
     if (!selectedRecord) return null;
     return toObjectRows(templateVersions).find((version) => version.id === selectedRecord.template_version_id) || null;
   }, [selectedRecord, templateVersions]);
   const groupedNotes = useMemo(() => groupTrainingNotes(notes), [notes]);
+  const selectedEmployeeAllNotes = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return [];
+    return toObjectRows(laborEmployeeNotes).filter((note) => note.labor_employee_id === selectedLaborEmployeeView.id);
+  }, [laborEmployeeNotes, selectedLaborEmployeeView]);
   const selectedEmployeeNotes = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     return toObjectRows(laborNotesByEmployee[selectedLaborEmployeeView.id] || []);
@@ -1134,6 +1159,46 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return Number.isFinite(incidentDate) && now - incidentDate <= 30 * 24 * 60 * 60 * 1000;
     });
   }, [laborAttendanceIncidents, selectedLaborEmployeeView]);
+  const selectedEmployeeHistoryEvents = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return [];
+    return toObjectRows(laborEmployeeHistoryEvents).filter((event) => event.labor_employee_id === selectedLaborEmployeeView.id);
+  }, [laborEmployeeHistoryEvents, selectedLaborEmployeeView]);
+  const selectedEmployeeTrainingRecordIds = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return new Set();
+    const selectedName = normalizeEmployeeName(selectedLaborEmployeeView.full_name);
+    return new Set(toObjectRows(records)
+      .filter((record) => (
+        record.labor_employee_id === selectedLaborEmployeeView.id
+        || (selectedName && normalizeEmployeeName(record.employee_full_name) === selectedName)
+      ))
+      .map((record) => record.id)
+      .filter(Boolean));
+  }, [records, selectedLaborEmployeeView]);
+  const selectedEmployeeTrainingEvents = useMemo(() => {
+    if (selectedEmployeeTrainingRecordIds.size === 0) return [];
+    return toObjectRows(allTrainingEvents).filter((event) => selectedEmployeeTrainingRecordIds.has(event.record_id));
+  }, [allTrainingEvents, selectedEmployeeTrainingRecordIds]);
+  const selectedEmployeeHistoryTimeline = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return [];
+    return buildEmployeeHistoryTimeline({
+      historyEvents: selectedEmployeeHistoryEvents,
+      notes: selectedEmployeeAllNotes,
+      documents: selectedEmployeeDocuments,
+      attendanceIncidents: toObjectRows(laborAttendanceIncidents).filter((incident) => incident.labor_employee_id === selectedLaborEmployeeView.id),
+      trainingEvents: selectedEmployeeTrainingEvents,
+      trainingRecordMap: recordMap,
+      trainingItemMap,
+    });
+  }, [
+    laborAttendanceIncidents,
+    recordMap,
+    selectedEmployeeAllNotes,
+    selectedEmployeeDocuments,
+    selectedEmployeeHistoryEvents,
+    selectedEmployeeTrainingEvents,
+    selectedLaborEmployeeView,
+    trainingItemMap,
+  ]);
   const selectedReviewInstance = useMemo(() => {
     if (!selectedReviewInstanceId) return null;
     return toObjectRows(reviewInstances).find((instance) => instance.id === selectedReviewInstanceId) || null;
@@ -1328,7 +1393,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return { ...template, kind: "training", version, sections: sectionData };
   }, [allReviewTemplateVersions, allTemplateVersions, items, previewTemplateId, previewTemplateKind, previewTemplateVersionId, reviewItems, reviewSections, reviewTemplates, sections, templates]);
   const globalNotesFeed = useMemo(() => {
-    const employeeNotesFeed = toObjectRows(laborEmployeeNotes).map((note) => {
+    const employeeNotesFeed = toObjectRows(laborEmployeeNotes)
+      .filter((note) => !isLaborEmployeeNoteDeleted(note))
+      .map((note) => {
       const employee = laborEmployeeMap[note.labor_employee_id];
       return {
         id: `employee_${note.id}`,
@@ -1341,6 +1408,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         createdAt: note.created_at,
         createdByName: note.created_by_name || "Staff",
         noteText: note.note_text,
+        documents: toObjectRows(activeEmployeeDocumentsByNote[note.id] || []),
       };
     });
     const trainingNotesFeed = toObjectRows(allTrainingNotes).map((note) => {
@@ -1363,7 +1431,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     });
     return [...employeeNotesFeed, ...trainingNotesFeed]
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [allTrainingNotes, getItemById, getSectionById, laborEmployeeMap, laborEmployeeNotes, recordMap]);
+  }, [activeEmployeeDocumentsByNote, allTrainingNotes, getItemById, getSectionById, laborEmployeeMap, laborEmployeeNotes, recordMap]);
   const filteredGlobalNotes = useMemo(() => {
     const now = new Date();
     return globalNotesFeed.filter((note) => {
@@ -1547,6 +1615,111 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setDeletingAttachmentId(null);
     }
   }, [actorName, actorUserId, addGlobalToast, refreshLaborData]);
+
+  const handleDeleteEmployeeNote = useCallback(async (note) => {
+    if (!note?.id || isLaborEmployeeNoteDeleted(note)) return;
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm("Remove this note from the active employee record? The full note and its attachments will stay in History.");
+    if (!confirmed) return;
+
+    setDeletingEmployeeNoteId(note.id);
+    try {
+      const { error } = await supabase
+        .from("labor_employee_notes")
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by_user_id: actorUserId,
+          deleted_by_name: actorName,
+          delete_reason: "Removed from employee record",
+        })
+        .eq("id", note.id)
+        .is("deleted_at", null);
+
+      if (error) throw error;
+
+      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      addGlobalToast("Note removed from active views; history was retained", "success");
+    } catch (error) {
+      console.error("Employee note delete error:", error);
+      addGlobalToast("Failed to remove employee note", "error");
+    } finally {
+      setDeletingEmployeeNoteId(null);
+    }
+  }, [actorName, actorUserId, addGlobalToast, refreshLaborData]);
+
+  const renderEmployeeDocumentButton = useCallback((document) => {
+    const documentId = document?.id || `${document?.file_name || "attachment"}-${document?.storage_path || document?.external_url || "preview"}`;
+    const previewKind = getLaborAttachmentPreviewKind(document);
+    const isPreviewable = previewKind !== "unsupported";
+    const isSyntheticDocument = String(document?.id || "").startsWith("requirement-url-");
+    const canDeleteDocument = Boolean(document?.id && !isSyntheticDocument && !isLaborEmployeeDocumentDeleted(document));
+    return (
+      <span
+        key={documentId}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          maxWidth: "100%",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => handlePreviewEmployeeDocument(document)}
+          disabled={!isPreviewable || previewingAttachmentId === document.id}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+            maxWidth: "100%",
+            padding: "7px 10px",
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: isPreviewable ? "#fff" : C.bg,
+            color: isPreviewable ? C.text : C.textMut,
+            cursor: isPreviewable ? "pointer" : "not-allowed",
+            fontFamily: "inherit",
+            fontSize: 10.5,
+            fontWeight: 900,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          }}
+        >
+          <I.Eye />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{document.file_name || "Attachment"}</span>
+          {document.file_size_bytes ? <span style={{ color: C.textMut, fontWeight: 600 }}>{formatLaborAttachmentFileSize(document.file_size_bytes)}</span> : null}
+        </button>
+        {canDeleteDocument && (
+          <button
+            type="button"
+            title="Remove attachment"
+            aria-label={`Remove ${document.file_name || "attachment"}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleDeleteEmployeeDocument(document);
+            }}
+            disabled={deletingAttachmentId === document.id}
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: deletingAttachmentId === document.id ? C.bg : "#fff",
+              color: C.dan,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: deletingAttachmentId === document.id ? "wait" : "pointer",
+            }}
+          >
+            <I.Trash />
+          </button>
+        )}
+      </span>
+    );
+  }, [deletingAttachmentId, handleDeleteEmployeeDocument, handlePreviewEmployeeDocument, previewingAttachmentId]);
 
   const openTrainingRequirementEditor = useCallback((requirementRow) => {
     if (!requirementRow) return;
@@ -1937,10 +2110,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, { email, phone });
     const { error } = await supabase
       .from("labor_employees")
-      .update({ metadata: nextMetadata })
+      .update({ metadata: nextMetadata, updated_by_user_id: actorUserId })
       .eq("id", employeeId);
     return { error };
-  }, []);
+  }, [actorUserId]);
 
   useEffect(() => {
     if (!showInlineLaborEmployeeComposer) return undefined;
@@ -3885,83 +4058,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       { id: "reviews", label: "Performance" },
       { id: "attendance", label: "Attendance" },
       { id: "notes", label: `Notes (${selectedEmployeeNotes.length})` },
+      { id: "history", label: "History" },
     ];
     const selectedEmployeeAttendanceRows = toObjectRows(laborAttendanceIncidents)
       .filter((incident) => incident.labor_employee_id === selectedLaborEmployeeView.id)
       .sort((a, b) => new Date(b.incident_date || 0) - new Date(a.incident_date || 0))
       .slice(0, 10);
-    const renderEmployeeDocumentButton = (document) => {
-      const documentId = document?.id || `${document?.file_name || "attachment"}-${document?.storage_path || document?.external_url || "preview"}`;
-      const previewKind = getLaborAttachmentPreviewKind(document);
-      const isPreviewable = previewKind !== "unsupported";
-      const isSyntheticDocument = String(document?.id || "").startsWith("requirement-url-");
-      const canDeleteDocument = Boolean(document?.id && !isSyntheticDocument);
-      return (
-        <span
-          key={documentId}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            maxWidth: "100%",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => handlePreviewEmployeeDocument(document)}
-            disabled={!isPreviewable || previewingAttachmentId === document.id}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              minWidth: 0,
-              maxWidth: "100%",
-              padding: "7px 10px",
-              borderRadius: 8,
-              border: `1px solid ${C.border}`,
-              background: isPreviewable ? "#fff" : C.bg,
-              color: isPreviewable ? C.text : C.textMut,
-              cursor: isPreviewable ? "pointer" : "not-allowed",
-              fontFamily: "inherit",
-              fontSize: 10.5,
-              fontWeight: 900,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            <I.Eye />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{document.file_name || "Attachment"}</span>
-            {document.file_size_bytes ? <span style={{ color: C.textMut, fontWeight: 600 }}>{formatLaborAttachmentFileSize(document.file_size_bytes)}</span> : null}
-          </button>
-          {canDeleteDocument && (
-            <button
-              type="button"
-              title="Remove attachment"
-              aria-label={`Remove ${document.file_name || "attachment"}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                handleDeleteEmployeeDocument(document);
-              }}
-              disabled={deletingAttachmentId === document.id}
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: deletingAttachmentId === document.id ? C.bg : "#fff",
-                color: C.dan,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: deletingAttachmentId === document.id ? "wait" : "pointer",
-              }}
-            >
-              <I.Trash />
-            </button>
-          )}
-        </span>
-      );
-    };
 
     return (
       <div style={{ maxWidth: 1120, margin: "0 auto", padding: "24px 16px 48px" }}>
@@ -4295,10 +4397,33 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   const noteDocuments = toObjectRows(selectedEmployeeDocumentsByNote[note.id] || []);
                   return (
                     <div key={note.id} style={{ padding: "13px 0", borderTop: `1px solid ${C.borderLight}` }}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 5 }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{note.created_by_name || "Staff"}</span>
-                        <Badge color="default">{String(note.note_type || "general").replace(/_/g, " ")}</Badge>
-                        <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 5 }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{note.created_by_name || "Staff"}</span>
+                          <Badge color="default">{String(note.note_type || "general").replace(/_/g, " ")}</Badge>
+                          <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
+                        </div>
+                        <button
+                          type="button"
+                          title="Remove note"
+                          aria-label="Remove employee note"
+                          onClick={() => handleDeleteEmployeeNote(note)}
+                          disabled={deletingEmployeeNoteId === note.id}
+                          style={{
+                            width: 30,
+                            height: 30,
+                            borderRadius: 8,
+                            border: `1px solid ${C.border}`,
+                            background: deletingEmployeeNoteId === note.id ? C.bg : "#fff",
+                            color: C.dan,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            cursor: deletingEmployeeNoteId === note.id ? "wait" : "pointer",
+                          }}
+                        >
+                          <I.Trash />
+                        </button>
                       </div>
                       <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{note.note_text}</div>
                       {noteDocuments.length > 0 && (
@@ -4351,6 +4476,63 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     ))}
                   </tbody>
                 </table>
+              </Card>
+            )}
+          </>
+        )}
+
+        {employeeRecordTab === "history" && (
+          <>
+            <SectionHeader title="Employee History" count={selectedEmployeeHistoryTimeline.length} />
+            {selectedEmployeeHistoryTimeline.length === 0 ? (
+              <Card style={{ padding: 18, color: C.textMut, fontSize: 13 }}>No employee history has been recorded yet.</Card>
+            ) : (
+              <Card style={{ padding: 0, overflow: "hidden" }}>
+                {selectedEmployeeHistoryTimeline.map((item, index) => {
+                  const noteDocuments = item.note?.id
+                    ? selectedEmployeeDocuments.filter((document) => document.labor_employee_note_id === item.note.id)
+                    : [];
+                  const itemDocuments = item.document ? [item.document] : noteDocuments;
+                  const oldNewVisible = item.oldValue || item.newValue;
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        padding: "14px 16px",
+                        borderTop: index === 0 ? "none" : `1px solid ${C.borderLight}`,
+                        display: "grid",
+                        gridTemplateColumns: "120px minmax(0, 1fr) 170px",
+                        gap: 14,
+                        alignItems: "start",
+                      }}
+                    >
+                      <div>
+                        <Badge color={item.tone === "danger" ? "danger" : "default"}>{String(item.category || "history").replace(/_/g, " ")}</Badge>
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{item.title}</div>
+                        {item.summary ? (
+                          <div style={{ fontSize: 12, color: C.textSec, marginTop: 5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.summary}</div>
+                        ) : null}
+                        {oldNewVisible ? (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+                            {item.oldValue ? <span>From: {item.oldValue}</span> : null}
+                            {item.newValue ? <span>To: {item.newValue}</span> : null}
+                          </div>
+                        ) : null}
+                        {itemDocuments.length > 0 && (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                            {itemDocuments.map((document) => renderEmployeeDocumentButton(document))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ textAlign: "right", color: C.textMut, fontSize: 11, fontWeight: 700 }}>
+                        <div style={{ color: C.text, fontSize: 12 }}>{item.actorName || "Staff"}</div>
+                        <div style={{ marginTop: 4 }}>{formatTrainingTimestamp(item.occurredAt)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
               </Card>
             )}
           </>
@@ -6065,6 +6247,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     </div>
                   </div>
                   <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>{note.noteText}</div>
+                  {toObjectRows(note.documents || []).length > 0 && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                      {toObjectRows(note.documents || []).map((document) => renderEmployeeDocumentButton(document))}
+                    </div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
                     <Btn variant="ghost" size="sm" onClick={() => openLaborEmployeeProfile(note.employeeId)}>Open Employee</Btn>
                   </div>
