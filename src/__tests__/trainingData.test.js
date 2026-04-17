@@ -192,6 +192,7 @@ describe("trainingData helpers", () => {
       groupLaborEmployeeNotes([
         { id: "n1", labor_employee_id: "e1" },
         { id: "n2", labor_employee_id: "e1" },
+        { id: "n2-deleted", labor_employee_id: "e1", deleted_at: "2026-04-17T12:00:00Z" },
         { id: "n3", labor_employee_id: "e2" },
       ])
     ).toEqual({
