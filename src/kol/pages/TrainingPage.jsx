@@ -4020,6 +4020,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Modal>
   ) : null;
 
+  const attachmentPreviewModal = attachmentPreview ? (
+    <Modal
+      title={attachmentPreview.document?.file_name || "Attachment Preview"}
+      onClose={() => setAttachmentPreview(null)}
+      fullWidth
+    >
+      <div style={{ height: "calc(100vh - 180px)", minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
+        {attachmentPreview.kind === "image" ? (
+          <img
+            src={attachmentPreview.url}
+            alt={attachmentPreview.document?.file_name || "Employee attachment"}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+          />
+        ) : (
+          <iframe
+            title={attachmentPreview.document?.file_name || "Employee attachment"}
+            src={attachmentPreview.url}
+            style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
+          />
+        )}
+      </div>
+    </Modal>
+  ) : null;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // EMPLOYEE DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
@@ -4269,6 +4293,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           {laborEmployeeEditorModal}
           {employeeNoteEditorModal}
+          {attachmentPreviewModal}
         </div>
       );
     }
@@ -4810,30 +4835,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </Modal>
         )}
 
-        {attachmentPreview && (
-          <Modal
-            title={attachmentPreview.document?.file_name || "Attachment Preview"}
-            onClose={() => setAttachmentPreview(null)}
-            fullWidth
-          >
-            <div style={{ height: "calc(100vh - 180px)", minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
-              {attachmentPreview.kind === "image" ? (
-                <img
-                  src={attachmentPreview.url}
-                  alt={attachmentPreview.document?.file_name || "Employee attachment"}
-                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                />
-              ) : (
-                <iframe
-                  title={attachmentPreview.document?.file_name || "Employee attachment"}
-                  src={attachmentPreview.url}
-                  style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
-                />
-              )}
-            </div>
-          </Modal>
-        )}
-
+        {attachmentPreviewModal}
         {laborEmployeeEditorModal}
         {employeeNoteEditorModal}
       </div>
@@ -6599,6 +6601,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {laborEmployeeEditorModal}
       {employeeNoteEditorModal}
+      {attachmentPreviewModal}
 
       {showGlobalNoteModal && (
         <Modal title="Add Employee Note" onClose={() => setShowGlobalNoteModal(false)}>
