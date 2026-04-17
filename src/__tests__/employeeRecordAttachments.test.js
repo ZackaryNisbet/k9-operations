@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmployeeRecordMetricCards,
+  buildEmployeeHistoryTimeline,
   buildEmployeeTrainingRequirementRows,
   buildLaborEmployeeAttachmentPath,
   buildLaborEmployeeRequirementEvidencePath,
   formatLaborAttachmentFileSize,
   getLaborAttachmentPreviewKind,
   getNextEmployeeReviewCycle,
+  isLaborEmployeeNoteDeleted,
   isLaborEmployeeDocumentDeleted,
   LABOR_TRAINING_REQUIREMENT_SLUGS,
   groupLaborEmployeeDocumentsByNote,
@@ -59,6 +61,47 @@ describe("employee record attachment helpers", () => {
     expect(grouped["note-1"].map((document) => document.id)).toEqual(["newer", "older"]);
     expect(grouped.__unlinked__.map((document) => document.id)).toEqual(["loose"]);
     expect(isLaborEmployeeDocumentDeleted({ deleted_at: "2026-04-17T12:00:00Z" })).toBe(true);
+  });
+
+  it("keeps deleted notes out of active grouping while preserving them for history", () => {
+    expect(isLaborEmployeeNoteDeleted({ deleted_at: "2026-04-17T12:00:00Z" })).toBe(true);
+
+    const timeline = buildEmployeeHistoryTimeline({
+      notes: [
+        {
+          id: "note-1",
+          labor_employee_id: EMPLOYEE_ID,
+          note_text: "Original note text",
+          created_at: "2026-04-17T10:00:00Z",
+          created_by_name: "Zack Nisbet",
+          deleted_at: "2026-04-17T12:00:00Z",
+          deleted_by_name: "Zack Nisbet",
+        },
+      ],
+      documents: [
+        {
+          id: "doc-1",
+          labor_employee_id: EMPLOYEE_ID,
+          labor_employee_note_id: "note-1",
+          file_name: "email.pdf",
+          uploaded_at: "2026-04-17T10:05:00Z",
+          uploaded_by_name: "Zack Nisbet",
+          deleted_at: "2026-04-17T12:01:00Z",
+          deleted_by_name: "Zack Nisbet",
+        },
+      ],
+    });
+
+    expect(timeline.map((item) => item.type)).toEqual([
+      "employee_document_deleted",
+      "employee_note_deleted",
+      "employee_document_uploaded",
+      "employee_note_created",
+    ]);
+    expect(timeline[1]).toMatchObject({
+      title: "Employee note removed",
+      summary: "Original note text",
+    });
   });
 
   it("identifies in-app preview kinds for supported evidence files", () => {
