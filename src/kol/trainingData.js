@@ -254,6 +254,10 @@ export function getLaborAttachmentPreviewKind(document = {}) {
   return "unsupported";
 }
 
+export function isLaborEmployeeNoteDeleted(note = {}) {
+  return Boolean(note?.deleted_at);
+}
+
 export function isLaborEmployeeDocumentDeleted(document = {}) {
   return Boolean(document?.deleted_at);
 }
@@ -433,6 +437,153 @@ export function buildEmployeeRecordMetricCards({
   ];
 }
 
+function getHistoryTimestampValue(value) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function humanizeHistoryToken(value = "") {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+}
+
+function toHistoryArray(value = []) {
+  return Array.isArray(value) ? value : [];
+}
+
+const DERIVED_EMPLOYEE_HISTORY_EVENT_TYPES = new Set([
+  "employee_document_deleted",
+  "employee_note_deleted",
+]);
+
+export function buildEmployeeHistoryTimeline({
+  historyEvents = [],
+  notes = [],
+  documents = [],
+  attendanceIncidents = [],
+  trainingEvents = [],
+  trainingRecordMap = {},
+  trainingItemMap = {},
+} = {}) {
+  const items = [];
+
+  toHistoryArray(historyEvents).forEach((event) => {
+    if (!event || typeof event !== "object") return;
+    if (DERIVED_EMPLOYEE_HISTORY_EVENT_TYPES.has(event.event_type)) return;
+    items.push({
+      id: `history-${event.id}`,
+      category: event.event_category || "employee",
+      type: event.event_type || "history_event",
+      title: event.title || humanizeHistoryToken(event.event_type || "History event"),
+      summary: event.summary || "",
+      oldValue: event.old_value || "",
+      newValue: event.new_value || "",
+      occurredAt: event.occurred_at || event.created_at,
+      actorName: event.actor_name || "Staff",
+      source: event.source_table || "history",
+      raw: event,
+    });
+  });
+
+  toHistoryArray(notes).forEach((note) => {
+    if (!note || typeof note !== "object") return;
+    items.push({
+      id: `note-created-${note.id}`,
+      category: "notes",
+      type: "employee_note_created",
+      title: "Employee note added",
+      summary: note.note_text || "",
+      occurredAt: note.created_at,
+      actorName: note.created_by_name || "Staff",
+      source: "labor_employee_notes",
+      note,
+    });
+
+    if (isLaborEmployeeNoteDeleted(note)) {
+      items.push({
+        id: `note-deleted-${note.id}`,
+        category: "notes",
+        type: "employee_note_deleted",
+        title: "Employee note removed",
+        summary: note.note_text || "",
+        occurredAt: note.deleted_at,
+        actorName: note.deleted_by_name || "Staff",
+        source: "labor_employee_notes",
+        tone: "danger",
+        note,
+      });
+    }
+  });
+
+  toHistoryArray(documents).forEach((document) => {
+    if (!document || typeof document !== "object") return;
+    items.push({
+      id: `document-uploaded-${document.id}`,
+      category: "documents",
+      type: "employee_document_uploaded",
+      title: "Attachment uploaded",
+      summary: document.file_name || "Attachment",
+      occurredAt: document.uploaded_at,
+      actorName: document.uploaded_by_name || "Staff",
+      source: "labor_employee_documents",
+      document,
+    });
+
+    if (isLaborEmployeeDocumentDeleted(document)) {
+      items.push({
+        id: `document-deleted-${document.id}`,
+        category: "documents",
+        type: "employee_document_deleted",
+        title: "Attachment removed",
+        summary: document.file_name || "Attachment",
+        occurredAt: document.deleted_at,
+        actorName: document.deleted_by_name || "Staff",
+        source: "labor_employee_documents",
+        tone: "danger",
+        document,
+      });
+    }
+  });
+
+  toHistoryArray(attendanceIncidents).forEach((incident) => {
+    if (!incident || typeof incident !== "object") return;
+    items.push({
+      id: `attendance-${incident.id}`,
+      category: "attendance",
+      type: "attendance_mark_recorded",
+      title: "Attendance mark recorded",
+      summary: incident.detail || humanizeHistoryToken(incident.incident_type || "Attendance mark"),
+      occurredAt: incident.created_at || incident.incident_date,
+      actorName: incident.created_by_name || "Staff",
+      source: "attendance_incidents",
+      raw: incident,
+    });
+  });
+
+  toHistoryArray(trainingEvents).forEach((event) => {
+    if (!event || typeof event !== "object") return;
+    const record = trainingRecordMap[event.record_id] || {};
+    const item = trainingItemMap[event.template_item_id] || {};
+    items.push({
+      id: `training-event-${event.id}`,
+      category: "training",
+      type: event.event_type || "training_event",
+      title: humanizeHistoryToken(event.event_type || "Training event"),
+      summary: item.label || item.title || record.template_name_snapshot || record.employee_full_name || "",
+      occurredAt: event.created_at,
+      actorName: event.actor_name || "Staff",
+      source: "training_record_events",
+      raw: event,
+    });
+  });
+
+  return items
+    .filter((item) => item.occurredAt)
+    .sort((a, b) => getHistoryTimestampValue(b.occurredAt) - getHistoryTimestampValue(a.occurredAt));
+}
+
 export function buildTrainingTemplateScopeClause(locationId) {
   return locationId ? `location_id.is.null,location_id.eq.${locationId}` : "location_id.is.null";
 }
@@ -608,6 +759,7 @@ export function groupTrainingNotes(notes = []) {
 export function groupLaborEmployeeNotes(notes = []) {
   return notes.reduce((acc, note) => {
     if (!note || typeof note !== "object") return acc;
+    if (isLaborEmployeeNoteDeleted(note)) return acc;
     const key = note.labor_employee_id || "__unlinked__";
     if (!acc[key]) acc[key] = [];
     acc[key].push(note);
