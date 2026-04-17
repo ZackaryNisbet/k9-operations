@@ -861,9 +861,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (!locationIdForBundle || (!force && (supportBundleLoaded || supportBundleLoading))) return;
     setSupportBundleLoading(true);
     try {
-      const employeeSource = Array.isArray(seedData?.laborEmployees) ? seedData.laborEmployees : laborEmployees;
+      const employeeSource = [
+        ...(Array.isArray(seedData?.laborEmployees) ? seedData.laborEmployees : laborEmployees),
+        ...(Array.isArray(seedData?.rosterSnapshot) ? seedData.rosterSnapshot : rosterSnapshot),
+      ];
       const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
-      const employeeIds = toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean);
+      const employeeIds = Array.from(new Set(toObjectRows(employeeSource).map(getLaborEmployeeRowId).filter(Boolean)));
       const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
       const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
@@ -948,7 +951,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       addGlobalToast("Failed to load labor notes and reviews", "error");
     }
     setSupportBundleLoading(false);
-  }, [addGlobalToast, laborEmployees, records, resolvedLaborLocationId, supportBundleLoaded, supportBundleLoading]);
+  }, [addGlobalToast, laborEmployees, records, resolvedLaborLocationId, rosterSnapshot, supportBundleLoaded, supportBundleLoading]);
 
   const refreshLaborData = useCallback(async ({ includeTraining = true, includeSupport = true } = {}) => {
     const coreData = await loadCoreData();
@@ -1104,7 +1107,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     };
   }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedLaborEmployeeSnapshot, selectedRecord, selectedRecordEmployeeId]);
   const hasSelectedLaborEmployee = Boolean(selectedLaborEmployeeId || selectedLaborEmployeeSeed);
-  const laborEmployeeMap = useMemo(() => Object.fromEntries(toObjectRows(laborEmployees).map((employee) => [employee.id, employee])), [laborEmployees]);
+  const laborEmployeeMap = useMemo(() => {
+    const entries = [...toObjectRows(rosterSnapshot), ...toObjectRows(laborEmployees)]
+      .map((employee) => [getLaborEmployeeRowId(employee), employee])
+      .filter(([employeeId]) => employeeId);
+    return Object.fromEntries(entries);
+  }, [laborEmployees, rosterSnapshot]);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const trainingItemMap = useMemo(() => Object.fromEntries(toObjectRows(items).map((item) => [item.id, item])), [items]);
   const activeEmployeeDocumentsByNote = useMemo(() => groupLaborEmployeeDocumentsByNote(laborEmployeeDocuments), [laborEmployeeDocuments]);
@@ -3556,10 +3564,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hasRosterEmployeesInGraceWindow = useMemo(() => {
     return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
   }, [visibleRosterRows]);
-  const globalNoteEmployeeOptions = useMemo(() => laborEmployees.map((employee) => ({
-    value: employee.id,
-    label: `${employee.full_name} (${employee.position_title})`,
-  })), [laborEmployees]);
+  const globalNoteEmployeeOptions = useMemo(() => {
+    const source = toObjectRows(rosterSnapshot).length > 0 ? rosterSnapshot : laborEmployees;
+    return toObjectRows(source)
+      .map((employee) => {
+        const employeeId = getLaborEmployeeRowId(employee);
+        if (!employeeId) return null;
+        return {
+          value: employeeId,
+          label: `${employee.full_name || employee.name || "Employee"} (${employee.position_title || employee.position || "Employee"})`,
+        };
+      })
+      .filter(Boolean);
+  }, [laborEmployees, rosterSnapshot]);
 
   const sectionCompletionMap = useMemo(() => {
     const map = {};
