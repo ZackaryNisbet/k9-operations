@@ -13,6 +13,7 @@ import {
   COMPLETED_TRAINING_RECORD_STATUSES,
   LABOR_EMPLOYEE_ATTACHMENT_ACCEPT,
   LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+  LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES,
   LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
   LABOR_TRAINING_REQUIREMENT_SLUGS,
   buildEmployeeHistoryTimeline,
@@ -100,6 +101,15 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Reviews", key: "review30", label: "30-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
   { section: "Reviews", key: "review60", label: "60-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
   { section: "Reviews", key: "review90", label: "90-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+];
+
+const LABOR_NOTE_TYPE_OPTIONS = [
+  { value: "general", label: "General" },
+  { value: "personal", label: "Personal" },
+  { value: "performance", label: "Performance" },
+  { value: "attendance", label: "Attendance" },
+  { value: "training", label: "Training" },
+  { value: "hr", label: "HR" },
 ];
 
 function normalizePositionTitle(value = "") {
@@ -531,6 +541,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [employeeNoteFileErrors, setEmployeeNoteFileErrors] = useState([]);
   const [savingEmployeeNote, setSavingEmployeeNote] = useState(false);
   const employeeNoteFileInputRef = useRef(null);
+  const [editingEmployeeNoteId, setEditingEmployeeNoteId] = useState(null);
+  const [editingEmployeeNoteType, setEditingEmployeeNoteType] = useState("general");
+  const [editingEmployeeNoteText, setEditingEmployeeNoteText] = useState("");
+  const [editingEmployeeNoteFiles, setEditingEmployeeNoteFiles] = useState([]);
+  const [editingEmployeeNoteFileErrors, setEditingEmployeeNoteFileErrors] = useState([]);
+  const [savingEmployeeNoteEdit, setSavingEmployeeNoteEdit] = useState(false);
+  const editingEmployeeNoteFileInputRef = useRef(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [previewingAttachmentId, setPreviewingAttachmentId] = useState(null);
   const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
@@ -877,7 +894,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       if (noteRes.error) throw noteRes.error;
       if (documentRes.error) throw documentRes.error;
-      if (historyEventRes.error) throw historyEventRes.error;
+      if (historyEventRes.error) {
+        console.error("Labor employee history events load error:", historyEventRes.error);
+        addGlobalToast("Employee history is temporarily unavailable; notes still loaded", "error");
+      }
       if (attendanceIncidentRes.error) throw attendanceIncidentRes.error;
       if (reviewInstanceRes.error) throw reviewInstanceRes.error;
       if (certificationRes.error) throw certificationRes.error;
@@ -914,7 +934,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       setLaborEmployeeNotes(noteRes.data || []);
       setLaborEmployeeDocuments(documentRes.data || []);
-      setLaborEmployeeHistoryEvents(historyEventRes.data || []);
+      setLaborEmployeeHistoryEvents(historyEventRes.error ? [] : (historyEventRes.data || []));
       setLaborAttendanceIncidents(attendanceIncidentRes.data || []);
       setReviewInstances(reviewInstanceRes.data || []);
       setReviewResponses(responseRes.data || []);
@@ -1111,6 +1131,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const selectedEmployeeDocumentsByNote = useMemo(() => {
     return groupLaborEmployeeDocumentsByNote(selectedEmployeeDocuments);
   }, [selectedEmployeeDocuments]);
+  const editingEmployeeNote = useMemo(() => {
+    if (!editingEmployeeNoteId) return null;
+    return toObjectRows(laborEmployeeNotes).find((note) => note.id === editingEmployeeNoteId) || null;
+  }, [editingEmployeeNoteId, laborEmployeeNotes]);
+  const editingEmployeeNoteDocuments = useMemo(() => {
+    if (!editingEmployeeNote?.id) return [];
+    return toObjectRows(activeEmployeeDocumentsByNote[editingEmployeeNote.id] || []);
+  }, [activeEmployeeDocumentsByNote, editingEmployeeNote]);
   const selectedEmployeeUnlinkedDocuments = useMemo(() => {
     return toObjectRows(selectedEmployeeDocumentsByNote.__unlinked__ || []);
   }, [selectedEmployeeDocumentsByNote]);
@@ -1490,6 +1518,51 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (employeeNoteFileInputRef.current) employeeNoteFileInputRef.current.value = "";
   }, []);
 
+  const resetEmployeeNoteEditor = useCallback(() => {
+    setEditingEmployeeNoteId(null);
+    setEditingEmployeeNoteType("general");
+    setEditingEmployeeNoteText("");
+    setEditingEmployeeNoteFiles([]);
+    setEditingEmployeeNoteFileErrors([]);
+    if (editingEmployeeNoteFileInputRef.current) editingEmployeeNoteFileInputRef.current.value = "";
+  }, []);
+
+  const openEmployeeNoteEditor = useCallback((note) => {
+    if (!note?.id || isLaborEmployeeNoteDeleted(note)) return;
+    setEditingEmployeeNoteId(note.id);
+    setEditingEmployeeNoteType(note.note_type || "general");
+    setEditingEmployeeNoteText(note.note_text || "");
+    setEditingEmployeeNoteFiles([]);
+    setEditingEmployeeNoteFileErrors([]);
+    if (editingEmployeeNoteFileInputRef.current) editingEmployeeNoteFileInputRef.current.value = "";
+  }, []);
+
+  const handleEditingEmployeeNoteFileChange = useCallback((event) => {
+    const incomingFiles = Array.from(event.target.files || []);
+    const remainingSlots = Math.max(
+      0,
+      LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES - editingEmployeeNoteDocuments.length - editingEmployeeNoteFiles.length
+    );
+    const { acceptedFiles, errors } = validateLaborEmployeeAttachmentFiles(incomingFiles);
+    const nextErrors = [...errors];
+    const filesToAdd = acceptedFiles.slice(0, remainingSlots);
+
+    if (incomingFiles.length > remainingSlots) {
+      nextErrors.push(`Each note can have up to ${LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES} active attachments.`);
+    }
+
+    setEditingEmployeeNoteFiles((prev) => [...prev, ...filesToAdd]);
+    setEditingEmployeeNoteFileErrors(nextErrors);
+    if (nextErrors.length > 0) addGlobalToast(nextErrors[0], "error");
+    if (editingEmployeeNoteFileInputRef.current) editingEmployeeNoteFileInputRef.current.value = "";
+  }, [addGlobalToast, editingEmployeeNoteDocuments.length, editingEmployeeNoteFiles.length]);
+
+  const handleRemoveEditingEmployeeNoteFile = useCallback((fileIndex) => {
+    setEditingEmployeeNoteFiles((prev) => prev.filter((_, index) => index !== fileIndex));
+    setEditingEmployeeNoteFileErrors([]);
+    if (editingEmployeeNoteFileInputRef.current) editingEmployeeNoteFileInputRef.current.value = "";
+  }, []);
+
   const uploadEmployeeNoteAttachments = useCallback(async ({ laborEmployeeId, noteId, files }) => {
     const createdDocuments = [];
     for (const file of files) {
@@ -1617,11 +1690,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [actorName, actorUserId, addGlobalToast, refreshLaborData]);
 
   const handleDeleteEmployeeNote = useCallback(async (note) => {
-    if (!note?.id || isLaborEmployeeNoteDeleted(note)) return;
+    if (!note?.id || isLaborEmployeeNoteDeleted(note)) return false;
     const confirmed = typeof window === "undefined"
       ? true
       : window.confirm("Remove this note from the active employee record? The full note and its attachments will stay in History.");
-    if (!confirmed) return;
+    if (!confirmed) return false;
 
     setDeletingEmployeeNoteId(note.id);
     try {
@@ -1639,21 +1712,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (error) throw error;
 
       await refreshLaborData({ includeTraining: false, includeSupport: true });
+      if (editingEmployeeNoteId === note.id) resetEmployeeNoteEditor();
       addGlobalToast("Note removed from active views; history was retained", "success");
+      return true;
     } catch (error) {
       console.error("Employee note delete error:", error);
       addGlobalToast("Failed to remove employee note", "error");
+      return false;
     } finally {
       setDeletingEmployeeNoteId(null);
     }
-  }, [actorName, actorUserId, addGlobalToast, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, editingEmployeeNoteId, refreshLaborData, resetEmployeeNoteEditor]);
 
-  const renderEmployeeDocumentButton = useCallback((document) => {
+  const renderEmployeeDocumentButton = useCallback((document, options = {}) => {
     const documentId = document?.id || `${document?.file_name || "attachment"}-${document?.storage_path || document?.external_url || "preview"}`;
     const previewKind = getLaborAttachmentPreviewKind(document);
     const isPreviewable = previewKind !== "unsupported";
     const isSyntheticDocument = String(document?.id || "").startsWith("requirement-url-");
-    const canDeleteDocument = Boolean(document?.id && !isSyntheticDocument && !isLaborEmployeeDocumentDeleted(document));
+    const canDeleteDocument = Boolean(options.allowDelete && document?.id && !isSyntheticDocument && !isLaborEmployeeDocumentDeleted(document));
     return (
       <span
         key={documentId}
@@ -2900,6 +2976,66 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     );
   }, [addGlobalToast, appendEmployeeNote, employeeNoteFiles, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData, uploadEmployeeNoteAttachments]);
 
+  const handleSaveEmployeeNoteEdit = useCallback(async () => {
+    if (!editingEmployeeNote?.id || !editingEmployeeNoteText.trim()) return;
+    setSavingEmployeeNoteEdit(true);
+
+    const noteLaborEmployeeId = editingEmployeeNote.labor_employee_id || selectedLaborEmployeeView?.id;
+    let attachmentError = null;
+    try {
+      const { error } = await supabase
+        .from("labor_employee_notes")
+        .update({
+          note_type: editingEmployeeNoteType,
+          note_text: editingEmployeeNoteText.trim(),
+          updated_at: new Date().toISOString(),
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+        })
+        .eq("id", editingEmployeeNote.id)
+        .is("deleted_at", null);
+
+      if (error) throw error;
+
+      if (editingEmployeeNoteFiles.length > 0 && noteLaborEmployeeId) {
+        try {
+          await uploadEmployeeNoteAttachments({
+            laborEmployeeId: noteLaborEmployeeId,
+            noteId: editingEmployeeNote.id,
+            files: editingEmployeeNoteFiles,
+          });
+        } catch (uploadError) {
+          console.error("Employee note edit attachment upload error:", uploadError);
+          attachmentError = uploadError;
+        }
+      }
+
+      resetEmployeeNoteEditor();
+      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      addGlobalToast(
+        attachmentError ? "Note updated, but one or more attachments failed" : "Employee note updated",
+        attachmentError ? "error" : "success"
+      );
+    } catch (error) {
+      console.error("Employee note edit error:", error);
+      addGlobalToast("Failed to update employee note", "error");
+    } finally {
+      setSavingEmployeeNoteEdit(false);
+    }
+  }, [
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    editingEmployeeNote,
+    editingEmployeeNoteFiles,
+    editingEmployeeNoteText,
+    editingEmployeeNoteType,
+    refreshLaborData,
+    resetEmployeeNoteEditor,
+    selectedLaborEmployeeView,
+    uploadEmployeeNoteAttachments,
+  ]);
+
   const handleAddGlobalEmployeeNote = useCallback(async () => {
     if (!globalNoteEmployeeId || !globalNoteText.trim()) {
       addGlobalToast("Choose an employee and add note text", "error");
@@ -3767,6 +3903,93 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Modal>
   ) : null;
 
+  const employeeNoteEditorModal = editingEmployeeNote ? (
+    <Modal title="Edit Employee Note" onClose={resetEmployeeNoteEditor}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 560, maxWidth: 700 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{editingEmployeeNote.created_by_name || "Staff"}</span>
+          <span style={{ fontSize: 12, color: C.textMut }}>{formatTrainingTimestamp(editingEmployeeNote.created_at)}</span>
+        </div>
+        <Inp
+          label="Note Type"
+          type="select"
+          value={editingEmployeeNoteType}
+          onChange={setEditingEmployeeNoteType}
+          options={LABOR_NOTE_TYPE_OPTIONS}
+        />
+        <Inp
+          label="Employee Note"
+          type="textarea"
+          rows={5}
+          value={editingEmployeeNoteText}
+          onChange={setEditingEmployeeNoteText}
+          placeholder="Update the manager-facing note text"
+        />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: C.textSec, marginBottom: 8 }}>
+            Attachments
+          </div>
+          <input
+            ref={editingEmployeeNoteFileInputRef}
+            type="file"
+            multiple
+            accept={LABOR_EMPLOYEE_ATTACHMENT_ACCEPT}
+            onChange={handleEditingEmployeeNoteFileChange}
+            style={{ display: "none" }}
+          />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+            <Btn
+              variant="secondary"
+              size="sm"
+              icon={<I.FileText />}
+              onClick={() => editingEmployeeNoteFileInputRef.current?.click()}
+              disabled={editingEmployeeNoteDocuments.length + editingEmployeeNoteFiles.length >= LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES}
+            >
+              Add PDF/Image
+            </Btn>
+            {editingEmployeeNoteDocuments.length === 0 && editingEmployeeNoteFiles.length === 0 ? (
+              <span style={{ fontSize: 12, color: C.textMut }}>No attachments on this note.</span>
+            ) : null}
+          </div>
+          {(editingEmployeeNoteDocuments.length > 0 || editingEmployeeNoteFiles.length > 0) && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {editingEmployeeNoteDocuments.map((document) => renderEmployeeDocumentButton(document, { allowDelete: true }))}
+              {editingEmployeeNoteFiles.map((file, index) => (
+                <span key={`${file.name}-${index}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, color: C.textSec, fontWeight: 800 }}>
+                  {file.name}
+                  <button type="button" onClick={() => handleRemoveEditingEmployeeNoteFile(index)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", padding: 0, display: "flex" }}>
+                    <I.X />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {editingEmployeeNoteFileErrors.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: C.dan, fontWeight: 800 }}>
+              {editingEmployeeNoteFileErrors.join(" ")}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+          <Btn
+            variant="danger"
+            onClick={() => handleDeleteEmployeeNote(editingEmployeeNote)}
+            disabled={deletingEmployeeNoteId === editingEmployeeNote.id || savingEmployeeNoteEdit}
+            icon={<I.Trash />}
+          >
+            {deletingEmployeeNoteId === editingEmployeeNote.id ? "Removing..." : "Remove Note"}
+          </Btn>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Btn variant="ghost" onClick={resetEmployeeNoteEditor} disabled={savingEmployeeNoteEdit}>Cancel</Btn>
+            <Btn variant="primary" onClick={handleSaveEmployeeNoteEdit} disabled={savingEmployeeNoteEdit || !editingEmployeeNoteText.trim()}>
+              {savingEmployeeNoteEdit ? "Saving..." : "Save Changes"}
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // EMPLOYEE DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
@@ -4015,6 +4238,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </div>
 
           {laborEmployeeEditorModal}
+          {employeeNoteEditorModal}
         </div>
       );
     }
@@ -4327,14 +4551,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   type="select"
                   value={employeeNoteType}
                   onChange={setEmployeeNoteType}
-                  options={[
-                    { value: "general", label: "General" },
-                    { value: "personal", label: "Personal" },
-                    { value: "performance", label: "Performance" },
-                    { value: "attendance", label: "Attendance" },
-                    { value: "training", label: "Training" },
-                    { value: "hr", label: "HR" },
-                  ]}
+                  options={LABOR_NOTE_TYPE_OPTIONS}
                 />
                 <Inp
                   label="New Employee Note"
@@ -4403,27 +4620,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           <Badge color="default">{String(note.note_type || "general").replace(/_/g, " ")}</Badge>
                           <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
                         </div>
-                        <button
-                          type="button"
-                          title="Remove note"
-                          aria-label="Remove employee note"
-                          onClick={() => handleDeleteEmployeeNote(note)}
-                          disabled={deletingEmployeeNoteId === note.id}
-                          style={{
-                            width: 30,
-                            height: 30,
-                            borderRadius: 8,
-                            border: `1px solid ${C.border}`,
-                            background: deletingEmployeeNoteId === note.id ? C.bg : "#fff",
-                            color: C.dan,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            cursor: deletingEmployeeNoteId === note.id ? "wait" : "pointer",
-                          }}
-                        >
-                          <I.Trash />
-                        </button>
+                        <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={() => openEmployeeNoteEditor(note)}>
+                          Edit
+                        </Btn>
                       </div>
                       <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{note.note_text}</div>
                       {noteDocuments.length > 0 && (
@@ -4564,7 +4763,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     {trainingRequirementEvidenceFile.name}
                   </span>
                 ) : trainingRequirementEditor.evidenceDocument ? (
-                  renderEmployeeDocumentButton(trainingRequirementEditor.evidenceDocument)
+                  renderEmployeeDocumentButton(trainingRequirementEditor.evidenceDocument, { allowDelete: true })
                 ) : null}
               </div>
               {trainingRequirementEvidenceError && (
@@ -4606,6 +4805,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         )}
 
         {laborEmployeeEditorModal}
+        {employeeNoteEditorModal}
       </div>
     );
   }
@@ -6201,12 +6401,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 onChange={setNoteFilterType}
                 options={[
                   { value: "all", label: "All note types" },
-                  { value: "general", label: "General" },
-                  { value: "personal", label: "Personal" },
-                  { value: "performance", label: "Performance" },
-                  { value: "attendance", label: "Attendance" },
-                  { value: "training", label: "Training" },
-                  { value: "hr", label: "HR" },
+                  ...LABOR_NOTE_TYPE_OPTIONS,
                   { value: "record_note", label: "Record Notes" },
                   { value: "task_observation", label: "Task Observations" },
                 ]}
@@ -6373,6 +6568,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {laborEmployeeEditorModal}
+      {employeeNoteEditorModal}
 
       {showGlobalNoteModal && (
         <Modal title="Add Employee Note" onClose={() => setShowGlobalNoteModal(false)}>
@@ -6388,14 +6584,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               type="select"
               value={globalNoteType}
               onChange={setGlobalNoteType}
-              options={[
-                { value: "general", label: "General" },
-                { value: "personal", label: "Personal" },
-                { value: "performance", label: "Performance" },
-                { value: "attendance", label: "Attendance" },
-                { value: "training", label: "Training" },
-                { value: "hr", label: "HR" },
-              ]}
+              options={LABOR_NOTE_TYPE_OPTIONS}
             />
             <Inp
               label="Note"
