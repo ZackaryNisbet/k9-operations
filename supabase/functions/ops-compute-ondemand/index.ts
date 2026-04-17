@@ -1,8 +1,9 @@
 // ============================================================================
 // Ops Compute On-Demand — K9 Operations Lite
-// Lightweight edge function that computes bathing + pamper + enrichment +
-// private play for a specific date on-demand. No room cleaning, no checklists,
-// no Gingr web auth. Caches results in lite_daily_ops.
+// Lightweight edge function that computes room cleaning, bathing, pamper,
+// enrichment, private play, and lodging transfers for a specific date
+// on-demand. No template checklists, no Gingr web auth. Caches results in
+// lite_daily_ops.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -33,6 +34,7 @@ import {
   resolveRoomOccupancyLookupEntry,
   type RoomOccupancyLookup,
 } from "../_shared/room-occupancy.ts";
+import { buildRoomCleaningPayload } from "../_shared/room-cleaning.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -265,6 +267,121 @@ async function fetchReservationsForDate(
     };
   }
   return result;
+}
+
+async function computeRoomCleaning(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+): Promise<any> {
+  const previousDate = new Date(`${targetDate}T12:00:00`);
+  previousDate.setDate(previousDate.getDate() - 1);
+  const nextDate = new Date(`${targetDate}T12:00:00`);
+  nextDate.setDate(nextDate.getDate() + 1);
+  const previousDateKey = previousDate.toISOString().slice(0, 10);
+  const nextDateKey = nextDate.toISOString().slice(0, 10);
+
+  const [{ data: gingrRuns }, { data: roomOccupancy }, { data: reservationRows }] =
+    await Promise.all([
+      supabase
+        .from("gingr_runs")
+        .select("gingr_run_id, run_name, area_name, run_type")
+        .eq("location_id", locationId),
+      supabase
+        .from("gingr_room_occupancy")
+        .select("gingr_run_id, run_name, area_name, occupancy_date, animal_names, occupied, end_date")
+        .eq("location_id", locationId)
+        .in("occupancy_date", [previousDateKey, targetDate, nextDateKey]),
+      supabase
+        .from("gingr_reservations")
+        .select(
+          "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment",
+        )
+        .eq("location_id", locationId)
+        .is("cancelled_date", null)
+        .lte("start_date", `${targetDate}T23:59:59`)
+        .gte("end_date", `${targetDate}T00:00:00`),
+    ]);
+
+  let runs = (gingrRuns || []).map((run: any) => ({
+    gingr_run_id: run.gingr_run_id,
+    run_name: run.run_name,
+    area_name: run.area_name,
+    run_type: run.run_type,
+  }));
+
+  if (runs.length === 0) {
+    const { data: roomNamesSetting } = await supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "room_names")
+      .maybeSingle();
+
+    const roomNamesConfig: Record<string, string[]> = roomNamesSetting?.setting_value || {};
+    runs = Object.entries(roomNamesConfig).flatMap(([roomType, roomList]) =>
+      Array.isArray(roomList)
+        ? roomList.map((roomName) => ({
+          gingr_run_id: null,
+          run_name: roomName,
+          area_name: roomType,
+          run_type: roomType,
+        }))
+        : []
+    );
+  }
+
+  const allAnimalIds = [
+    ...new Set(
+      (reservationRows || [])
+        .map((row: any) => String(row.animal_gingr_id || ""))
+        .filter(Boolean),
+    ),
+  ];
+
+  const animalMetaMap: Record<string, { weight: number | null; photoUrl: string | null }> = {};
+  if (allAnimalIds.length > 0) {
+    const { data: animals } = await supabase
+      .from("gingr_animals")
+      .select("gingr_id, weight, image_url")
+      .in("gingr_id", allAnimalIds);
+
+    for (const animal of animals || []) {
+      const parsedWeight = animal.weight == null ? null : parseFloat(String(animal.weight));
+      animalMetaMap[String(animal.gingr_id)] = {
+        weight: Number.isFinite(parsedWeight) ? parsedWeight : null,
+        photoUrl: animal.image_url || null,
+      };
+    }
+  }
+
+  return buildRoomCleaningPayload({
+    date: targetDate,
+    runs,
+    occupancyRows: roomOccupancy || [],
+    bohDogs: [],
+    reservations: (reservationRows || []).map((row: any) => {
+      const animalId = String(row.animal_gingr_id || "");
+      const meta = animalMetaMap[animalId] || { weight: null, photoUrl: null };
+      return {
+        reservation_id: String(row.gingr_id || ""),
+        animal_id: animalId,
+        animal_name: row.animal_name || "",
+        owner_first_name: row.owner_first_name || "",
+        owner_last_name: row.owner_last_name || "",
+        reservation_type_name: row.reservation_type_name || "",
+        start_date: row.start_date,
+        end_date: row.end_date,
+        check_in_date: row.check_in_date,
+        check_out_date: row.check_out_date,
+        cancelled_date: row.cancelled_date,
+        raw_data: row.raw_data || null,
+        room_assignment: row.room_assignment || null,
+        photo_url: meta.photoUrl,
+        dog_weight: meta.weight,
+      };
+    }),
+  });
 }
 
 // ─── Reservation type classification ─────────────────────────────────────
@@ -1517,7 +1634,8 @@ Deno.serve(async (req: Request) => {
         .map((assignment: any) => assignment.animalGingrId),
     );
 
-    const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
+    const [roomCleaning, bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
+      computeRoomCleaning(sb, locationId, date),
       computeBathingReport(sb, locationId, date, roomOccupancyLookup),
       Promise.resolve(computeServiceReport(reservations, "pamper", roomOccupancyLookup)),
       computeEnrichmentReport(sb, locationId, date, reservations, roomOccupancyLookup),
@@ -1535,6 +1653,7 @@ Deno.serve(async (req: Request) => {
     // Upsert results into lite_daily_ops so subsequent requests are cached
     await Promise.allSettled([
       upsertComputedItems(sb, `ops_room_occupancy_${date}`, locationId, "room_occupancy", "room_occupancy", date, roomOccupancyComputed),
+      upsertComputedItems(sb, `ops_room_cleaning_${date}`, locationId, "room_cleaning", "room_cleaning", date, roomCleaning),
       upsertComputedItems(sb, `ops_bathing_${date}`, locationId, "bathing", "bathing", date, bathing),
       upsertComputedItems(sb, `ops_pp_${date}`, locationId, "pp", "pp", date, privatePlay),
       upsertComputedItems(sb, `ops_pamper_${date}`, locationId, "pamper", "pamper", date, pamper),
@@ -1551,6 +1670,7 @@ Deno.serve(async (req: Request) => {
         location_id: locationId,
         duration_ms: duration,
         room_occupancy: roomOccupancyComputed,
+        room_cleaning: roomCleaning,
         bathing,
         pamper,
         enrichment,
