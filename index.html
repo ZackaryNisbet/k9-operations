@@ -27,7 +27,15 @@
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       html, body, #root { height: 100%; width: 100%; }
-      body { font-family: 'Outfit', sans-serif; -webkit-font-smoothing: antialiased; }
+      html { scrollbar-gutter: stable; }
+      body {
+        font-family: 'Outfit', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        overflow-y: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      body::-webkit-scrollbar { width: 0; height: 0; }
     </style>
   </head>
   <body>

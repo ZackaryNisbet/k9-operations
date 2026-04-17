@@ -4,6 +4,7 @@ import {
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
+  noteMatchesSearch,
   safeTrainingProgress,
   toObjectRows,
 } from "../kol/pages/TrainingPage.jsx";
@@ -82,5 +83,20 @@ describe("applyLaborRosterFilters", () => {
     expect(isLaborEmployeeActive({ id: "inactive-status", employment_status: "inactive" })).toBe(false);
     expect(isLaborEmployeeActive({ id: "inactive-flag", is_active: false })).toBe(false);
     expect(isLaborEmployeeActive({ id: "active-fallback", end_date: null })).toBe(true);
+  });
+
+  it("searches employee notes across note body and context fields", () => {
+    const note = {
+      employeeName: "Larrissa Santana",
+      noteType: "hr",
+      sourceLabel: "Employee Note",
+      createdByName: "Manager",
+      noteText: "Printed email PDF received for documentation.",
+    };
+
+    expect(noteMatchesSearch(note, "email pdf")).toBe(true);
+    expect(noteMatchesSearch(note, "larrissa")).toBe(true);
+    expect(noteMatchesSearch(note, "disciplinary")).toBe(false);
+    expect(noteMatchesSearch(note, "")).toBe(true);
   });
 });
