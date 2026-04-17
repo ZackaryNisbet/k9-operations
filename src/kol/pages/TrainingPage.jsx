@@ -4036,7 +4036,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         ) : (
           <iframe
             title={attachmentPreview.document?.file_name || "Employee attachment"}
-            src={attachmentPreview.url}
+            src={attachmentPreview.kind === "pdf" ? `${attachmentPreview.url}#toolbar=0&navpanes=0&scrollbar=1` : attachmentPreview.url}
             style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
           />
         )}
