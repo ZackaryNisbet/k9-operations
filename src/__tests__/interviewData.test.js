@@ -1,14 +1,18 @@
 import { PDFDocument } from "pdf-lib";
 import {
   buildPdfResponseMap,
+  buildInterviewSttAudioFileName,
   buildInterviewTemplateSnapshot,
   cleanInterviewTranscriptText,
+  encodePcm16Wav,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewAudioContentType,
   getInterviewRecommendation,
   getInterviewTranscriptTurns,
   INTERVIEW_AUDIO_MAX_BYTES,
+  INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE,
+  shouldNormalizeInterviewAudioForStt,
   validateAiDraftPayload,
   validateInterviewAudioFile,
 } from "../kol/interviewData";
@@ -132,6 +136,24 @@ describe("interview audio helpers", () => {
       contentType: "audio/mp4",
     });
     expect(getInterviewAudioContentType(file)).toBe("audio/mp4");
+    expect(shouldNormalizeInterviewAudioForStt(file)).toBe(true);
+    expect(buildInterviewSttAudioFileName(file.name)).toBe("candidate-interview-stt.wav");
+  });
+
+  it("encodes mono PCM samples as a 16-bit WAV file for STT normalization", () => {
+    const wav = encodePcm16Wav(new Float32Array([-1, 0, 1]), INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE);
+    const view = new DataView(wav);
+    const ascii = (offset, length) => String.fromCharCode(...new Uint8Array(wav, offset, length));
+
+    expect(ascii(0, 4)).toBe("RIFF");
+    expect(ascii(8, 4)).toBe("WAVE");
+    expect(ascii(12, 4)).toBe("fmt ");
+    expect(ascii(36, 4)).toBe("data");
+    expect(view.getUint16(20, true)).toBe(1);
+    expect(view.getUint16(22, true)).toBe(1);
+    expect(view.getUint32(24, true)).toBe(INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE);
+    expect(view.getUint16(34, true)).toBe(16);
+    expect(view.getUint32(40, true)).toBe(6);
   });
 
   it("accepts xAI-supported MKV containers and rejects unsupported WebM containers", () => {
