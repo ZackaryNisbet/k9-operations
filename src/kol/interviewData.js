@@ -59,6 +59,8 @@ export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
 export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mkv,.mp3,.mp4,.ogg,.opus,.wav,audio/*,video/mp4,video/x-matroska";
 export const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
 export const INTERVIEW_AUDIO_MAX_LABEL = "500 MB";
+export const INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE = 16000;
+export const INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE = "audio/wav";
 
 const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mkv", "mp3", "mp4", "ogg", "opus", "wav"]);
 const INTERVIEW_AUDIO_CONTENT_TYPES = {
@@ -145,6 +147,57 @@ export function getInterviewAudioContentType(file = {}) {
   const explicitType = String(file.type || "").trim().toLowerCase();
   if (explicitType && explicitType !== "application/octet-stream") return explicitType;
   return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(file.name)] || "";
+}
+
+export function shouldNormalizeInterviewAudioForStt(file = {}) {
+  const extension = getFileExtension(file.name);
+  const contentType = getInterviewAudioContentType(file);
+  return extension === "m4a" || ["audio/m4a", "audio/mp4", "audio/x-m4a"].includes(contentType);
+}
+
+export function buildInterviewSttAudioFileName(fileName = "interview-audio") {
+  const sanitized = sanitizeInterviewFileName(fileName || "interview-audio");
+  const withoutExtension = sanitized.replace(/\.[^.]+$/, "");
+  return `${withoutExtension || "interview-audio"}-stt.wav`;
+}
+
+export function encodePcm16Wav(samples, sampleRate = INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE) {
+  const safeSamples = samples instanceof Float32Array ? samples : new Float32Array(samples || []);
+  const safeSampleRate = Math.max(1, Number(sampleRate) || INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE);
+  const bytesPerSample = 2;
+  const channelCount = 1;
+  const dataSize = safeSamples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channelCount, true);
+  view.setUint32(24, safeSampleRate, true);
+  view.setUint32(28, safeSampleRate * channelCount * bytesPerSample, true);
+  view.setUint16(32, channelCount * bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let index = 0; index < safeSamples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, Number(safeSamples[index]) || 0));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+
+  return buffer;
 }
 
 export function validateInterviewAudioFile(file) {
