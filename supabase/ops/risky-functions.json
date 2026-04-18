@@ -21,6 +21,12 @@
     },
     "gingr-today-notes": {
       "verifyJwt": false
+    },
+    "interview-transcribe-audio": {
+      "verifyJwt": false
+    },
+    "interview-ai-draft": {
+      "verifyJwt": false
     }
   }
 }
