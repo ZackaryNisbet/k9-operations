@@ -42,6 +42,7 @@ export const PDF_VERIFICATION_LABELS = {
 
 export const INTERVIEW_PDF_ACCEPT = "application/pdf";
 export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
+export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mp3,.mp4,.ogg,.opus,.wav,audio/*,video/mp4";
 
 const PDF_FIELD_TYPE_LABELS = {
   text: "Text",
@@ -92,6 +93,16 @@ export function buildInterviewTranscriptPath({ locationId, interviewId, fileName
     interviewId,
     "transcripts",
     sanitizeInterviewFileName(fileName || "transcript.txt"),
+  ].filter(Boolean).join("/");
+}
+
+export function buildInterviewAudioPath({ locationId, interviewId, fileName }) {
+  return [
+    locationId,
+    "interviews",
+    interviewId,
+    "audio",
+    sanitizeInterviewFileName(fileName || "interview-audio.m4a"),
   ].filter(Boolean).join("/");
 }
 
