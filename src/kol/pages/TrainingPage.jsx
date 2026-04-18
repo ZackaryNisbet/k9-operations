@@ -2,7 +2,7 @@
 // Implements Training Home, Templates, Active Records, Train New Employee flow,
 // and Training Record Detail with section expand/collapse and item completion.
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr, fmtDate, fmtDateFull, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
@@ -120,6 +120,32 @@ const RESTARTED_REVIEW_METADATA_KEYS = [
   "pdf_draft_saved_at",
   "signature",
 ];
+const SAVING_ALL_REVIEW_RESPONSES_ID = "__all_review_responses__";
+const REVIEW_RESPONSE_FIELDS = ["rating_value", "response_text"];
+
+function hasOwnReviewDraftField(draft, field) {
+  return Boolean(draft && Object.prototype.hasOwnProperty.call(draft, field));
+}
+
+function normalizeReviewResponseValue(value) {
+  return String(value ?? "").trim();
+}
+
+function getReviewDraftValue(response, draft, field) {
+  if (hasOwnReviewDraftField(draft, field)) return draft[field] ?? "";
+  return response?.[field] ?? "";
+}
+
+function isReviewItemAnswered(response, draft = {}) {
+  return REVIEW_RESPONSE_FIELDS.some((field) => normalizeReviewResponseValue(getReviewDraftValue(response, draft, field)));
+}
+
+function isReviewItemDraftDirty(response, draft = {}) {
+  return REVIEW_RESPONSE_FIELDS.some((field) => (
+    hasOwnReviewDraftField(draft, field)
+    && normalizeReviewResponseValue(draft[field]) !== normalizeReviewResponseValue(response?.[field])
+  ));
+}
 
 const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "first_name", label: "First Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
@@ -283,6 +309,70 @@ function PerformanceReviewStyles() {
       .performance-review-sync-dot {
         animation: performanceReviewStatusPulse 2.4s ease-in-out infinite;
       }
+      .performance-review-surface {
+        transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, border-color 180ms ease;
+      }
+      .performance-review-surface:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+      }
+      .performance-review-rating-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .performance-review-rating-option {
+        min-height: 42px;
+        border-radius: 8px;
+        border: 1.5px solid #E2E8F0;
+        background: #FFFFFF;
+        color: #1E293B;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.2;
+        padding: 9px 10px;
+        text-align: center;
+        transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, color 150ms ease;
+      }
+      .performance-review-rating-option:hover {
+        transform: translateY(-1px);
+        border-color: rgba(20, 83, 45, 0.4);
+      }
+      .performance-review-rating-option.is-selected {
+        background: #F7FEE7;
+        border-color: #14532D;
+        color: #14532D;
+        box-shadow: inset 0 0 0 1px rgba(20, 83, 45, 0.08);
+      }
+      .performance-review-item-shell {
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        padding: 16px;
+        background: #FFFFFF;
+        transition: border-color 160ms ease, box-shadow 160ms ease;
+      }
+      .performance-review-item-shell.is-dirty {
+        border-color: rgba(217, 119, 6, 0.34);
+        box-shadow: 0 10px 24px rgba(217, 119, 6, 0.06);
+      }
+      .performance-review-queue-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .performance-review-queue-stat {
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        background: #FFFFFF;
+        padding: 12px 14px;
+      }
       @media (max-width: 960px) {
         .performance-review-detail-grid {
           grid-template-columns: 1fr !important;
@@ -292,6 +382,15 @@ function PerformanceReviewStyles() {
         }
         .performance-review-side-panel {
           position: static !important;
+        }
+        .performance-review-queue-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 620px) {
+        .performance-review-rating-grid,
+        .performance-review-queue-grid {
+          grid-template-columns: 1fr;
         }
       }
     `}</style>
@@ -1194,6 +1293,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [tab]);
 
+  useLayoutEffect(() => {
+    setReviewDrafts({});
+    if (!selectedReviewInstanceId || typeof window === "undefined") return;
+    const resetScroll = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      document.scrollingElement?.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
+    };
+    resetScroll();
+    window.requestAnimationFrame(resetScroll);
+    const timeoutId = window.setTimeout(resetScroll, 80);
+    return () => window.clearTimeout(timeoutId);
+  }, [selectedReviewInstanceId]);
+
   // Load record detail data when a record is selected
   useEffect(() => {
     if (!selectedRecordId) return;
@@ -1466,6 +1578,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (!selectedReviewInstance?.id) return [];
     return toObjectRows(reviewResponses).filter((response) => response.review_instance_id === selectedReviewInstance.id);
   }, [reviewResponses, selectedReviewInstance]);
+  const selectedReviewResponseByItemId = useMemo(() => {
+    return new Map(selectedReviewResponses.map((response) => [response.review_item_id, response]));
+  }, [selectedReviewResponses]);
+  const unsavedReviewItems = useMemo(() => {
+    return selectedReviewSections.flatMap((section) => (
+      section.items
+        .filter((item) => isReviewItemDraftDirty(selectedReviewResponseByItemId.get(item.id), reviewDrafts[item.id] || {}))
+        .map((item) => ({ section, item }))
+    ));
+  }, [reviewDrafts, selectedReviewResponseByItemId, selectedReviewSections]);
+  const unsavedReviewResponseCount = unsavedReviewItems.length;
 
   useEffect(() => {
     if (!selectedReviewInstance?.id) return;
@@ -3376,13 +3499,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }));
   }, []);
 
-  const handleSaveReviewResponse = useCallback(async (reviewItem) => {
+  const persistReviewResponse = useCallback(async (reviewItem) => {
     if (!selectedReviewInstanceId) return;
     const draft = reviewDrafts[reviewItem.id] || {};
     const existing = getReviewResponse(reviewItem.id);
     const ratingValue = draft.rating_value ?? existing?.rating_value ?? null;
     const responseText = draft.response_text ?? existing?.response_text ?? null;
-    setSavingReviewItemId(reviewItem.id);
     const { error } = await supabase.rpc("save_employee_review_response", {
       p_review_instance_id: selectedReviewInstanceId,
       p_review_item_id: reviewItem.id,
@@ -3390,19 +3512,67 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       p_response_text: responseText,
       p_actor_user_id: actorUserId,
     });
-    if (error) {
+    if (error) throw error;
+  }, [actorUserId, getReviewResponse, reviewDrafts, selectedReviewInstanceId]);
+
+  const handleSaveReviewResponse = useCallback(async (reviewItem) => {
+    if (!selectedReviewInstanceId) return false;
+    setSavingReviewItemId(reviewItem.id);
+    try {
+      await persistReviewResponse(reviewItem);
+      await refreshLaborData();
+      setReviewDrafts((prev) => {
+        if (!prev[reviewItem.id]) return prev;
+        const next = { ...prev };
+        delete next[reviewItem.id];
+        return next;
+      });
+      addGlobalToast("Review response saved", "success");
+      return true;
+    } catch (error) {
       addGlobalToast("Failed to save review response", "error");
+      return false;
+    } finally {
       setSavingReviewItemId(null);
-      return;
     }
-    await refreshLaborData();
-    setSavingReviewItemId(null);
-    addGlobalToast("Review response saved", "success");
-  }, [actorUserId, addGlobalToast, getReviewResponse, reviewDrafts, selectedReviewInstanceId, refreshLaborData]);
+  }, [addGlobalToast, persistReviewResponse, refreshLaborData, selectedReviewInstanceId]);
+
+  const handleSaveAllReviewResponses = useCallback(async ({ quiet = false } = {}) => {
+    if (!selectedReviewInstanceId || unsavedReviewItems.length === 0) return true;
+    setSavingReviewItemId(SAVING_ALL_REVIEW_RESPONSES_ID);
+    try {
+      for (const { item } of unsavedReviewItems) {
+        await persistReviewResponse(item);
+      }
+      await refreshLaborData();
+      setReviewDrafts({});
+      if (!quiet) {
+        addGlobalToast(
+          unsavedReviewItems.length === 1 ? "Review response saved" : `${unsavedReviewItems.length} review responses saved`,
+          "success",
+        );
+      }
+      return true;
+    } catch (error) {
+      addGlobalToast("Failed to save review responses", "error");
+      return false;
+    } finally {
+      setSavingReviewItemId(null);
+    }
+  }, [addGlobalToast, persistReviewResponse, refreshLaborData, selectedReviewInstanceId, unsavedReviewItems]);
+
+  const handleSaveAllReviewResponsesClick = useCallback(() => {
+    handleSaveAllReviewResponses();
+  }, [handleSaveAllReviewResponses]);
 
   const handleCompleteReviewInstance = useCallback(async () => {
     if (!selectedReviewInstanceId) return;
     setCompletingReview(true);
+    const savedResponses = await handleSaveAllReviewResponses({ quiet: true });
+    if (!savedResponses) {
+      setCompletingReview(false);
+      return;
+    }
     const { error } = await supabase.rpc("complete_employee_review_instance", {
       p_review_instance_id: selectedReviewInstanceId,
       p_actor_user_id: actorUserId,
@@ -3416,7 +3586,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await refreshLaborData();
     setCompletingReview(false);
     addGlobalToast("Review completed", "success");
-  }, [actorName, actorUserId, addGlobalToast, selectedReviewInstanceId, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, handleSaveAllReviewResponses, selectedReviewInstanceId, refreshLaborData]);
 
   const handleRestartSelectedReviewInstance = useCallback(async (targetReviewTemplate = null) => {
     if (!selectedReviewInstance || !selectedLaborEmployeeView) return;
@@ -3576,12 +3746,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       template,
       employee: selectedLaborEmployeeView,
       reviewInstance: selectedReviewInstance,
+      reviewSections: selectedReviewSections,
+      reviewDrafts,
       responses: selectedReviewResponses,
       draft: reviewPdfDraft,
       locationName: laborContactLocationName,
       reviewDate: todayStr(),
     });
-  }, [laborContactLocationName, reviewPdfDraft, selectedLaborEmployeeView, selectedReviewInstance, selectedReviewResponses]);
+  }, [laborContactLocationName, reviewDrafts, reviewPdfDraft, selectedLaborEmployeeView, selectedReviewInstance, selectedReviewResponses, selectedReviewSections]);
 
   const handlePreviewPerformanceReviewPdf = useCallback(async () => {
     setRenderingReviewPdf(true);
@@ -3620,6 +3792,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
     setSendingReviewSignature(true);
     try {
+      const savedResponses = await handleSaveAllReviewResponses({ quiet: true });
+      if (!savedResponses) return;
       const saved = await saveReviewPdfDraft({ quiet: true });
       if (!saved) return;
       const pdfBytes = await buildSelectedPerformanceReviewPdfBytes();
@@ -3647,6 +3821,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [
     addGlobalToast,
     buildSelectedPerformanceReviewPdfBytes,
+    handleSaveAllReviewResponses,
     refreshLaborData,
     reviewSignatureDeliveryMethod,
     saveReviewPdfDraft,
@@ -3976,6 +4151,35 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       })
       .sort((a, b) => String(a.last_name || a.full_name || "").localeCompare(String(b.last_name || b.full_name || ""), undefined, { sensitivity: "base" }));
   }, [preparedRosterRows, reviewInstances]);
+  const performanceReviewOverview = useMemo(() => {
+    const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
+    return [
+      {
+        label: "Non-compliant",
+        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Non-compliant").length,
+        color: C.dan,
+        helper: "active employees",
+      },
+      {
+        label: "Overdue cycles",
+        value: cycles.filter((cycle) => String(cycle.status) === "overdue").length,
+        color: C.warn,
+        helper: "30/60/90 checkpoints",
+      },
+      {
+        label: "In progress",
+        value: cycles.filter((cycle) => String(cycle.status) === "in_progress").length,
+        color: C.info,
+        helper: "open review packets",
+      },
+      {
+        label: "Compliant",
+        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Compliant").length,
+        color: C.suc,
+        helper: "active employees",
+      },
+    ];
+  }, [activePerformanceReviewRows]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -4637,9 +4841,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         sum + section.items.filter((item) => {
           const response = getReviewResponse(item.id);
           const draft = reviewDrafts[item.id] || {};
-          const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
-          const responseText = draft.response_text ?? response?.response_text ?? "";
-          return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+          return isReviewItemAnswered(response, draft);
         }).length
       ), 0);
       const reviewPercent = reviewItemTotal > 0 ? Math.round((answeredReviewItems / reviewItemTotal) * 100) : 0;
@@ -4658,6 +4860,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         && selectedReviewTemplate?.id
         && selectedExpectedReviewTemplate.id !== selectedReviewTemplate.id
       );
+      const selectedDisplayReviewTitle = selectedReviewTemplateMismatch
+        ? selectedExpectedReviewTemplate?.name || `${selectedPerformanceTemplate?.roleLabel || "Paired"} 30 / 60 / 90 Day Review`
+        : selectedReviewTemplate?.name || "Performance Review";
       const selectedRestartTemplate = selectedExpectedReviewTemplate || selectedReviewTemplate;
       const selectedRestartLabel = selectedPerformanceTemplate?.roleLabel || "Paired Template";
       const selectedPerformanceTemplateBadgeLabel = selectedPerformanceTemplate
@@ -4692,8 +4897,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: "-0.02em", marginBottom: 4 }}>
-                {selectedReviewTemplate?.name || "Performance Review"}
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: 0, marginBottom: 4 }}>
+                {selectedDisplayReviewTitle}
               </div>
               <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
                 {selectedLaborEmployeeView.full_name} · {selectedLaborEmployeeView.position_title || "Employee"} · {reviewCycleLabel}
@@ -4703,6 +4908,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 pdfTemplateName={selectedPerformanceTemplate?.roleLabel}
                 mismatch={selectedReviewTemplateMismatch}
               />
+              {unsavedReviewResponseCount > 0 && (
+                <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 7, color: C.warn, background: C.warnLt, border: "1px solid rgba(217,119,6,0.18)", borderRadius: 8, padding: "5px 9px", fontSize: 12, fontWeight: 800 }}>
+                  <I.Clock />
+                  <span>{unsavedReviewResponseCount} unsaved {unsavedReviewResponseCount === 1 ? "response" : "responses"}</span>
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Badge color={reviewStatusColor}>{reviewStatus.replace(/_/g, " ")}</Badge>
@@ -4867,7 +5078,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <Btn variant="secondary" size="sm" onClick={() => saveReviewPdfDraft()} disabled={savingReviewPdfDraft}>
                     {savingReviewPdfDraft ? "Saving..." : "Save PDF Fields"}
                   </Btn>
-                  <Btn variant="ghost" size="sm" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || !selectedPerformanceTemplate}>
+                  <Btn variant="ghost" size="sm" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
                     {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
                 </div>
@@ -4877,9 +5088,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 const sectionAnswered = section.items.filter((item) => {
                   const response = getReviewResponse(item.id);
                   const draft = reviewDrafts[item.id] || {};
-                  const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
-                  const responseText = draft.response_text ?? response?.response_text ?? "";
-                  return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+                  return isReviewItemAnswered(response, draft);
                 }).length;
 
                 return (
@@ -4900,6 +5109,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       {section.items.map((item) => {
                         const response = getReviewResponse(item.id);
                         const draft = reviewDrafts[item.id] || {};
+                        const itemDirty = isReviewItemDraftDirty(response, draft);
+                        const itemAnswered = isReviewItemAnswered(response, draft);
+                        const savingThisItem = savingReviewItemId === item.id || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID;
                         const ratingOptions = Array.isArray(item.options)
                           ? item.options.map((option) => ({ value: option, label: option }))
                           : [
@@ -4907,34 +5119,58 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               { value: "Needs Improvement", label: "Needs Improvement" },
                               { value: "Exceeds Expectations", label: "Exceeds Expectations" },
                             ];
+                        const selectedRating = getReviewDraftValue(response, draft, "rating_value");
+                        const itemFooterText = savingThisItem
+                          ? "Saving response..."
+                          : itemDirty
+                            ? "Unsaved response"
+                            : response?.created_at
+                              ? `Saved ${formatTrainingTimestamp(response.created_at)}`
+                              : itemAnswered
+                                ? "Ready to save"
+                                : "Not answered yet";
 
                         return (
-                          <div key={item.id} style={{ border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, background: "#fff" }}>
+                          <div key={item.id} className={`performance-review-item-shell${itemDirty ? " is-dirty" : ""}`}>
                             <div style={{ fontSize: 15, fontWeight: 700, color: C.text, lineHeight: 1.5, marginBottom: 12 }}>{item.prompt}</div>
                             {item.item_type === "rating" ? (
-                              <CustomSelect
-                                value={draft.rating_value ?? response?.rating_value ?? ""}
-                                onChange={(value) => handleReviewDraftChange(item.id, "rating_value", value)}
-                                options={ratingOptions}
-                                placeholder="Select rating"
-                              />
+                              <div className="performance-review-rating-grid">
+                                {ratingOptions.map((option) => {
+                                  const selected = selectedRating === option.value;
+                                  return (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      aria-pressed={selected}
+                                      className={`performance-review-rating-option${selected ? " is-selected" : ""}`}
+                                      onClick={() => handleReviewDraftChange(item.id, "rating_value", option.value)}
+                                    >
+                                      {selected && <I.Check />}
+                                      <span>{option.label}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             ) : (
                               <Inp
                                 type={item.item_type === "short_text" ? "text" : "textarea"}
                                 rows={item.item_type === "short_text" ? 1 : 4}
-                                value={draft.response_text ?? response?.response_text ?? ""}
+                                value={getReviewDraftValue(response, draft, "response_text")}
                                 onChange={(value) => handleReviewDraftChange(item.id, "response_text", value)}
                                 placeholder="Enter response"
                               />
                             )}
 
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
-                              <div style={{ fontSize: 11, color: C.textMut }}>
-                                {response?.created_at ? `Last saved ${formatTrainingTimestamp(response.created_at)}` : "Unsaved changes stay on this review page until you save"}
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, color: itemDirty ? C.warn : C.textMut, fontWeight: itemDirty ? 800 : 600 }}>
+                                {itemDirty ? <I.Clock /> : itemAnswered ? <I.CheckCircle /> : <I.InfoCircle />}
+                                <span>{itemFooterText}</span>
                               </div>
-                              <Btn variant="secondary" size="sm" onClick={() => handleSaveReviewResponse(item)} disabled={savingReviewItemId === item.id}>
-                                {savingReviewItemId === item.id ? "Saving..." : "Save Response"}
-                              </Btn>
+                              {itemDirty && (
+                                <Btn variant="secondary" size="sm" icon={<I.Check />} onClick={() => handleSaveReviewResponse(item)} disabled={savingThisItem}>
+                                  {savingThisItem ? "Saving..." : "Save"}
+                                </Btn>
+                              )}
                             </div>
                           </div>
                         );
@@ -4949,10 +5185,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <Card style={{ padding: 18 }}>
                 <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Review Actions</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview}>
+                  {unsavedReviewResponseCount > 0 && (
+                    <Btn
+                      variant="secondary"
+                      icon={<I.Check />}
+                      onClick={handleSaveAllReviewResponsesClick}
+                      disabled={savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID}
+                    >
+                      {savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID
+                        ? "Saving..."
+                        : `Save ${unsavedReviewResponseCount} ${unsavedReviewResponseCount === 1 ? "Response" : "Responses"}`}
+                    </Btn>
+                  )}
+                  <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID}>
                     {completingReview ? "Completing..." : "Complete Review"}
                   </Btn>
-                  <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || !selectedPerformanceTemplate}>
+                  <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
                     {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
                   <Btn
@@ -5013,7 +5261,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <Btn
                   variant="primary"
                   onClick={handleSendPerformanceReviewSignature}
-                  disabled={sendingReviewSignature || !selectedPerformanceTemplate}
+                  disabled={sendingReviewSignature || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}
                   style={{ width: "100%", justifyContent: "center" }}
                 >
                   {sendingReviewSignature ? "Sending..." : "Send to Employee"}
@@ -5037,9 +5285,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     const answered = section.items.filter((item) => {
                       const response = getReviewResponse(item.id);
                       const draft = reviewDrafts[item.id] || {};
-                      const ratingValue = draft.rating_value ?? response?.rating_value ?? "";
-                      const responseText = draft.response_text ?? response?.response_text ?? "";
-                      return Boolean(String(ratingValue || "").trim() || String(responseText || "").trim());
+                      return isReviewItemAnswered(response, draft);
                     }).length;
                     return (
                       <div key={section.id} style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${C.borderLight}`, background: C.bg }}>
@@ -5985,6 +6231,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   return (
     <div style={{ maxWidth: 1340, margin: "0 auto", padding: "20px 10px" }}>
+      <PerformanceReviewStyles />
 	      <style>{`
         html { scrollbar-gutter: stable; }
         body { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
@@ -6774,93 +7021,110 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading performance reviews...</Card>
           ) : null}
           <SectionHeader title="Performance Reviews" count={activePerformanceReviewRows.length}>
-            <Btn variant="ghost" size="sm" onClick={() => refreshLaborData()}>Refresh</Btn>
+            <Btn variant="ghost" size="sm" icon={<I.RefreshCw />} onClick={() => refreshLaborData()}>Refresh</Btn>
           </SectionHeader>
           {activePerformanceReviewRows.length === 0 ? (
             <EmptyState icon="Users" title="No active employees" subtitle="Roster load required." />
           ) : (
-            <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
-              <table style={{ width: "100%", minWidth: 1120, borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th style={tableHeaderStyle}>Employee</th>
-                    <th style={tableHeaderStyle}>Position</th>
-                    <th style={tableHeaderStyle}>Start Date</th>
-                    <th style={tableHeaderStyle}>Performance Reviews</th>
-                    {PERFORMANCE_REVIEW_CYCLES.map((cycle) => (
-                      <th key={cycle.id} style={tableHeaderStyle}>{cycle.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activePerformanceReviewRows.map((row) => {
-                    const employeeId = getLaborEmployeeRowId(row);
-                    return (
-                      <tr key={employeeId || row.full_name} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                        <td style={{ ...rosterCellStyle, minWidth: 180 }}>
-                          <button
-                            type="button"
-                            onClick={() => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
-                            style={{ border: "none", background: "transparent", color: C.pri, padding: 0, fontFamily: "inherit", fontSize: 13, fontWeight: 900, cursor: "pointer", textAlign: "left" }}
-                          >
-                            {row.full_name || "Employee"}
-                          </button>
-                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : row.contact_email || "No contact on file"}</div>
-                        </td>
-                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
-                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatLaborDate(row.start_date)}</td>
-                        <td style={{ ...rosterCellStyle, minWidth: 170 }}>
-                          <Badge color={row.performance_review_compliance?.color || "default"}>
-                            {row.performance_review_compliance?.label || "Needs setup"}
-                          </Badge>
-                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 5 }}>{row.performance_review_compliance?.detail || "No review schedule"}</div>
-                        </td>
-                        {row.cycles.map((cycle) => {
-                          const signature = isObjectRow(cycle.instance?.metadata?.signature) ? cycle.instance.metadata.signature : {};
-                          return (
-                            <td key={cycle.id} style={{ ...rosterCellStyle, minWidth: 150, verticalAlign: "top" }}>
-                              <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-start" }}>
-                                <Badge color={String(cycle.status) === "completed" ? "success" : String(cycle.status) === "overdue" || cycle.presentation?.tone === C.dan ? "danger" : "warning"}>
-                                  {String(cycle.status || "not_started").replace(/_/g, " ")}
-                                </Badge>
-                                <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
-                                {signature.status && (
-                                  <div style={{ fontSize: 11, color: signature.status === "completed" ? C.suc : C.warn, fontWeight: 800 }}>
-                                    Signature {String(signature.status).replace(/_/g, " ")}
-                                  </div>
-                                )}
-                                {cycle.instance ? (
-                                  <Btn
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => {
-                                      setSelectedLaborEmployeeId(employeeId);
-                                      setSelectedLaborEmployeeSeed(row);
-                                      setSelectedReviewInstanceId(cycle.instance.id);
-                                    }}
-                                  >
-                                    Open
-                                  </Btn>
-                                ) : (
-                                  <Btn
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleCreateReviewInstanceForEmployee(row, cycle.id)}
-                                    disabled={!row.template}
-                                  >
-                                    Start
-                                  </Btn>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
+            <>
+              <div className="performance-review-queue-grid">
+                {performanceReviewOverview.map((stat) => (
+                  <div key={stat.label} className="performance-review-queue-stat">
+                    <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 7 }}>
+                      {stat.label}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontSize: 24, fontWeight: 900, color: stat.color }}>{stat.value}</span>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: C.textMut }}>{stat.helper}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24, borderRadius: 8 }}>
+                <table style={{ width: "100%", minWidth: 1120, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeaderStyle}>Employee</th>
+                      <th style={tableHeaderStyle}>Position</th>
+                      <th style={tableHeaderStyle}>Start Date</th>
+                      <th style={tableHeaderStyle}>Performance Reviews</th>
+                      {PERFORMANCE_REVIEW_CYCLES.map((cycle) => (
+                        <th key={cycle.id} style={tableHeaderStyle}>{cycle.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activePerformanceReviewRows.map((row) => {
+                      const employeeId = getLaborEmployeeRowId(row);
+                      return (
+                        <tr key={employeeId || row.full_name} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                          <td style={{ ...rosterCellStyle, minWidth: 180 }}>
+                            <button
+                              type="button"
+                              onClick={() => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
+                              style={{ border: "none", background: "transparent", color: C.pri, padding: 0, fontFamily: "inherit", fontSize: 13, fontWeight: 900, cursor: "pointer", textAlign: "left" }}
+                            >
+                              {row.full_name || "Employee"}
+                            </button>
+                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : row.contact_email || "No contact on file"}</div>
+                          </td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatLaborDate(row.start_date)}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 170 }}>
+                            <Badge color={row.performance_review_compliance?.color || "default"}>
+                              {row.performance_review_compliance?.label || "Needs setup"}
+                            </Badge>
+                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 5 }}>{row.performance_review_compliance?.detail || "No review schedule"}</div>
+                          </td>
+                          {row.cycles.map((cycle) => {
+                            const signature = isObjectRow(cycle.instance?.metadata?.signature) ? cycle.instance.metadata.signature : {};
+                            return (
+                              <td key={cycle.id} style={{ ...rosterCellStyle, minWidth: 150, verticalAlign: "top" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-start" }}>
+                                  <Badge color={String(cycle.status) === "completed" ? "success" : String(cycle.status) === "overdue" || cycle.presentation?.tone === C.dan ? "danger" : "warning"}>
+                                    {String(cycle.status || "not_started").replace(/_/g, " ")}
+                                  </Badge>
+                                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
+                                  {signature.status && (
+                                    <div style={{ fontSize: 11, color: signature.status === "completed" ? C.suc : C.warn, fontWeight: 800 }}>
+                                      Signature {String(signature.status).replace(/_/g, " ")}
+                                    </div>
+                                  )}
+                                  {cycle.instance ? (
+                                    <Btn
+                                      variant="secondary"
+                                      size="sm"
+                                      icon={<I.Eye />}
+                                      onClick={() => {
+                                        setSelectedLaborEmployeeId(employeeId);
+                                        setSelectedLaborEmployeeSeed(row);
+                                        setSelectedReviewInstanceId(cycle.instance.id);
+                                      }}
+                                    >
+                                      Open
+                                    </Btn>
+                                  ) : (
+                                    <Btn
+                                      variant="ghost"
+                                      size="sm"
+                                      icon={<I.Plus />}
+                                      onClick={() => handleCreateReviewInstanceForEmployee(row, cycle.id)}
+                                      disabled={!row.template}
+                                    >
+                                      Start
+                                    </Btn>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Card>
+            </>
           )}
         </div>
       )}

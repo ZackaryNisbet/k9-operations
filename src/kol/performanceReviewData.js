@@ -29,6 +29,12 @@ const RATING_CHOICES = {
   checkboxSize: 9,
 };
 
+const RATING_CHOICE_LABELS = {
+  meets_expectations: "Meets Expectations",
+  needs_improvement: "Needs Improvement",
+  exceeds_expectations: "Exceeds Expectations",
+};
+
 export const PERFORMANCE_REVIEW_TEMPLATES = {
   assistant_manager: {
     roleKey: "assistant_manager",
@@ -342,6 +348,12 @@ function normalizeRatingChoice(value = "") {
   return "meets_expectations";
 }
 
+function formatRatingChoiceLabel(value = "") {
+  const text = truncateText(value, 80);
+  if (!text) return "";
+  return RATING_CHOICE_LABELS[normalizeRatingChoice(text)] || text;
+}
+
 function truncateText(value = "", maxLength = 2000) {
   return String(value || "").trim().slice(0, maxLength);
 }
@@ -427,6 +439,129 @@ function drawWrappedText(page, text, rect, font, options = {}) {
   });
 }
 
+function sectionMatchesCycle(section = {}, cycle) {
+  const haystack = normalizeTitle([
+    section.section_key,
+    section.item_key,
+    section.title,
+    section.name,
+  ].filter(Boolean).join(" "));
+  if (!haystack || !cycle) return false;
+  const numeric = String(cycle.shortLabel || "").trim();
+  return haystack.includes(`${numeric} day`) || haystack.includes(`${numeric}-day`) || haystack.includes(`${numeric}_day`);
+}
+
+function responseForItem(responseMap, reviewDrafts, itemId) {
+  const response = responseMap.get(itemId) || {};
+  const draft = reviewDrafts?.[itemId] || {};
+  const rating = draft.rating_value ?? response.rating_value ?? "";
+  const text = draft.response_text ?? response.response_text ?? "";
+  return { rating, text };
+}
+
+function buildPerformanceReviewAreaResponseDetails(reviewSections = [], responses = [], reviewDrafts = {}, reviewCycle = "30_day") {
+  const cycle = getPerformanceReviewCycle(reviewCycle);
+  const responseRows = Array.isArray(responses) ? responses : [];
+  const responseMap = new Map(responseRows.map((response) => [response.review_item_id, response]));
+  const targetSection = (Array.isArray(reviewSections) ? reviewSections : []).find((section) => sectionMatchesCycle(section, cycle));
+  if (!targetSection?.items?.length) return [];
+
+  return targetSection.items
+    .filter((item) => item?.item_type === "rating")
+    .map((item, index) => {
+      const { rating, text } = responseForItem(responseMap, reviewDrafts, item.id);
+      const label = formatRatingChoiceLabel(rating || text);
+      if (!label) return null;
+      return {
+        number: index + 1,
+        prompt: truncateText(item.prompt || item.title || item.name || `Area ${index + 1}`, 500),
+        status: `Addressed; ${label}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function buildPerformanceReviewAreaResponseSummaries(reviewSections = [], responses = [], reviewDrafts = {}, reviewCycle = "30_day") {
+  return buildPerformanceReviewAreaResponseDetails(reviewSections, responses, reviewDrafts, reviewCycle)
+    .map((detail) => `${detail.number}. ${detail.status}`);
+}
+
+function drawWrappedTextAt(page, text, x, y, width, font, options = {}) {
+  const size = options.size || 8;
+  const lineHeight = options.lineHeight || size * 1.24;
+  const lines = wrapText(text, font, size, width).slice(0, options.maxLines || 100);
+  let cursorY = y;
+  lines.forEach((line) => {
+    drawText(page, line, x, cursorY, { ...options, size, font, maxWidth: width });
+    cursorY -= lineHeight;
+  });
+  return cursorY;
+}
+
+function drawAreaReviewAppendixHeader(page, font, boldFont, payload) {
+  drawText(page, "Areas for Review Responses", 72, 724, {
+    font: boldFont,
+    size: 15,
+    color: rgb(0.07, 0.12, 0.18),
+  });
+  drawText(page, `${payload.employeeName || "Employee"} - ${payload.roleLabel || "Performance Review"} - ${payload.reviewCheckpoint}`, 72, 704, {
+    font,
+    size: 8.4,
+    color: rgb(0.28, 0.34, 0.43),
+    maxWidth: 468,
+  });
+  page.drawLine({
+    start: { x: 72, y: 688 },
+    end: { x: 540, y: 688 },
+    thickness: 0.7,
+    color: rgb(0.86, 0.89, 0.94),
+  });
+}
+
+function drawAreaReviewResponsesAppendix(pdfDoc, details, font, boldFont, payload) {
+  if (!details?.length) return;
+  let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  drawAreaReviewAppendixHeader(page, font, boldFont, payload);
+  let cursorY = 662;
+
+  details.forEach((detail) => {
+    if (cursorY < 128) {
+      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      drawAreaReviewAppendixHeader(page, font, boldFont, payload);
+      cursorY = 662;
+    }
+
+    page.drawRectangle({
+      x: 72,
+      y: cursorY - 5,
+      width: 20,
+      height: 18,
+      borderWidth: 0.8,
+      borderColor: rgb(0.82, 0.87, 0.93),
+      color: rgb(0.98, 0.99, 1),
+    });
+    drawText(page, String(detail.number), 79, cursorY, {
+      font: boldFont,
+      size: 8.2,
+      color: rgb(0.07, 0.12, 0.18),
+    });
+    const nextPromptY = drawWrappedTextAt(page, detail.prompt, 104, cursorY + 1, 436, boldFont, {
+      size: 8.4,
+      lineHeight: 10.2,
+      color: rgb(0.07, 0.12, 0.18),
+      maxLines: 4,
+    });
+    cursorY = Math.min(cursorY - 18, nextPromptY - 4);
+    drawText(page, detail.status, 104, cursorY, {
+      font: boldFont,
+      size: 8,
+      color: rgb(0.12, 0.34, 0.18),
+      maxWidth: 436,
+    });
+    cursorY -= 26;
+  });
+}
+
 function drawIdentityHeader(pdfDoc, font, payload) {
   const page = pdfPage(pdfDoc, COMMON_IDENTITY_HEADER.page);
   const fieldValues = {
@@ -470,6 +605,12 @@ export async function fillPerformanceReviewPdfBytes(sourcePdfBytes, options = {}
     ...buildPerformanceReviewDraftFromInstance(options.reviewInstance, options.responses || []),
     ...(options.draft || {}),
   };
+  const areaResponseDetails = buildPerformanceReviewAreaResponseDetails(
+    options.reviewSections || [],
+    options.responses || [],
+    options.reviewDrafts || {},
+    cycle.id,
+  );
 
   const pdfDoc = await PDFDocument.load(sourcePdfBytes, { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -506,6 +647,12 @@ export async function fillPerformanceReviewPdfBytes(sourcePdfBytes, options = {}
       drawWrappedText(pdfPage(pdfDoc, overall.page), draft.overallComments, overall.commentsRect, font, { size: 7.6, lineHeight: 9.4 });
     }
   }
+
+  drawAreaReviewResponsesAppendix(pdfDoc, areaResponseDetails, font, boldFont, {
+    employeeName: employee.full_name || employee.employee_name || "",
+    roleLabel: template.roleLabel || employee.position_title || "",
+    reviewCheckpoint: `${cycle.label} Review`,
+  });
 
   return pdfDoc.save();
 }

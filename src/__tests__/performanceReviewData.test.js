@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import {
+  buildPerformanceReviewAreaResponseSummaries,
   buildDocuSealPerformanceReviewFields,
   buildPerformanceReviewPdfFileName,
   fillPerformanceReviewPdfBytes,
@@ -87,6 +88,35 @@ describe("performance review PDF helpers", () => {
     });
   });
 
+  it("summarizes answered area ratings for the active review cycle", () => {
+    const reviewSections = [
+      {
+        section_key: "pct_30_day",
+        title: "30-Day Review",
+        items: [
+          { id: "item-1", item_type: "rating", prompt: "First area" },
+          { id: "item-2", item_type: "rating", prompt: "Second area" },
+          { id: "item-3", item_type: "long_text", prompt: "Manager Notes" },
+        ],
+      },
+      {
+        section_key: "pct_60_day",
+        title: "60-Day Review",
+        items: [
+          { id: "item-4", item_type: "rating", prompt: "Later area" },
+        ],
+      },
+    ];
+    const responses = [
+      { review_item_id: "item-1", rating_value: "Meets Expectations" },
+      { review_item_id: "item-4", rating_value: "Needs Improvement" },
+    ];
+
+    expect(buildPerformanceReviewAreaResponseSummaries(reviewSections, responses, {}, "30_day")).toEqual([
+      "1. Addressed; Meets Expectations",
+    ]);
+  });
+
   it("overlays identity and manager notes into a non-fillable PDF", async () => {
     const sourcePdf = await createBlankReviewPdf(3);
     const filled = await fillPerformanceReviewPdfBytes(sourcePdf, {
@@ -97,6 +127,16 @@ describe("performance review PDF helpers", () => {
         start_date: "2026-01-01",
       },
       reviewInstance: { review_cycle: "30_day", metadata: {} },
+      reviewSections: [
+        {
+          section_key: "pct_30_day",
+          title: "30-Day Review",
+          items: [
+            { id: "item-1", item_type: "rating", prompt: "Has the employee completed onboarding?" },
+          ],
+        },
+      ],
+      responses: [{ review_item_id: "item-1", rating_value: "Meets Expectations" }],
       locationName: "Adair Forsythe",
       reviewDate: "2026-02-01",
       draft: {
@@ -107,7 +147,7 @@ describe("performance review PDF helpers", () => {
     });
 
     const pdfDoc = await PDFDocument.load(filled);
-    expect(pdfDoc.getPageCount()).toBe(3);
+    expect(pdfDoc.getPageCount()).toBe(4);
   });
 
   it("generates stable review filenames", () => {
