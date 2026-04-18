@@ -51,11 +51,11 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "d4e0116ce2858088d07e4bf18b03e5763329cf7a",
+      "commit": "fdc8759ed557d9cb55b3f95c686111ff2986a59c",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Require xAI structured transcript turns and improve interview review UI",
-      "updatedAt": "2026-04-18T04:37:02.911Z"
+      "note": "Add targeted PDF AI instructions and numbered STAR context",
+      "updatedAt": "2026-04-18T20:55:10.295Z"
     },
     "interview-transcribe-audio": {
       "commit": "8a8e6691786172a42be37710973bfd222331b8f8",
