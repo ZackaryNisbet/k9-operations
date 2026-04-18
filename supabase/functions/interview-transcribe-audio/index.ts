@@ -315,6 +315,14 @@ function providerStatusToClientStatus(providerStatus: number) {
   return 502;
 }
 
+function providerMessageForClient(message: string, fileName: string) {
+  const text = String(message || "").trim();
+  if (/unsupported or corrupt audio format/i.test(text) && /\.m4a$/i.test(fileName || "")) {
+    return "AI could not read this M4A audio codec. Re-upload this recording so K9 can normalize it to WAV, or export it as WAV/MP3 and upload that file.";
+  }
+  return text;
+}
+
 async function getAuthenticatedUserId(token: string) {
   const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: {
@@ -351,7 +359,7 @@ async function transcribeWithGrok(audioBlob: Blob, fileName: string, mimeType: s
   const responseText = await response.text();
   const providerMessage = parseProviderErrorBody(responseText);
   if (!response.ok) {
-    const message = providerMessage || `xAI Grok STT request failed for ${mimeType || "audio"}.`;
+    const message = providerMessageForClient(providerMessage, fileName) || `xAI Grok STT request failed for ${mimeType || "audio"}.`;
     console.error("xAI Grok STT failed", {
       status: response.status,
       statusText: response.statusText,
@@ -410,6 +418,13 @@ serve(async (req) => {
     const audioPath = String(body?.audio_file_path || "").trim();
     const audioFileName = String(body?.audio_file_name || "interview-audio.m4a").trim();
     const audioMimeType = normalizeAudioMimeType(audioFileName, String(body?.audio_mime_type || "audio/mpeg").trim());
+    const originalAudioFileName = String(body?.original_audio_file_name || audioFileName).trim();
+    const originalAudioMimeType = normalizeAudioMimeType(
+      originalAudioFileName,
+      String(body?.original_audio_mime_type || body?.audio_mime_type || "").trim(),
+    );
+    const originalAudioSizeBytes = Number(body?.original_audio_size_bytes || 0) || null;
+    const audioNormalizedForStt = Boolean(body?.audio_normalized_for_stt);
 
     if (!interviewId) return jsonResponse({ error: "Missing interview_id." }, 400);
     if (!audioPath) return jsonResponse({ error: "Missing audio_file_path." }, 400);
@@ -490,6 +505,10 @@ serve(async (req) => {
               file_name: audioFileName,
               mime_type: audioMimeType,
               size_bytes: audioBlob.size,
+              original_file_name: originalAudioFileName || audioFileName,
+              original_mime_type: originalAudioMimeType || audioMimeType,
+              original_size_bytes: originalAudioSizeBytes || audioBlob.size,
+              normalized_for_stt: audioNormalizedForStt,
             },
           },
         },
