@@ -71,6 +71,20 @@ describe("interview PDF form utilities", () => {
     expect(form.getCheckBox("recommend_hire").isChecked()).toBe(true);
   });
 
+  it("nudges interviewer text right in PDF appearances without changing source metadata", async () => {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([612, 792]);
+    const form = pdfDoc.getForm();
+    const interviewerField = form.createTextField("interviewer_name");
+    interviewerField.addToPage(page, { x: 72, y: 700, width: 240, height: 24 });
+    const bytes = await pdfDoc.save();
+
+    const filled = await fillInterviewPdfBytes(bytes, { interviewer_name: "Zack Nisbet" });
+    const filledDoc = await PDFDocument.load(filled);
+
+    expect(filledDoc.getForm().getTextField("interviewer_name").getText()).toBe("  Zack Nisbet");
+  });
+
   it("adds candidate metadata defaults for common PDF identity fields", () => {
     const map = buildPdfResponseMap([], {
       candidate_full_name: "Lahayla Kern",

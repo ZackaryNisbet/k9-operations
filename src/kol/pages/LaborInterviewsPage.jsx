@@ -1113,6 +1113,8 @@ function ReviewGuideModal({
   getFieldValue,
   setFieldDraft,
   approveField,
+  aiFillingKey,
+  onAiFillField,
   exportFinalPdf,
   downloadArtifact,
   onClose,
@@ -1126,6 +1128,14 @@ function ReviewGuideModal({
   const approved = !!activeResponse.metadata?.approved;
   const approvedCount = reviewFields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
   const activeValue = activeField ? getFieldValue(activeField) : "";
+  const [aiInstructionOpen, setAiInstructionOpen] = useState(false);
+  const [aiInstructionValue, setAiInstructionValue] = useState("");
+  const aiFillingThisField = !!activeKey && aiFillingKey === activeKey;
+
+  useEffect(() => {
+    setAiInstructionOpen(false);
+    setAiInstructionValue("");
+  }, [activeKey]);
 
   const goNext = () => {
     if (!reviewFields.length) return;
@@ -1138,6 +1148,15 @@ function ReviewGuideModal({
     if (!activeField) return;
     await approveField(activeField, activeValue);
     goNext();
+  };
+
+  const applyAiInstruction = async () => {
+    if (!activeField || !aiInstructionValue.trim()) return;
+    const ok = await onAiFillField?.(activeField, aiInstructionValue.trim());
+    if (ok) {
+      setAiInstructionOpen(false);
+      setAiInstructionValue("");
+    }
   };
 
   return (
@@ -1211,7 +1230,17 @@ function ReviewGuideModal({
                       <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{humanizePdfFieldName(activeField.name)}</div>
                       <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"}</div>
                     </div>
-                    <Badge color={approved ? "success" : "default"}>{approved ? "Reviewed" : "Needs Review"}</Badge>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                      <IconButton
+                        label="AI fill this field"
+                        onClick={() => setAiInstructionOpen((open) => !open)}
+                        disabled={aiFillingThisField}
+                        variant={aiInstructionOpen ? "primary" : "default"}
+                      >
+                        AI
+                      </IconButton>
+                      <Badge color={approved ? "success" : "default"}>{approved ? "Reviewed" : "Needs Review"}</Badge>
+                    </div>
                   </div>
                 </div>
                 <textarea
@@ -1220,6 +1249,21 @@ function ReviewGuideModal({
                   rows={fieldValueRows(activeValue)}
                   style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 92 }}
                 />
+                {aiInstructionOpen && (
+                  <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 10, background: "#f8fafc", display: "grid", gap: 8 }}>
+                    <textarea
+                      value={aiInstructionValue}
+                      onChange={(event) => setAiInstructionValue(event.target.value)}
+                      rows={4}
+                      placeholder="AI instruction"
+                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit", fontSize: 13, lineHeight: 1.45, color: C.text, resize: "vertical", outline: "none", background: "#fff" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                      <Btn variant="ghost" size="sm" onClick={() => setAiInstructionOpen(false)} disabled={aiFillingThisField}>Cancel</Btn>
+                      <Btn variant="primary" size="sm" onClick={applyAiInstruction} disabled={!aiInstructionValue.trim() || aiFillingThisField}>{aiFillingThisField ? "Applying..." : "Apply AI"}</Btn>
+                    </div>
+                  </div>
+                )}
                 {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
@@ -1458,6 +1502,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [showConfigSettings, setShowConfigSettings] = useState(false);
   const [autoScoreCandidates, setAutoScoreCandidates] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiFillingPdfKey, setAiFillingPdfKey] = useState("");
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
@@ -1983,7 +2028,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const draftInterview = async (interviewId = selectedRecord?.id, options = {}) => {
-    const { requireLocalTranscript = true, quietStart = false } = options;
+    const {
+      requireLocalTranscript = true,
+      quietStart = false,
+      targetPdfFieldName = "",
+      pdfPopulationInstruction = "",
+    } = options;
     if (!interviewId) return null;
     if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
       showToast("Upload interview audio or a transcript first.", "error");
@@ -1991,8 +2041,17 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
     setAiDrafting(true);
     try {
+      const pdfPopulationInstructions = targetPdfFieldName
+        ? { [targetPdfFieldName]: pdfPopulationInstruction }
+        : undefined;
       const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
-        body: { interview_id: interviewId, action: "start", auto_score_candidate: autoScoreCandidates },
+        body: {
+          interview_id: interviewId,
+          action: "start",
+          auto_score_candidate: autoScoreCandidates,
+          target_pdf_field_name: targetPdfFieldName || undefined,
+          pdf_population_instructions: pdfPopulationInstructions,
+        },
       });
       if (startError) throw new Error(await readEdgeFunctionError(startError, "AI draft failed"));
 
@@ -2018,7 +2077,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         }
       }
 
-      showToast(`AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      showToast(targetPdfFieldName ? "AI updated field" : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
       await loadAll(locationId);
       setSelectedRecordId(interviewId);
       return result;
@@ -2027,6 +2086,26 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       return null;
     } finally {
       setAiDrafting(false);
+    }
+  };
+
+  const fillPdfFieldWithAiInstruction = async (field, instruction) => {
+    if (!selectedRecord?.id || !field?.name || !String(instruction || "").trim()) return false;
+    const key = responseKeyForPdfField(field);
+    setAiFillingPdfKey(key);
+    try {
+      const result = await draftInterview(selectedRecord.id, {
+        requireLocalTranscript: true,
+        quietStart: true,
+        targetPdfFieldName: field.name,
+        pdfPopulationInstruction: instruction,
+      });
+      if (!result) return false;
+      await loadAll(locationId);
+      setSelectedRecordId(selectedRecord.id);
+      return true;
+    } finally {
+      setAiFillingPdfKey("");
     }
   };
 
@@ -2954,6 +3033,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
           approveField={approvePdfField}
+          aiFillingKey={aiFillingPdfKey}
+          onAiFillField={fillPdfFieldWithAiInstruction}
           exportFinalPdf={exportFinalPdf}
           downloadArtifact={downloadArtifact}
           onClose={() => setShowGuideModal(false)}
