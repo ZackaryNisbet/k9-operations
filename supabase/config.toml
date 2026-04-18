@@ -1,0 +1,4 @@
+[functions.performance-review-signing]
+# The function validates the caller token in-function via Supabase Auth.
+# Gateway verification can reject newer ES256 auth JWTs before function code runs.
+verify_jwt = false

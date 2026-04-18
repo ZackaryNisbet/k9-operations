@@ -27,6 +27,9 @@
     },
     "interview-ai-draft": {
       "verifyJwt": false
+    },
+    "performance-review-signing": {
+      "verifyJwt": false
     }
   }
 }
