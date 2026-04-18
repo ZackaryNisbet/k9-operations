@@ -22,12 +22,10 @@ const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = new Set([
   "audio/ogg",
   "audio/opus",
   "audio/wav",
-  "audio/webm",
   "audio/x-matroska",
   "audio/x-m4a",
   "audio/x-wav",
   "video/mp4",
-  "video/webm",
   "video/x-matroska",
   "application/x-matroska",
 ]);
@@ -41,7 +39,6 @@ const INTERVIEW_AUDIO_CONTENT_TYPES: Record<string, string> = {
   ogg: "audio/ogg",
   opus: "audio/opus",
   wav: "audio/wav",
-  webm: "audio/webm",
 };
 
 type SttWord = {
@@ -83,7 +80,7 @@ function getFileExtension(fileName = "") {
 function normalizeAudioMimeType(fileName: string, mimeType: string) {
   const normalized = String(mimeType || "").trim().toLowerCase();
   if (normalized && normalized !== "application/octet-stream") return normalized;
-  return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(fileName)] || "audio/mpeg";
+  return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(fileName)] || "";
 }
 
 function buildSpeakerTranscript(result: SttResult) {
