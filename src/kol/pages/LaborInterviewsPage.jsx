@@ -887,9 +887,9 @@ function AudioUploadPanel({
             inset: 0,
             zIndex: 2,
             transition: "opacity 180ms ease",
-            display: "grid",
-            gridTemplateRows: "minmax(0, 1fr) auto",
+            display: "flex",
             alignItems: "center",
+            justifyContent: "center",
             background: "rgba(2,6,23,0.48)",
             backdropFilter: "blur(8px)",
             padding: 16,
@@ -928,26 +928,43 @@ function AudioUploadPanel({
               </svg>
             )}
           </button>
-          <div style={{ display: "grid", gridTemplateColumns: "54px minmax(0, 1fr) 54px", gap: 10, alignItems: "center", color: "#f8fafc", fontSize: 12, fontWeight: 850 }}>
-            <span>{formatPlaybackTime(currentTime)}</span>
-            <input
-              type="range"
-              min="0"
-              max={Math.max(1, durationSeconds || audioDuration || 1)}
-              step="0.1"
-              value={Math.min(currentTime, durationSeconds || audioDuration || currentTime || 0)}
-              disabled={!audioUrl}
-              onChange={(event) => {
-                const nextTime = Number(event.target.value || 0);
-                if (audioRef.current) audioRef.current.currentTime = nextTime;
-                onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
-              }}
-              style={{ width: "100%", accentColor: "#84cc16" }}
-            />
-            <span style={{ textAlign: "right" }}>{formatPlaybackTime(durationSeconds || audioDuration)}</span>
-          </div>
         </div>
       </div>
+      {audioUrl && (
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "54px minmax(0, 1fr) 54px",
+            gap: 10,
+            alignItems: "center",
+            color: C.textSec,
+            fontSize: 12,
+            fontWeight: 850,
+          }}
+        >
+          <span>{formatPlaybackTime(currentTime)}</span>
+          <input
+            type="range"
+            min="0"
+            max={Math.max(1, durationSeconds || audioDuration || 1)}
+            step="0.1"
+            value={Math.min(currentTime, durationSeconds || audioDuration || currentTime || 0)}
+            disabled={!audioUrl}
+            onChange={(event) => {
+              const nextTime = Number(event.target.value || 0);
+              if (audioRef.current) audioRef.current.currentTime = nextTime;
+              onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
+            }}
+            style={{
+              width: "100%",
+              accentColor: "#84cc16",
+              cursor: "pointer",
+            }}
+          />
+          <span style={{ textAlign: "right" }}>{formatPlaybackTime(durationSeconds || audioDuration)}</span>
+        </div>
+      )}
       {record?.transcript_text && (
         <div style={{ marginTop: 14, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
           <div style={{ padding: "11px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
