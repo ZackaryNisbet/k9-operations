@@ -43,6 +43,35 @@ export const PDF_VERIFICATION_LABELS = {
 export const INTERVIEW_PDF_ACCEPT = "application/pdf";
 export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
 export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mp3,.mp4,.ogg,.opus,.wav,audio/*,video/mp4";
+export const INTERVIEW_AUDIO_MAX_BYTES = 100 * 1024 * 1024;
+export const INTERVIEW_AUDIO_MAX_LABEL = "100 MB";
+
+const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "mp4", "ogg", "opus", "wav"]);
+const INTERVIEW_AUDIO_CONTENT_TYPES = {
+  aac: "audio/aac",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
+  ogg: "audio/ogg",
+  opus: "audio/opus",
+  wav: "audio/wav",
+};
+
+export const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = [
+  "audio/aac",
+  "audio/flac",
+  "audio/m4a",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/ogg",
+  "audio/opus",
+  "audio/wav",
+  "audio/x-m4a",
+  "audio/x-wav",
+  "video/mp4",
+];
 
 const PDF_FIELD_TYPE_LABELS = {
   text: "Text",
@@ -74,6 +103,35 @@ export function sanitizeInterviewFileName(value = "document.pdf") {
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-");
   return cleaned || "document.pdf";
+}
+
+function getFileExtension(fileName = "") {
+  const match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1] || "";
+}
+
+export function getInterviewAudioContentType(file = {}) {
+  const explicitType = String(file.type || "").trim().toLowerCase();
+  if (explicitType && explicitType !== "application/octet-stream") return explicitType;
+  return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(file.name)] || "audio/mpeg";
+}
+
+export function validateInterviewAudioFile(file) {
+  if (!file) return { ok: false, error: "Choose an interview audio file first." };
+  const extension = getFileExtension(file.name);
+  const contentType = getInterviewAudioContentType(file);
+  const isSupported = INTERVIEW_AUDIO_EXTENSIONS.has(extension)
+    || INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.includes(contentType);
+
+  if (!isSupported) {
+    return { ok: false, error: "Upload a supported audio file: AAC, FLAC, M4A, MP3, MP4, OGG, OPUS, or WAV." };
+  }
+
+  if (Number(file.size || 0) > INTERVIEW_AUDIO_MAX_BYTES) {
+    return { ok: false, error: `Interview audio must be ${INTERVIEW_AUDIO_MAX_LABEL} or smaller.` };
+  }
+
+  return { ok: true, contentType };
 }
 
 export function buildInterviewTemplatePdfPath({ locationId, templateId, versionNo, fileName }) {

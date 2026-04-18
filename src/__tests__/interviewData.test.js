@@ -3,7 +3,10 @@ import {
   buildInterviewTemplateSnapshot,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewAudioContentType,
+  INTERVIEW_AUDIO_MAX_BYTES,
   validateAiDraftPayload,
+  validateInterviewAudioFile,
 } from "../kol/interviewData";
 
 async function createFillableInterviewPdf() {
@@ -81,6 +84,27 @@ describe("interview template snapshots", () => {
 
     expect(snapshot.questions[0].prompt).toBe("Are you available weekends?");
     expect(snapshot.version.pdf_field_manifest).toHaveLength(1);
+  });
+});
+
+describe("interview audio helpers", () => {
+  it("accepts Zoom-sized m4a audio and infers a storage-safe content type", () => {
+    const file = { name: "candidate-interview.m4a", type: "", size: 25 * 1024 * 1024 };
+
+    expect(validateInterviewAudioFile(file)).toMatchObject({
+      ok: true,
+      contentType: "audio/mp4",
+    });
+    expect(getInterviewAudioContentType(file)).toBe("audio/mp4");
+  });
+
+  it("rejects audio files over the 100 MB interview limit", () => {
+    const file = { name: "candidate-interview.mp3", type: "audio/mpeg", size: INTERVIEW_AUDIO_MAX_BYTES + 1 };
+
+    expect(validateInterviewAudioFile(file)).toMatchObject({
+      ok: false,
+      error: "Interview audio must be 100 MB or smaller.",
+    });
   });
 });
 

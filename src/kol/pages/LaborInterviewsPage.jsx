@@ -11,6 +11,7 @@ import {
   buildPdfResponseMap,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewAudioContentType,
   getInterviewRoleLabel,
   getPdfFieldTypeLabel,
   groupQuestionsByCategory,
@@ -26,6 +27,7 @@ import {
   pdfFieldsFromSnapshot,
   PDF_VERIFICATION_LABELS,
   questionRowsFromSnapshot,
+  validateInterviewAudioFile,
 } from "../interviewData";
 import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingData";
 
@@ -505,12 +507,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const handleAudioUpload = async (file) => {
     if (!selectedRecord?.id || !file) return;
+    const validation = validateInterviewAudioFile(file);
+    if (!validation.ok) {
+      showToast(validation.error, "error");
+      return;
+    }
     setAudioTranscribing(true);
     try {
       const path = buildInterviewAudioPath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
+      const contentType = validation.contentType || getInterviewAudioContentType(file);
       const { error: uploadError } = await supabase.storage
         .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
-        .upload(path, file, { upsert: true, contentType: file.type || "application/octet-stream" });
+        .upload(path, file, { upsert: true, contentType });
       if (uploadError) throw uploadError;
       setAudioFileName(file.name);
 
@@ -520,7 +528,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           audio_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
           audio_file_path: path,
           audio_file_name: file.name,
-          audio_mime_type: file.type || "application/octet-stream",
+          audio_mime_type: contentType,
         },
       });
       if (error) throw error;

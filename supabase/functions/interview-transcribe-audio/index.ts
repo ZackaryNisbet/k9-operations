@@ -11,6 +11,31 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const XAI_API_KEY = Deno.env.get("XAI_API_KEY") || "";
 const XAI_STT_MODEL = Deno.env.get("INTERVIEW_XAI_STT_MODEL") || Deno.env.get("XAI_STT_MODEL") || "grok-stt";
 const LABOR_INTERVIEW_DOCUMENT_BUCKET = "labor-interview-documents";
+const INTERVIEW_AUDIO_MAX_BYTES = 100 * 1024 * 1024;
+const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = new Set([
+  "audio/aac",
+  "audio/flac",
+  "audio/m4a",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/ogg",
+  "audio/opus",
+  "audio/wav",
+  "audio/x-m4a",
+  "audio/x-wav",
+  "video/mp4",
+]);
+const INTERVIEW_AUDIO_CONTENT_TYPES: Record<string, string> = {
+  aac: "audio/aac",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
+  ogg: "audio/ogg",
+  opus: "audio/opus",
+  wav: "audio/wav",
+};
 
 type SttWord = {
   text?: string;
@@ -43,6 +68,17 @@ function cleanJoinedWords(words: SttWord[]) {
     .trim();
 }
 
+function getFileExtension(fileName = "") {
+  const match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1] || "";
+}
+
+function normalizeAudioMimeType(fileName: string, mimeType: string) {
+  const normalized = String(mimeType || "").trim().toLowerCase();
+  if (normalized && normalized !== "application/octet-stream") return normalized;
+  return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(fileName)] || "audio/mpeg";
+}
+
 function buildSpeakerTranscript(result: SttResult) {
   const words = Array.isArray(result.words) ? result.words : [];
   if (!words.some((word) => Number.isInteger(word.speaker))) {
@@ -72,11 +108,12 @@ function buildSpeakerTranscript(result: SttResult) {
 }
 
 async function transcribeWithGrok(audioBlob: Blob, fileName: string, mimeType: string) {
+  const typedAudioBlob = audioBlob.type === mimeType ? audioBlob : new Blob([audioBlob], { type: mimeType });
   const formData = new FormData();
   formData.append("format", "true");
   formData.append("language", "en");
   formData.append("diarize", "true");
-  formData.append("file", audioBlob, fileName);
+  formData.append("file", typedAudioBlob, fileName);
 
   const response = await fetch("https://api.x.ai/v1/stt", {
     method: "POST",
@@ -121,7 +158,7 @@ serve(async (req) => {
     const audioBucket = String(body?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET).trim();
     const audioPath = String(body?.audio_file_path || "").trim();
     const audioFileName = String(body?.audio_file_name || "interview-audio.m4a").trim();
-    const audioMimeType = String(body?.audio_mime_type || "audio/mpeg").trim();
+    const audioMimeType = normalizeAudioMimeType(audioFileName, String(body?.audio_mime_type || "audio/mpeg").trim());
 
     if (!interviewId) return jsonResponse({ error: "Missing interview_id." }, 400);
     if (!audioPath) return jsonResponse({ error: "Missing audio_file_path." }, 400);
@@ -148,6 +185,12 @@ serve(async (req) => {
       .download(audioPath);
     if (downloadError || !audioBlob) {
       throw new Error(downloadError?.message || "Unable to download interview audio.");
+    }
+    if (audioBlob.size > INTERVIEW_AUDIO_MAX_BYTES) {
+      return jsonResponse({ error: "Interview audio must be 100 MB or smaller." }, 400);
+    }
+    if (!INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.has(audioMimeType)) {
+      return jsonResponse({ error: `Unsupported interview audio type: ${audioMimeType}.` }, 400);
     }
 
     const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
