@@ -636,6 +636,15 @@ export function getInterviewTranscriptTurns(record = {}) {
   return normalizeProviderTranscriptTurns(turns);
 }
 
+function getPdfTextAppearanceValue(fieldName, value) {
+  const textValue = value == null ? "" : String(value);
+  const normalized = normalizeFieldName(fieldName);
+  if (textValue && /interviewer|manager/.test(normalized)) {
+    return `  ${textValue}`;
+  }
+  return textValue;
+}
+
 export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {
   const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const form = pdfDoc.getForm();
@@ -647,7 +656,7 @@ export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatte
     const textValue = value == null ? "" : String(value);
     try {
       if (field instanceof PDFTextField) {
-        field.setText(textValue);
+        field.setText(getPdfTextAppearanceValue(name, textValue));
       } else if (field instanceof PDFCheckBox) {
         if (["true", "yes", "checked", "1", "x"].includes(textValue.trim().toLowerCase())) field.check();
         else field.uncheck();
