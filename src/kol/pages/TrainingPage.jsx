@@ -49,6 +49,15 @@ import {
   validateLaborTrainingRequirementEvidenceFile,
 } from "../trainingData";
 import { getAttendanceIncidentLabel } from "../attendanceData";
+import {
+  buildDocuSealPerformanceReviewFields,
+  buildPerformanceReviewDraftFromInstance,
+  buildPerformanceReviewPdfFileName,
+  fillPerformanceReviewPdfBytes,
+  getPerformanceReviewCompliance,
+  PERFORMANCE_REVIEW_CYCLES,
+  resolvePerformanceReviewTemplate,
+} from "../performanceReviewData";
 import AttendanceTrackerPage from "./AttendancePage";
 import LaborInterviewsPage from "./LaborInterviewsPage";
 
@@ -79,6 +88,7 @@ const ITEM_STATUS_COLORS = {
 const TABS = [
   { id: "home", label: "Home" },
   { id: "training", label: "Training" },
+  { id: "performance-reviews", label: "Performance Reviews" },
   { id: "templates", label: "Templates" },
   { id: "attendance", label: "Attendance" },
   { id: "interviews", label: "Interviews" },
@@ -100,9 +110,7 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
   { section: "Employment", key: "start_date", label: "Start Date", type: "date", ops: ["after", "before", "inLastDays"] },
   { section: "Compliance", key: "training", label: "Training", type: "select", ops: ["is", "isNot"], options: ["Compliant", "In Progress", "Non-Compliant"] },
-  { section: "Reviews", key: "review30", label: "30-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
-  { section: "Reviews", key: "review60", label: "60-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
-  { section: "Reviews", key: "review90", label: "90-Day Due", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+  { section: "Compliance", key: "performance_reviews", label: "Performance Reviews", type: "select", ops: ["is", "isNot"], options: ["Compliant", "Non-compliant", "Needs setup"] },
 ];
 
 const LABOR_NOTE_TYPE_OPTIONS = [
@@ -245,6 +253,39 @@ function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-
   anchor.click();
   anchor.remove();
   window.URL.revokeObjectURL(url);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+async function readEdgeFunctionError(error, fallbackMessage) {
+  if (!error) return fallbackMessage;
+  try {
+    if (error.context?.json) {
+      const body = await error.context.json();
+      return body?.error || body?.message || fallbackMessage;
+    }
+    if (error.context?.text) {
+      const text = await error.context.text();
+      if (!text) return fallbackMessage;
+      try {
+        const body = JSON.parse(text);
+        return body?.error || body?.message || text;
+      } catch {
+        return text;
+      }
+    }
+  } catch (_) {
+    // Fall through to the SDK message below.
+  }
+  return error.message || fallbackMessage;
 }
 
 export function isTrainingRecordForEmployee(record = {}, employee = {}) {
@@ -401,6 +442,12 @@ export function applyLaborRosterFilters(rows, filters) {
     }
     if (key === "training") {
       const status = String(row.training_compliance?.label || "");
+      if (op === "is") return status === val;
+      if (op === "isNot") return status !== val;
+      return true;
+    }
+    if (key === "performance_reviews") {
+      const status = String(row.performance_review_compliance?.label || "");
       if (op === "is") return status === val;
       if (op === "isNot") return status !== val;
       return true;
@@ -568,6 +615,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [savingReviewItemId, setSavingReviewItemId] = useState(null);
   const [completingReview, setCompletingReview] = useState(false);
+  const [reviewPdfDraft, setReviewPdfDraft] = useState({
+    rating: "",
+    managerNotes: "",
+    actionPlan: "",
+    overallRating: "",
+    overallComments: "",
+  });
+  const [savingReviewPdfDraft, setSavingReviewPdfDraft] = useState(false);
+  const [renderingReviewPdf, setRenderingReviewPdf] = useState(false);
+  const [sendingReviewSignature, setSendingReviewSignature] = useState(false);
+  const [reviewSignatureDeliveryMethod, setReviewSignatureDeliveryMethod] = useState("sms");
+  const reviewPdfObjectUrlRef = useRef("");
   const [showGlobalNoteModal, setShowGlobalNoteModal] = useState(false);
   const [globalNoteEmployeeId, setGlobalNoteEmployeeId] = useState("");
   const [globalNoteType, setGlobalNoteType] = useState("general");
@@ -596,6 +655,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [rosterViewName, setRosterViewName] = useState("");
   const firstRosterNameInputRef = useRef(null);
   const prevRosterFilterOpen = useRef(false);
+  const pendingEmployeeRecordTabRef = useRef("");
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -986,19 +1046,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   useEffect(() => { loadCoreData(); }, [loadCoreData]);
 
   useEffect(() => {
-    if (tab === "training" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
+    if (tab === "training" || tab === "performance-reviews" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
       loadTrainingBundle();
     }
   }, [loadTrainingBundle, previewTemplateId, selectedRecordId, selectedReviewInstanceId, showNewRecord, tab]);
 
   useEffect(() => {
-    if (tab === "home" || tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
+    if (tab === "home" || tab === "performance-reviews" || tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
       loadSupportBundle();
     }
   }, [loadSupportBundle, selectedLaborEmployeeId, selectedReviewInstanceId, tab]);
 
   useEffect(() => {
-    setEmployeeRecordTab("training");
+    setEmployeeRecordTab(pendingEmployeeRecordTabRef.current || "training");
+    pendingEmployeeRecordTabRef.current = "";
     setEmployeeNoteText("");
     setEmployeeNoteType("general");
     setEmployeeNoteSearchText("");
@@ -1276,6 +1337,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .sort((a, b) => a.sequence_order - b.sequence_order),
       }));
   }, [reviewItems, reviewSections, selectedReviewTemplateVersion]);
+  const selectedReviewResponses = useMemo(() => {
+    if (!selectedReviewInstance?.id) return [];
+    return toObjectRows(reviewResponses).filter((response) => response.review_instance_id === selectedReviewInstance.id);
+  }, [reviewResponses, selectedReviewInstance]);
+
+  useEffect(() => {
+    if (!selectedReviewInstance?.id) return;
+    setReviewPdfDraft(buildPerformanceReviewDraftFromInstance(selectedReviewInstance, selectedReviewResponses));
+  }, [selectedReviewInstance, selectedReviewResponses]);
+
+  useEffect(() => () => {
+    if (reviewPdfObjectUrlRef.current) URL.revokeObjectURL(reviewPdfObjectUrlRef.current);
+  }, []);
 
   const recordSections = useMemo(() => {
     if (!selectedRecord) return [];
@@ -2939,12 +3013,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await refreshTemplateBundle();
   }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
 
-  const openLaborEmployeeProfile = useCallback((employeeId, seedRow = null) => {
+  const openLaborEmployeeProfile = useCallback((employeeId, seedRow = null, options = {}) => {
     const resolvedEmployeeId = employeeId || getLaborEmployeeRowId(seedRow);
     if (!resolvedEmployeeId && !isObjectRow(seedRow)) {
       addGlobalToast?.("Employee record is missing an employee link", "error");
       return;
     }
+    pendingEmployeeRecordTabRef.current = options.recordTab || "";
     setSelectedRecordId(null);
     setSelectedLaborEmployeeId(resolvedEmployeeId);
     setSelectedLaborEmployeeSeed(isObjectRow(seedRow) ? seedRow : null);
@@ -3086,19 +3161,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     addGlobalToast("Employee note added", "success");
   }, [addGlobalToast, appendEmployeeNote, globalNoteEmployeeId, globalNoteText, globalNoteType, refreshLaborData]);
 
-  const handleCreateReviewInstance = useCallback(async (reviewCycle) => {
-    if (!selectedLaborEmployeeView?.id) return;
-    const matchingTemplate = toObjectRows(reviewTemplates).find((template) =>
-      (Array.isArray(template.role_scopes) ? template.role_scopes : []).some((scope) => scope.toUpperCase() === String(selectedLaborEmployeeView.position_title || "").toUpperCase())
-    ) || toObjectRows(reviewTemplates)[0];
+  const findReviewTemplateForEmployee = useCallback((employee) => {
+    const templates = toObjectRows(reviewTemplates);
+    const mappedTemplate = resolvePerformanceReviewTemplate(employee);
+    const normalizedPosition = normalizePositionTitle(employee?.position_title || "");
+    const normalizedRoleLabel = normalizePositionTitle(mappedTemplate?.roleLabel || "");
+    const normalizedRoleKey = String(mappedTemplate?.roleKey || "").replace(/_/g, " ");
+    return templates.find((template) => {
+      const scopes = Array.isArray(template.role_scopes) ? template.role_scopes : [];
+      const normalizedScopes = scopes.map((scope) => normalizePositionTitle(scope));
+      return normalizedScopes.includes(normalizedPosition)
+        || (normalizedRoleLabel && normalizedScopes.includes(normalizedRoleLabel))
+        || (normalizedRoleKey && normalizedScopes.includes(normalizedRoleKey));
+    }) || templates.find((template) => {
+      const slug = normalizePositionTitle(String(template.slug || template.name || "").replace(/_/g, " "));
+      return mappedTemplate?.roleKey && slug.includes(String(mappedTemplate.roleKey).replace(/_/g, " "));
+    }) || templates[0];
+  }, [reviewTemplates]);
+
+  const handleCreateReviewInstanceForEmployee = useCallback(async (employee, reviewCycle) => {
+    const employeeId = getLaborEmployeeRowId(employee);
+    if (!employeeId) return null;
+    const matchingTemplate = findReviewTemplateForEmployee(employee);
 
     if (!matchingTemplate?.id) {
       addGlobalToast("No review template is available for this role", "error");
-      return;
+      return null;
     }
 
     const { data, error } = await supabase.rpc("create_review_instance", {
-      p_labor_employee_id: selectedLaborEmployeeView.id,
+      p_labor_employee_id: employeeId,
       p_template_id: matchingTemplate.id,
       p_review_cycle: reviewCycle,
       p_due_date: null,
@@ -3107,13 +3199,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     });
     if (error) {
       addGlobalToast("Failed to create review instance", "error");
-      return;
+      return null;
     }
     const createdInstance = Array.isArray(data) ? data[0] : data;
     await refreshLaborData();
+    setSelectedLaborEmployeeId(employeeId);
+    setSelectedLaborEmployeeSeed(isObjectRow(employee) ? employee : null);
     if (createdInstance?.id) setSelectedReviewInstanceId(createdInstance.id);
     addGlobalToast("Review instance created", "success");
-  }, [actorName, actorUserId, addGlobalToast, reviewTemplates, selectedLaborEmployeeView, refreshLaborData]);
+    return createdInstance || null;
+  }, [actorName, actorUserId, addGlobalToast, findReviewTemplateForEmployee, refreshLaborData]);
+
+  const handleCreateReviewInstance = useCallback(async (reviewCycle) => {
+    if (!selectedLaborEmployeeView?.id) return null;
+    return handleCreateReviewInstanceForEmployee(selectedLaborEmployeeView, reviewCycle);
+  }, [handleCreateReviewInstanceForEmployee, selectedLaborEmployeeView]);
 
   const getReviewResponse = useCallback((reviewItemId) => {
     if (!selectedReviewInstanceId) return null;
@@ -3171,6 +3271,126 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setCompletingReview(false);
     addGlobalToast("Review completed", "success");
   }, [actorName, actorUserId, addGlobalToast, selectedReviewInstanceId, refreshLaborData]);
+
+  const handleReviewPdfDraftChange = useCallback((field, value) => {
+    setReviewPdfDraft((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const saveReviewPdfDraft = useCallback(async ({ quiet = false } = {}) => {
+    if (!selectedReviewInstanceId) return false;
+    setSavingReviewPdfDraft(true);
+    const { error } = await supabase.rpc("save_employee_review_pdf_draft", {
+      p_review_instance_id: selectedReviewInstanceId,
+      p_review_rating: reviewPdfDraft.rating || null,
+      p_manager_notes: reviewPdfDraft.managerNotes || null,
+      p_action_plan: reviewPdfDraft.actionPlan || null,
+      p_overall_rating: reviewPdfDraft.overallRating || null,
+      p_overall_comments: reviewPdfDraft.overallComments || null,
+      p_actor_user_id: actorUserId,
+    });
+    if (error) {
+      addGlobalToast("Failed to save PDF draft fields", "error");
+      setSavingReviewPdfDraft(false);
+      return false;
+    }
+    await refreshLaborData();
+    setSavingReviewPdfDraft(false);
+    if (!quiet) addGlobalToast("PDF draft fields saved", "success");
+    return true;
+  }, [actorUserId, addGlobalToast, refreshLaborData, reviewPdfDraft, selectedReviewInstanceId]);
+
+  const buildSelectedPerformanceReviewPdfBytes = useCallback(async () => {
+    if (!selectedReviewInstance || !selectedLaborEmployeeView) {
+      throw new Error("Choose a review before rendering the PDF.");
+    }
+    const template = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
+    if (!template?.pdfUrl) {
+      throw new Error("No HR PDF template is mapped for this employee position.");
+    }
+    const response = await fetch(template.pdfUrl);
+    if (!response.ok) throw new Error("Failed to load HR source PDF template.");
+    const sourcePdfBytes = await response.arrayBuffer();
+    return await fillPerformanceReviewPdfBytes(sourcePdfBytes, {
+      template,
+      employee: selectedLaborEmployeeView,
+      reviewInstance: selectedReviewInstance,
+      responses: selectedReviewResponses,
+      draft: reviewPdfDraft,
+      locationName: laborContactLocationName,
+      reviewDate: todayStr(),
+    });
+  }, [laborContactLocationName, reviewPdfDraft, selectedLaborEmployeeView, selectedReviewInstance, selectedReviewResponses]);
+
+  const handlePreviewPerformanceReviewPdf = useCallback(async () => {
+    setRenderingReviewPdf(true);
+    try {
+      const pdfBytes = await buildSelectedPerformanceReviewPdfBytes();
+      if (reviewPdfObjectUrlRef.current) URL.revokeObjectURL(reviewPdfObjectUrlRef.current);
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      const objectUrl = URL.createObjectURL(blob);
+      reviewPdfObjectUrlRef.current = objectUrl;
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      addGlobalToast(error?.message || "Failed to render performance review PDF", "error");
+    } finally {
+      setRenderingReviewPdf(false);
+    }
+  }, [addGlobalToast, buildSelectedPerformanceReviewPdfBytes]);
+
+  const handleSendPerformanceReviewSignature = useCallback(async () => {
+    if (!selectedReviewInstance || !selectedLaborEmployeeView) return;
+    const template = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
+    if (!template) {
+      addGlobalToast("No HR PDF template is mapped for this employee position", "error");
+      return;
+    }
+    const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
+    const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
+    const deliveryMethod = reviewSignatureDeliveryMethod === "email" ? "email" : "sms";
+    if (deliveryMethod === "sms" && !employeePhone) {
+      addGlobalToast("Add an employee phone number before sending by SMS", "error");
+      return;
+    }
+    if (deliveryMethod === "email" && !employeeEmail) {
+      addGlobalToast("Add an employee email before sending by email", "error");
+      return;
+    }
+
+    setSendingReviewSignature(true);
+    try {
+      const saved = await saveReviewPdfDraft({ quiet: true });
+      if (!saved) return;
+      const pdfBytes = await buildSelectedPerformanceReviewPdfBytes();
+      const fileName = buildPerformanceReviewPdfFileName(selectedLaborEmployeeView, selectedReviewInstance.review_cycle);
+      const { data, error } = await supabase.functions.invoke("performance-review-signing", {
+        body: {
+          review_instance_id: selectedReviewInstance.id,
+          delivery_method: deliveryMethod,
+          recipient_email: employeeEmail,
+          recipient_phone: employeePhone,
+          file_name: fileName,
+          pdf_base64: arrayBufferToBase64(pdfBytes),
+          fields: buildDocuSealPerformanceReviewFields(template, selectedReviewInstance.review_cycle),
+        },
+      });
+      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to send performance review for signature"));
+      if (!data?.ok) throw new Error(data?.error || "Failed to send performance review for signature");
+      await refreshLaborData();
+      addGlobalToast(deliveryMethod === "sms" ? "Signature request texted to employee" : "Signature request emailed to employee", "success");
+    } catch (error) {
+      addGlobalToast(error?.message || "Failed to send performance review for signature", "error");
+    } finally {
+      setSendingReviewSignature(false);
+    }
+  }, [
+    addGlobalToast,
+    buildSelectedPerformanceReviewPdfBytes,
+    refreshLaborData,
+    reviewSignatureDeliveryMethod,
+    saveReviewPdfDraft,
+    selectedLaborEmployeeView,
+    selectedReviewInstance,
+  ]);
 
   const saveHierarchy = useCallback(async () => {
     if (!resolvedLaborLocationId || hierarchyDraft.length === 0) {
@@ -3323,6 +3543,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (!requirementSummary.isCompliant && daysSinceStart != null && daysSinceStart < TRAINING_GRACE_PERIOD_DAYS) {
         trainingCompliance = { label: "In Progress", color: "warning", inProgress: true };
       }
+      const performanceReviewCompliance = getPerformanceReviewCompliance(row);
       return {
         ...row,
         id: employeeId || row.id,
@@ -3343,6 +3564,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         review30: getReviewStatusPresentation(row, "review_30"),
         review60: getReviewStatusPresentation(row, "review_60"),
         review90: getReviewStatusPresentation(row, "review_90"),
+        performance_review_compliance: performanceReviewCompliance,
         employee_note_count: supportNoteCount || snapshotNoteCount,
       };
     });
@@ -3439,6 +3661,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return String(row.position_title || "");
         case "training":
           return String(row.training_compliance?.label || "");
+        case "performance_reviews":
+          return String(row.performance_review_compliance?.label || "");
         case "review30":
           return String(row.review_30_due_date || "");
         case "review60":
@@ -3468,6 +3692,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) * direction;
     });
 	  }, [positionHierarchyIndex, rosterSort, visibleRosterRows]);
+  const activePerformanceReviewRows = useMemo(() => {
+    const instances = toObjectRows(reviewInstances);
+    return preparedRosterRows
+      .filter((row) => isLaborEmployeeActive(row))
+      .map((row) => {
+        const employeeId = getLaborEmployeeRowId(row);
+        const employeeInstances = instances.filter((instance) => instance.labor_employee_id === employeeId);
+        return {
+          ...row,
+          template: resolvePerformanceReviewTemplate(row),
+          cycles: PERFORMANCE_REVIEW_CYCLES.map((cycle) => ({
+            ...cycle,
+            dueDate: row[cycle.dueDateKey] || null,
+            status: row[cycle.statusKey] || "not_started",
+            presentation: getReviewStatusPresentation(row, cycle.dueDateKey.replace(/_due_date$/, "")),
+            instance: employeeInstances.find((instance) => instance.review_cycle === cycle.id) || null,
+          })),
+        };
+      })
+      .sort((a, b) => String(a.last_name || a.full_name || "").localeCompare(String(b.last_name || b.full_name || ""), undefined, { sensitivity: "base" }));
+  }, [preparedRosterRows, reviewInstances]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -4130,6 +4375,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         : reviewStatus === "overdue"
           ? "danger"
           : "warning";
+      const selectedPerformanceTemplate = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
+      const reviewSignature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
+      const ratingOptions = [
+        { value: "", label: "Select rating" },
+        { value: "Meets Expectations", label: "Meets Expectations" },
+        { value: "Needs Improvement", label: "Needs Improvement" },
+        { value: "Exceeds Expectations", label: "Exceeds Expectations" },
+      ];
 
       return (
         <div style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 16px 40px" }}>
@@ -4186,6 +4439,71 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 20, alignItems: "start" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              <Card style={{ padding: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>Manager PDF Notes</div>
+                  </div>
+                  <Badge color={selectedPerformanceTemplate ? "success" : "danger"}>
+                    {selectedPerformanceTemplate ? selectedPerformanceTemplate.roleLabel : "No PDF template"}
+                  </Badge>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Checkpoint Rating</span>
+                    <CustomSelect
+                      value={reviewPdfDraft.rating || ""}
+                      onChange={(value) => handleReviewPdfDraftChange("rating", value)}
+                      options={ratingOptions}
+                      placeholder="Select rating"
+                    />
+                  </label>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Overall Rating</span>
+                    <CustomSelect
+                      value={reviewPdfDraft.overallRating || ""}
+                      onChange={(value) => handleReviewPdfDraftChange("overallRating", value)}
+                      options={ratingOptions}
+                      placeholder="Select rating"
+                    />
+                  </label>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+                  <Inp
+                    label="Manager Notes"
+                    type="textarea"
+                    rows={5}
+                    value={reviewPdfDraft.managerNotes}
+                    onChange={(value) => handleReviewPdfDraftChange("managerNotes", value)}
+                    placeholder="Notes discussed with the employee"
+                  />
+                  <Inp
+                    label="Action Plan"
+                    type="textarea"
+                    rows={5}
+                    value={reviewPdfDraft.actionPlan}
+                    onChange={(value) => handleReviewPdfDraftChange("actionPlan", value)}
+                    placeholder="Next steps and commitments"
+                  />
+                  <Inp
+                    label="Overall Comments"
+                    type="textarea"
+                    rows={4}
+                    value={reviewPdfDraft.overallComments}
+                    onChange={(value) => handleReviewPdfDraftChange("overallComments", value)}
+                    placeholder="Optional final comments for the summary section"
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
+                  <Btn variant="secondary" size="sm" onClick={() => saveReviewPdfDraft()} disabled={savingReviewPdfDraft}>
+                    {savingReviewPdfDraft ? "Saving..." : "Save PDF Fields"}
+                  </Btn>
+                  <Btn variant="ghost" size="sm" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || !selectedPerformanceTemplate}>
+                    {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
+                  </Btn>
+                </div>
+              </Card>
+
               {selectedReviewSections.map((section) => {
                 const sectionAnswered = section.items.filter((item) => {
                   const response = getReviewResponse(item.id);
@@ -4261,15 +4579,68 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div style={{ position: "sticky", top: 24, display: "flex", flexDirection: "column", gap: 12 }}>
               <Card style={{ padding: 18 }}>
                 <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Review Actions</div>
-                <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 14 }}>
-                  Use this page to complete the full {reviewCycleLabel} review without the cramped modal layout.
-                </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview}>
                     {completingReview ? "Completing..." : "Complete Review"}
                   </Btn>
+                  <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || !selectedPerformanceTemplate}>
+                    {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
+                  </Btn>
                   <Btn variant="ghost" onClick={() => setSelectedReviewInstanceId(null)}>Back to Employee</Btn>
                 </div>
+              </Card>
+
+              <Card style={{ padding: 18 }}>
+                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Employee Signature</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  <Badge color={reviewSignature.status === "completed" ? "success" : reviewSignature.status === "sent" ? "warning" : "default"}>
+                    {reviewSignature.status ? String(reviewSignature.status).replace(/_/g, " ") : "not sent"}
+                  </Badge>
+                  {reviewSignature.sent_at && <Badge color="default">Sent {formatTrainingTimestamp(reviewSignature.sent_at)}</Badge>}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+                  {[
+                    { id: "sms", label: "SMS" },
+                    { id: "email", label: "Email" },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setReviewSignatureDeliveryMethod(option.id)}
+                      style={{
+                        padding: "9px 10px",
+                        borderRadius: 10,
+                        border: `1.5px solid ${reviewSignatureDeliveryMethod === option.id ? C.pri : C.border}`,
+                        background: reviewSignatureDeliveryMethod === option.id ? C.priLt : C.surface,
+                        color: reviewSignatureDeliveryMethod === option.id ? C.pri : C.textSec,
+                        fontWeight: 800,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <Btn
+                  variant="primary"
+                  onClick={handleSendPerformanceReviewSignature}
+                  disabled={sendingReviewSignature || !selectedPerformanceTemplate}
+                  style={{ width: "100%", justifyContent: "center" }}
+                >
+                  {sendingReviewSignature ? "Sending..." : "Send to Employee"}
+                </Btn>
+                {reviewSignature.embed_src && (
+                  <a
+                    href={reviewSignature.embed_src}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: "block", marginTop: 10, fontSize: 12, fontWeight: 800, color: C.pri, textDecoration: "none" }}
+                  >
+                    Open signing link
+                  </a>
+                )}
               </Card>
 
               <Card style={{ padding: 18 }}>
@@ -5620,7 +5991,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
             <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
-              <table style={{ width: "100%", minWidth: 1460, borderCollapse: "collapse" }}>
+              <table style={{ width: "100%", minWidth: 1240, borderCollapse: "collapse" }}>
                 <thead><tr>
 	                  {[
 	                    { key: "first_name", label: "First Name" },
@@ -5629,9 +6000,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                    { key: "email", label: "Email" },
 	                    { key: "position", label: "Position" },
 	                    { key: "start_date", label: "Start Date" },
-	                    { key: "review30", label: "30-Day" },
-	                    { key: "review60", label: "60-Day" },
-	                    { key: "review90", label: "90-Day" },
+	                    { key: "performance_reviews", label: "Performance Reviews" },
 	                    { key: "training", label: "Training" },
 	                    { key: "notes", label: "Notes" },
 	                  ].map((column) => (
@@ -5667,7 +6036,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <tbody>
                   {showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={11} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
+                      <td colSpan={9} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
                         <form
                           onSubmit={(event) => {
                             event.preventDefault();
@@ -5894,26 +6263,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap", fontWeight: 700 }}>Inactive since {formatLaborDate(row.end_date)}</div>
 	                          ) : null}
 	                        </td>
-	                        {["review30", "review60", "review90"].map((reviewKey) => (
-	                          <td key={reviewKey} style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10 }}>
-	                            <div
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                minWidth: 76,
-                                padding: "6px 9px",
-                                borderRadius: 999,
-                                background: row[reviewKey].background,
-                                color: row[reviewKey].tone,
-                                fontSize: 11,
-                                fontWeight: 700,
-                              }}
-                            >
-	                              {row[reviewKey].label}
-	                            </div>
-	                          </td>
-		                        ))}
+	                        <td style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10, minWidth: 170 }}>
+	                          <Badge color={row.performance_review_compliance?.color || "default"}>
+	                            {row.performance_review_compliance?.label || "Needs setup"}
+	                          </Badge>
+	                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 5, fontWeight: 700 }}>
+	                            {row.performance_review_compliance?.detail || "No review schedule"}
+	                          </div>
+	                        </td>
 	                        <td style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10 }}>
 	                          <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
 	                        </td>
@@ -5925,7 +6282,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   })}
                   {sortedRosterRows.length === 0 && showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={11} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
+                      <td colSpan={9} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
                         Your first employee will land directly in the roster the moment you save this row.
                       </td>
                     </tr>
@@ -6021,6 +6378,103 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             onViewChange={setInterviewView}
             onDetailChange={setInterviewDetailOpen}
           />
+        </div>
+      )}
+
+      {!loading && tab === "performance-reviews" && (
+        <div>
+          {supportBundleLoading && !supportBundleLoaded ? (
+            <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading performance reviews...</Card>
+          ) : null}
+          <SectionHeader title="Performance Reviews" count={activePerformanceReviewRows.length}>
+            <Btn variant="ghost" size="sm" onClick={() => refreshLaborData()}>Refresh</Btn>
+          </SectionHeader>
+          {activePerformanceReviewRows.length === 0 ? (
+            <EmptyState icon="Users" title="No active employees" subtitle="Roster load required." />
+          ) : (
+            <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
+              <table style={{ width: "100%", minWidth: 1120, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeaderStyle}>Employee</th>
+                    <th style={tableHeaderStyle}>Position</th>
+                    <th style={tableHeaderStyle}>Start Date</th>
+                    <th style={tableHeaderStyle}>Performance Reviews</th>
+                    {PERFORMANCE_REVIEW_CYCLES.map((cycle) => (
+                      <th key={cycle.id} style={tableHeaderStyle}>{cycle.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activePerformanceReviewRows.map((row) => {
+                    const employeeId = getLaborEmployeeRowId(row);
+                    return (
+                      <tr key={employeeId || row.full_name} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                        <td style={{ ...rosterCellStyle, minWidth: 180 }}>
+                          <button
+                            type="button"
+                            onClick={() => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
+                            style={{ border: "none", background: "transparent", color: C.pri, padding: 0, fontFamily: "inherit", fontSize: 13, fontWeight: 900, cursor: "pointer", textAlign: "left" }}
+                          >
+                            {row.full_name || "Employee"}
+                          </button>
+                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : row.contact_email || "No contact on file"}</div>
+                        </td>
+                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
+                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatLaborDate(row.start_date)}</td>
+                        <td style={{ ...rosterCellStyle, minWidth: 170 }}>
+                          <Badge color={row.performance_review_compliance?.color || "default"}>
+                            {row.performance_review_compliance?.label || "Needs setup"}
+                          </Badge>
+                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 5 }}>{row.performance_review_compliance?.detail || "No review schedule"}</div>
+                        </td>
+                        {row.cycles.map((cycle) => {
+                          const signature = isObjectRow(cycle.instance?.metadata?.signature) ? cycle.instance.metadata.signature : {};
+                          return (
+                            <td key={cycle.id} style={{ ...rosterCellStyle, minWidth: 150, verticalAlign: "top" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-start" }}>
+                                <Badge color={String(cycle.status) === "completed" ? "success" : String(cycle.status) === "overdue" || cycle.presentation?.tone === C.dan ? "danger" : "warning"}>
+                                  {String(cycle.status || "not_started").replace(/_/g, " ")}
+                                </Badge>
+                                <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
+                                {signature.status && (
+                                  <div style={{ fontSize: 11, color: signature.status === "completed" ? C.suc : C.warn, fontWeight: 800 }}>
+                                    Signature {String(signature.status).replace(/_/g, " ")}
+                                  </div>
+                                )}
+                                {cycle.instance ? (
+                                  <Btn
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setSelectedLaborEmployeeId(employeeId);
+                                      setSelectedLaborEmployeeSeed(row);
+                                      setSelectedReviewInstanceId(cycle.instance.id);
+                                    }}
+                                  >
+                                    Open
+                                  </Btn>
+                                ) : (
+                                  <Btn
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCreateReviewInstanceForEmployee(row, cycle.id)}
+                                    disabled={!row.template}
+                                  >
+                                    Start
+                                  </Btn>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
         </div>
       )}
 
