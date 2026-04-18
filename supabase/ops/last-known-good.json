@@ -58,11 +58,11 @@
       "updatedAt": "2026-04-18T04:37:02.911Z"
     },
     "interview-transcribe-audio": {
-      "commit": "7d12daf89999bc6558b2706100c877ac0af539b6",
+      "commit": "ecdf3a7b2cfb3e60f43baea94f5214f403a81f25",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Use xAI provider word segments for interview transcript timing",
-      "updatedAt": "2026-04-18T04:41:08.216Z"
+      "note": "Clean xAI transcript artifacts before interview drafting",
+      "updatedAt": "2026-04-18T04:44:35.649Z"
     }
   }
 }
