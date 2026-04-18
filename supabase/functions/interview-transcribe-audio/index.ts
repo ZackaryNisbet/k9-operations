@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.99.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +40,16 @@ const INTERVIEW_AUDIO_CONTENT_TYPES: Record<string, string> = {
   opus: "audio/opus",
   wav: "audio/wav",
 };
+
+class InterviewFunctionError extends Error {
+  status: number;
+
+  constructor(message: string, status = 500) {
+    super(message);
+    this.name = "InterviewFunctionError";
+    this.status = status;
+  }
+}
 
 type SttWord = {
   text?: string;
@@ -111,6 +121,45 @@ function buildSpeakerTranscript(result: SttResult) {
     .trim();
 }
 
+function parseProviderErrorBody(rawBody: string) {
+  if (!rawBody) return "";
+  try {
+    const data = JSON.parse(rawBody);
+    const error = data?.error;
+    if (typeof error === "string") return error;
+    if (typeof error?.message === "string") return error.message;
+    if (typeof data?.message === "string") return data.message;
+    return rawBody;
+  } catch (_) {
+    return rawBody;
+  }
+}
+
+function providerStatusToClientStatus(providerStatus: number) {
+  if (providerStatus === 401 || providerStatus === 403) return 500;
+  if (providerStatus === 413) return 400;
+  if (providerStatus === 429) return 429;
+  if (providerStatus >= 500) return 503;
+  return 502;
+}
+
+async function getAuthenticatedUserId(token: string) {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "apikey": SUPABASE_ANON_KEY,
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.error_description || data?.msg || data?.message || "Unauthorized.";
+    throw new InterviewFunctionError(message, 401);
+  }
+  const userId = String(data?.id || "").trim();
+  if (!userId) throw new InterviewFunctionError("Unauthorized.", 401);
+  return userId;
+}
+
 async function transcribeWithGrok(audioBlob: Blob, fileName: string, mimeType: string) {
   const typedAudioBlob = audioBlob.type === mimeType ? audioBlob : new Blob([audioBlob], { type: mimeType });
   const formData = new FormData();
@@ -127,9 +176,34 @@ async function transcribeWithGrok(audioBlob: Blob, fileName: string, mimeType: s
     body: formData,
   });
 
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.error) {
-    throw new Error(data.error?.message || `xAI Grok STT request failed for ${mimeType || "audio"}.`);
+  const responseText = await response.text();
+  const providerMessage = parseProviderErrorBody(responseText);
+  if (!response.ok) {
+    const message = providerMessage || `xAI Grok STT request failed for ${mimeType || "audio"}.`;
+    console.error("xAI Grok STT failed", {
+      status: response.status,
+      statusText: response.statusText,
+      message,
+      mimeType,
+      fileName,
+      sizeBytes: audioBlob.size,
+    });
+    throw new InterviewFunctionError(
+      `xAI Grok STT failed (${response.status}): ${String(message).slice(0, 500)}`,
+      providerStatusToClientStatus(response.status),
+    );
+  }
+
+  let data: SttResult & { error?: { message?: string } | string };
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch (_) {
+    throw new InterviewFunctionError("xAI Grok STT returned a non-JSON response.", 502);
+  }
+
+  if (data.error) {
+    const message = parseProviderErrorBody(JSON.stringify(data));
+    throw new InterviewFunctionError(`xAI Grok STT failed: ${message || "Provider returned an error."}`, 502);
   }
   return data as SttResult;
 }
@@ -149,13 +223,14 @@ serve(async (req) => {
 
     const authorization = req.headers.get("Authorization") || "";
     if (!authorization) return jsonResponse({ error: "Missing authorization header." }, 401);
+    const token = authorization.replace(/^Bearer\s+/i, "").trim();
+    if (!token) return jsonResponse({ error: "Missing authorization token." }, 401);
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authorization } },
     });
 
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData?.user) return jsonResponse({ error: "Unauthorized." }, 401);
+    const userId = await getAuthenticatedUserId(token);
 
     const body = await req.json();
     const interviewId = String(body?.interview_id || "").trim();
@@ -188,7 +263,7 @@ serve(async (req) => {
       .from(audioBucket)
       .download(audioPath);
     if (downloadError || !audioBlob) {
-      throw new Error(downloadError?.message || "Unable to download interview audio.");
+      throw new InterviewFunctionError(downloadError?.message || "Unable to download interview audio.", 500);
     }
     if (audioBlob.size > INTERVIEW_AUDIO_MAX_BYTES) {
       return jsonResponse({ error: "Interview audio must be 500 MB or smaller." }, 400);
@@ -200,7 +275,7 @@ serve(async (req) => {
     const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
     const transcript = buildSpeakerTranscript(stt) || String(stt.text || "").trim();
     if (!transcript) {
-      throw new Error("xAI Grok STT returned an empty transcript.");
+      throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
     }
 
     const existingMetadata = (record.metadata || {}) as Record<string, unknown>;
@@ -231,11 +306,11 @@ serve(async (req) => {
             },
           },
         },
-        updated_by_user_id: userData.user.id,
+        updated_by_user_id: userId,
         updated_at: generatedAt,
       })
       .eq("id", interviewId);
-    if (updateError) throw updateError;
+    if (updateError) throw new InterviewFunctionError(updateError.message, 500);
 
     return jsonResponse({
       ok: true,
@@ -247,6 +322,7 @@ serve(async (req) => {
       word_count: wordCount,
     });
   } catch (error) {
-    return jsonResponse({ error: error?.message || "Interview audio transcription failed." }, 500);
+    const status = typeof error?.status === "number" ? error.status : 500;
+    return jsonResponse({ error: error?.message || "Interview audio transcription failed." }, status);
   }
 });
