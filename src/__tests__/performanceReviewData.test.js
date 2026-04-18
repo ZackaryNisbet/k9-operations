@@ -3,6 +3,7 @@ import {
   buildDocuSealPerformanceReviewFields,
   buildPerformanceReviewPdfFileName,
   fillPerformanceReviewPdfBytes,
+  getPerformanceReviewTemplateOverrideKey,
   getPerformanceReviewCompliance,
   PERFORMANCE_REVIEW_TEMPLATES,
   resolvePerformanceReviewTemplate,
@@ -52,6 +53,16 @@ describe("performance review PDF helpers", () => {
     expect(resolvePerformanceReviewTemplate({ position_title: "PCT" })?.roleKey).toBe("pet_care_technician");
     expect(resolvePerformanceReviewTemplate({ position_title: "Customer Service Representative" })?.roleKey).toBe("customer_service_representative");
     expect(resolvePerformanceReviewTemplate({ position_title: "General Manager" })?.roleKey).toBe("general_manager");
+  });
+
+  it("uses an employee-level PDF template override when the position title does not match", () => {
+    const employee = {
+      position_title: "Director of Resorts",
+      metadata: { performance_review_template_role: "general_manager" },
+    };
+
+    expect(getPerformanceReviewTemplateOverrideKey(employee)).toBe("general_manager");
+    expect(resolvePerformanceReviewTemplate(employee)?.roleKey).toBe("general_manager");
   });
 
   it("creates DocuSeal fields for employee initials, signature, and date", () => {

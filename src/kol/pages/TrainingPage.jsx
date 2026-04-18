@@ -54,8 +54,12 @@ import {
   buildPerformanceReviewDraftFromInstance,
   buildPerformanceReviewPdfFileName,
   fillPerformanceReviewPdfBytes,
+  getPerformanceReviewTemplateOptions,
+  getPerformanceReviewTemplateOverrideKey,
   getPerformanceReviewCompliance,
   PERFORMANCE_REVIEW_CYCLES,
+  PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY,
+  normalizePerformanceReviewTemplateRoleKey,
   resolvePerformanceReviewTemplate,
 } from "../performanceReviewData";
 import AttendanceTrackerPage from "./AttendancePage";
@@ -157,16 +161,29 @@ function readLaborEmployeeContact(employee, key) {
   return readLaborEmployeeContactValue(employee, key);
 }
 
-function buildUpdatedLaborMetadata(existingMetadata = {}, { email, phone }) {
+function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
   const nextMetadata = { ...(existingMetadata || {}) };
-  const normalizedEmail = normalizeLaborContactEmail(email);
-  const normalizedPhone = normalizeLaborContactPhone(phone);
+  const hasEmail = Object.prototype.hasOwnProperty.call(updates, "email");
+  const hasPhone = Object.prototype.hasOwnProperty.call(updates, "phone");
+  const hasPerformanceReviewTemplateRole = Object.prototype.hasOwnProperty.call(updates, "performanceReviewTemplateRole");
 
-  if (normalizedEmail) nextMetadata.contact_email = normalizedEmail;
-  else delete nextMetadata.contact_email;
+  if (hasEmail) {
+    const normalizedEmail = normalizeLaborContactEmail(updates.email);
+    if (normalizedEmail) nextMetadata.contact_email = normalizedEmail;
+    else delete nextMetadata.contact_email;
+  }
 
-  if (normalizedPhone) nextMetadata.contact_phone = normalizedPhone;
-  else delete nextMetadata.contact_phone;
+  if (hasPhone) {
+    const normalizedPhone = normalizeLaborContactPhone(updates.phone);
+    if (normalizedPhone) nextMetadata.contact_phone = normalizedPhone;
+    else delete nextMetadata.contact_phone;
+  }
+
+  if (hasPerformanceReviewTemplateRole) {
+    const roleKey = normalizePerformanceReviewTemplateRoleKey(updates.performanceReviewTemplateRole);
+    if (roleKey) nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY] = roleKey;
+    else delete nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY];
+  }
 
   return nextMetadata;
 }
@@ -570,6 +587,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborEmployeePhone, setLaborEmployeePhone] = useState("");
   const [laborEmployeeEmail, setLaborEmployeeEmail] = useState("");
   const [laborEmployeeRole, setLaborEmployeeRole] = useState("");
+  const [laborEmployeeReviewTemplateRole, setLaborEmployeeReviewTemplateRole] = useState("");
   const [laborEmployeeStartDate, setLaborEmployeeStartDate] = useState("");
   const [laborEmployeeEndDate, setLaborEmployeeEndDate] = useState("");
   const [savingLaborEmployee, setSavingLaborEmployee] = useState(false);
@@ -623,6 +641,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     overallComments: "",
   });
   const [savingReviewPdfDraft, setSavingReviewPdfDraft] = useState(false);
+  const [savingPerformanceReviewTemplateRole, setSavingPerformanceReviewTemplateRole] = useState(false);
   const [renderingReviewPdf, setRenderingReviewPdf] = useState(false);
   const [sendingReviewSignature, setSendingReviewSignature] = useState(false);
   const [reviewSignatureDeliveryMethod, setReviewSignatureDeliveryMethod] = useState("sms");
@@ -1168,7 +1187,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       || selectedLaborEmployeeId
       || selectedRecordEmployeeId
       || null;
-    const employeeMetadata = isObjectRow(selectedLaborEmployee?.metadata) ? selectedLaborEmployee.metadata : {};
+    const employeeMetadata = {
+      ...(isObjectRow(selectedLaborEmployee?.metadata) ? selectedLaborEmployee.metadata : {}),
+      ...(isObjectRow(selectedLaborEmployeeSnapshot?.metadata) ? selectedLaborEmployeeSnapshot.metadata : {}),
+      ...(isObjectRow(selectedLaborEmployeeSeed?.metadata) ? selectedLaborEmployeeSeed.metadata : {}),
+    };
     return {
       ...(selectedLaborEmployeeSeed || {}),
       ...(selectedLaborEmployeeSnapshot || {}),
@@ -1191,6 +1214,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter(([employeeId]) => employeeId);
     return Object.fromEntries(entries);
   }, [laborEmployees, rosterSnapshot]);
+  const performanceReviewTemplateOptions = useMemo(() => getPerformanceReviewTemplateOptions(), []);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const trainingItemMap = useMemo(() => Object.fromEntries(toObjectRows(items).map((item) => [item.id, item])), [items]);
   const activeEmployeeDocumentsByNote = useMemo(() => groupLaborEmployeeDocumentsByNote(laborEmployeeDocuments), [laborEmployeeDocuments]);
@@ -2230,6 +2254,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeePhone("");
     setLaborEmployeeEmail("");
     setLaborEmployeeRole("");
+    setLaborEmployeeReviewTemplateRole("");
     setLaborEmployeeStartDate("");
     setLaborEmployeeEndDate("");
   }, []);
@@ -2276,18 +2301,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeePhone(readLaborEmployeeContact(employee, "contact_phone"));
     setLaborEmployeeEmail(readLaborEmployeeContact(employee, "contact_email"));
     setLaborEmployeeRole(employee.position_title || "");
+    setLaborEmployeeReviewTemplateRole(getPerformanceReviewTemplateOverrideKey(employee));
     setLaborEmployeeStartDate(employee.start_date || "");
     setLaborEmployeeEndDate(employee.end_date || "");
     setShowLaborEmployeeEditor(true);
   }, [closeInlineLaborEmployeeComposer, openInlineLaborEmployeeComposer]);
 
-  const persistLaborEmployeeContact = useCallback(async (employeeId, existingMetadata = {}, { email, phone }) => {
-    const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, { email, phone });
+  const persistLaborEmployeeContact = useCallback(async (employeeId, existingMetadata = {}, updates = {}) => {
+    const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, updates);
     const { error } = await supabase
       .from("labor_employees")
       .update({ metadata: nextMetadata, updated_by_user_id: actorUserId })
       .eq("id", employeeId);
     return { error };
+  }, [actorUserId]);
+
+  const persistLaborEmployeePerformanceReviewTemplate = useCallback(async (employeeId, existingMetadata = {}, roleKey = "") => {
+    const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, { performanceReviewTemplateRole: roleKey });
+    const { error } = await supabase
+      .from("labor_employees")
+      .update({ metadata: nextMetadata, updated_by_user_id: actorUserId })
+      .eq("id", employeeId);
+    return { error, metadata: nextMetadata };
   }, [actorUserId]);
 
   useEffect(() => {
@@ -2341,6 +2376,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const { error: contactError } = await persistLaborEmployeeContact(editingLaborEmployeeId, employeeBeforeUpdate?.metadata, {
         email: laborEmployeeEmail,
         phone: laborEmployeePhone,
+        performanceReviewTemplateRole: laborEmployeeReviewTemplateRole,
       });
       if (contactError) {
         addGlobalToast("Employee updated, but contact info did not save", "error");
@@ -2368,6 +2404,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const { error: contactError } = await persistLaborEmployeeContact(createdEmployee.id, createdEmployee.metadata, {
           email: laborEmployeeEmail,
           phone: laborEmployeePhone,
+          performanceReviewTemplateRole: laborEmployeeReviewTemplateRole,
         });
         if (contactError) {
           addGlobalToast("Employee added, but contact info did not save", "error");
@@ -2382,7 +2419,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setSavingLaborEmployee(false);
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
-  }, [actorName, actorUserId, addGlobalToast, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
 
   const handleCreateLaborEmployeeInline = useCallback(async () => {
     const fullName = `${newRosterEmployeeFirstName} ${newRosterEmployeeLastName}`.replace(/\s+/g, " ").trim();
@@ -3276,6 +3313,37 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setReviewPdfDraft((current) => ({ ...current, [field]: value }));
   }, []);
 
+  const handleSavePerformanceReviewTemplateOverride = useCallback(async (roleKey) => {
+    if (!selectedLaborEmployeeView?.id) return;
+    setSavingPerformanceReviewTemplateRole(true);
+    const employeeBeforeUpdate = toObjectRows(laborEmployees).find((employee) => employee.id === selectedLaborEmployeeView.id) || selectedLaborEmployeeView;
+    const { error, metadata } = await persistLaborEmployeePerformanceReviewTemplate(
+      selectedLaborEmployeeView.id,
+      employeeBeforeUpdate?.metadata,
+      roleKey
+    );
+    if (error) {
+      addGlobalToast("Failed to pair PDF template", "error");
+      setSavingPerformanceReviewTemplateRole(false);
+      return;
+    }
+    setSelectedLaborEmployeeSeed((current) => {
+      if (isObjectRow(current) && getLaborEmployeeRowId(current) === selectedLaborEmployeeView.id) {
+        return { ...current, metadata };
+      }
+      return { ...selectedLaborEmployeeView, metadata };
+    });
+    await refreshLaborData();
+    setSavingPerformanceReviewTemplateRole(false);
+    addGlobalToast(roleKey ? "Performance review PDF template paired" : "Performance review PDF template pairing cleared", "success");
+  }, [
+    addGlobalToast,
+    laborEmployees,
+    persistLaborEmployeePerformanceReviewTemplate,
+    refreshLaborData,
+    selectedLaborEmployeeView,
+  ]);
+
   const saveReviewPdfDraft = useCallback(async ({ quiet = false } = {}) => {
     if (!selectedReviewInstanceId) return false;
     setSavingReviewPdfDraft(true);
@@ -3550,6 +3618,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         labor_employee_id: employeeId,
         full_name: fullName,
         position_title: row.position_title || contactEmployee?.position_title || "",
+        metadata: contactEmployee?.metadata || row.metadata || {},
         start_date: row.start_date || contactEmployee?.start_date || null,
         end_date: endDate,
         is_active: isActive,
@@ -4157,6 +4226,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           />
         </div>
         <Inp label="Position Title" value={laborEmployeeRole} onChange={setLaborEmployeeRole} required />
+        <label style={{ display: "block" }}>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Performance Review PDF Template</span>
+          <CustomSelect
+            value={laborEmployeeReviewTemplateRole}
+            onChange={setLaborEmployeeReviewTemplateRole}
+            options={[
+              { value: "", label: "Auto by position title" },
+              ...performanceReviewTemplateOptions,
+            ]}
+            placeholder="Auto by position title"
+          />
+        </label>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Inp label="Start Date" type="date" value={laborEmployeeStartDate} onChange={setLaborEmployeeStartDate} required />
           <Inp label="End Date" type="date" value={laborEmployeeEndDate} onChange={setLaborEmployeeEndDate} />
@@ -4376,6 +4457,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           ? "danger"
           : "warning";
       const selectedPerformanceTemplate = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
+      const selectedPerformanceTemplateOverrideKey = getPerformanceReviewTemplateOverrideKey(selectedLaborEmployeeView);
+      const selectedPerformanceTemplateBadgeLabel = selectedPerformanceTemplate
+        ? selectedPerformanceTemplateOverrideKey
+          ? `Paired: ${selectedPerformanceTemplate.roleLabel}`
+          : `Auto: ${selectedPerformanceTemplate.roleLabel}`
+        : "No PDF template";
+      const selectedPerformanceTemplatePlaceholder = selectedPerformanceTemplateOverrideKey
+        ? "Clear pairing / auto by title"
+        : selectedPerformanceTemplate
+          ? `Auto: ${selectedPerformanceTemplate.roleLabel}`
+          : "Auto by position title";
       const reviewSignature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
       const ratingOptions = [
         { value: "", label: "Select rating" },
@@ -4444,11 +4536,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>Manager PDF Notes</div>
                   </div>
-                  <Badge color={selectedPerformanceTemplate ? "success" : "danger"}>
-                    {selectedPerformanceTemplate ? selectedPerformanceTemplate.roleLabel : "No PDF template"}
+                  <Badge color={selectedPerformanceTemplate ? (selectedPerformanceTemplateOverrideKey ? "primary" : "success") : "danger"}>
+                    {savingPerformanceReviewTemplateRole ? "Saving pairing..." : selectedPerformanceTemplateBadgeLabel}
                   </Badge>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>PDF Template Pairing</span>
+                    <CustomSelect
+                      value={selectedPerformanceTemplateOverrideKey}
+                      onChange={handleSavePerformanceReviewTemplateOverride}
+                      options={performanceReviewTemplateOptions}
+                      placeholder={selectedPerformanceTemplatePlaceholder}
+                      disabled={savingPerformanceReviewTemplateRole || !selectedLaborEmployeeView?.id}
+                    />
+                  </label>
                   <label style={{ display: "block" }}>
                     <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Checkpoint Rating</span>
                     <CustomSelect
