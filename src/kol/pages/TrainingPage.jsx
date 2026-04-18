@@ -50,6 +50,7 @@ import {
 } from "../trainingData";
 import { getAttendanceIncidentLabel } from "../attendanceData";
 import AttendanceTrackerPage from "./AttendancePage";
+import LaborInterviewsPage from "./LaborInterviewsPage";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ const TABS = [
   { id: "training", label: "Training" },
   { id: "templates", label: "Templates" },
   { id: "attendance", label: "Attendance" },
+  { id: "interviews", label: "Interviews" },
   { id: "notes", label: "Notes" },
 ];
 
@@ -5212,7 +5214,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
       return <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowCreateTemplateModal(true); }}>Add Template</Btn>;
     }
-    if (tab === "attendance") {
+    if (tab === "attendance" || tab === "interviews") {
       return null;
     }
     if (tab === "notes") {
@@ -5974,6 +5976,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             tabPreset={attendanceView}
           />
         </div>
+      )}
+
+      {!loading && tab === "interviews" && (
+        <LaborInterviewsPage data={data} profile={profile} addGlobalToast={addGlobalToast} locationName={laborContactLocationName} />
       )}
 
       {!loading && tab === "training" && (
