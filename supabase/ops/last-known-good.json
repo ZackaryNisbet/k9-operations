@@ -51,18 +51,18 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "b77b1f565242fa09323cd6f15c7fe517b1c9350f",
+      "commit": "3a8be58b6d3c6e7a3669837dfa7566457935fafa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "interview Grok STT and deferred draft flow",
-      "updatedAt": "2026-04-18T03:13:05.070Z"
+      "note": "interview assistant UI transcript and PDF prompt improvements",
+      "updatedAt": "2026-04-18T04:02:19.069Z"
     },
     "interview-transcribe-audio": {
-      "commit": "b77b1f565242fa09323cd6f15c7fe517b1c9350f",
+      "commit": "3a8be58b6d3c6e7a3669837dfa7566457935fafa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "interview Grok STT and deferred draft flow",
-      "updatedAt": "2026-04-18T03:13:05.070Z"
+      "note": "interview assistant UI transcript and PDF prompt improvements",
+      "updatedAt": "2026-04-18T04:02:19.069Z"
     }
   }
 }
