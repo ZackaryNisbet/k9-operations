@@ -8,8 +8,8 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
-const OPENAI_MODEL = Deno.env.get("INTERVIEW_AI_MODEL") || "gpt-4.1-mini";
+const XAI_API_KEY = Deno.env.get("XAI_API_KEY") || "";
+const XAI_DRAFT_MODEL = Deno.env.get("INTERVIEW_XAI_DRAFT_MODEL") || Deno.env.get("XAI_DRAFT_MODEL") || "grok-4.20-0309-reasoning";
 
 type DraftTarget = {
   target_type: "custom_question" | "pdf_field";
@@ -115,7 +115,7 @@ function validateDrafts(payload: unknown, targets: DraftTarget[]) {
   return { valid, skipped };
 }
 
-async function callOpenAI(transcript: string, targets: DraftTarget[]) {
+async function callGrok(transcript: string, targets: DraftTarget[]) {
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -127,14 +127,13 @@ async function callOpenAI(transcript: string, targets: DraftTarget[]) {
           additionalProperties: false,
           properties: {
             target_type: { type: "string", enum: ["custom_question", "pdf_field"] },
-            question_key: { type: ["string", "null"] },
-            pdf_field_name: { type: ["string", "null"] },
+            question_key: { type: "string" },
+            pdf_field_name: { type: "string" },
             draft_text: { type: "string" },
-            confidence: { type: "number", minimum: 0, maximum: 1 },
+            confidence: { type: "number" },
             evidence: {
               type: "array",
               items: { type: "string" },
-              maxItems: 3,
             },
           },
           required: ["target_type", "question_key", "pdf_field_name", "draft_text", "confidence", "evidence"],
@@ -144,21 +143,21 @@ async function callOpenAI(transcript: string, targets: DraftTarget[]) {
     required: ["responses"],
   };
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${XAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: XAI_DRAFT_MODEL,
       temperature: 0.1,
       max_tokens: 4096,
       response_format: {
         type: "json_schema",
         json_schema: {
           name: "interview_draft_responses",
-          strict: false,
+          strict: true,
           schema,
         },
       },
@@ -187,10 +186,10 @@ async function callOpenAI(transcript: string, targets: DraftTarget[]) {
 
   const data = await response.json();
   if (!response.ok || data.error) {
-    throw new Error(data.error?.message || "OpenAI request failed.");
+    throw new Error(data.error?.message || "xAI Grok request failed.");
   }
   const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenAI returned an empty draft.");
+  if (!content) throw new Error("xAI Grok returned an empty draft.");
   return JSON.parse(content);
 }
 
@@ -203,8 +202,8 @@ serve(async (req) => {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       return jsonResponse({ error: "Supabase environment variables are missing." }, 500);
     }
-    if (!OPENAI_API_KEY) {
-      return jsonResponse({ error: "OPENAI_API_KEY is not configured." }, 500);
+    if (!XAI_API_KEY) {
+      return jsonResponse({ error: "XAI_API_KEY is not configured." }, 500);
     }
 
     const authorization = req.headers.get("Authorization") || "";
@@ -231,7 +230,7 @@ serve(async (req) => {
 
     const transcript = String(record.transcript_text || "").trim();
     if (!transcript) {
-      return jsonResponse({ error: "Transcript text is required before AI drafting." }, 400);
+      return jsonResponse({ error: "Transcript text is required before Grok drafting." }, 400);
     }
 
     const targets = buildTargets(record as Record<string, unknown>);
@@ -239,7 +238,7 @@ serve(async (req) => {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
     }
 
-    const aiPayload = await callOpenAI(transcript, targets);
+    const aiPayload = await callGrok(transcript, targets);
     const { valid, skipped } = validateDrafts(aiPayload, targets);
 
     const { data: existingRows, error: responseError } = await supabase
@@ -296,6 +295,16 @@ serve(async (req) => {
       .from("labor_interview_records")
       .update({
         status: "ai_drafted",
+        metadata: {
+          ...((record.metadata || {}) as Record<string, unknown>),
+          last_ai_draft: {
+            provider: "xai",
+            model: XAI_DRAFT_MODEL,
+            generated_at: new Date().toISOString(),
+            saved_count: savedCount,
+            skipped_count: skipped.length,
+          },
+        },
         updated_by_user_id: userData.user.id,
         updated_at: new Date().toISOString(),
       })
@@ -305,9 +314,10 @@ serve(async (req) => {
       ok: true,
       saved_count: savedCount,
       skipped_targets: skipped,
-      model: OPENAI_MODEL,
+      provider: "xai",
+      model: XAI_DRAFT_MODEL,
     });
   } catch (error) {
-    return jsonResponse({ error: error?.message || "Interview AI draft failed." }, 500);
+    return jsonResponse({ error: error?.message || "Interview Grok draft failed." }, 500);
   }
 });
