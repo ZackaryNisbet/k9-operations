@@ -440,6 +440,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [supportBundleLoaded, setSupportBundleLoaded] = useState(false);
   const [supportBundleLoading, setSupportBundleLoading] = useState(false);
   const [attendanceView, setAttendanceView] = useState("input");
+  const [interviewView, setInterviewView] = useState("records");
+  const [interviewDetailOpen, setInterviewDetailOpen] = useState(false);
 
   // Data state
   const [templates, setTemplates] = useState([]);
@@ -5979,7 +5981,47 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {!loading && tab === "interviews" && (
-        <LaborInterviewsPage data={data} profile={profile} addGlobalToast={addGlobalToast} locationName={laborContactLocationName} />
+        <div>
+          {!interviewDetailOpen && (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+            {[
+              { id: "records", label: "Interviews", subtitle: "Candidate records and interview review" },
+              { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" },
+            ].map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setInterviewView(option.id)}
+                style={{
+                  flex: "1 1 260px",
+                  minWidth: 220,
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  border: `1.5px solid ${interviewView === option.id ? C.pri : C.border}`,
+                  background: interviewView === option.id ? C.priLt : C.surface,
+                  color: interviewView === option.id ? C.pri : C.text,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
+              </button>
+            ))}
+          </div>
+          )}
+          <LaborInterviewsPage
+            data={data}
+            profile={profile}
+            addGlobalToast={addGlobalToast}
+            locationName={laborContactLocationName}
+            embedded
+            viewPreset={interviewView}
+            onViewChange={setInterviewView}
+            onDetailChange={setInterviewDetailOpen}
+          />
+        </div>
       )}
 
       {!loading && tab === "training" && (

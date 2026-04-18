@@ -15,17 +15,14 @@ import {
   getInterviewRecommendationOption,
   getInterviewAudioContentType,
   getInterviewRoleLabel,
-  getPdfFieldTypeLabel,
   INTERVIEW_AUDIO_ACCEPT,
   INTERVIEW_PDF_ACCEPT,
   INTERVIEW_RECOMMENDATION_OPTIONS,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
-  LABOR_INTERVIEW_STATUS_LABELS,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
   normalizeInterviewCandidateDraft,
   normalizeQuestionKey,
   pdfFieldsFromSnapshot,
-  PDF_VERIFICATION_LABELS,
   questionRowsFromSnapshot,
   validateInterviewAudioFile,
 } from "../interviewData";
@@ -53,29 +50,6 @@ function buildNewInterviewDraft() {
     template_version_id: "",
   };
 }
-
-const STATUS_BADGE_COLORS = {
-  draft: "default",
-  in_progress: "info",
-  ai_drafted: "warning",
-  reviewed: "accent",
-  completed: "success",
-  archived: "default",
-};
-
-const TEMPLATE_STATUS_COLORS = {
-  draft: "warning",
-  published: "success",
-  archived: "default",
-};
-
-const VERIFY_STATUS_COLORS = {
-  verified_fields: "success",
-  missing_pdf: "warning",
-  pending_verification: "warning",
-  failed_no_fields: "danger",
-  failed_invalid_pdf: "danger",
-};
 
 function fieldKey(responseType, key) {
   return `${responseType}:${key}`;
@@ -154,16 +128,6 @@ function getResponseDraft(response) {
   return response?.response_text ?? response?.ai_draft_text ?? "";
 }
 
-function Metric({ label, value, helper }) {
-  return (
-    <Card style={{ borderRadius: 10, padding: 16 }}>
-      <div style={{ fontSize: 26, fontWeight: 800, color: C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: C.textSec, marginTop: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      {helper && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{helper}</div>}
-    </Card>
-  );
-}
-
 function SectionHeading({ title, detail, action }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
@@ -203,7 +167,30 @@ function InterviewStyles() {
         70% { transform: scale(1); box-shadow: 0 0 0 18px rgba(22, 163, 74, 0); }
         100% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
       }
+      @keyframes interviewPanelEnter {
+        0% { opacity: 0; transform: translateY(14px) scale(0.992); filter: blur(3px); }
+        100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+      }
+      @keyframes interviewModalEnter {
+        0% { opacity: 0; transform: translateY(18px) scale(0.985); filter: blur(5px); }
+        100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+      }
+      @keyframes interviewBackdropIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
       .interview-row:hover { background: #f8fafc; }
+      .interview-action-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08); }
+      .interview-audio-stage:hover .interview-audio-overlay,
+      .interview-audio-stage.is-playing .interview-audio-overlay {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .interview-audio-stage:hover .interview-audio-bars,
+      .interview-audio-stage.is-playing .interview-audio-bars {
+        filter: blur(2px);
+        transform: scale(0.996);
+      }
       .interview-modal-backdrop {
         position: fixed;
         inset: 0;
@@ -214,6 +201,7 @@ function InterviewStyles() {
         align-items: center;
         justify-content: center;
         padding: 26px;
+        animation: interviewBackdropIn 180ms ease-out;
       }
       .interview-immersive-shell {
         width: min(1480px, 94vw);
@@ -225,8 +213,13 @@ function InterviewStyles() {
         box-shadow: 0 26px 80px rgba(2, 6, 23, 0.28);
         display: grid;
         grid-template-rows: auto minmax(0, 1fr);
+        animation: interviewModalEnter 260ms cubic-bezier(0.22, 1, 0.36, 1);
       }
       .interview-transcript-line:hover { border-color: #cbd5e1; background: #ffffff; }
+      .interview-question-rail-line:hover .interview-question-tooltip {
+        opacity: 1;
+        transform: translateX(0);
+      }
       @media (max-width: 920px) {
         .interview-immersive-shell { width: 96vw; height: 94vh; }
         .interview-guide-grid { grid-template-columns: 1fr !important; overflow-y: auto; }
@@ -326,6 +319,29 @@ function wordsFromProviderSegments(turns = []) {
     .filter((word) => word.text);
 }
 
+function chunkProviderWords(words = [], size = 22) {
+  const chunks = [];
+  for (let index = 0; index < words.length; index += size) {
+    const slice = words.slice(index, index + size);
+    if (!slice.length) continue;
+    chunks.push({
+      id: `word-chunk-${index}`,
+      timestamp: formatPlaybackTime(slice[0]?.startSeconds || 0),
+      startSeconds: slice[0]?.startSeconds ?? null,
+      endSeconds: slice[slice.length - 1]?.endSeconds ?? null,
+      speaker: "Timeline",
+      text: slice.map((word) => word.text).join(" "),
+      words: slice,
+    });
+  }
+  return chunks;
+}
+
+function getTranscriptPreviewRows({ turns = [], wordSegmentMode = false, providerWords = [] }) {
+  if (wordSegmentMode) return chunkProviderWords(providerWords, 18).slice(0, 4);
+  return turns.slice(0, 4);
+}
+
 function getAutoScoreStorageKey(actorUserId) {
   return `k9:labor-interviews:auto-score:${actorUserId || "local"}`;
 }
@@ -401,20 +417,57 @@ function RecommendationBadge({ value }) {
   return <Badge color={option.tone}>{option.label}</Badge>;
 }
 
+function humanizePdfFieldName(value = "") {
+  const raw = String(value || "").trim();
+  const aliases = {
+    candidate_name: "Candidate name",
+    interview_date: "Interview date",
+    interviewer_name: "Interviewer",
+    location: "Location",
+    scorecard_date: "Scorecard date",
+    scorecard_interviewer: "Scorecard interviewer",
+    overall_score: "Overall score",
+    strongest_area: "Strongest area",
+    biggest_concern: "Biggest concern",
+  };
+  if (aliases[raw]) return aliases[raw];
+  return raw
+    .replace(/^q(\d+)_/i, "Question $1 ")
+    .replace(/^score_notes_/i, "Score notes ")
+    .replace(/^score_/i, "Score ")
+    .replace(/^decision_/i, "Decision ")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function fieldValueRows(value = "") {
+  const length = String(value || "").length;
+  if (length < 80) return 3;
+  if (length < 220) return 5;
+  if (length < 520) return 7;
+  return 9;
+}
+
 function StaticField({ label, value }) {
+  const isLink = /^https?:\/\//i.test(String(value || ""));
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 14, color: C.text, fontWeight: 700, minHeight: 20, overflowWrap: "anywhere" }}>{value || "-"}</div>
+      <div style={{ marginTop: 4, fontSize: 14, color: C.text, fontWeight: 700, minHeight: 20, overflowWrap: "anywhere" }}>
+        {isLink ? <a href={value} target="_blank" rel="noreferrer" style={{ color: C.pri, textDecoration: "none" }}>{value}</a> : (value || "-")}
+      </div>
     </div>
   );
 }
 
 function SegmentedRecommendation({ value, onChange, disabled }) {
   return (
-    <div style={{ display: "inline-grid", gridTemplateColumns: "repeat(4, minmax(80px, 1fr))", border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+    <div style={{ display: "inline-grid", gridTemplateColumns: "repeat(2, minmax(96px, 1fr))", border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
       {INTERVIEW_RECOMMENDATION_OPTIONS.map((option) => {
         const selected = value === option.value;
+        const selectedColor = option.value === "reject" ? C.dan : C.pri;
         return (
           <button
             type="button"
@@ -423,8 +476,8 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
             onClick={() => onChange(option.value)}
             style={{
               border: "none",
-              borderRight: option.value === "pass" ? "none" : `1px solid ${C.border}`,
-              background: selected ? C.pri : "#fff",
+              borderRight: option.value === "reject" ? "none" : `1px solid ${C.border}`,
+              background: selected ? selectedColor : "#fff",
               color: selected ? "#fff" : C.textSec,
               padding: "9px 12px",
               fontFamily: "inherit",
@@ -442,19 +495,33 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
   );
 }
 
-function InterviewRoster({ records, onOpen }) {
+function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
   if (records.length === 0) {
-    return <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />;
+    return (
+      <div style={{ display: "grid", gap: 12, animation: "interviewPanelEnter 240ms ease-out" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
+        </div>
+        <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />
+      </div>
+    );
   }
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflowX: "auto", background: "#fff" }}>
+    <div style={{ display: "grid", gap: 12, animation: "interviewPanelEnter 240ms ease-out" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interviews</div>
+          <div style={{ marginTop: 3, fontSize: 13, color: C.textMut }}>{records.length} total interview{records.length === 1 ? "" : "s"}</div>
+        </div>
+        <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
+      </div>
+      <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflowX: "auto", background: "#fff" }}>
       <div className="interview-roster-table" style={{ minWidth: 900 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.5fr) minmax(180px, 1.1fr) 150px 140px 140px 90px", gap: 0, padding: "12px 16px", background: C.surfaceHover, borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "12px 16px", background: C.surfaceHover, borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
           <div>Candidate</div>
           <div>Position</div>
           <div>Date Interviewed</div>
           <div>Next Step</div>
-          <div>Workflow</div>
           <div />
         </div>
         {records.map((record) => (
@@ -466,7 +533,7 @@ function InterviewRoster({ records, onOpen }) {
             style={{
               width: "100%",
               display: "grid",
-              gridTemplateColumns: "minmax(220px, 1.5fr) minmax(180px, 1.1fr) 150px 140px 140px 90px",
+              gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px",
               gap: 0,
               alignItems: "center",
               padding: "14px 16px",
@@ -485,10 +552,10 @@ function InterviewRoster({ records, onOpen }) {
             <div style={{ fontSize: 13, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
             <div style={{ fontSize: 13, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
             <div><RecommendationBadge value={getInterviewRecommendation(record)} /></div>
-            <div><Badge color={STATUS_BADGE_COLORS[record.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[record.status] || record.status}</Badge></div>
             <div style={{ color: C.pri, fontSize: 13, fontWeight: 900, textAlign: "right" }}>Open</div>
           </button>
         ))}
+      </div>
       </div>
     </div>
   );
@@ -505,7 +572,6 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
             <h2 style={{ margin: 0, color: C.text, fontSize: 26, lineHeight: 1.1, fontWeight: 950, letterSpacing: 0 }}>{record.candidate_full_name}</h2>
             <div style={{ marginTop: 7, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: C.textSec, fontWeight: 800 }}>{position || "Interview"}</span>
-              <Badge color={STATUS_BADGE_COLORS[record.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[record.status] || record.status}</Badge>
             </div>
           </div>
         </div>
@@ -517,10 +583,10 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
         <StaticField label="Date" value={compactDateTime(record)} />
-        <StaticField label="Email" value={record.candidate_email} />
-        <StaticField label="Phone" value={record.candidate_phone} />
+        <StaticField label="Candidate Email" value={record.candidate_email} />
+        <StaticField label="Candidate Phone" value={record.candidate_phone} />
         <StaticField label="Zoom Link" value={record.zoom_recording_url} />
-        <StaticField label="Passcode" value={record.zoom_passcode} />
+        <StaticField label="Zoom Passcode" value={record.zoom_passcode} />
       </div>
     </div>
   );
@@ -552,17 +618,18 @@ function AudioUploadPanel({
   const duration = formatDuration(durationSeconds);
   const fileSize = formatFileSize(sourceAudio.size_bytes);
   const complete = !!record?.transcript_text && !transcribing && !drafting;
-  const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}:${record?.updated_at || ""}`), [record?.id, record?.updated_at, fileName]);
+  const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}`), [record?.id, fileName]);
   const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
   const hasProviderTurns = safeTranscriptTurns.length > 0;
   const segmentationSource = String(transcription.segmentation_source || "");
-  const wordSegmentMode = segmentationSource === "xai_word_segments";
-  const providerTurnLabel = segmentationSource === "xai_word_segments" ? "word-timed segment" : "speaker turn";
+  const wordSegmentMode = segmentationSource === "xai_word_segments" && safeTranscriptTurns.length > 40 && !safeTranscriptTurns.some((turn) => /^(Speaker|Person)\s+\d+/i.test(turn.speaker || ""));
+  const providerTurnLabel = wordSegmentMode ? "timeline row" : "speaker turn";
   const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTranscriptTurns) : [];
   const activeTurn = safeTranscriptTurns.find((turn) => isTurnActive(turn, currentTime));
   const visibleTurns = activeTurn
     ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
     : safeTranscriptTurns.slice(0, 4);
+  const transcriptPreviewRows = getTranscriptPreviewRows({ turns: visibleTurns, wordSegmentMode, providerWords });
 
   const handleDrop = (event) => {
     event.preventDefault();
@@ -601,7 +668,7 @@ function AudioUploadPanel({
             <span>{fileName || "M4A, MP3, WAV, MP4, MKV"}</span>
             {duration && <span>{duration}</span>}
             {fileSize && <span>{fileSize}</span>}
-            {record?.transcript_text && <span>{hasProviderTurns ? `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}` : "turn data required"}</span>}
+            {record?.transcript_text && <span>{hasProviderTurns ? (wordSegmentMode ? "Timestamped transcript" : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}`) : "turn data required"}</span>}
           </div>
         </div>
         <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
@@ -619,11 +686,14 @@ function AudioUploadPanel({
           style={{ display: "none" }}
         />
       )}
-      <div style={{ marginTop: 18, height: 120, borderRadius: 8, background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderLight}`, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px" }}>
+      <div
+        className={`interview-audio-stage${audioPlaying ? " is-playing" : ""}`}
+        style={{ marginTop: 18, height: 144, borderRadius: 8, background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderLight}`, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px" }}
+      >
         <div style={{ position: "absolute", inset: 0, opacity: transcribing || drafting ? 1 : 0.35, background: "radial-gradient(circle at 30% 50%, rgba(132,204,22,0.12), transparent 38%), radial-gradient(circle at 70% 50%, rgba(37,99,235,0.10), transparent 32%)" }} />
         {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
         {complete && <div style={{ position: "absolute", right: 16, top: 16, width: 12, height: 12, borderRadius: 99, background: C.suc, animation: "interviewCompletePulse 1.8s ease-out infinite" }} />}
-        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 4, width: "100%", height: 92, justifyContent: "center" }}>
+        <div className="interview-audio-bars" style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 4, width: "100%", height: 96, justifyContent: "center", transition: "filter 180ms ease, transform 180ms ease" }}>
           {bars.map((bar, index) => (
             <div
               key={index}
@@ -634,10 +704,67 @@ function AudioUploadPanel({
                 background: index % 3 === 0 ? C.pri : index % 3 === 1 ? C.accDk : C.info,
                 opacity: bar.opacity,
                 transformOrigin: "center",
-                animation: transcribing || drafting ? `interviewWaveFloat ${bar.duration}s ease-in-out ${bar.delay}s infinite` : "none",
+                animation: transcribing || drafting || audioPlaying ? `interviewWaveFloat ${bar.duration}s ease-in-out ${bar.delay}s infinite` : "none",
               }}
             />
           ))}
+        </div>
+        <div
+          className="interview-audio-overlay"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            opacity: 0,
+            pointerEvents: "none",
+            transition: "opacity 180ms ease",
+            display: "grid",
+            gridTemplateRows: "minmax(0, 1fr) auto",
+            alignItems: "center",
+            background: "rgba(248,250,252,0.58)",
+            backdropFilter: "blur(5px)",
+            padding: 16,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onPlayToggle}
+            disabled={!audioUrl}
+            aria-label={audioPlaying ? "Pause interview audio" : "Play interview audio"}
+            style={{
+              justifySelf: "center",
+              width: 58,
+              height: 58,
+              borderRadius: 999,
+              border: "none",
+              background: C.pri,
+              color: "#fff",
+              fontSize: 22,
+              fontWeight: 900,
+              cursor: audioUrl ? "pointer" : "not-allowed",
+              boxShadow: "0 14px 34px rgba(20,83,45,0.26)",
+            }}
+          >
+            {audioPlaying ? "||" : "▶"}
+          </button>
+          <div style={{ display: "grid", gridTemplateColumns: "54px minmax(0, 1fr) 54px", gap: 10, alignItems: "center", color: C.textSec, fontSize: 12, fontWeight: 800 }}>
+            <span>{formatPlaybackTime(currentTime)}</span>
+            <input
+              type="range"
+              min="0"
+              max={Math.max(1, durationSeconds || audioDuration || 1)}
+              step="0.1"
+              value={Math.min(currentTime, durationSeconds || audioDuration || currentTime || 0)}
+              disabled={!audioUrl}
+              onChange={(event) => {
+                const nextTime = Number(event.target.value || 0);
+                if (audioRef.current) audioRef.current.currentTime = nextTime;
+                onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
+              }}
+              style={{ width: "100%", accentColor: C.pri }}
+            />
+            <span style={{ textAlign: "right" }}>{formatPlaybackTime(durationSeconds || audioDuration)}</span>
+          </div>
         </div>
       </div>
       {record?.transcript_text && (
@@ -646,49 +773,19 @@ function AudioUploadPanel({
             <div>
               <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Transcript</div>
               <div style={{ marginTop: 2, fontSize: 13, color: C.textSec, fontWeight: 750 }}>
-                {safeTranscriptTurns.length} {providerTurnLabel}{safeTranscriptTurns.length === 1 ? "" : "s"}{duration ? ` across ${duration}` : ""}
+                {wordSegmentMode ? `Timestamped transcript${duration ? ` across ${duration}` : ""}` : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}${duration ? ` across ${duration}` : ""}`}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn variant="secondary" size="sm" onClick={onPlayToggle} disabled={!audioUrl}>
-                {audioPlaying ? "Pause Audio" : "Play Audio"}
-              </Btn>
-              <span style={{ minWidth: 92, fontSize: 12, color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-                {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
-              </span>
-            </div>
+            <span style={{ minWidth: 92, fontSize: 12, color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+              {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
+            </span>
           </div>
           <div style={{ display: "grid" }}>
             {!hasProviderTurns ? (
               <div style={{ padding: 12, color: C.textMut, fontSize: 13 }}>
                 This record was transcribed before structured turn data was stored. Replace the audio to regenerate the transcript with provider timestamps and diarization.
               </div>
-            ) : wordSegmentMode ? (
-              <button
-                type="button"
-                onClick={onTranscriptClick}
-                style={{
-                  border: "none",
-                  background: "#fff",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  padding: "12px",
-                  display: "grid",
-                  gridTemplateColumns: "70px minmax(0, 1fr)",
-                  gap: 10,
-                  fontFamily: "inherit",
-                  alignItems: "start",
-                }}
-              >
-                <span style={{ color: C.textMut, fontSize: 12, fontWeight: 850 }}>{safeTranscriptTurns[0]?.timestamp || "--:--"}</span>
-                <span style={{ color: C.textSec, fontSize: 13, lineHeight: 1.55, overflow: "hidden" }}>
-                  <TranscriptWords
-                    turn={{ id: "provider-word-preview", words: providerWords.slice(0, 72), text: providerWords.slice(0, 72).map((word) => word.text).join(" ") }}
-                    currentTime={currentTime}
-                  />
-                </span>
-              </button>
-            ) : visibleTurns.map((turn) => {
+            ) : transcriptPreviewRows.map((turn) => {
               const active = isTurnActive(turn, currentTime);
               return (
                 <button
@@ -703,16 +800,16 @@ function AudioUploadPanel({
                     cursor: "pointer",
                     padding: "10px 12px",
                     display: "grid",
-                    gridTemplateColumns: "70px 104px minmax(0, 1fr)",
+                    gridTemplateColumns: wordSegmentMode ? "70px minmax(0, 1fr)" : "70px 104px minmax(0, 1fr)",
                     gap: 10,
                     fontFamily: "inherit",
                     alignItems: "start",
                   }}
                 >
                   <span style={{ color: active ? C.pri : C.textMut, fontSize: 12, fontWeight: 850 }}>{turn.timestamp || "--:--"}</span>
-                  <span style={{ color: active ? C.pri : C.textSec, fontSize: 12, fontWeight: 900 }}>{turn.speaker}</span>
+                  {!wordSegmentMode && <span style={{ color: active ? C.pri : C.textSec, fontSize: 12, fontWeight: 900 }}>{turn.speaker}</span>}
                   <span style={{ color: C.textSec, fontSize: 13, lineHeight: 1.45, overflow: "hidden" }}>
-                    <TranscriptWords turn={turn} currentTime={currentTime} maxWords={28} />
+                    <TranscriptWords turn={turn} currentTime={currentTime} maxWords={wordSegmentMode ? null : 28} />
                   </span>
                 </button>
               );
@@ -726,16 +823,17 @@ function AudioUploadPanel({
 
 function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose }) {
   const safeTurns = Array.isArray(turns) ? turns : [];
-  const wordSegmentMode = segmentationSource === "xai_word_segments";
+  const wordSegmentMode = segmentationSource === "xai_word_segments" && safeTurns.length > 40 && !safeTurns.some((turn) => /^(Speaker|Person)\s+\d+/i.test(turn.speaker || ""));
   const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTurns) : [];
+  const providerWordChunks = wordSegmentMode ? chunkProviderWords(providerWords) : [];
   const hasSpeakers = safeTurns.some((turn) => turn.speaker !== "Transcript");
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
-      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 92vw)", maxHeight: "86vh", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 24px 70px rgba(2,6,23,0.24)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 92vw)", maxHeight: "86vh", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 24px 70px rgba(2,6,23,0.24)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", animation: "interviewModalEnter 260ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
             <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Transcript</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{safeTurns.length} {hasSpeakers ? "speaker turn" : "transcript segment"}{safeTurns.length === 1 ? "" : "s"}</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{wordSegmentMode ? providerWordChunks.length : safeTurns.length} {hasSpeakers && !wordSegmentMode ? "speaker turn" : "timeline row"}{(wordSegmentMode ? providerWordChunks.length : safeTurns.length) === 1 ? "" : "s"}</div>
           </div>
           <IconButton label="Close transcript" onClick={onClose}>{"x"}</IconButton>
         </div>
@@ -743,11 +841,13 @@ function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose 
           {safeTurns.length === 0 ? (
             <EmptyState title="No Transcript" body="Replace the audio to regenerate this record with structured transcript turns." />
           ) : wordSegmentMode ? (
-            <div style={{ background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 16, color: C.textSec, fontSize: 14, lineHeight: 1.7 }}>
-              <TranscriptWords
-                turn={{ id: "provider-word-transcript", words: providerWords, text: providerWords.map((word) => word.text).join(" ") }}
-                currentTime={currentTime}
-              />
+            <div style={{ display: "grid", gap: 10 }}>
+              {providerWordChunks.map((turn) => (
+                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px minmax(0, 1fr)", gap: 12, alignItems: "start", background: isTurnActive(turn, currentTime) ? "#f0fdf4" : "#fff", border: `1px solid ${isTurnActive(turn, currentTime) ? "#bbf7d0" : C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
+                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 850 }}>{turn.timestamp || "--:--"}</div>
+                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}><TranscriptWords turn={turn} currentTime={currentTime} /></div>
+                </div>
+              ))}
             </div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
@@ -780,23 +880,26 @@ function ReviewGuideModal({
   setActiveIndex,
   getFieldValue,
   setFieldDraft,
-  saveField,
   approveField,
   exportFinalPdf,
+  downloadArtifact,
   onClose,
 }) {
-  const activeField = fields[activeIndex] || fields[0] || null;
+  const populatedFields = fields.filter((field) => String(getFieldValue(field) || "").trim());
+  const reviewFields = populatedFields.length ? populatedFields : fields;
+  const boundedIndex = Math.min(activeIndex, Math.max(0, reviewFields.length - 1));
+  const activeField = reviewFields[boundedIndex] || reviewFields[0] || null;
   const activeKey = activeField ? responseKeyForPdfField(activeField) : "";
   const activeResponse = responsesByTarget[activeKey] || {};
   const approved = !!activeResponse.metadata?.approved;
-  const approvedCount = fields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
+  const approvedCount = reviewFields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
   const activeValue = activeField ? getFieldValue(activeField) : "";
 
   const goNext = () => {
-    if (!fields.length) return;
-    const nextUnapproved = fields.findIndex((field, index) => index > activeIndex && !responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved);
+    if (!reviewFields.length) return;
+    const nextUnapproved = reviewFields.findIndex((field, index) => index > boundedIndex && !responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved);
     if (nextUnapproved >= 0) setActiveIndex(nextUnapproved);
-    else setActiveIndex(Math.min(fields.length - 1, activeIndex + 1));
+    else setActiveIndex(Math.min(reviewFields.length - 1, boundedIndex + 1));
   };
 
   const approveAndNext = async () => {
@@ -811,57 +914,57 @@ function ReviewGuideModal({
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interview Guide</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{fields.length} approved</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewFields.length} populated fields reviewed</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Btn variant="success" size="sm" onClick={exportFinalPdf} disabled={exporting || !pdfUrl}>{exporting ? "Exporting..." : "Export Final PDF"}</Btn>
             <IconButton label="Close guide" onClick={onClose}>{"x"}</IconButton>
           </div>
         </div>
-        <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "260px minmax(0, 1fr) 360px", minHeight: 0 }}>
-          <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fff" }}>
-            <div style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Fields</div>
-            {fields.length === 0 ? (
-              <div style={{ padding: 14, color: C.textMut, fontSize: 13 }}>No PDF fields found.</div>
-            ) : fields.map((field, index) => {
+        <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "74px minmax(0, 1fr) 370px", minHeight: 0 }}>
+          <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fbfdff", padding: "12px 10px", display: "grid", alignContent: "start", gap: 7 }}>
+            {reviewFields.length === 0 ? (
+              <div style={{ color: C.textMut, fontSize: 12 }}>No fields</div>
+            ) : reviewFields.map((field, index) => {
               const key = responseKeyForPdfField(field);
-              const isActive = index === activeIndex;
+              const isActive = index === boundedIndex;
               const isApproved = !!responsesByTarget[key]?.metadata?.approved;
-              const hasDraft = !!(getFieldValue(field) || "").trim();
               return (
                 <button
                   type="button"
                   key={field.name}
                   onClick={() => setActiveIndex(index)}
+                  title={humanizePdfFieldName(field.name)}
                   style={{
                     width: "100%",
-                    display: "grid",
-                    gridTemplateColumns: "22px minmax(0, 1fr)",
-                    gap: 8,
-                    alignItems: "start",
-                    padding: "10px 12px",
-                    border: "none",
-                    borderBottom: `1px solid ${C.borderLight}`,
-                    background: isActive ? C.priLt : "#fff",
-                    textAlign: "left",
+                    height: 24,
+                    borderRadius: 999,
+                    border: `1px solid ${isActive ? C.pri : isApproved ? C.suc : C.border}`,
+                    background: isActive ? C.pri : isApproved ? "#dcfce7" : "#fff",
+                    color: isActive ? "#fff" : isApproved ? C.suc : C.textMut,
                     cursor: "pointer",
                     fontFamily: "inherit",
+                    fontSize: 11,
+                    fontWeight: 900,
                   }}
                 >
-                  <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${isApproved ? C.suc : C.border}`, background: isApproved ? C.suc : "#fff", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>{isApproved ? "✓" : ""}</span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", color: C.text, fontSize: 12, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{field.name}</span>
-                    <span style={{ display: "block", color: hasDraft ? C.pri : C.textMut, marginTop: 2, fontSize: 11 }}>Page {field.page_number || "-"} - {getPdfFieldTypeLabel(field.type)}</span>
-                  </span>
+                  {index + 1}
                 </button>
               );
             })}
           </div>
           <div className="interview-guide-pdf" style={{ background: "#e5e7eb", padding: 14, minHeight: 0 }}>
-            {loadingPdf ? (
+            {pdfUrl ? (
+              <div style={{ position: "relative", height: "100%", minHeight: 560 }}>
+                <iframe title="Filled Interview Guide" src={`${pdfUrl}#page=${activeField?.page_number || 1}&toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", minHeight: 560, border: "none", borderRadius: 6, background: "#fff", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }} />
+                {loadingPdf && (
+                  <div style={{ position: "absolute", right: 14, top: 14, borderRadius: 999, background: "rgba(255,255,255,0.94)", border: `1px solid ${C.borderLight}`, color: C.textSec, fontSize: 11, fontWeight: 900, padding: "5px 9px", boxShadow: "0 8px 20px rgba(15,23,42,0.12)" }}>
+                    Updating
+                  </div>
+                )}
+              </div>
+            ) : loadingPdf ? (
               <div style={{ height: "100%", minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontWeight: 800 }}>Rendering guide...</div>
-            ) : pdfUrl ? (
-              <iframe title="Filled Interview Guide" src={`${pdfUrl}#page=${activeField?.page_number || 1}&toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", minHeight: 560, border: "none", borderRadius: 6, background: "#fff", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }} />
             ) : (
               <EmptyState title="No PDF" body="This interview does not have a source guide PDF." />
             )}
@@ -873,18 +976,17 @@ function ReviewGuideModal({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Field</div>
-                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{activeField.name}</div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"} - {getPdfFieldTypeLabel(activeField.type)}</div>
+                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{humanizePdfFieldName(activeField.name)}</div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"}</div>
                     </div>
-                    <Badge color={approved ? "success" : activeResponse.ai_draft_text ? "warning" : "default"}>{approved ? "Approved" : activeResponse.ai_draft_text ? "AI Draft" : "Manual"}</Badge>
+                    <Badge color={approved ? "success" : "default"}>{approved ? "Reviewed" : "Needs Review"}</Badge>
                   </div>
                 </div>
                 <textarea
                   value={activeValue}
                   onChange={(event) => setFieldDraft(activeField, event.target.value)}
-                  onBlur={(event) => saveField(activeField, event.target.value)}
-                  rows={9}
-                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff" }}
+                  rows={fieldValueRows(activeValue)}
+                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 92 }}
                 />
                 {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
                   <div style={{ display: "grid", gap: 6 }}>
@@ -895,9 +997,8 @@ function ReviewGuideModal({
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaved by field name"}</span>
+                  <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaves as you type"}</span>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="secondary" size="sm" onClick={() => saveField(activeField, activeValue)}>Save</Btn>
                     <Btn variant="primary" size="sm" onClick={approveAndNext}>Approve & Next</Btn>
                   </div>
                 </div>
@@ -905,9 +1006,16 @@ function ReviewGuideModal({
                   <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 12, display: "grid", gap: 8 }}>
                     <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Exports</div>
                     {artifacts.slice(0, 3).map((artifact) => (
-                      <div key={artifact.id} style={{ fontSize: 12, color: C.textSec, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div key={artifact.id} style={{ fontSize: 12, color: C.textSec, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{artifact.file_name}</span>
-                        <span>{artifact.created_at ? new Date(artifact.created_at).toLocaleDateString() : ""}</span>
+                        <span style={{ flexShrink: 0 }}>{artifact.created_at ? new Date(artifact.created_at).toLocaleDateString() : ""}</span>
+                        <button
+                          type="button"
+                          onClick={() => downloadArtifact?.(artifact)}
+                          style={{ border: "none", background: "none", color: C.pri, fontFamily: "inherit", fontSize: 12, fontWeight: 900, cursor: "pointer", padding: 0 }}
+                        >
+                          Download
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -929,30 +1037,25 @@ function QuestionReviewModal({
   responsesByTarget,
   responseDrafts,
   savingKey,
-  activeIndex,
-  setActiveIndex,
   setQuestionDraft,
-  saveQuestionResponse,
   approveQuestion,
   onClose,
 }) {
-  const activeQuestion = questions[activeIndex] || questions[0] || null;
-  const activeKey = activeQuestion ? responseKeyForQuestion(activeQuestion) : "";
-  const activeResponse = responsesByTarget[activeKey] || {};
   const approvedCount = questions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length;
-  const activeValue = activeKey ? (responseDrafts[activeKey] || "") : "";
-
-  const approveAndNext = async () => {
-    if (!activeQuestion) return;
-    await approveQuestion(activeQuestion, activeValue);
-    const nextUnapproved = questions.findIndex((question, index) => index > activeIndex && !responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved);
-    if (nextUnapproved >= 0) setActiveIndex(nextUnapproved);
-    else setActiveIndex(Math.min(questions.length - 1, activeIndex + 1));
+  const grouped = questions.reduce((groups, question, index) => {
+    const category = question.category || "Interview";
+    if (!groups[category]) groups[category] = [];
+    groups[category].push({ question, index });
+    return groups;
+  }, {});
+  const questionRefs = useRef({});
+  const scrollToQuestion = (questionKey) => {
+    questionRefs.current[questionKey]?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
-      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1120px, 94vw)" }}>
+      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1180px, 94vw)" }}>
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
@@ -960,77 +1063,115 @@ function QuestionReviewModal({
           </div>
           <IconButton label="Close questions" onClick={onClose}>{"x"}</IconButton>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0, 1fr)", minHeight: 0 }}>
-          <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fff" }}>
-            {questions.map((question, index) => {
-              const key = responseKeyForQuestion(question);
-              const isActive = index === activeIndex;
-              const isApproved = !!responsesByTarget[key]?.metadata?.approved;
-              return (
-                <button
-                  type="button"
-                  key={question.question_key}
-                  onClick={() => setActiveIndex(index)}
-                  style={{
-                    width: "100%",
-                    display: "grid",
-                    gridTemplateColumns: "22px minmax(0, 1fr)",
-                    gap: 8,
-                    padding: "12px 14px",
-                    border: "none",
-                    borderBottom: `1px solid ${C.borderLight}`,
-                    background: isActive ? C.priLt : "#fff",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${isApproved ? C.suc : C.border}`, background: isApproved ? C.suc : "#fff", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>{isApproved ? "✓" : ""}</span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 12, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{question.prompt}</span>
-                    <span style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut }}>{question.category || "Interview"}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ padding: 18, background: C.surfaceHover, overflowY: "auto" }}>
-            {activeQuestion ? (
-              <div style={{ maxWidth: 760, display: "grid", gap: 14 }}>
-                <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>{activeQuestion.category || "Interview"}</div>
-                      <div style={{ marginTop: 7, fontSize: 18, lineHeight: 1.35, color: C.text, fontWeight: 950 }}>{activeQuestion.prompt}</div>
-                    </div>
-                    <Badge color={activeResponse.metadata?.approved ? "success" : activeResponse.ai_draft_text ? "warning" : "default"}>{activeResponse.metadata?.approved ? "Approved" : activeResponse.ai_draft_text ? "AI Draft" : "Manual"}</Badge>
-                  </div>
-                </div>
-                <textarea
-                  value={activeValue}
-                  onChange={(event) => setQuestionDraft(activeQuestion, event.target.value)}
-                  onBlur={(event) => saveQuestionResponse(activeQuestion, event.target.value)}
-                  rows={12}
-                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 13, fontFamily: "inherit", fontSize: 14, lineHeight: 1.55, color: C.text, resize: "vertical", background: "#fff", outline: "none" }}
-                />
-                {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
-                  <div style={{ background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 13, display: "grid", gap: 8 }}>
-                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
-                    {activeResponse.ai_evidence.map((entry, index) => (
-                      <div key={index} style={{ borderLeft: `3px solid ${C.acc}`, paddingLeft: 10, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>{entry}</div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaved"}</span>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="secondary" size="sm" onClick={() => saveQuestionResponse(activeQuestion, activeValue)}>Save</Btn>
-                    <Btn variant="primary" size="sm" onClick={approveAndNext}>Approve & Next</Btn>
-                  </div>
+        <div style={{ display: "grid", gridTemplateColumns: "190px minmax(0, 1fr)", minHeight: 0 }}>
+          <div style={{ borderRight: `1px solid ${C.border}`, background: "#fff", overflowY: "auto", padding: "18px 16px" }}>
+            {Object.entries(grouped).map(([category, rows]) => (
+              <div key={category} style={{ marginBottom: 20 }}>
+                <div style={{ color: C.text, fontSize: 12, fontWeight: 950, marginBottom: 8 }}>{category}</div>
+                <div style={{ display: "grid", gap: 5 }}>
+                  {rows.map(({ question, index }) => {
+                    const key = responseKeyForQuestion(question);
+                    const isApproved = !!responsesByTarget[key]?.metadata?.approved;
+                    return (
+                      <button
+                        type="button"
+                        key={question.question_key}
+                        className="interview-question-rail-line"
+                        onClick={() => scrollToQuestion(question.question_key)}
+                        style={{
+                          position: "relative",
+                          height: 8,
+                          width: "100%",
+                          border: "none",
+                          borderRadius: 99,
+                          background: isApproved ? C.suc : C.border,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                        aria-label={`Jump to question ${index + 1}`}
+                      >
+                        <span
+                          className="interview-question-tooltip"
+                          style={{
+                            position: "absolute",
+                            left: "calc(100% + 10px)",
+                            top: "50%",
+                            transform: "translate(-6px, -50%)",
+                            opacity: 0,
+                            pointerEvents: "none",
+                            width: 300,
+                            borderRadius: 8,
+                            background: "#0f172a",
+                            color: "#fff",
+                            padding: "8px 10px",
+                            fontSize: 12,
+                            fontWeight: 750,
+                            lineHeight: 1.35,
+                            zIndex: 5,
+                            transition: "opacity 160ms ease, transform 160ms ease",
+                            textAlign: "left",
+                          }}
+                        >
+                          {question.prompt}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            ) : (
+            ))}
+          </div>
+          <div style={{ padding: 20, background: C.surfaceHover, overflowY: "auto" }}>
+            {questions.length === 0 ? (
               <EmptyState title="No Questions" body="Add shared custom questions in configuration." />
+            ) : (
+              <div style={{ maxWidth: 880, display: "grid", gap: 20 }}>
+                {Object.entries(grouped).map(([category, rows]) => (
+                  <section key={category} style={{ display: "grid", gap: 12 }}>
+                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>{category}</div>
+                    {rows.map(({ question, index }) => {
+                      const key = responseKeyForQuestion(question);
+                      const response = responsesByTarget[key] || {};
+                      const value = responseDrafts[key] || "";
+                      const approved = !!response.metadata?.approved;
+                      return (
+                        <div
+                          key={question.question_key}
+                          ref={(node) => { if (node) questionRefs.current[question.question_key] = node; }}
+                          style={{ background: "#fff", border: `1px solid ${approved ? "#bbf7d0" : C.border}`, borderRadius: 8, padding: 16, display: "grid", gap: 12 }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900 }}>Question {index + 1}</div>
+                              <div style={{ marginTop: 5, fontSize: 16, lineHeight: 1.4, color: C.text, fontWeight: 900 }}>{question.prompt}</div>
+                            </div>
+                            <Badge color={approved ? "success" : "default"}>{approved ? "Reviewed" : "Needs Review"}</Badge>
+                          </div>
+                          <textarea
+                            value={value}
+                            onChange={(event) => setQuestionDraft(question, event.target.value)}
+                            rows={fieldValueRows(value)}
+                            style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 13, fontFamily: "inherit", fontSize: 14, lineHeight: 1.55, color: C.text, resize: "vertical", background: "#fff", outline: "none", minHeight: 96 }}
+                          />
+                          {Array.isArray(response.ai_evidence) && response.ai_evidence.length > 0 && (
+                            <div style={{ display: "grid", gap: 6 }}>
+                              {response.ai_evidence.slice(0, 2).map((entry, evidenceIndex) => (
+                                <div key={evidenceIndex} style={{ borderLeft: `3px solid ${C.acc}`, paddingLeft: 10, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>{entry}</div>
+                              ))}
+                            </div>
+                          )}
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === key ? "Saving..." : "Autosaves as you type"}</span>
+                            <Btn variant={approved ? "secondary" : "primary"} size="sm" onClick={() => approveQuestion(question, value)}>
+                              {approved ? "Reviewed" : "Approve"}
+                            </Btn>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </section>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -1039,12 +1180,12 @@ function QuestionReviewModal({
   );
 }
 
-export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName }) {
+export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, onViewChange = null, onDetailChange = null }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const locationRef = profile?.location_id || data?.locationId || "";
   const [locationId, setLocationId] = useState("");
-  const [view, setView] = useState("records");
+  const [view, setView] = useState(viewPreset || "records");
   const [loading, setLoading] = useState(true);
   const [schemaError, setSchemaError] = useState("");
   const [templates, setTemplates] = useState([]);
@@ -1063,7 +1204,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [guidePdfUrl, setGuidePdfUrl] = useState("");
   const [guidePdfLoading, setGuidePdfLoading] = useState(false);
   const [pdfReviewIndex, setPdfReviewIndex] = useState(0);
-  const [questionReviewIndex, setQuestionReviewIndex] = useState(0);
   const [configQuestionsOpen, setConfigQuestionsOpen] = useState(false);
   const [showNewPosition, setShowNewPosition] = useState(false);
   const [newPositionDraft, setNewPositionDraft] = useState({ role_label: "", description: "" });
@@ -1072,6 +1212,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [savingNewInterview, setSavingNewInterview] = useState(false);
   const [recordSaving, setRecordSaving] = useState(false);
   const [responseDrafts, setResponseDrafts] = useState({});
+  const [guidePreviewDrafts, setGuidePreviewDrafts] = useState({});
   const [savingResponseKey, setSavingResponseKey] = useState("");
   const [questionDrafts, setQuestionDrafts] = useState({});
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
@@ -1090,6 +1231,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const pdfInputRefs = useRef({});
   const audioInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
+  const pdfSaveTimersRef = useRef({});
+  const questionSaveTimersRef = useRef({});
+  const guidePreviewTimerRef = useRef(null);
+  const guidePdfObjectUrlRef = useRef("");
+  const guideSourcePdfRef = useRef({ key: "", bytes: null });
+  const guideRenderSeqRef = useRef(0);
 
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
@@ -1115,6 +1262,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return records.find((record) => record.id === selectedRecordId) || null;
   }, [records, selectedRecordId]);
 
+  useEffect(() => {
+    onDetailChange?.(!!selectedRecordId);
+    return () => onDetailChange?.(false);
+  }, [onDetailChange, selectedRecordId]);
+
   const selectedSnapshot = useMemo(() => snapshotForRecord(selectedRecord), [selectedRecord]);
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
@@ -1124,18 +1276,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     const durationSeconds = Number(selectedRecord?.metadata?.audio_transcription?.duration_seconds || audioDuration || 0);
     return getInterviewTranscriptTurns(selectedRecord || {}, { durationSeconds });
   }, [audioDuration, selectedRecord]);
-
-  const metrics = useMemo(() => {
-    const completed = records.filter((record) => record.status === "completed").length;
-    const aiDrafted = records.filter((record) => record.status === "ai_drafted").length;
-    const verifiedTemplates = versions.filter((version) => version.pdf_verification_status === "verified_fields").length;
-    return {
-      total: records.length,
-      completed,
-      aiDrafted,
-      verifiedTemplates,
-    };
-  }, [records, versions]);
 
   const selectedTemplateVersion = useMemo(() => {
     return versions.find((version) => version.id === newInterviewDraft.template_version_id) || null;
@@ -1160,6 +1300,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const showToast = useCallback((message, type = "success") => {
     addGlobalToast?.(message, type);
   }, [addGlobalToast]);
+
+  const changeView = useCallback((nextView) => {
+    setView(nextView);
+    onViewChange?.(nextView);
+  }, [onViewChange]);
+
+  useEffect(() => {
+    if (viewPreset && viewPreset !== view) setView(viewPreset);
+  }, [view, viewPreset]);
 
   const loadAll = useCallback(async (resolvedLocationId = locationId) => {
     if (!resolvedLocationId) return;
@@ -1255,7 +1404,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   useEffect(() => {
     setAudioFileName("");
     setPdfReviewIndex(0);
-    setQuestionReviewIndex(0);
     setShowCandidateEdit(false);
     setShowGuideModal(false);
     setShowQuestionsModal(false);
@@ -1293,6 +1441,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       }
     });
     setResponseDrafts(nextDrafts);
+    setGuidePreviewDrafts(nextDrafts);
   }, [responses]);
 
   useEffect(() => {
@@ -1311,6 +1460,17 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedSnapshot]);
 
   useEffect(() => {
+    if (!showGuideModal) return undefined;
+    if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
+    guidePreviewTimerRef.current = setTimeout(() => {
+      setGuidePreviewDrafts(responseDrafts);
+    }, 180);
+    return () => {
+      if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
+    };
+  }, [responseDrafts, showGuideModal]);
+
+  useEffect(() => {
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
     const path = sourceAudio.path;
     const bucket = sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
@@ -1326,8 +1486,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return () => { active = false; };
   }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
 
+  const buildCurrentPdfResponseMap = useCallback((drafts = responseDrafts) => {
+    const map = buildPdfResponseMap(responses, selectedRecord, selectedPdfFields);
+    Object.entries(drafts || {}).forEach(([key, value]) => {
+      if (!key.startsWith("pdf_field:")) return;
+      const fieldName = key.replace(/^pdf_field:/, "");
+      map[fieldName] = value || "";
+    });
+    return map;
+  }, [responses, selectedPdfFields, selectedRecord]);
+
   useEffect(() => {
     if (!showGuideModal) {
+      if (guidePdfObjectUrlRef.current) {
+        URL.revokeObjectURL(guidePdfObjectUrlRef.current);
+        guidePdfObjectUrlRef.current = "";
+      }
       setGuidePdfUrl("");
       return undefined;
     }
@@ -1338,19 +1512,34 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       return undefined;
     }
     let active = true;
-    let objectUrl = "";
-    setGuidePdfLoading(true);
-    supabase.storage.from(bucket).download(path)
-      .then(async ({ data: sourceBlob, error }) => {
-        if (error) throw error;
-        const bytes = await sourceBlob.arrayBuffer();
+    const renderSeq = guideRenderSeqRef.current + 1;
+    guideRenderSeqRef.current = renderSeq;
+    setGuidePdfLoading(!guidePdfObjectUrlRef.current);
+    const sourceKey = `${bucket}:${path}`;
+    Promise.resolve()
+      .then(async () => {
+        if (guideSourcePdfRef.current.key !== sourceKey || !guideSourcePdfRef.current.bytes) {
+          const { data: sourceBlob, error } = await supabase.storage.from(bucket).download(path);
+          if (error) throw error;
+          guideSourcePdfRef.current = {
+            key: sourceKey,
+            bytes: await sourceBlob.arrayBuffer(),
+          };
+        }
         const filledBytes = await fillInterviewPdfBytes(
-          bytes,
-          buildPdfResponseMap(responses, selectedRecord, selectedPdfFields),
+          guideSourcePdfRef.current.bytes,
+          buildCurrentPdfResponseMap(guidePreviewDrafts),
           { flatten: false },
         );
-        objectUrl = URL.createObjectURL(new Blob([filledBytes], { type: "application/pdf" }));
-        if (active) setGuidePdfUrl(objectUrl);
+        const objectUrl = URL.createObjectURL(new Blob([filledBytes], { type: "application/pdf" }));
+        if (active && renderSeq === guideRenderSeqRef.current) {
+          const previousUrl = guidePdfObjectUrlRef.current;
+          guidePdfObjectUrlRef.current = objectUrl;
+          setGuidePdfUrl(objectUrl);
+          if (previousUrl) setTimeout(() => URL.revokeObjectURL(previousUrl), 1200);
+        } else {
+          URL.revokeObjectURL(objectUrl);
+        }
       })
       .catch((error) => {
         if (active) showToast(safeUiError(error, "Failed to render interview guide"), "error");
@@ -1360,9 +1549,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       });
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [responses, selectedPdfFields, selectedRecord, selectedSnapshot, showGuideModal, showToast]);
+  }, [buildCurrentPdfResponseMap, guidePreviewDrafts, selectedRecord?.id, selectedSnapshot, showGuideModal, showToast]);
 
   const setAutoScorePreference = (enabled) => {
     setAutoScoreCandidates(enabled);
@@ -1456,11 +1644,23 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const saveRecordMetadataPatch = async (metadataPatch) => {
     if (!selectedRecord?.id) return null;
+    const previousRecord = selectedRecord;
+    const nextMetadata = {
+      ...(selectedRecord.metadata || {}),
+      ...metadataPatch,
+    };
+    setRecords((prev) => prev.map((record) => (
+      record.id === selectedRecord.id ? { ...record, metadata: nextMetadata } : record
+    )));
     return saveRecordPatch({
-      metadata: {
-        ...(selectedRecord.metadata || {}),
-        ...metadataPatch,
-      },
+      metadata: nextMetadata,
+    }).then((updated) => {
+      if (!updated) {
+        setRecords((prev) => prev.map((record) => (
+          record.id === previousRecord.id ? previousRecord : record
+        )));
+      }
+      return updated;
     });
   };
 
@@ -1648,7 +1848,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       const { data: sourceBlob, error: downloadError } = await supabase.storage.from(bucket).download(path);
       if (downloadError) throw downloadError;
       const bytes = await sourceBlob.arrayBuffer();
-      const filledBytes = await fillInterviewPdfBytes(bytes, buildPdfResponseMap(responses, selectedRecord, selectedPdfFields), { flatten: true });
+      const filledBytes = await fillInterviewPdfBytes(bytes, buildCurrentPdfResponseMap(responseDrafts), { flatten: true });
       const outputName = `${selectedRecord.candidate_full_name.replace(/[^a-z0-9]+/gi, "-") || "candidate"}-interview.pdf`;
       const artifactPath = buildInterviewArtifactPath({ locationId, interviewId: selectedRecord.id, fileName: outputName });
       const { error: uploadError } = await supabase.storage
@@ -1672,11 +1872,42 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       if (artifactError) throw artifactError;
       setArtifacts((prev) => [artifact, ...prev]);
       await saveRecordPatch({ status: "completed" });
+      const { data: signed } = await supabase.storage
+        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .createSignedUrl(artifactPath, 60 * 5, { download: outputName });
+      if (signed?.signedUrl && typeof document !== "undefined") {
+        const link = document.createElement("a");
+        link.href = signed.signedUrl;
+        link.download = outputName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
       showToast("Final PDF exported");
     } catch (error) {
       showToast(safeUiError(error, "Failed to export PDF"), "error");
     } finally {
       setExportingPdf(false);
+    }
+  };
+
+  const downloadArtifact = async (artifact) => {
+    if (!artifact?.storage_path) return;
+    try {
+      const { data: signed, error } = await supabase.storage
+        .from(artifact.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .createSignedUrl(artifact.storage_path, 60 * 5, { download: artifact.file_name || "interview.pdf" });
+      if (error) throw error;
+      if (signed?.signedUrl && typeof document !== "undefined") {
+        const link = document.createElement("a");
+        link.href = signed.signedUrl;
+        link.download = artifact.file_name || "interview.pdf";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to download PDF"), "error");
     }
   };
 
@@ -1690,11 +1921,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const setPdfFieldDraft = (field, value) => {
     const key = responseKeyForPdfField(field);
     setResponseDrafts((prev) => ({ ...prev, [key]: value }));
+    if (showGuideModal) {
+      setGuidePreviewDrafts((prev) => ({ ...prev, [key]: value }));
+    }
+    if (pdfSaveTimersRef.current[key]) clearTimeout(pdfSaveTimersRef.current[key]);
+    pdfSaveTimersRef.current[key] = setTimeout(() => {
+      savePdfFieldResponse(field, value);
+    }, 650);
   };
 
   const setQuestionResponseDraft = (question, value) => {
     const key = responseKeyForQuestion(question);
     setResponseDrafts((prev) => ({ ...prev, [key]: value }));
+    if (questionSaveTimersRef.current[key]) clearTimeout(questionSaveTimersRef.current[key]);
+    questionSaveTimersRef.current[key] = setTimeout(() => {
+      saveCustomQuestionResponse(question, value);
+    }, 650);
   };
 
   const savePdfFieldResponse = (field, value) => saveResponse({
@@ -2076,16 +2318,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   return (
     <div>
       <InterviewStyles />
-      {!inInterviewDetail && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
-          <Metric label="Interviews" value={metrics.total} helper={locationName || data?.locationName || "Current location"} />
-          <Metric label="AI Drafts" value={metrics.aiDrafted} helper="Waiting on manager review" />
-          <Metric label="Completed" value={metrics.completed} helper="Final PDF exported" />
-          <Metric label="Verified PDFs" value={metrics.verifiedTemplates} helper="AcroForm templates" />
-        </div>
-      )}
-
-      {!inInterviewDetail && (
+      {!inInterviewDetail && !embedded && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
           <div style={{ display: "inline-flex", border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
             {[
@@ -2094,7 +2327,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             ].map((item) => (
               <button
                 key={item.id}
-                onClick={() => setView(item.id)}
+                onClick={() => changeView(item.id)}
                 style={{
                   border: "none",
                   borderRight: item.id === "records" ? `1px solid ${C.border}` : "none",
@@ -2116,11 +2349,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {view === "records" && !selectedRecord && (
-        <InterviewRoster records={records} onOpen={setSelectedRecordId} />
+        <InterviewRoster records={records} onOpen={setSelectedRecordId} onAdd={() => setShowNewInterview(true)} canAdd={templateOptions.length > 0} />
       )}
 
       {view === "records" && selectedRecord && (
-        <div style={{ display: "grid", gap: 16 }}>
+        <div style={{ display: "grid", gap: 16, animation: "interviewPanelEnter 260ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
           <CandidateHeader
             record={selectedRecord}
             recommendation={getInterviewRecommendation(selectedRecord)}
@@ -2414,7 +2647,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               <Inp label="Interview Date" type="date" value={candidateEditDraft.interview_date} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, interview_date: value }))} />
               <Inp label="Interview Time" type="time" value={candidateEditDraft.interview_time} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, interview_time: value }))} />
               <Inp label="Zoom Passcode" value={candidateEditDraft.zoom_passcode} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, zoom_passcode: value }))} />
-              <Inp label="Workflow Status" type="select" value={selectedRecord.status || "draft"} onChange={(value) => saveRecordPatch({ status: value })} options={Object.entries(LABOR_INTERVIEW_STATUS_LABELS).map(([value, label]) => ({ value, label }))} />
             </div>
             <Inp label="Zoom Recording Link" value={candidateEditDraft.zoom_recording_url} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, zoom_recording_url: value }))} />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -2462,9 +2694,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           setActiveIndex={setPdfReviewIndex}
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
-          saveField={savePdfFieldResponse}
           approveField={approvePdfField}
           exportFinalPdf={exportFinalPdf}
+          downloadArtifact={downloadArtifact}
           onClose={() => setShowGuideModal(false)}
         />
       )}
@@ -2476,10 +2708,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           responsesByTarget={responsesByTarget}
           responseDrafts={responseDrafts}
           savingKey={savingResponseKey}
-          activeIndex={questionReviewIndex}
-          setActiveIndex={setQuestionReviewIndex}
           setQuestionDraft={setQuestionResponseDraft}
-          saveQuestionResponse={saveCustomQuestionResponse}
           approveQuestion={approveCustomQuestion}
           onClose={() => setShowQuestionsModal(false)}
         />
