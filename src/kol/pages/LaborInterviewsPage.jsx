@@ -538,6 +538,8 @@ function AudioUploadPanel({
   const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}:${record?.updated_at || ""}`), [record?.id, record?.updated_at, fileName]);
   const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
   const hasProviderTurns = safeTranscriptTurns.length > 0;
+  const segmentationSource = String(transcription.segmentation_source || "");
+  const providerTurnLabel = segmentationSource === "xai_word_segments" ? "word-timed segment" : "speaker turn";
   const activeTurn = safeTranscriptTurns.find((turn) => isTurnActive(turn, currentTime));
   const visibleTurns = activeTurn
     ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
@@ -580,7 +582,7 @@ function AudioUploadPanel({
             <span>{fileName || "M4A, MP3, WAV, MP4, MKV"}</span>
             {duration && <span>{duration}</span>}
             {fileSize && <span>{fileSize}</span>}
-            {record?.transcript_text && <span>{hasProviderTurns ? `${safeTranscriptTurns.length} speaker turns` : "turn data required"}</span>}
+            {record?.transcript_text && <span>{hasProviderTurns ? `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}` : "turn data required"}</span>}
           </div>
         </div>
         <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
@@ -625,7 +627,7 @@ function AudioUploadPanel({
             <div>
               <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Transcript</div>
               <div style={{ marginTop: 2, fontSize: 13, color: C.textSec, fontWeight: 750 }}>
-                {safeTranscriptTurns.length} turn{safeTranscriptTurns.length === 1 ? "" : "s"}{duration ? ` across ${duration}` : ""}
+                {safeTranscriptTurns.length} {providerTurnLabel}{safeTranscriptTurns.length === 1 ? "" : "s"}{duration ? ` across ${duration}` : ""}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

@@ -190,6 +190,21 @@ function turnFromSegment(segment: Record<string, unknown>, index: number): Trans
   };
 }
 
+function turnFromProviderWord(word: SttWord, index: number): TranscriptTurn | null {
+  const normalized = normalizeSttWord(word);
+  if (!normalized) return null;
+  const speaker = normalized.speaker ?? null;
+  return {
+    id: `xai-word-segment-${index}`,
+    speaker: speakerLabel(speaker),
+    speaker_id: speaker,
+    start: numberOrNull(normalized.start),
+    end: numberOrNull(normalized.end),
+    text: getWordText(normalized),
+    words: [normalized],
+  };
+}
+
 function buildProviderTranscriptTurns(result: SttResult) {
   const segmentSources = [
     { source: "xai_segments", segments: result.segments },
@@ -203,10 +218,20 @@ function buildProviderTranscriptTurns(result: SttResult) {
   const segmentedTurns = providerSegments
     .map((segment, index) => turnFromSegment(segment, index))
     .filter(Boolean) as TranscriptTurn[];
-  return { turns: segmentedTurns, source: providerSource?.source || "xai_missing_turns" };
+  if (segmentedTurns.length) return { turns: segmentedTurns, source: providerSource?.source || "xai_segments" };
+
+  const wordTurns = normalizeProviderWords(result)
+    .map((word, index) => turnFromProviderWord(word, index))
+    .filter(Boolean) as TranscriptTurn[];
+  if (wordTurns.length) return { turns: wordTurns, source: "xai_word_segments" };
+
+  return { turns: [], source: "xai_missing_turns" };
 }
 
-function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[]) {
+function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[], source = "") {
+  if (source === "xai_word_segments" && String(result.text || "").trim()) {
+    return String(result.text || "").trim();
+  }
   if (!turns.length) {
     return String(result.text || "").trim();
   }
@@ -381,12 +406,12 @@ serve(async (req) => {
         wordCount: normalizeProviderWords(stt).length,
       });
       throw new InterviewFunctionError(
-        "xAI Grok STT did not return structured transcript turns. The interview module requires provider segmentation and will not infer turns locally.",
+        "xAI Grok STT did not return provider transcript segments. The interview module will not infer turns locally.",
         502,
       );
     }
 
-    const transcript = buildSpeakerTranscript(stt, providerTurns.turns);
+    const transcript = buildSpeakerTranscript(stt, providerTurns.turns, providerTurns.source);
     if (!transcript) {
       throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
     }
