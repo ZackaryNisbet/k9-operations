@@ -48,7 +48,7 @@ function asArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [];
 }
 
-function buildTargets(record: Record<string, unknown>): DraftTarget[] {
+function buildTargets(record: Record<string, unknown>, options: { autoScoreCandidate?: boolean } = {}): DraftTarget[] {
   const snapshot = (record.template_snapshot || {}) as Record<string, unknown>;
   const questions = asArray(snapshot.questions || record.question_snapshot);
   const version = (snapshot.version || {}) as Record<string, unknown>;
@@ -76,7 +76,7 @@ function buildTargets(record: Record<string, unknown>): DraftTarget[] {
       const mappedQuestion = questionByMappedField.get(fieldName);
       const fieldPrompt = mappedQuestion?.prompt
         ? `PDF field "${fieldName}" should answer this interview prompt: ${String(mappedQuestion.prompt)}`
-        : buildPdfFieldPrompt(fieldName);
+        : buildPdfFieldPrompt(fieldName, options);
       return {
         target_type: "pdf_field" as const,
         key: fieldName,
@@ -89,14 +89,26 @@ function buildTargets(record: Record<string, unknown>): DraftTarget[] {
   return [...questionTargets, ...fieldTargets];
 }
 
-function buildPdfFieldPrompt(fieldName: string) {
+function buildPdfFieldPrompt(fieldName: string, options: { autoScoreCandidate?: boolean } = {}) {
   const normalized = fieldName.toLowerCase().replace(/[^a-z0-9]+/g, "_");
   if (/candidate.*name|applicant.*name|full.*name/.test(normalized)) return `Candidate full name from interview metadata for PDF field "${fieldName}".`;
   if (/position|role/.test(normalized)) return `Candidate role or position from interview metadata for PDF field "${fieldName}".`;
-  if (/interview.*date|date/.test(normalized)) return `Interview date from interview metadata for PDF field "${fieldName}".`;
+  if (/scorecard.*date|interview.*date|date/.test(normalized)) return `Interview date from interview metadata for PDF field "${fieldName}".`;
   if (/interview.*time|time/.test(normalized)) return `Interview time from interview metadata for PDF field "${fieldName}".`;
   if (/interviewer|manager/.test(normalized)) return `Interviewer name from interview metadata for PDF field "${fieldName}".`;
-  if (/recommend|decision|next.*step|status/.test(normalized)) return `Hiring recommendation from interview metadata for PDF field "${fieldName}".`;
+  const scorecardField = /score|decision|strongest|concern|recommend|move.*forward|second.*interview/.test(normalized);
+  if (scorecardField && !options.autoScoreCandidate) {
+    return `Scorecard field "${fieldName}" is manager-controlled. Return an empty draft_text unless the transcript explicitly contains the manager's stated score or decision.`;
+  }
+  if (/score.*notes|notes.*score|strongest|concern/.test(normalized)) {
+    return `Draft the scorecard note for PDF field "${fieldName}" from transcript evidence only. Be concise, specific, and manager-ready.`;
+  }
+  if (/^score_|overall_score|rating/.test(normalized)) {
+    return `Automatically score PDF field "${fieldName}" from the transcript only. Use a 1-4 score where 1 is poor, 2 is concerning, 3 is solid, and 4 is excellent. Return only the score number.`;
+  }
+  if (/decision.*do.*not|do.*not.*move|decision.*move.*forward|move.*forward|decision.*reservation|reservation|decision.*second|second.*interview|recommend|next.*step|status/.test(normalized)) {
+    return `Choose the hiring recommendation for PDF field "${fieldName}" from transcript evidence only. For selected checkbox-like decision fields, return "X"; for unselected decision fields, return an empty draft_text.`;
+  }
   return `PDF field "${fieldName}". Draft only if the transcript clearly supports what belongs in this form field.`;
 }
 
@@ -117,6 +129,12 @@ function cleanEvidence(value: unknown) {
     .map((entry) => String(entry || "").trim().slice(0, 240))
     .filter(Boolean)
     .slice(0, 3);
+}
+
+function asBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.trim().toLowerCase() === "true";
+  return false;
 }
 
 async function readProviderError(response: Response, data: Record<string, unknown> | null) {
@@ -451,13 +469,17 @@ serve(async (req) => {
       return jsonResponse({ error: "Transcript text is required before Grok drafting." }, 400);
     }
 
-    const targets = buildTargets(record as Record<string, unknown>);
+    const metadata = getRecordMetadata(record as Record<string, unknown>);
+    const draftJob = getDraftJob(record as Record<string, unknown>);
+    const autoScoreCandidate = asBoolean(
+      requestBody.auto_score_candidate ?? draftJob.auto_score_candidate ?? metadata.auto_score_candidate ?? false,
+    );
+
+    const targets = buildTargets(record as Record<string, unknown>, { autoScoreCandidate });
     if (targets.length === 0) {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
     }
 
-    const metadata = getRecordMetadata(record as Record<string, unknown>);
-    const draftJob = getDraftJob(record as Record<string, unknown>);
     const existingRequestId = String(draftJob.request_id || "").trim();
 
     if (action === "start") {
@@ -487,7 +509,9 @@ serve(async (req) => {
               status: "pending",
               started_at: startedAt,
               target_count: targets.length,
+              auto_score_candidate: autoScoreCandidate,
             },
+            auto_score_candidate: autoScoreCandidate,
           },
           updated_by_user_id: userId,
           updated_at: startedAt,
@@ -525,6 +549,7 @@ serve(async (req) => {
               status: "pending",
               last_polled_at: polledAt,
               target_count: Number(draftJob.target_count || targets.length),
+              auto_score_candidate: autoScoreCandidate,
             },
           },
           updated_by_user_id: userId,

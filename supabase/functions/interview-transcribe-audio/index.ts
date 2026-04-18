@@ -53,9 +53,28 @@ class InterviewFunctionError extends Error {
 
 type SttWord = {
   text?: string;
+  word?: string;
+  value?: string;
   start?: number;
+  start_seconds?: number;
+  start_time?: number;
   end?: number;
-  speaker?: number;
+  end_seconds?: number;
+  end_time?: number;
+  speaker?: number | string;
+  speaker_id?: number | string;
+  channel?: number;
+  confidence?: number;
+};
+
+type TranscriptTurn = {
+  id: string;
+  speaker: string;
+  speaker_id?: number | string | null;
+  start: number | null;
+  end: number | null;
+  text: string;
+  words: SttWord[];
 };
 
 type SttResult = {
@@ -63,6 +82,11 @@ type SttResult = {
   language?: string;
   duration?: number;
   words?: SttWord[];
+  segments?: Array<Record<string, unknown>>;
+  utterances?: Array<Record<string, unknown>>;
+  transcript_segments?: Array<Record<string, unknown>>;
+  speech_segments?: Array<Record<string, unknown>>;
+  turns?: Array<Record<string, unknown>>;
   channels?: Array<{ index?: number; text?: string; words?: SttWord[] }>;
 };
 
@@ -75,11 +99,52 @@ function jsonResponse(body: unknown, status = 200) {
 
 function cleanJoinedWords(words: SttWord[]) {
   return words
-    .map((word) => String(word.text || "").trim())
+    .map((word) => String(word.text || word.word || word.value || "").trim())
     .filter(Boolean)
     .join(" ")
     .replace(/\s+([.,!?;:])/g, "$1")
     .trim();
+}
+
+function numberOrNull(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getWordText(word: SttWord) {
+  return String(word.text || word.word || word.value || "").trim();
+}
+
+function normalizeSttWord(word: SttWord, channel?: number): SttWord | null {
+  const text = getWordText(word);
+  if (!text) return null;
+  return {
+    text,
+    start: numberOrNull(word.start ?? word.start_seconds ?? word.start_time) ?? undefined,
+    end: numberOrNull(word.end ?? word.end_seconds ?? word.end_time) ?? undefined,
+    speaker: word.speaker ?? word.speaker_id,
+    channel: channel ?? word.channel,
+    confidence: numberOrNull(word.confidence) ?? undefined,
+  };
+}
+
+function normalizeProviderWords(result: SttResult) {
+  const topLevelWords = Array.isArray(result.words) ? result.words.map((word) => normalizeSttWord(word)).filter(Boolean) as SttWord[] : [];
+  const channelWords = Array.isArray(result.channels)
+    ? result.channels.flatMap((channel) => (Array.isArray(channel.words) ? channel.words : [])
+        .map((word) => normalizeSttWord(word, channel.index))
+        .filter(Boolean) as SttWord[])
+    : [];
+  return [...topLevelWords, ...channelWords]
+    .sort((a, b) => Number(a.start ?? 0) - Number(b.start ?? 0));
+}
+
+function speakerLabel(value: unknown) {
+  const speaker = value == null || value === "" ? null : value;
+  if (speaker == null) return "Speaker";
+  const numeric = Number(speaker);
+  if (Number.isInteger(numeric)) return `Speaker ${numeric + 1}`;
+  return String(speaker);
 }
 
 function formatSeconds(value: unknown) {
@@ -106,29 +171,50 @@ function normalizeAudioMimeType(fileName: string, mimeType: string) {
   return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(fileName)] || "";
 }
 
-function buildSpeakerTranscript(result: SttResult) {
-  const words = Array.isArray(result.words) ? result.words : [];
-  if (!words.some((word) => Number.isInteger(word.speaker))) {
+function turnFromSegment(segment: Record<string, unknown>, index: number): TranscriptTurn | null {
+  const rawWords = Array.isArray(segment.words) ? segment.words as SttWord[] : [];
+  const words = rawWords.map((word) => normalizeSttWord(word)).filter(Boolean) as SttWord[];
+  const text = String(segment.text || cleanJoinedWords(words) || "").trim();
+  if (!text) return null;
+  const start = numberOrNull(segment.start ?? segment.start_seconds ?? segment.start_time ?? words[0]?.start);
+  const end = numberOrNull(segment.end ?? segment.end_seconds ?? segment.end_time ?? words[words.length - 1]?.end);
+  const speaker = segment.speaker ?? segment.speaker_id ?? words.find((word) => word.speaker != null)?.speaker ?? null;
+  return {
+    id: `xai-segment-${index}`,
+    speaker: speakerLabel(speaker),
+    speaker_id: speaker,
+    start,
+    end,
+    text,
+    words,
+  };
+}
+
+function buildProviderTranscriptTurns(result: SttResult) {
+  const segmentSources = [
+    { source: "xai_segments", segments: result.segments },
+    { source: "xai_utterances", segments: result.utterances },
+    { source: "xai_transcript_segments", segments: result.transcript_segments },
+    { source: "xai_speech_segments", segments: result.speech_segments },
+    { source: "xai_turns", segments: result.turns },
+  ];
+  const providerSource = segmentSources.find((entry) => Array.isArray(entry.segments) && entry.segments.length);
+  const providerSegments = providerSource?.segments || [];
+  const segmentedTurns = providerSegments
+    .map((segment, index) => turnFromSegment(segment, index))
+    .filter(Boolean) as TranscriptTurn[];
+  return { turns: segmentedTurns, source: providerSource?.source || "xai_missing_turns" };
+}
+
+function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[]) {
+  if (!turns.length) {
     return String(result.text || "").trim();
   }
 
-  const blocks: Array<{ speaker: number; words: SttWord[] }> = [];
-  for (const word of words) {
-    const speaker = Number.isInteger(word.speaker) ? Number(word.speaker) : 0;
-    const previous = blocks[blocks.length - 1];
-    if (!previous || previous.speaker !== speaker) {
-      blocks.push({ speaker, words: [word] });
-    } else {
-      previous.words.push(word);
-    }
-  }
-
-  return blocks
-    .map((block) => {
-      const timestamp = formatSeconds(block.words[0]?.start);
-      const label = `Speaker ${block.speaker + 1}`;
-      const text = cleanJoinedWords(block.words);
-      return text ? `${timestamp ? `[${timestamp}] ` : ""}${label}: ${text}` : "";
+  return turns
+    .map((turn) => {
+      const timestamp = formatSeconds(turn.start);
+      return turn.text ? `${timestamp ? `[${timestamp}] ` : ""}${turn.speaker}: ${turn.text}` : "";
     })
     .filter(Boolean)
     .join("\n\n")
@@ -287,14 +373,27 @@ serve(async (req) => {
     }
 
     const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
-    const transcript = buildSpeakerTranscript(stt) || String(stt.text || "").trim();
+    const providerTurns = buildProviderTranscriptTurns(stt);
+    if (!providerTurns.turns.length) {
+      console.error("xAI Grok STT returned no structured transcript turns", {
+        responseKeys: Object.keys(stt || {}),
+        hasText: !!String(stt.text || "").trim(),
+        wordCount: normalizeProviderWords(stt).length,
+      });
+      throw new InterviewFunctionError(
+        "xAI Grok STT did not return structured transcript turns. The interview module requires provider segmentation and will not infer turns locally.",
+        502,
+      );
+    }
+
+    const transcript = buildSpeakerTranscript(stt, providerTurns.turns);
     if (!transcript) {
       throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
     }
 
     const existingMetadata = (record.metadata || {}) as Record<string, unknown>;
     const generatedAt = new Date().toISOString();
-    const wordCount = Array.isArray(stt.words) ? stt.words.length : null;
+    const wordCount = normalizeProviderWords(stt).length || null;
 
     const { error: updateError } = await supabase
       .from("labor_interview_records")
@@ -311,6 +410,8 @@ serve(async (req) => {
             duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
             word_count: wordCount,
             diarization_enabled: true,
+            segmentation_source: providerTurns.source,
+            transcript_turns: providerTurns.turns,
             source_audio: {
               bucket: audioBucket,
               path: audioPath,
@@ -334,6 +435,8 @@ serve(async (req) => {
       language: stt.language || null,
       duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
       word_count: wordCount,
+      turn_count: providerTurns.turns.length,
+      segmentation_source: providerTurns.source,
     });
   } catch (error) {
     const status = typeof error?.status === "number" ? error.status : 500;
