@@ -6,8 +6,8 @@ import {
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewAudioContentType,
+  getInterviewTranscriptTurns,
   INTERVIEW_AUDIO_MAX_BYTES,
-  parseInterviewTranscriptTurns,
   validateAiDraftPayload,
   validateInterviewAudioFile,
 } from "../kol/interviewData";
@@ -86,7 +86,7 @@ describe("interview PDF form utilities", () => {
       candidate_position: "Pet Care Technician",
       interview_date: "2026-04-12",
       interviewer_name: "Skyler Brooks",
-      decision_move_forward: "Proceed",
+      decision_move_forward: "X",
     });
   });
 });
@@ -172,13 +172,37 @@ describe("AI draft response validation", () => {
 });
 
 describe("interview transcript display helpers", () => {
-  it("removes stray CJK characters and segments long undiarized transcript text", () => {
+  it("removes stray CJK characters from transcript text", () => {
     const raw = `${"Candidate said they can work weekends. ".repeat(35)}漢字`;
     const cleaned = cleanInterviewTranscriptText(raw);
-    const turns = parseInterviewTranscriptTurns(raw);
 
     expect(cleaned).not.toContain("漢");
-    expect(turns.length).toBeGreaterThan(1);
-    expect(turns[0]).toMatchObject({ speaker: "Transcript", timestamp: "" });
+  });
+
+  it("renders transcript turns only from provider turn metadata in the app path", () => {
+    const withoutProviderTurns = getInterviewTranscriptTurns({
+      transcript_text: "Speaker 1: Hello.\n\nSpeaker 2: Hi.",
+      metadata: { audio_transcription: {} },
+    });
+    const withProviderTurns = getInterviewTranscriptTurns({
+      metadata: {
+        audio_transcription: {
+          transcript_turns: [
+            {
+              id: "turn-1",
+              speaker: 0,
+              start: 1,
+              end: 2,
+              text: "Hello there.",
+              words: [{ text: "Hello", start: 1, end: 1.4, speaker: 0 }, { text: "there.", start: 1.4, end: 2, speaker: 0 }],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(withoutProviderTurns).toEqual([]);
+    expect(withProviderTurns).toHaveLength(1);
+    expect(withProviderTurns[0]).toMatchObject({ speaker: "Speaker 1", timestamp: "00:01", text: "Hello there." });
   });
 });

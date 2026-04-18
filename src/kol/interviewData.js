@@ -404,7 +404,9 @@ export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
   const interviewDate = record.interview_date || "";
   const interviewTime = record.interview_time || "";
   const interviewer = record.interviewer_name || "";
-  const recommendation = INTERVIEW_RECOMMENDATION_LABELS[getInterviewRecommendation(record)] || "";
+  const recommendationKey = getInterviewRecommendation(record);
+  const recommendation = INTERVIEW_RECOMMENDATION_LABELS[recommendationKey] || "";
+  const location = record.location_name || record.metadata?.location_name || record.metadata?.candidate_location || "";
 
   const aliases = {
     candidate_name: fullName,
@@ -420,6 +422,10 @@ export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
     time: interviewTime,
     interviewer,
     interviewer_name: interviewer,
+    scorecard_interviewer: interviewer,
+    location,
+    candidate_location: location,
+    scorecard_date: interviewDate,
     recommendation,
     next_step: recommendation,
   };
@@ -430,11 +436,17 @@ export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
     const name = field?.name;
     const normalized = normalizeFieldName(name);
     if (!name || map[name]) return;
+    const checkedValue = field?.type === "checkbox" ? "yes" : "X";
     if (/candidate.*name|applicant.*name|full.*name/.test(normalized)) putIfValue(map, name, fullName);
     else if (/position|role/.test(normalized)) putIfValue(map, name, position);
-    else if (/interview.*date|date/.test(normalized)) putIfValue(map, name, interviewDate);
+    else if (/scorecard.*date|interview.*date|date/.test(normalized)) putIfValue(map, name, interviewDate);
     else if (/interview.*time|time/.test(normalized)) putIfValue(map, name, interviewTime);
     else if (/interviewer|manager/.test(normalized)) putIfValue(map, name, interviewer);
+    else if (/location/.test(normalized)) putIfValue(map, name, location);
+    else if (/decision.*do.*not|do.*not.*move|pass/.test(normalized)) putIfValue(map, name, recommendationKey === "pass" ? checkedValue : "");
+    else if (/decision.*reservation|move.*forward.*reservation|hold/.test(normalized)) putIfValue(map, name, recommendationKey === "hold" ? checkedValue : "");
+    else if (/decision.*second|second.*interview/.test(normalized)) putIfValue(map, name, "");
+    else if (/decision.*move.*forward|move.*forward|proceed/.test(normalized)) putIfValue(map, name, recommendationKey === "proceed" ? checkedValue : "");
     else if (/recommend|decision|next.*step|status/.test(normalized)) putIfValue(map, name, recommendation);
   });
 
@@ -446,6 +458,7 @@ export function buildPdfResponseMap(responses = [], record = null, fields = []) 
   return (responses || []).reduce((map, response) => {
     if (response?.response_type !== "pdf_field" || !response.pdf_field_name) return map;
     const text = response.response_text ?? response.ai_draft_text ?? "";
+    if (text === "" && map[response.pdf_field_name]) return map;
     map[response.pdf_field_name] = text;
     return map;
   }, initial);
@@ -460,58 +473,68 @@ export function cleanInterviewTranscriptText(value = "") {
     .trim();
 }
 
-function normalizeTranscriptTimestamp(value = "") {
-  const raw = String(value || "").replace(/[^\d:]/g, "");
-  if (!raw) return "";
-  const parts = raw.split(":").map((part) => Number(part));
-  if (parts.some((part) => !Number.isFinite(part))) return raw;
-  if (parts.length === 2) return `${String(parts[0]).padStart(2, "0")}:${String(parts[1]).padStart(2, "0")}`;
-  if (parts.length === 3) return `${String(parts[0]).padStart(2, "0")}:${String(parts[1]).padStart(2, "0")}:${String(parts[2]).padStart(2, "0")}`;
-  return raw;
+function secondsToTranscriptTimestamp(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  const rounded = Math.floor(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remainder = rounded % 60;
+  if (hours > 0) return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
-export function parseInterviewTranscriptTurns(value = "") {
-  const text = cleanInterviewTranscriptText(value);
-  if (!text) return [];
-  const paragraphBlocks = text.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-  const blocks = paragraphBlocks.length === 1 && paragraphBlocks[0].length > 900
-    ? paragraphBlocks[0]
-        .split(/(?<=[.!?])\s+/)
-        .reduce((chunks, sentence) => {
-          const trimmed = sentence.trim();
-          if (!trimmed) return chunks;
-          const previous = chunks[chunks.length - 1] || "";
-          if (previous && `${previous} ${trimmed}`.length <= 760) {
-            chunks[chunks.length - 1] = `${previous} ${trimmed}`;
-          } else {
-            chunks.push(trimmed);
-          }
-          return chunks;
-        }, [])
-    : paragraphBlocks;
-  const turns = [];
-  const speakerPattern = /^(?:\[?((?:\d{1,2}:)?\d{1,2}:\d{2})\]?\s*)?(Speaker\s+\d+|Interviewer|Candidate|Manager|Applicant)\s*:\s*([\s\S]+)$/i;
+function normalizeProviderWord(word, index, turnId) {
+  const text = String(word?.text || word?.word || word?.value || "").trim();
+  if (!text) return null;
+  const startSeconds = Number(word?.start ?? word?.start_seconds ?? word?.start_time);
+  const endSeconds = Number(word?.end ?? word?.end_seconds ?? word?.end_time);
+  return {
+    id: `${turnId}-w${index}`,
+    text,
+    startSeconds: Number.isFinite(startSeconds) ? startSeconds : null,
+    endSeconds: Number.isFinite(endSeconds) ? endSeconds : null,
+    speaker: word?.speaker ?? word?.speaker_id ?? null,
+  };
+}
 
-  blocks.forEach((block, index) => {
-    const match = block.match(speakerPattern);
-    if (match) {
-      turns.push({
-        id: `${index}-${match[2]}`,
-        timestamp: normalizeTranscriptTimestamp(match[1] || ""),
-        speaker: match[2].replace(/\s+/g, " ").trim(),
-        text: match[3].trim(),
-      });
-      return;
-    }
-    turns.push({
-      id: `${index}-transcript`,
-      timestamp: "",
-      speaker: "Transcript",
-      text: block,
-    });
-  });
+function normalizeProviderTranscriptTurns(turns = []) {
+  if (!Array.isArray(turns)) return [];
+  return turns.map((turn, index) => {
+    const id = String(turn?.id || `provider-${index}`);
+    const startSeconds = Number(turn?.startSeconds ?? turn?.start_seconds ?? turn?.start ?? turn?.start_time);
+    const endSeconds = Number(turn?.endSeconds ?? turn?.end_seconds ?? turn?.end ?? turn?.end_time);
+    const rawSpeaker = turn?.speaker_label ?? turn?.speaker ?? turn?.speaker_id;
+    const numericSpeaker = Number(rawSpeaker);
+    const speaker = rawSpeaker == null || rawSpeaker === ""
+      ? "Speaker"
+      : Number.isInteger(numericSpeaker) ? `Speaker ${numericSpeaker + 1}` : String(rawSpeaker);
+    const words = (Array.isArray(turn?.words) ? turn.words : [])
+      .map((word, wordIndex) => normalizeProviderWord(word, wordIndex, id))
+      .filter(Boolean);
+    const text = String(turn?.text || words.map((word) => word.text).join(" ") || "").trim();
+    if (!text) return null;
+    const safeStart = Number.isFinite(startSeconds) ? startSeconds : (words[0]?.startSeconds ?? null);
+    const safeEnd = Number.isFinite(endSeconds) ? endSeconds : (words[words.length - 1]?.endSeconds ?? null);
+    return {
+      id,
+      timestamp: secondsToTranscriptTimestamp(safeStart),
+      startSeconds: safeStart,
+      endSeconds: safeEnd,
+      speaker,
+      text,
+      words,
+      estimatedTiming: false,
+      providerSegment: true,
+    };
+  }).filter(Boolean);
+}
 
-  return turns;
+export function getInterviewTranscriptTurns(record = {}) {
+  const transcription = record?.metadata?.audio_transcription || {};
+  return normalizeProviderTranscriptTurns(
+    transcription.transcript_turns || transcription.provider_turns || transcription.segments || [],
+  );
 }
 
 export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {

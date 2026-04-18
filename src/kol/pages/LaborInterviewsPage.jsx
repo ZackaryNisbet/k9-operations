@@ -10,6 +10,7 @@ import {
   buildPdfResponseMap,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewTranscriptTurns,
   getInterviewRecommendation,
   getInterviewRecommendationOption,
   getInterviewAudioContentType,
@@ -23,7 +24,6 @@ import {
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
   normalizeInterviewCandidateDraft,
   normalizeQuestionKey,
-  parseInterviewTranscriptTurns,
   pdfFieldsFromSnapshot,
   PDF_VERIFICATION_LABELS,
   questionRowsFromSnapshot,
@@ -258,6 +258,66 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+function formatPlaybackTime(seconds) {
+  const value = Number(seconds || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0:00";
+  const minutes = Math.floor(value / 60);
+  const remainder = Math.floor(value % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function isTurnActive(turn, currentTime) {
+  const time = Number(currentTime || 0);
+  if (!Number.isFinite(time) || turn.startSeconds == null || turn.endSeconds == null) return false;
+  return time >= turn.startSeconds && time <= turn.endSeconds;
+}
+
+function TranscriptWords({ turn, currentTime, maxWords = null }) {
+  const words = Array.isArray(turn?.words) && turn.words.length
+    ? turn.words
+    : String(turn?.text || "").split(/\s+/).filter(Boolean).map((text, index) => ({ id: `${turn?.id || "turn"}-${index}`, text }));
+  const visibleWords = maxWords ? words.slice(0, maxWords) : words;
+  const time = Number(currentTime || 0);
+  return (
+    <span>
+      {visibleWords.map((word) => {
+        const active = Number.isFinite(time)
+          && word.startSeconds != null
+          && word.endSeconds != null
+          && time >= word.startSeconds
+          && time <= word.endSeconds;
+        return (
+          <span
+            key={word.id}
+            style={{
+              display: "inline-block",
+              marginRight: 4,
+              marginBottom: 2,
+              borderRadius: 4,
+              padding: "0 2px",
+              background: active ? "#dcfce7" : "transparent",
+              color: active ? C.pri : "inherit",
+              transition: "background 120ms ease, color 120ms ease",
+            }}
+          >
+            {word.text}
+          </span>
+        );
+      })}
+      {maxWords && words.length > maxWords && <span style={{ color: C.textMut }}>...</span>}
+    </span>
+  );
+}
+
+function getAutoScoreStorageKey(actorUserId) {
+  return `k9:labor-interviews:auto-score:${actorUserId || "local"}`;
+}
+
+function readAutoScoreSetting(storageKey) {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(storageKey) === "true";
+}
+
 function seededWaveBars(seed = "") {
   let state = 0;
   String(seed || "interview").split("").forEach((char) => {
@@ -434,8 +494,8 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <SegmentedRecommendation value={recommendation} onChange={onRecommendationChange} disabled={saving} />
-          <IconButton label="Edit candidate details" onClick={onEdit}>{"E"}</IconButton>
-          <IconButton label="Delete interview" variant="danger" onClick={onDelete}>{"x"}</IconButton>
+          <Btn variant="secondary" size="sm" onClick={onEdit}>Edit Details</Btn>
+          <Btn variant="danger" size="sm" onClick={onDelete}>Delete</Btn>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
@@ -449,14 +509,39 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
   );
 }
 
-function AudioUploadPanel({ record, audioFileName, transcribing, drafting, onUpload, onTranscriptClick, inputRef }) {
+function AudioUploadPanel({
+  record,
+  audioFileName,
+  transcribing,
+  drafting,
+  onUpload,
+  onTranscriptClick,
+  inputRef,
+  audioRef,
+  audioUrl,
+  audioPlaying,
+  currentTime,
+  audioDuration,
+  transcriptTurns = [],
+  onPlayToggle,
+  onAudioTimeUpdate,
+  onAudioLoadedMetadata,
+  onAudioEnded,
+}) {
   const sourceAudio = record?.metadata?.audio_transcription?.source_audio || {};
   const transcription = record?.metadata?.audio_transcription || {};
   const fileName = audioFileName || sourceAudio.file_name || "";
-  const duration = formatDuration(transcription.duration_seconds);
+  const durationSeconds = Number(transcription.duration_seconds || audioDuration || 0);
+  const duration = formatDuration(durationSeconds);
   const fileSize = formatFileSize(sourceAudio.size_bytes);
   const complete = !!record?.transcript_text && !transcribing && !drafting;
   const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}:${record?.updated_at || ""}`), [record?.id, record?.updated_at, fileName]);
+  const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
+  const hasProviderTurns = safeTranscriptTurns.length > 0;
+  const activeTurn = safeTranscriptTurns.find((turn) => isTurnActive(turn, currentTime));
+  const visibleTurns = activeTurn
+    ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
+    : safeTranscriptTurns.slice(0, 4);
 
   const handleDrop = (event) => {
     event.preventDefault();
@@ -495,13 +580,24 @@ function AudioUploadPanel({ record, audioFileName, transcribing, drafting, onUpl
             <span>{fileName || "M4A, MP3, WAV, MP4, MKV"}</span>
             {duration && <span>{duration}</span>}
             {fileSize && <span>{fileSize}</span>}
-            {record?.transcript_text && <button type="button" onClick={onTranscriptClick} style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}>Review transcript</button>}
+            {record?.transcript_text && <span>{hasProviderTurns ? `${safeTranscriptTurns.length} speaker turns` : "turn data required"}</span>}
           </div>
         </div>
         <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
           {transcribing || drafting ? "Processing..." : complete ? "Replace Audio" : "Choose File"}
         </Btn>
       </div>
+      {audioUrl && (
+        <audio
+          ref={audioRef}
+          src={audioUrl}
+          preload="metadata"
+          onTimeUpdate={onAudioTimeUpdate}
+          onLoadedMetadata={onAudioLoadedMetadata}
+          onEnded={onAudioEnded}
+          style={{ display: "none" }}
+        />
+      )}
       <div style={{ marginTop: 18, height: 120, borderRadius: 8, background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderLight}`, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px" }}>
         <div style={{ position: "absolute", inset: 0, opacity: transcribing || drafting ? 1 : 0.35, background: "radial-gradient(circle at 30% 50%, rgba(132,204,22,0.12), transparent 38%), radial-gradient(circle at 70% 50%, rgba(37,99,235,0.10), transparent 32%)" }} />
         {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
@@ -523,33 +619,88 @@ function AudioUploadPanel({ record, audioFileName, transcribing, drafting, onUpl
           ))}
         </div>
       </div>
+      {record?.transcript_text && (
+        <div style={{ marginTop: 14, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+          <div style={{ padding: "11px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Transcript</div>
+              <div style={{ marginTop: 2, fontSize: 13, color: C.textSec, fontWeight: 750 }}>
+                {safeTranscriptTurns.length} turn{safeTranscriptTurns.length === 1 ? "" : "s"}{duration ? ` across ${duration}` : ""}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn variant="secondary" size="sm" onClick={onPlayToggle} disabled={!audioUrl}>
+                {audioPlaying ? "Pause Audio" : "Play Audio"}
+              </Btn>
+              <span style={{ minWidth: 92, fontSize: 12, color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+                {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "grid" }}>
+            {!hasProviderTurns ? (
+              <div style={{ padding: 12, color: C.textMut, fontSize: 13 }}>
+                This record was transcribed before structured turn data was stored. Replace the audio to regenerate the transcript with provider timestamps and diarization.
+              </div>
+            ) : visibleTurns.map((turn) => {
+              const active = isTurnActive(turn, currentTime);
+              return (
+                <button
+                  type="button"
+                  key={turn.id}
+                  onClick={onTranscriptClick}
+                  style={{
+                    border: "none",
+                    borderBottom: `1px solid ${C.borderLight}`,
+                    background: active ? "#f0fdf4" : "#fff",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    padding: "10px 12px",
+                    display: "grid",
+                    gridTemplateColumns: "70px 104px minmax(0, 1fr)",
+                    gap: 10,
+                    fontFamily: "inherit",
+                    alignItems: "start",
+                  }}
+                >
+                  <span style={{ color: active ? C.pri : C.textMut, fontSize: 12, fontWeight: 850 }}>{turn.timestamp || "--:--"}</span>
+                  <span style={{ color: active ? C.pri : C.textSec, fontSize: 12, fontWeight: 900 }}>{turn.speaker}</span>
+                  <span style={{ color: C.textSec, fontSize: 13, lineHeight: 1.45, overflow: "hidden" }}>
+                    <TranscriptWords turn={turn} currentTime={currentTime} maxWords={28} />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function TranscriptModal({ text, onClose }) {
-  const turns = parseInterviewTranscriptTurns(text);
-  const hasSpeakers = turns.some((turn) => turn.speaker !== "Transcript");
+function TranscriptModal({ turns, currentTime, onClose }) {
+  const safeTurns = Array.isArray(turns) ? turns : [];
+  const hasSpeakers = safeTurns.some((turn) => turn.speaker !== "Transcript");
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 92vw)", maxHeight: "86vh", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 24px 70px rgba(2,6,23,0.24)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
             <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Transcript</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{turns.length} {hasSpeakers ? "speaker turn" : "transcript segment"}{turns.length === 1 ? "" : "s"}</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{safeTurns.length} {hasSpeakers ? "speaker turn" : "transcript segment"}{safeTurns.length === 1 ? "" : "s"}</div>
           </div>
           <IconButton label="Close transcript" onClick={onClose}>{"x"}</IconButton>
         </div>
         <div style={{ padding: 18, overflowY: "auto", background: C.surfaceHover }}>
-          {turns.length === 0 ? (
-            <EmptyState title="No Transcript" body="Upload interview audio to generate a transcript." />
+          {safeTurns.length === 0 ? (
+            <EmptyState title="No Transcript" body="Replace the audio to regenerate this record with structured transcript turns." />
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {turns.map((turn) => (
-                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px 120px minmax(0, 1fr)", gap: 12, alignItems: "start", background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
+              {safeTurns.map((turn) => (
+                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px 120px minmax(0, 1fr)", gap: 12, alignItems: "start", background: isTurnActive(turn, currentTime) ? "#f0fdf4" : "#fff", border: `1px solid ${isTurnActive(turn, currentTime) ? "#bbf7d0" : C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
                   <div style={{ fontSize: 12, color: C.textMut, fontWeight: 850 }}>{turn.timestamp || "--:--"}</div>
                   <div style={{ fontSize: 12, color: C.pri, fontWeight: 900 }}>{turn.speaker}</div>
-                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>{turn.text}</div>
+                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}><TranscriptWords turn={turn} currentTime={currentTime} /></div>
                 </div>
               ))}
             </div>
@@ -872,11 +1023,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [templateActionId, setTemplateActionId] = useState("");
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
   const [audioFileName, setAudioFileName] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [showConfigSettings, setShowConfigSettings] = useState(false);
+  const [autoScoreCandidates, setAutoScoreCandidates] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
   const audioInputRef = useRef(null);
+  const audioPlayerRef = useRef(null);
 
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
@@ -906,6 +1064,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const responsesByTarget = useMemo(() => mapResponsesByTarget(responses), [responses]);
+  const autoScoreStorageKey = useMemo(() => getAutoScoreStorageKey(actorUserId), [actorUserId]);
+  const selectedTranscriptTurns = useMemo(() => {
+    const durationSeconds = Number(selectedRecord?.metadata?.audio_transcription?.duration_seconds || audioDuration || 0);
+    return getInterviewTranscriptTurns(selectedRecord || {}, { durationSeconds });
+  }, [audioDuration, selectedRecord]);
 
   const metrics = useMemo(() => {
     const completed = records.filter((record) => record.status === "completed").length;
@@ -1010,6 +1173,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [actorUserId, loadAll, locationRef]);
 
   useEffect(() => {
+    setAutoScoreCandidates(readAutoScoreSetting(autoScoreStorageKey));
+  }, [autoScoreStorageKey]);
+
+  useEffect(() => {
     const loadRecordDetail = async () => {
       if (!selectedRecord?.id) {
         setResponses([]);
@@ -1038,6 +1205,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setShowGuideModal(false);
     setShowQuestionsModal(false);
     setShowTranscriptModal(false);
+    setAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    if (audioPlayerRef.current) audioPlayerRef.current.pause();
   }, [selectedRecord?.id]);
 
   useEffect(() => {
@@ -1085,6 +1256,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedSnapshot]);
 
   useEffect(() => {
+    const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
+    const path = sourceAudio.path;
+    const bucket = sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
+    if (!path) {
+      setAudioUrl("");
+      return;
+    }
+    let active = true;
+    supabase.storage.from(bucket).createSignedUrl(path, 60 * 30).then(({ data: signed, error }) => {
+      if (!active) return;
+      setAudioUrl(error ? "" : signed?.signedUrl || "");
+    });
+    return () => { active = false; };
+  }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
+
+  useEffect(() => {
     if (!showGuideModal) {
       setGuidePdfUrl("");
       return undefined;
@@ -1121,6 +1308,29 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [responses, selectedPdfFields, selectedRecord, selectedSnapshot, showGuideModal, showToast]);
+
+  const setAutoScorePreference = (enabled) => {
+    setAutoScoreCandidates(enabled);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(autoScoreStorageKey, enabled ? "true" : "false");
+    }
+  };
+
+  const toggleAudioPlayback = async () => {
+    const player = audioPlayerRef.current;
+    if (!player || !audioUrl) return;
+    try {
+      if (audioPlaying) {
+        player.pause();
+        setAudioPlaying(false);
+      } else {
+        await player.play();
+        setAudioPlaying(true);
+      }
+    } catch (error) {
+      showToast(safeUiError(error, "Audio playback failed"), "error");
+    }
+  };
 
   const createNewInterview = async () => {
     const normalized = normalizeInterviewCandidateDraft({
@@ -1295,7 +1505,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setAiDrafting(true);
     try {
       const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
-        body: { interview_id: interviewId, action: "start" },
+        body: { interview_id: interviewId, action: "start", auto_score_candidate: autoScoreCandidates },
       });
       if (startError) throw new Error(await readEdgeFunctionError(startError, "AI draft failed"));
 
@@ -1741,7 +1951,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         .select("*");
       if (error) throw error;
       setQuestions((prev) => [...prev, ...(created || [])]);
-      setNewQuestionDrafts((prev) => ({ ...prev, shared: { category: "Custom", prompt: "", mapped_pdf_field_name: "" } }));
+      setNewQuestionDrafts((prev) => ({ ...prev, shared: { category: draft.category || "Custom", prompt: "" } }));
       showToast("Shared question added");
     } catch (error) {
       showToast(safeUiError(error, "Failed to add shared question"), "error");
@@ -1806,43 +2016,49 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return <EmptyState title="Interview Tables Pending" body={schemaError} />;
   }
 
+  const inInterviewDetail = view === "records" && !!selectedRecord;
+
   return (
     <div>
       <InterviewStyles />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
-        <Metric label="Interviews" value={metrics.total} helper={locationName || data?.locationName || "Current location"} />
-        <Metric label="AI Drafts" value={metrics.aiDrafted} helper="Waiting on manager review" />
-        <Metric label="Completed" value={metrics.completed} helper="Final PDF exported" />
-        <Metric label="Verified PDFs" value={metrics.verifiedTemplates} helper="AcroForm templates" />
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
-        <div style={{ display: "inline-flex", border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
-          {[
-            { id: "records", label: "Interviews" },
-            { id: "config", label: "Configuration" },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setView(item.id)}
-              style={{
-                border: "none",
-                borderRight: item.id === "records" ? `1px solid ${C.border}` : "none",
-                background: view === item.id ? C.pri : C.surface,
-                color: view === item.id ? "#fff" : C.textSec,
-                padding: "9px 16px",
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+      {!inInterviewDetail && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
+          <Metric label="Interviews" value={metrics.total} helper={locationName || data?.locationName || "Current location"} />
+          <Metric label="AI Drafts" value={metrics.aiDrafted} helper="Waiting on manager review" />
+          <Metric label="Completed" value={metrics.completed} helper="Final PDF exported" />
+          <Metric label="Verified PDFs" value={metrics.verifiedTemplates} helper="AcroForm templates" />
         </div>
-        <Btn variant="primary" onClick={() => setShowNewInterview(true)} disabled={templateOptions.length === 0}>Add New Interview</Btn>
-      </div>
+      )}
+
+      {!inInterviewDetail && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ display: "inline-flex", border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+            {[
+              { id: "records", label: "Interviews" },
+              { id: "config", label: "Configuration" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setView(item.id)}
+                style={{
+                  border: "none",
+                  borderRight: item.id === "records" ? `1px solid ${C.border}` : "none",
+                  background: view === item.id ? C.pri : C.surface,
+                  color: view === item.id ? "#fff" : C.textSec,
+                  padding: "9px 16px",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <Btn variant="primary" onClick={() => setShowNewInterview(true)} disabled={templateOptions.length === 0}>Add New Interview</Btn>
+        </div>
+      )}
 
       {view === "records" && !selectedRecord && (
         <InterviewRoster records={records} onOpen={setSelectedRecordId} />
@@ -1868,6 +2084,16 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             onUpload={handleAudioUpload}
             onTranscriptClick={() => setShowTranscriptModal(true)}
             inputRef={audioInputRef}
+            audioRef={audioPlayerRef}
+            audioUrl={audioUrl}
+            audioPlaying={audioPlaying}
+            currentTime={audioCurrentTime}
+            audioDuration={audioDuration}
+            transcriptTurns={selectedTranscriptTurns}
+            onPlayToggle={toggleAudioPlayback}
+            onAudioTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime || 0)}
+            onAudioLoadedMetadata={(event) => setAudioDuration(event.currentTarget.duration || 0)}
+            onAudioEnded={() => setAudioPlaying(false)}
           />
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
@@ -1912,8 +2138,40 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         <div style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <SectionHeading title="Interview Configuration" />
-            <Btn variant="primary" onClick={() => setShowNewPosition(true)}>Create Position Type</Btn>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn variant="secondary" onClick={() => setShowConfigSettings((prev) => !prev)}>Settings</Btn>
+              <Btn variant="primary" onClick={() => setShowNewPosition(true)}>Create Position Type</Btn>
+            </div>
           </div>
+
+          {showConfigSettings && (
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 950, color: C.text }}>Automatically Score Candidates</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: C.textMut, lineHeight: 1.45, maxWidth: 720 }}>
+                  When enabled, the interview guide scorecard is drafted from the structured transcript during the audio processing pass. The manager still reviews and approves every field.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoScorePreference(!autoScoreCandidates)}
+                aria-pressed={autoScoreCandidates}
+                style={{
+                  width: 142,
+                  height: 40,
+                  borderRadius: 8,
+                  border: `1px solid ${autoScoreCandidates ? C.pri : C.border}`,
+                  background: autoScoreCandidates ? C.pri : C.surfaceHover,
+                  color: autoScoreCandidates ? "#fff" : C.textSec,
+                  fontFamily: "inherit",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                {autoScoreCandidates ? "Scoring On" : "Scoring Off"}
+              </button>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
             {templates.map((template) => {
@@ -1973,59 +2231,75 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             </button>
 
             {configQuestionsOpen && (
-              <div style={{ padding: 14, display: "grid", gap: 10 }}>
-                {sharedQuestions.map((question) => {
-                  const draft = questionDrafts[question.id] || question;
-                  const canEdit = draftVersions.length > 0;
-                  return (
-                    <div
-                      key={question.id}
-                      draggable={canEdit}
-                      onDragStart={() => setDragQuestionId(question.id)}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => {
-                        reorderSharedQuestion(dragQuestionId, question.id);
-                        setDragQuestionId("");
-                      }}
-                      style={{ display: "grid", gridTemplateColumns: "34px minmax(110px, 160px) minmax(0, 1fr) minmax(120px, 180px) 38px", gap: 8, alignItems: "center", padding: 8, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff" }}
-                    >
-                      <div style={{ color: C.textMut, fontWeight: 950, textAlign: "center", cursor: canEdit ? "grab" : "default" }}>::</div>
-                      <input
-                        value={draft.category || ""}
-                        disabled={!canEdit}
-                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, category: event.target.value } }))}
-                        onBlur={(event) => saveSharedQuestion(question, { category: event.target.value })}
-                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 12, fontFamily: "inherit", color: C.text }}
-                      />
-                      <input
-                        value={draft.prompt || ""}
-                        disabled={!canEdit}
-                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, prompt: event.target.value } }))}
-                        onBlur={(event) => saveSharedQuestion(question, { prompt: event.target.value })}
-                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", color: C.text }}
-                      />
-                      <input
-                        value={draft.mapped_pdf_field_name || ""}
-                        disabled={!canEdit}
-                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, mapped_pdf_field_name: event.target.value } }))}
-                        onBlur={(event) => saveSharedQuestion(question, { mapped_pdf_field_name: event.target.value || null })}
-                        placeholder="PDF field"
-                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 12, fontFamily: "inherit", color: C.text }}
-                      />
-                      <IconButton label="Delete question" variant="danger" disabled={!canEdit} onClick={() => deleteSharedQuestion(question)}>{"x"}</IconButton>
+              <div style={{ padding: 16, display: "grid", gap: 14 }}>
+                {Object.entries(sharedQuestions.reduce((groups, question) => {
+                  const category = question.category || "Custom";
+                  if (!groups[category]) groups[category] = [];
+                  groups[category].push(question);
+                  return groups;
+                }, {})).map(([category, categoryQuestions]) => (
+                  <div key={category} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+                    <div style={{ padding: "10px 12px", background: C.surfaceHover, borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ color: C.text, fontSize: 13, fontWeight: 950 }}>{category}</div>
+                      <div style={{ color: C.textMut, fontSize: 12, fontWeight: 800 }}>{categoryQuestions.length} question{categoryQuestions.length === 1 ? "" : "s"}</div>
                     </div>
-                  );
-                })}
+                    <div style={{ display: "grid" }}>
+                      {categoryQuestions.map((question) => {
+                        const draft = questionDrafts[question.id] || question;
+                        const canEdit = draftVersions.length > 0;
+                        return (
+                          <div
+                            key={question.id}
+                            draggable={canEdit}
+                            onDragStart={() => setDragQuestionId(question.id)}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={() => {
+                              reorderSharedQuestion(dragQuestionId, question.id);
+                              setDragQuestionId("");
+                            }}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "34px minmax(120px, 180px) minmax(0, 1fr) auto",
+                              gap: 10,
+                              alignItems: "center",
+                              padding: "10px 12px",
+                              borderBottom: `1px solid ${C.borderLight}`,
+                              background: "#fff",
+                            }}
+                          >
+                            <div style={{ color: C.textMut, fontWeight: 950, textAlign: "center", cursor: canEdit ? "grab" : "default" }}>::</div>
+                            <input
+                              value={draft.category || ""}
+                              disabled={!canEdit}
+                              aria-label="Question category"
+                              onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, category: event.target.value } }))}
+                              onBlur={(event) => saveSharedQuestion(question, { category: event.target.value })}
+                              style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", color: C.text, background: canEdit ? "#fff" : C.surfaceHover }}
+                            />
+                            <input
+                              value={draft.prompt || ""}
+                              disabled={!canEdit}
+                              aria-label="Question prompt"
+                              onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, prompt: event.target.value } }))}
+                              onBlur={(event) => saveSharedQuestion(question, { prompt: event.target.value })}
+                              style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", color: C.text, background: canEdit ? "#fff" : C.surfaceHover }}
+                            />
+                            <Btn variant="danger" size="sm" disabled={!canEdit} onClick={() => deleteSharedQuestion(question)}>Delete</Btn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
 
                 {draftVersions.length === 0 && (
                   <div style={{ padding: 12, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, color: C.textMut, fontSize: 13 }}>Create a draft position template to edit shared questions.</div>
                 )}
 
                 {draftVersions.length > 0 && (
-                  <div style={{ display: "grid", gridTemplateColumns: "150px minmax(0, 1fr) minmax(130px, 180px) auto", gap: 8, alignItems: "center", padding: 10, border: `1.5px dashed ${C.border}`, borderRadius: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "180px minmax(0, 1fr) auto", gap: 10, alignItems: "end", padding: 12, border: `1.5px dashed ${C.border}`, borderRadius: 8, background: C.surfaceHover }}>
                     <Inp label="Category" value={newQuestionDrafts.shared?.category || "Custom"} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), category: value } }))} />
                     <Inp label="New Question" value={newQuestionDrafts.shared?.prompt || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), prompt: value } }))} />
-                    <Inp label="PDF Field" value={newQuestionDrafts.shared?.mapped_pdf_field_name || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), mapped_pdf_field_name: value } }))} />
                     <Btn variant="secondary" onClick={addSharedQuestion}>Add</Btn>
                   </div>
                 )}
@@ -2110,7 +2384,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {showTranscriptModal && selectedRecord && (
-        <TranscriptModal text={selectedRecord.transcript_text || ""} onClose={() => setShowTranscriptModal(false)} />
+        <TranscriptModal turns={selectedTranscriptTurns} currentTime={audioCurrentTime} onClose={() => setShowTranscriptModal(false)} />
       )}
 
       {showGuideModal && selectedRecord && (
