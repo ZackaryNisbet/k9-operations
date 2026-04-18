@@ -195,8 +195,7 @@ function InterviewStyles() {
       }
       .interview-row:hover { background: #f8fafc; }
       .interview-action-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08); }
-      .interview-audio-stage:hover .interview-audio-overlay,
-      .interview-audio-stage.is-playing .interview-audio-overlay {
+      .interview-audio-stage:hover .interview-audio-overlay {
         opacity: 1;
         pointer-events: auto;
       }
@@ -204,13 +203,11 @@ function InterviewStyles() {
         opacity: 0;
         pointer-events: none;
       }
-      .interview-audio-stage:hover .interview-audio-bars,
-      .interview-audio-stage.is-playing .interview-audio-bars {
+      .interview-audio-stage:hover .interview-audio-bars {
         filter: blur(2.5px) saturate(1.12);
         transform: scale(0.99);
       }
-      .interview-audio-stage:hover .interview-audio-signal,
-      .interview-audio-stage.is-playing .interview-audio-signal {
+      .interview-audio-stage:hover .interview-audio-signal {
         filter: blur(1.5px);
         opacity: 0.42;
       }
