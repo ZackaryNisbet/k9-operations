@@ -42,6 +42,43 @@ export const PDF_VERIFICATION_LABELS = {
 
 export const INTERVIEW_PDF_ACCEPT = "application/pdf";
 export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
+export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mkv,.mp3,.mp4,.ogg,.opus,.wav,.webm,audio/*,video/*";
+export const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
+export const INTERVIEW_AUDIO_MAX_LABEL = "500 MB";
+
+const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mkv", "mp3", "mp4", "ogg", "opus", "wav", "webm"]);
+const INTERVIEW_AUDIO_CONTENT_TYPES = {
+  aac: "audio/aac",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  mkv: "video/x-matroska",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
+  ogg: "audio/ogg",
+  opus: "audio/opus",
+  wav: "audio/wav",
+  webm: "audio/webm",
+};
+
+export const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = [
+  "audio/aac",
+  "audio/flac",
+  "audio/m4a",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/ogg",
+  "audio/opus",
+  "audio/wav",
+  "audio/webm",
+  "audio/x-matroska",
+  "audio/x-m4a",
+  "audio/x-wav",
+  "video/webm",
+  "video/mp4",
+  "video/x-matroska",
+  "application/x-matroska",
+];
 
 const PDF_FIELD_TYPE_LABELS = {
   text: "Text",
@@ -75,6 +112,35 @@ export function sanitizeInterviewFileName(value = "document.pdf") {
   return cleaned || "document.pdf";
 }
 
+function getFileExtension(fileName = "") {
+  const match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1] || "";
+}
+
+export function getInterviewAudioContentType(file = {}) {
+  const explicitType = String(file.type || "").trim().toLowerCase();
+  if (explicitType && explicitType !== "application/octet-stream") return explicitType;
+  return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(file.name)] || "audio/mpeg";
+}
+
+export function validateInterviewAudioFile(file) {
+  if (!file) return { ok: false, error: "Choose an interview audio file first." };
+  const extension = getFileExtension(file.name);
+  const contentType = getInterviewAudioContentType(file);
+  const isSupported = INTERVIEW_AUDIO_EXTENSIONS.has(extension)
+    || INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.includes(contentType);
+
+  if (!isSupported) {
+    return { ok: false, error: "Upload a supported audio file: AAC, FLAC, M4A, MKV, MP3, MP4, OGG, OPUS, WAV, or WebM." };
+  }
+
+  if (Number(file.size || 0) > INTERVIEW_AUDIO_MAX_BYTES) {
+    return { ok: false, error: `Interview audio must be ${INTERVIEW_AUDIO_MAX_LABEL} or smaller.` };
+  }
+
+  return { ok: true, contentType };
+}
+
 export function buildInterviewTemplatePdfPath({ locationId, templateId, versionNo, fileName }) {
   return [
     locationId,
@@ -92,6 +158,16 @@ export function buildInterviewTranscriptPath({ locationId, interviewId, fileName
     interviewId,
     "transcripts",
     sanitizeInterviewFileName(fileName || "transcript.txt"),
+  ].filter(Boolean).join("/");
+}
+
+export function buildInterviewAudioPath({ locationId, interviewId, fileName }) {
+  return [
+    locationId,
+    "interviews",
+    interviewId,
+    "audio",
+    sanitizeInterviewFileName(fileName || "interview-audio.m4a"),
   ].filter(Boolean).join("/");
 }
 
