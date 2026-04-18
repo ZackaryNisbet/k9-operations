@@ -6,6 +6,7 @@ import {
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewAudioContentType,
+  getInterviewRecommendation,
   getInterviewTranscriptTurns,
   INTERVIEW_AUDIO_MAX_BYTES,
   validateAiDraftPayload,
@@ -114,6 +115,14 @@ describe("interview template snapshots", () => {
   });
 });
 
+describe("interview recommendation labels", () => {
+  it("normalizes legacy hiring statuses to the two current manager decisions", () => {
+    expect(getInterviewRecommendation({ metadata: { hiring_recommendation: "proceed" } })).toBe("approve");
+    expect(getInterviewRecommendation({ metadata: { hiring_recommendation: "pass" } })).toBe("reject");
+    expect(getInterviewRecommendation({ metadata: { hiring_recommendation: "hold" } })).toBe("pending");
+  });
+});
+
 describe("interview audio helpers", () => {
   it("accepts Zoom-sized m4a audio and infers a storage-safe content type", () => {
     const file = { name: "candidate-interview.m4a", type: "", size: 25 * 1024 * 1024 };
@@ -203,6 +212,25 @@ describe("interview transcript display helpers", () => {
 
     expect(withoutProviderTurns).toEqual([]);
     expect(withProviderTurns).toHaveLength(1);
-    expect(withProviderTurns[0]).toMatchObject({ speaker: "Speaker 1", timestamp: "00:01", text: "Hello there." });
+    expect(withProviderTurns[0]).toMatchObject({ speaker: "Person 1", timestamp: "00:01", text: "Hello there." });
+  });
+
+  it("groups provider word-level diarization into speaker turns for review", () => {
+    const turns = getInterviewTranscriptTurns({
+      metadata: {
+        audio_transcription: {
+          segmentation_source: "xai_word_segments",
+          transcript_turns: [
+            { id: "w1", speaker: 0, start: 0, end: 0.2, text: "Hello", words: [{ text: "Hello", start: 0, end: 0.2, speaker: 0 }] },
+            { id: "w2", speaker: 0, start: 0.2, end: 0.4, text: "there", words: [{ text: "there", start: 0.2, end: 0.4, speaker: 0 }] },
+            { id: "w3", speaker: 1, start: 0.5, end: 0.8, text: "Hi", words: [{ text: "Hi", start: 0.5, end: 0.8, speaker: 1 }] },
+          ],
+        },
+      },
+    });
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ speaker: "Person 1", text: "Hello there" });
+    expect(turns[1]).toMatchObject({ speaker: "Person 2", text: "Hi" });
   });
 });

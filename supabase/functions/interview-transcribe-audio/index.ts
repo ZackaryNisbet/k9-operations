@@ -148,10 +148,15 @@ function normalizeProviderWords(result: SttResult) {
 
 function speakerLabel(value: unknown) {
   const speaker = value == null || value === "" ? null : value;
-  if (speaker == null) return "Speaker";
+  if (speaker == null) return "Person";
   const numeric = Number(speaker);
-  if (Number.isInteger(numeric)) return `Speaker ${numeric + 1}`;
-  return String(speaker);
+  if (Number.isInteger(numeric)) return `Person ${numeric + 1}`;
+  const text = String(speaker).trim();
+  const speakerMatch = text.match(/speaker[_\s-]*(\d+)/i);
+  if (speakerMatch) return `Person ${Number(speakerMatch[1]) + (speakerMatch[1] === "0" ? 1 : 0)}`;
+  const personMatch = text.match(/person[_\s-]*(\d+)/i);
+  if (personMatch) return `Person ${personMatch[1]}`;
+  return text;
 }
 
 function formatSeconds(value: unknown) {
@@ -212,6 +217,37 @@ function turnFromProviderWord(word: SttWord, index: number): TranscriptTurn | nu
   };
 }
 
+function turnsFromProviderWordsBySpeaker(words: SttWord[]) {
+  const normalizedWords = words.map((word) => normalizeSttWord(word)).filter(Boolean) as SttWord[];
+  if (!normalizedWords.length) return [];
+  const hasSpeakerIds = normalizedWords.some((word) => word.speaker != null && word.speaker !== "");
+  if (!hasSpeakerIds) return [];
+  const turns: TranscriptTurn[] = [];
+  normalizedWords.forEach((word) => {
+    const speaker = word.speaker ?? null;
+    const previous = turns[turns.length - 1];
+    const start = numberOrNull(word.start);
+    const end = numberOrNull(word.end);
+    const gap = previous?.end != null && start != null ? start - previous.end : 0;
+    if (previous && previous.speaker_id === speaker && gap <= 2.4) {
+      previous.words.push(word);
+      previous.text = cleanJoinedWords(previous.words);
+      previous.end = end ?? previous.end;
+      return;
+    }
+    turns.push({
+      id: `xai-speaker-turn-${turns.length}`,
+      speaker: speakerLabel(speaker),
+      speaker_id: speaker,
+      start,
+      end,
+      text: getWordText(word),
+      words: [word],
+    });
+  });
+  return turns;
+}
+
 function buildProviderTranscriptTurns(result: SttResult) {
   const segmentSources = [
     { source: "xai_segments", segments: result.segments },
@@ -227,7 +263,11 @@ function buildProviderTranscriptTurns(result: SttResult) {
     .filter(Boolean) as TranscriptTurn[];
   if (segmentedTurns.length) return { turns: segmentedTurns, source: providerSource?.source || "xai_segments" };
 
-  const wordTurns = normalizeProviderWords(result)
+  const providerWords = normalizeProviderWords(result);
+  const speakerTurns = turnsFromProviderWordsBySpeaker(providerWords);
+  if (speakerTurns.length) return { turns: speakerTurns, source: "xai_word_speaker_turns" };
+
+  const wordTurns = providerWords
     .map((word, index) => turnFromProviderWord(word, index))
     .filter(Boolean) as TranscriptTurn[];
   if (wordTurns.length) return { turns: wordTurns, source: "xai_word_segments" };
