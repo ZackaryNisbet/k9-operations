@@ -208,6 +208,8 @@ function normalizeTitle(value = "") {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export const PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY = "performance_review_template_role";
+
 export function normalizePerformanceReviewRole(value = "") {
   const title = normalizeTitle(value);
   if (!title) return "";
@@ -219,7 +221,42 @@ export function normalizePerformanceReviewRole(value = "") {
   return "";
 }
 
+export function normalizePerformanceReviewTemplateRoleKey(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const directKey = raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (PERFORMANCE_REVIEW_TEMPLATES[directKey]) return directKey;
+  const normalizedRole = normalizePerformanceReviewRole(raw);
+  return PERFORMANCE_REVIEW_TEMPLATES[normalizedRole] ? normalizedRole : "";
+}
+
+export function getPerformanceReviewTemplateOptions() {
+  return Object.values(PERFORMANCE_REVIEW_TEMPLATES).map((template) => ({
+    value: template.roleKey,
+    label: template.roleLabel,
+  }));
+}
+
+export function getPerformanceReviewTemplateOverrideKey(employee = {}) {
+  if (!employee || typeof employee !== "object") return "";
+  const metadata = employee.metadata && typeof employee.metadata === "object" ? employee.metadata : {};
+  return normalizePerformanceReviewTemplateRoleKey(
+    metadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY]
+      || metadata.performance_review_pdf_template_role
+      || metadata.performance_review_template_key
+      || employee.performance_review_template_role
+      || employee.performance_review_template_key
+      || ""
+  );
+}
+
 export function resolvePerformanceReviewTemplate(employeeOrPosition) {
+  if (employeeOrPosition && typeof employeeOrPosition === "object") {
+    const overrideKey = getPerformanceReviewTemplateOverrideKey(employeeOrPosition);
+    if (overrideKey && PERFORMANCE_REVIEW_TEMPLATES[overrideKey]) {
+      return PERFORMANCE_REVIEW_TEMPLATES[overrideKey];
+    }
+  }
   const position = typeof employeeOrPosition === "string"
     ? employeeOrPosition
     : employeeOrPosition?.position_title || employeeOrPosition?.target_role || "";
