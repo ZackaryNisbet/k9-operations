@@ -98,12 +98,12 @@ describe("interview audio helpers", () => {
     expect(getInterviewAudioContentType(file)).toBe("audio/mp4");
   });
 
-  it("rejects audio files over the 100 MB interview limit", () => {
+  it("rejects audio files over the xAI STT interview limit", () => {
     const file = { name: "candidate-interview.mp3", type: "audio/mpeg", size: INTERVIEW_AUDIO_MAX_BYTES + 1 };
 
     expect(validateInterviewAudioFile(file)).toMatchObject({
       ok: false,
-      error: "Interview audio must be 100 MB or smaller.",
+      error: "Interview audio must be 500 MB or smaller.",
     });
   });
 });

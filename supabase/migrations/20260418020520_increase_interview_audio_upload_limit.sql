@@ -1,8 +1,7 @@
--- Interview audio uploads need to support Zoom audio files safely up to 100 MB.
--- xAI STT currently accepts substantially larger files, so 100 MB is our app cap.
+-- Interview audio uploads are capped at xAI STT's current max upload size: 500 MB.
 UPDATE storage.buckets
 SET
-  file_size_limit = 104857600,
+  file_size_limit = 524288000,
   allowed_mime_types = ARRAY[
     'application/pdf',
     'text/plain',
@@ -17,8 +16,13 @@ SET
     'audio/ogg',
     'audio/opus',
     'audio/wav',
+    'audio/webm',
+    'audio/x-matroska',
     'audio/x-m4a',
     'audio/x-wav',
-    'video/mp4'
+    'video/mp4',
+    'video/webm',
+    'video/x-matroska',
+    'application/x-matroska'
   ]::text[]
 WHERE id = 'labor-interview-documents';

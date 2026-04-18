@@ -42,20 +42,22 @@ export const PDF_VERIFICATION_LABELS = {
 
 export const INTERVIEW_PDF_ACCEPT = "application/pdf";
 export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
-export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mp3,.mp4,.ogg,.opus,.wav,audio/*,video/mp4";
-export const INTERVIEW_AUDIO_MAX_BYTES = 100 * 1024 * 1024;
-export const INTERVIEW_AUDIO_MAX_LABEL = "100 MB";
+export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mkv,.mp3,.mp4,.ogg,.opus,.wav,.webm,audio/*,video/*";
+export const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
+export const INTERVIEW_AUDIO_MAX_LABEL = "500 MB";
 
-const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "mp4", "ogg", "opus", "wav"]);
+const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mkv", "mp3", "mp4", "ogg", "opus", "wav", "webm"]);
 const INTERVIEW_AUDIO_CONTENT_TYPES = {
   aac: "audio/aac",
   flac: "audio/flac",
   m4a: "audio/mp4",
+  mkv: "video/x-matroska",
   mp3: "audio/mpeg",
   mp4: "video/mp4",
   ogg: "audio/ogg",
   opus: "audio/opus",
   wav: "audio/wav",
+  webm: "audio/webm",
 };
 
 export const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = [
@@ -68,9 +70,14 @@ export const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = [
   "audio/ogg",
   "audio/opus",
   "audio/wav",
+  "audio/webm",
+  "audio/x-matroska",
   "audio/x-m4a",
   "audio/x-wav",
+  "video/webm",
   "video/mp4",
+  "video/x-matroska",
+  "application/x-matroska",
 ];
 
 const PDF_FIELD_TYPE_LABELS = {
@@ -124,7 +131,7 @@ export function validateInterviewAudioFile(file) {
     || INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.includes(contentType);
 
   if (!isSupported) {
-    return { ok: false, error: "Upload a supported audio file: AAC, FLAC, M4A, MP3, MP4, OGG, OPUS, or WAV." };
+    return { ok: false, error: "Upload a supported audio file: AAC, FLAC, M4A, MKV, MP3, MP4, OGG, OPUS, WAV, or WebM." };
   }
 
   if (Number(file.size || 0) > INTERVIEW_AUDIO_MAX_BYTES) {

@@ -11,7 +11,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const XAI_API_KEY = Deno.env.get("XAI_API_KEY") || "";
 const XAI_STT_MODEL = Deno.env.get("INTERVIEW_XAI_STT_MODEL") || Deno.env.get("XAI_STT_MODEL") || "grok-stt";
 const LABOR_INTERVIEW_DOCUMENT_BUCKET = "labor-interview-documents";
-const INTERVIEW_AUDIO_MAX_BYTES = 100 * 1024 * 1024;
+const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
 const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = new Set([
   "audio/aac",
   "audio/flac",
@@ -22,19 +22,26 @@ const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = new Set([
   "audio/ogg",
   "audio/opus",
   "audio/wav",
+  "audio/webm",
+  "audio/x-matroska",
   "audio/x-m4a",
   "audio/x-wav",
   "video/mp4",
+  "video/webm",
+  "video/x-matroska",
+  "application/x-matroska",
 ]);
 const INTERVIEW_AUDIO_CONTENT_TYPES: Record<string, string> = {
   aac: "audio/aac",
   flac: "audio/flac",
   m4a: "audio/mp4",
+  mkv: "video/x-matroska",
   mp3: "audio/mpeg",
   mp4: "video/mp4",
   ogg: "audio/ogg",
   opus: "audio/opus",
   wav: "audio/wav",
+  webm: "audio/webm",
 };
 
 type SttWord = {
@@ -187,7 +194,7 @@ serve(async (req) => {
       throw new Error(downloadError?.message || "Unable to download interview audio.");
     }
     if (audioBlob.size > INTERVIEW_AUDIO_MAX_BYTES) {
-      return jsonResponse({ error: "Interview audio must be 100 MB or smaller." }, 400);
+      return jsonResponse({ error: "Interview audio must be 500 MB or smaller." }, 400);
     }
     if (!INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.has(audioMimeType)) {
       return jsonResponse({ error: `Unsupported interview audio type: ${audioMimeType}.` }, 400);
