@@ -49,6 +49,20 @@
       "action": "deploy",
       "note": "Deduplicate same-stay reservation shadows and preserve room assignments",
       "updatedAt": "2026-04-16T20:31:06.004Z"
+    },
+    "interview-ai-draft": {
+      "commit": "b77b1f565242fa09323cd6f15c7fe517b1c9350f",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "interview Grok STT and deferred draft flow",
+      "updatedAt": "2026-04-18T03:13:05.070Z"
+    },
+    "interview-transcribe-audio": {
+      "commit": "b77b1f565242fa09323cd6f15c7fe517b1c9350f",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "interview Grok STT and deferred draft flow",
+      "updatedAt": "2026-04-18T03:13:05.070Z"
     }
   }
 }
