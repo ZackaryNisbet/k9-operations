@@ -156,6 +156,20 @@ function InterviewStyles() {
         0%, 100% { transform: scaleY(0.42); opacity: 0.52; }
         50% { transform: scaleY(1); opacity: 1; }
       }
+      @keyframes interviewWaveGlow {
+        0%, 100% { transform: translateX(-8%) scaleX(0.9); opacity: 0.28; }
+        50% { transform: translateX(8%) scaleX(1.06); opacity: 0.72; }
+      }
+      @keyframes interviewSignalTravel {
+        0% { transform: translateX(-18%); opacity: 0; }
+        12% { opacity: 0.92; }
+        88% { opacity: 0.92; }
+        100% { transform: translateX(118%); opacity: 0; }
+      }
+      @keyframes interviewParticleFloat {
+        0%, 100% { transform: translate3d(0, 0, 0) scale(0.82); opacity: 0.22; }
+        50% { transform: translate3d(0, -10px, 0) scale(1); opacity: 0.82; }
+      }
       @keyframes interviewScan {
         0% { transform: translateX(-26%); opacity: 0; }
         18% { opacity: 0.95; }
@@ -186,10 +200,19 @@ function InterviewStyles() {
         opacity: 1;
         pointer-events: auto;
       }
+      .interview-audio-overlay {
+        opacity: 0;
+        pointer-events: none;
+      }
       .interview-audio-stage:hover .interview-audio-bars,
       .interview-audio-stage.is-playing .interview-audio-bars {
-        filter: blur(2px);
-        transform: scale(0.996);
+        filter: blur(2.5px) saturate(1.12);
+        transform: scale(0.99);
+      }
+      .interview-audio-stage:hover .interview-audio-signal,
+      .interview-audio-stage.is-playing .interview-audio-signal {
+        filter: blur(1.5px);
+        opacity: 0.42;
       }
       .interview-modal-backdrop {
         position: fixed;
@@ -688,22 +711,79 @@ function AudioUploadPanel({
       )}
       <div
         className={`interview-audio-stage${audioPlaying ? " is-playing" : ""}`}
-        style={{ marginTop: 18, height: 144, borderRadius: 8, background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderLight}`, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px" }}
+        style={{
+          marginTop: 18,
+          height: 176,
+          borderRadius: 8,
+          background: "linear-gradient(135deg, #07130d 0%, #0f2f20 42%, #13243f 100%)",
+          border: "1px solid rgba(20,83,45,0.26)",
+          overflow: "hidden",
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 20px",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 18px 42px rgba(15,23,42,0.08)",
+        }}
       >
-        <div style={{ position: "absolute", inset: 0, opacity: transcribing || drafting ? 1 : 0.35, background: "radial-gradient(circle at 30% 50%, rgba(132,204,22,0.12), transparent 38%), radial-gradient(circle at 70% 50%, rgba(37,99,235,0.10), transparent 32%)" }} />
+        <div style={{ position: "absolute", inset: 0, opacity: 0.94, background: "radial-gradient(circle at 22% 52%, rgba(132,204,22,0.24), transparent 30%), radial-gradient(circle at 78% 38%, rgba(56,189,248,0.22), transparent 32%), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,0.025) 1px, transparent 1px)", backgroundSize: "auto, auto, 38px 38px, 38px 38px" }} />
+        <div style={{ position: "absolute", left: 16, right: 16, top: 18, height: 1, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.34), transparent)" }} />
+        <div style={{ position: "absolute", left: 16, right: 16, bottom: 18, height: 1, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent)" }} />
+        <div
+          className="interview-audio-signal"
+          style={{
+            position: "absolute",
+            left: "-12%",
+            top: 0,
+            bottom: 0,
+            width: "42%",
+            background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.06), rgba(132,204,22,0.22), rgba(56,189,248,0.14), transparent)",
+            animation: (transcribing || drafting || audioPlaying) ? "interviewSignalTravel 2.8s linear infinite" : "interviewWaveGlow 4.8s ease-in-out infinite",
+            transition: "filter 180ms ease, opacity 180ms ease",
+          }}
+        />
+        {bars.slice(0, 20).map((bar, index) => (
+          <span
+            key={`particle-${index}`}
+            style={{
+              position: "absolute",
+              left: `${5 + index * 4.7}%`,
+              top: `${18 + ((bar.height + index * 11) % 50)}%`,
+              width: 3 + (index % 3),
+              height: 3 + (index % 3),
+              borderRadius: 999,
+              background: index % 2 ? "rgba(132,204,22,0.72)" : "rgba(125,211,252,0.72)",
+              boxShadow: index % 2 ? "0 0 18px rgba(132,204,22,0.55)" : "0 0 18px rgba(125,211,252,0.52)",
+              animation: `interviewParticleFloat ${2.2 + (index % 6) * 0.24}s ease-in-out ${bar.delay}s infinite`,
+            }}
+          />
+        ))}
         {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
         {complete && <div style={{ position: "absolute", right: 16, top: 16, width: 12, height: 12, borderRadius: 99, background: C.suc, animation: "interviewCompletePulse 1.8s ease-out infinite" }} />}
-        <div className="interview-audio-bars" style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 4, width: "100%", height: 96, justifyContent: "center", transition: "filter 180ms ease, transform 180ms ease" }}>
+        <div style={{ position: "absolute", left: 24, top: 18, zIndex: 1, color: "rgba(255,255,255,0.66)", fontSize: 10, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+          Interview Audio
+        </div>
+        <div style={{ position: "absolute", right: 24, bottom: 18, zIndex: 1, color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: 850 }}>
+          {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
+        </div>
+        <div className="interview-audio-bars" style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 3, width: "100%", height: 112, justifyContent: "center", transition: "filter 180ms ease, transform 180ms ease" }}>
           {bars.map((bar, index) => (
             <div
               key={index}
               style={{
-                width: 5,
+                width: index % 7 === 0 ? 6 : 4,
                 height: bar.height,
                 borderRadius: 99,
-                background: index % 3 === 0 ? C.pri : index % 3 === 1 ? C.accDk : C.info,
-                opacity: bar.opacity,
+                background: index % 4 === 0
+                  ? "linear-gradient(180deg, #f8fafc, #84cc16)"
+                  : index % 4 === 1
+                    ? "linear-gradient(180deg, #bae6fd, #38bdf8)"
+                    : index % 4 === 2
+                      ? "linear-gradient(180deg, #d9f99d, #16a34a)"
+                      : "linear-gradient(180deg, rgba(255,255,255,0.82), rgba(148,163,184,0.44))",
+                opacity: Math.min(1, bar.opacity + 0.12),
                 transformOrigin: "center",
+                boxShadow: index % 5 === 0 ? "0 0 18px rgba(132,204,22,0.36)" : "none",
                 animation: transcribing || drafting || audioPlaying ? `interviewWaveFloat ${bar.duration}s ease-in-out ${bar.delay}s infinite` : "none",
               }}
             />
@@ -715,14 +795,12 @@ function AudioUploadPanel({
             position: "absolute",
             inset: 0,
             zIndex: 2,
-            opacity: 0,
-            pointerEvents: "none",
             transition: "opacity 180ms ease",
             display: "grid",
             gridTemplateRows: "minmax(0, 1fr) auto",
             alignItems: "center",
-            background: "rgba(248,250,252,0.58)",
-            backdropFilter: "blur(5px)",
+            background: "rgba(2,6,23,0.48)",
+            backdropFilter: "blur(8px)",
             padding: 16,
           }}
         >
@@ -736,18 +814,30 @@ function AudioUploadPanel({
               width: 58,
               height: 58,
               borderRadius: 999,
-              border: "none",
-              background: C.pri,
+              border: "1px solid rgba(255,255,255,0.58)",
+              background: "rgba(255,255,255,0.96)",
               color: "#fff",
               fontSize: 22,
               fontWeight: 900,
               cursor: audioUrl ? "pointer" : "not-allowed",
-              boxShadow: "0 14px 34px rgba(20,83,45,0.26)",
+              boxShadow: "0 18px 48px rgba(2,6,23,0.34)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            {audioPlaying ? "||" : "▶"}
+            {audioPlaying ? (
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="6" y="5" width="4" height="14" rx="1.5" fill={C.pri} />
+                <rect x="14" y="5" width="4" height="14" rx="1.5" fill={C.pri} />
+              </svg>
+            ) : (
+              <svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ marginLeft: 2 }}>
+                <path d="M8 5.8v12.4c0 .9 1 1.45 1.76.96l9.62-6.2a1.14 1.14 0 0 0 0-1.92L9.76 4.84C9 4.35 8 4.9 8 5.8Z" fill={C.pri} />
+              </svg>
+            )}
           </button>
-          <div style={{ display: "grid", gridTemplateColumns: "54px minmax(0, 1fr) 54px", gap: 10, alignItems: "center", color: C.textSec, fontSize: 12, fontWeight: 800 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "54px minmax(0, 1fr) 54px", gap: 10, alignItems: "center", color: "#f8fafc", fontSize: 12, fontWeight: 850 }}>
             <span>{formatPlaybackTime(currentTime)}</span>
             <input
               type="range"
@@ -761,7 +851,7 @@ function AudioUploadPanel({
                 if (audioRef.current) audioRef.current.currentTime = nextTime;
                 onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
               }}
-              style={{ width: "100%", accentColor: C.pri }}
+              style={{ width: "100%", accentColor: "#84cc16" }}
             />
             <span style={{ textAlign: "right" }}>{formatPlaybackTime(durationSeconds || audioDuration)}</span>
           </div>
