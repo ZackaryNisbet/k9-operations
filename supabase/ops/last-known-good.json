@@ -58,11 +58,11 @@
       "updatedAt": "2026-04-18T04:37:02.911Z"
     },
     "interview-transcribe-audio": {
-      "commit": "d4e0116ce2858088d07e4bf18b03e5763329cf7a",
+      "commit": "7d12daf89999bc6558b2706100c877ac0af539b6",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Require xAI structured transcript turns and improve interview review UI",
-      "updatedAt": "2026-04-18T04:37:02.911Z"
+      "note": "Use xAI provider word segments for interview transcript timing",
+      "updatedAt": "2026-04-18T04:41:08.216Z"
     }
   }
 }
