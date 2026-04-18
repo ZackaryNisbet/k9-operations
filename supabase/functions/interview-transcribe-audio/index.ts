@@ -106,13 +106,20 @@ function cleanJoinedWords(words: SttWord[]) {
     .trim();
 }
 
+function cleanTranscriptText(value: unknown) {
+  return String(value || "")
+    .replace(/[\u3400-\u9fff\u3040-\u30ff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function numberOrNull(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
 function getWordText(word: SttWord) {
-  return String(word.text || word.word || word.value || "").trim();
+  return cleanTranscriptText(word.text || word.word || word.value || "");
 }
 
 function normalizeSttWord(word: SttWord, channel?: number): SttWord | null {
@@ -229,11 +236,11 @@ function buildProviderTranscriptTurns(result: SttResult) {
 }
 
 function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[], source = "") {
-  if (source === "xai_word_segments" && String(result.text || "").trim()) {
-    return String(result.text || "").trim();
+  if (source === "xai_word_segments" && cleanTranscriptText(result.text)) {
+    return cleanTranscriptText(result.text);
   }
   if (!turns.length) {
-    return String(result.text || "").trim();
+    return cleanTranscriptText(result.text);
   }
 
   return turns
