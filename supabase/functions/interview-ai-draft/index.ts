@@ -53,6 +53,12 @@ function buildTargets(record: Record<string, unknown>): DraftTarget[] {
   const questions = asArray(snapshot.questions || record.question_snapshot);
   const version = (snapshot.version || {}) as Record<string, unknown>;
   const fields = asArray(version.pdf_field_manifest || record.pdf_field_manifest_snapshot);
+  const questionByMappedField = new Map<string, Record<string, unknown>>();
+
+  for (const question of questions) {
+    const mapped = String(question.mapped_pdf_field_name || "").trim();
+    if (mapped) questionByMappedField.set(mapped, question);
+  }
 
   const questionTargets = questions
     .filter((question) => question.question_key && question.prompt)
@@ -65,15 +71,33 @@ function buildTargets(record: Record<string, unknown>): DraftTarget[] {
 
   const fieldTargets = fields
     .filter((field) => field.name && field.type !== "signature")
-    .map((field) => ({
-      target_type: "pdf_field" as const,
-      key: String(field.name),
-      prompt: String(field.name),
-      field_type: field.type ? String(field.type) : null,
-      max_length: field.type === "text" ? 900 : 120,
-    }));
+    .map((field) => {
+      const fieldName = String(field.name);
+      const mappedQuestion = questionByMappedField.get(fieldName);
+      const fieldPrompt = mappedQuestion?.prompt
+        ? `PDF field "${fieldName}" should answer this interview prompt: ${String(mappedQuestion.prompt)}`
+        : buildPdfFieldPrompt(fieldName);
+      return {
+        target_type: "pdf_field" as const,
+        key: fieldName,
+        prompt: fieldPrompt,
+        field_type: field.type ? String(field.type) : null,
+        max_length: field.type === "text" ? 900 : 120,
+      };
+    });
 
   return [...questionTargets, ...fieldTargets];
+}
+
+function buildPdfFieldPrompt(fieldName: string) {
+  const normalized = fieldName.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (/candidate.*name|applicant.*name|full.*name/.test(normalized)) return `Candidate full name from interview metadata for PDF field "${fieldName}".`;
+  if (/position|role/.test(normalized)) return `Candidate role or position from interview metadata for PDF field "${fieldName}".`;
+  if (/interview.*date|date/.test(normalized)) return `Interview date from interview metadata for PDF field "${fieldName}".`;
+  if (/interview.*time|time/.test(normalized)) return `Interview time from interview metadata for PDF field "${fieldName}".`;
+  if (/interviewer|manager/.test(normalized)) return `Interviewer name from interview metadata for PDF field "${fieldName}".`;
+  if (/recommend|decision|next.*step|status/.test(normalized)) return `Hiring recommendation from interview metadata for PDF field "${fieldName}".`;
+  return `PDF field "${fieldName}". Draft only if the transcript clearly supports what belongs in this form field.`;
 }
 
 function targetMapKey(response: AiDraftResponse) {
@@ -150,7 +174,19 @@ function validateDrafts(payload: unknown, targets: DraftTarget[]) {
   return { valid, skipped };
 }
 
-function buildGrokPayload(transcript: string, targets: DraftTarget[]) {
+function buildCandidateContext(record: Record<string, unknown>) {
+  return {
+    candidate_full_name: record.candidate_full_name || null,
+    candidate_position: record.candidate_position || null,
+    candidate_email: record.candidate_email || null,
+    candidate_phone: record.candidate_phone || null,
+    interview_date: record.interview_date || null,
+    interview_time: record.interview_time || null,
+    interviewer_name: record.interviewer_name || null,
+  };
+}
+
+function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate: Record<string, unknown>) {
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -197,6 +233,7 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[]) {
         content: [
           "You draft K9 Resorts interview notes for a manager.",
           "Use only facts explicitly supported by the supplied transcript.",
+          "You may use supplied candidate metadata only for identity/date/role fields, never for interview substance.",
           "If the transcript does not support a field, return an empty draft_text for that field.",
           "Return exactly one response object for every target supplied.",
           "Keep wording concise, factual, and suitable for a manager-edited form.",
@@ -207,6 +244,7 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[]) {
       {
         role: "user",
         content: JSON.stringify({
+          candidate,
           transcript,
           targets,
         }),
@@ -215,14 +253,14 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[]) {
   };
 }
 
-async function startGrokDraft(transcript: string, targets: DraftTarget[]) {
+async function startGrokDraft(transcript: string, targets: DraftTarget[], candidate: Record<string, unknown>) {
   const response = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${XAI_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(buildGrokPayload(transcript, targets)),
+    body: JSON.stringify(buildGrokPayload(transcript, targets, candidate)),
   });
 
   const data = await response.json().catch(() => null);
@@ -435,7 +473,7 @@ serve(async (req) => {
         });
       }
 
-      const requestId = await startGrokDraft(transcript, targets);
+      const requestId = await startGrokDraft(transcript, targets, buildCandidateContext(record as Record<string, unknown>));
       const startedAt = new Date().toISOString();
       await supabase
         .from("labor_interview_records")

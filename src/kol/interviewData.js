@@ -26,6 +26,18 @@ export const LABOR_INTERVIEW_STATUS_LABELS = {
   archived: "Archived",
 };
 
+export const INTERVIEW_RECOMMENDATION_OPTIONS = [
+  { value: "pending", label: "Needs Review", tone: "default" },
+  { value: "proceed", label: "Proceed", tone: "success" },
+  { value: "hold", label: "Hold", tone: "warning" },
+  { value: "pass", label: "Pass", tone: "danger" },
+];
+
+export const INTERVIEW_RECOMMENDATION_LABELS = INTERVIEW_RECOMMENDATION_OPTIONS.reduce((map, option) => {
+  map[option.value] = option.label;
+  return map;
+}, {});
+
 export const LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS = {
   draft: "Draft",
   published: "Published",
@@ -98,6 +110,15 @@ function cloneJson(value, fallback) {
 
 export function getInterviewRoleLabel(roleKey) {
   return LABOR_INTERVIEW_ROLES.find((role) => role.value === roleKey)?.label || roleKey || "Unknown Role";
+}
+
+export function getInterviewRecommendation(record = {}) {
+  return record?.metadata?.hiring_recommendation || record?.metadata?.next_step || "pending";
+}
+
+export function getInterviewRecommendationOption(value) {
+  return INTERVIEW_RECOMMENDATION_OPTIONS.find((option) => option.value === value)
+    || INTERVIEW_RECOMMENDATION_OPTIONS[0];
 }
 
 export function sanitizeInterviewFileName(value = "document.pdf") {
@@ -367,13 +388,130 @@ export async function extractPdfFieldManifest(pdfBytes) {
   }
 }
 
-export function buildPdfResponseMap(responses = []) {
+function normalizeFieldName(value = "") {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+}
+
+function putIfValue(map, fieldName, value) {
+  if (!fieldName || value == null || value === "") return;
+  map[fieldName] = value;
+}
+
+export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
+  const map = {};
+  const fullName = record.candidate_full_name || "";
+  const position = record.candidate_position || record.template_snapshot?.template?.role_label || "";
+  const interviewDate = record.interview_date || "";
+  const interviewTime = record.interview_time || "";
+  const interviewer = record.interviewer_name || "";
+  const recommendation = INTERVIEW_RECOMMENDATION_LABELS[getInterviewRecommendation(record)] || "";
+
+  const aliases = {
+    candidate_name: fullName,
+    candidate_full_name: fullName,
+    applicant_name: fullName,
+    name: fullName,
+    position,
+    role: position,
+    candidate_position: position,
+    interview_date: interviewDate,
+    date: interviewDate,
+    interview_time: interviewTime,
+    time: interviewTime,
+    interviewer,
+    interviewer_name: interviewer,
+    recommendation,
+    next_step: recommendation,
+  };
+
+  Object.entries(aliases).forEach(([name, value]) => putIfValue(map, name, value));
+
+  (fields || []).forEach((field) => {
+    const name = field?.name;
+    const normalized = normalizeFieldName(name);
+    if (!name || map[name]) return;
+    if (/candidate.*name|applicant.*name|full.*name/.test(normalized)) putIfValue(map, name, fullName);
+    else if (/position|role/.test(normalized)) putIfValue(map, name, position);
+    else if (/interview.*date|date/.test(normalized)) putIfValue(map, name, interviewDate);
+    else if (/interview.*time|time/.test(normalized)) putIfValue(map, name, interviewTime);
+    else if (/interviewer|manager/.test(normalized)) putIfValue(map, name, interviewer);
+    else if (/recommend|decision|next.*step|status/.test(normalized)) putIfValue(map, name, recommendation);
+  });
+
+  return map;
+}
+
+export function buildPdfResponseMap(responses = [], record = null, fields = []) {
+  const initial = record ? buildInterviewMetadataPdfMap(record, fields) : {};
   return (responses || []).reduce((map, response) => {
     if (response?.response_type !== "pdf_field" || !response.pdf_field_name) return map;
     const text = response.response_text ?? response.ai_draft_text ?? "";
     map[response.pdf_field_name] = text;
     return map;
-  }, {});
+  }, initial);
+}
+
+export function cleanInterviewTranscriptText(value = "") {
+  return String(value || "")
+    .replace(/[\u3400-\u9fff\u3040-\u30ff]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeTranscriptTimestamp(value = "") {
+  const raw = String(value || "").replace(/[^\d:]/g, "");
+  if (!raw) return "";
+  const parts = raw.split(":").map((part) => Number(part));
+  if (parts.some((part) => !Number.isFinite(part))) return raw;
+  if (parts.length === 2) return `${String(parts[0]).padStart(2, "0")}:${String(parts[1]).padStart(2, "0")}`;
+  if (parts.length === 3) return `${String(parts[0]).padStart(2, "0")}:${String(parts[1]).padStart(2, "0")}:${String(parts[2]).padStart(2, "0")}`;
+  return raw;
+}
+
+export function parseInterviewTranscriptTurns(value = "") {
+  const text = cleanInterviewTranscriptText(value);
+  if (!text) return [];
+  const paragraphBlocks = text.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  const blocks = paragraphBlocks.length === 1 && paragraphBlocks[0].length > 900
+    ? paragraphBlocks[0]
+        .split(/(?<=[.!?])\s+/)
+        .reduce((chunks, sentence) => {
+          const trimmed = sentence.trim();
+          if (!trimmed) return chunks;
+          const previous = chunks[chunks.length - 1] || "";
+          if (previous && `${previous} ${trimmed}`.length <= 760) {
+            chunks[chunks.length - 1] = `${previous} ${trimmed}`;
+          } else {
+            chunks.push(trimmed);
+          }
+          return chunks;
+        }, [])
+    : paragraphBlocks;
+  const turns = [];
+  const speakerPattern = /^(?:\[?((?:\d{1,2}:)?\d{1,2}:\d{2})\]?\s*)?(Speaker\s+\d+|Interviewer|Candidate|Manager|Applicant)\s*:\s*([\s\S]+)$/i;
+
+  blocks.forEach((block, index) => {
+    const match = block.match(speakerPattern);
+    if (match) {
+      turns.push({
+        id: `${index}-${match[2]}`,
+        timestamp: normalizeTranscriptTimestamp(match[1] || ""),
+        speaker: match[2].replace(/\s+/g, " ").trim(),
+        text: match[3].trim(),
+      });
+      return;
+    }
+    turns.push({
+      id: `${index}-transcript`,
+      timestamp: "",
+      speaker: "Transcript",
+      text: block,
+    });
+  });
+
+  return turns;
 }
 
 export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {
