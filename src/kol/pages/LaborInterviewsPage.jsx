@@ -3,6 +3,7 @@ import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, Modal } from "../../shared/ui";
 import {
+  buildInterviewAudioPath,
   buildInterviewArtifactPath,
   buildInterviewTemplatePdfPath,
   buildInterviewTemplateSnapshot,
@@ -10,9 +11,11 @@ import {
   buildPdfResponseMap,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewAudioContentType,
   getInterviewRoleLabel,
   getPdfFieldTypeLabel,
   groupQuestionsByCategory,
+  INTERVIEW_AUDIO_ACCEPT,
   INTERVIEW_PDF_ACCEPT,
   INTERVIEW_TRANSCRIPT_ACCEPT,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
@@ -24,6 +27,7 @@ import {
   pdfFieldsFromSnapshot,
   PDF_VERIFICATION_LABELS,
   questionRowsFromSnapshot,
+  validateInterviewAudioFile,
 } from "../interviewData";
 import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingData";
 
@@ -189,10 +193,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [templateActionId, setTemplateActionId] = useState("");
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
   const [transcriptFileName, setTranscriptFileName] = useState("");
+  const [audioFileName, setAudioFileName] = useState("");
   const [aiDrafting, setAiDrafting] = useState(false);
+  const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
   const transcriptInputRef = useRef(null);
+  const audioInputRef = useRef(null);
 
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
@@ -222,6 +229,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const responsesByTarget = useMemo(() => mapResponsesByTarget(responses), [responses]);
+  const selectedAudioTranscription = selectedRecord?.metadata?.audio_transcription || null;
 
   const metrics = useMemo(() => {
     const completed = records.filter((record) => record.status === "completed").length;
@@ -334,6 +342,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     };
     loadRecordDetail();
   }, [selectedRecord?.id, showToast]);
+
+  useEffect(() => {
+    setTranscriptFileName("");
+    setAudioFileName("");
+  }, [selectedRecord?.id]);
 
   useEffect(() => {
     const nextDrafts = {};
@@ -492,6 +505,46 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
+  const handleAudioUpload = async (file) => {
+    if (!selectedRecord?.id || !file) return;
+    const validation = validateInterviewAudioFile(file);
+    if (!validation.ok) {
+      showToast(validation.error, "error");
+      return;
+    }
+    setAudioTranscribing(true);
+    try {
+      const path = buildInterviewAudioPath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
+      const contentType = validation.contentType || getInterviewAudioContentType(file);
+      const { error: uploadError } = await supabase.storage
+        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .upload(path, file, { upsert: true, contentType });
+      if (uploadError) throw uploadError;
+      setAudioFileName(file.name);
+
+      const { data: result, error } = await supabase.functions.invoke("interview-transcribe-audio", {
+        body: {
+          interview_id: selectedRecord.id,
+          audio_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+          audio_file_path: path,
+          audio_file_name: file.name,
+          audio_mime_type: contentType,
+        },
+      });
+      if (error) throw error;
+      if (!result?.transcript_text) throw new Error("Grok returned no transcript text.");
+
+      const minutes = Number(result.duration_seconds) > 0 ? Math.max(1, Math.round(Number(result.duration_seconds) / 60)) : null;
+      showToast(minutes ? `Grok transcribed ${minutes} min of audio` : "Grok transcribed the audio");
+      await loadAll(locationId);
+      setSelectedRecordId(selectedRecord.id);
+    } catch (error) {
+      showToast(error?.message || "Failed to transcribe audio", "error");
+    } finally {
+      setAudioTranscribing(false);
+    }
+  };
+
   const runAiDraft = async () => {
     if (!selectedRecord?.id || !String(selectedRecord.transcript_text || "").trim()) {
       showToast("Paste or upload a transcript before generating drafts.", "error");
@@ -503,11 +556,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         body: { interview_id: selectedRecord.id },
       });
       if (error) throw error;
-      showToast(`AI drafted ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      showToast(`Grok drafted ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
     } catch (error) {
-      showToast(error?.message || "AI draft failed", "error");
+      showToast(error?.message || "Grok draft failed", "error");
     } finally {
       setAiDrafting(false);
     }
@@ -902,7 +955,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 0.95fr) minmax(360px, 1.05fr)", gap: 16, alignItems: "start" }}>
                 <div style={{ display: "grid", gap: 16 }}>
                   <Card style={{ borderRadius: 10 }}>
-                    <SectionHeading title="Transcript and AI Draft" detail="AI drafting is limited to the pasted or uploaded transcript." />
+                    <SectionHeading title="Transcript and Grok Draft" detail="Drafting is limited to the saved transcript." />
                     <Inp
                       label="Transcript"
                       type="textarea"
@@ -911,13 +964,25 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                       onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, transcript_text: value } : row))}
                       placeholder="Paste Zoom transcript text here."
                     />
+                    <div style={{ display: "grid", gap: 4, marginTop: 10, fontSize: 12, color: C.textMut }}>
+                      <div>{audioFileName || selectedAudioTranscription?.source_audio?.file_name || "No audio file uploaded"}</div>
+                      {selectedAudioTranscription?.provider && (
+                        <div>
+                          {selectedAudioTranscription.provider === "xai" ? "Grok STT" : selectedAudioTranscription.provider}
+                          {selectedAudioTranscription.duration_seconds ? ` • ${Math.round(selectedAudioTranscription.duration_seconds / 60)} min` : ""}
+                          {selectedAudioTranscription.generated_at ? ` • ${fmtDate(selectedAudioTranscription.generated_at)}` : ""}
+                        </div>
+                      )}
+                    </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginTop: 12, flexWrap: "wrap" }}>
                       <div style={{ fontSize: 12, color: C.textMut }}>{transcriptFileName || selectedRecord.transcript_file_path || "No transcript file uploaded"}</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input ref={transcriptInputRef} type="file" accept={INTERVIEW_TRANSCRIPT_ACCEPT} style={{ display: "none" }} onChange={(event) => handleTranscriptUpload(event.target.files?.[0])} />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <input ref={audioInputRef} type="file" accept={INTERVIEW_AUDIO_ACCEPT} style={{ display: "none" }} onChange={(event) => { handleAudioUpload(event.target.files?.[0]); event.target.value = ""; }} />
+                        <input ref={transcriptInputRef} type="file" accept={INTERVIEW_TRANSCRIPT_ACCEPT} style={{ display: "none" }} onChange={(event) => { handleTranscriptUpload(event.target.files?.[0]); event.target.value = ""; }} />
+                        <Btn variant="secondary" size="sm" disabled={audioTranscribing} onClick={() => audioInputRef.current?.click()}>{audioTranscribing ? "Transcribing..." : "Upload Audio"}</Btn>
                         <Btn variant="secondary" size="sm" onClick={() => transcriptInputRef.current?.click()}>Upload Transcript</Btn>
                         <Btn variant="secondary" size="sm" onClick={() => saveRecordPatch({ transcript_text: selectedRecord.transcript_text || null })}>Save Transcript</Btn>
-                        <Btn variant="primary" size="sm" disabled={aiDrafting || !String(selectedRecord.transcript_text || "").trim()} onClick={runAiDraft}>{aiDrafting ? "Drafting..." : "Generate Responses"}</Btn>
+                        <Btn variant="primary" size="sm" disabled={aiDrafting || audioTranscribing || !String(selectedRecord.transcript_text || "").trim()} onClick={runAiDraft}>{aiDrafting ? "Drafting..." : "Generate With Grok"}</Btn>
                       </div>
                     </div>
                   </Card>
@@ -1011,7 +1076,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </div>
             </div>
           ) : (
-            <EmptyState title="Select An Interview" body="Choose an interview record to edit responses, run AI drafting, and export the final branded PDF." />
+            <EmptyState title="Select An Interview" body="Choose an interview record to edit responses, run Grok drafting, and export the final branded PDF." />
           )}
         </div>
       )}
