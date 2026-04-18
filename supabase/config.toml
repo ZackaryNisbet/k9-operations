@@ -1,3 +1,28 @@
+# Keep production-aligned values here because `supabase config push` reconciles
+# the whole remote config, not just the setting being changed.
+[api]
+max_rows = 100000
+
+[db.settings]
+max_connections = 100
+
+[storage]
+file_size_limit = "500MiB"
+
+[auth]
+site_url = "https://k9operations.com"
+additional_redirect_urls = ["https://k9operations.com/*"]
+minimum_password_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
 [functions.performance-review-signing]
 # The function validates the caller token in-function via Supabase Auth.
 # Gateway verification can reject newer ES256 auth JWTs before function code runs.
