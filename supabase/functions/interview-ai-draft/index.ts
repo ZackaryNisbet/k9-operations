@@ -48,12 +48,69 @@ function asArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [];
 }
 
-function buildTargets(record: Record<string, unknown>, options: { autoScoreCandidate?: boolean } = {}): DraftTarget[] {
+const NUMBERED_PDF_QUESTION_PROMPTS: Record<string, string> = {
+  "01": "Tell me about a time a customer was upset or frustrated. How did you handle it?",
+};
+
+function sanitizeManagerInstruction(value: unknown) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1400);
+}
+
+function normalizeInstructionMap(value: unknown) {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const entries = Object.entries(source)
+    .map(([key, instruction]) => [String(key || "").trim(), sanitizeManagerInstruction(instruction)] as const)
+    .filter(([key, instruction]) => key && instruction);
+  return new Map(entries);
+}
+
+function buildNumberedPdfQuestionPrompt(fieldName: string) {
+  const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes(?:_\d+)?)$/i);
+  if (!match) return "";
+  const questionNo = match[1];
+  const section = match[2].replace(/_\d+$/, "").toLowerCase();
+  const sectionLabel = section === "notes" ? "supporting notes" : section;
+  const knownPrompt = NUMBERED_PDF_QUESTION_PROMPTS[questionNo];
+  const questionContext = knownPrompt
+    ? `Q${Number(questionNo)}. ${knownPrompt}`
+    : `Q${Number(questionNo)} from the PDF interview guide`;
+  return [
+    `PDF field "${fieldName}" is the ${sectionLabel} line for ${questionContext}.`,
+    "First locate the interviewer asking this numbered question or near-verbatim prompt in the transcript.",
+    "Use the candidate answer immediately following that question before considering any loosely similar exchange.",
+    `Return only the ${sectionLabel} content for this STAR field, not the full answer.`,
+  ].join(" ");
+}
+
+function withManagerInstruction(prompt: string, instruction: string) {
+  const cleanInstruction = sanitizeManagerInstruction(instruction);
+  if (!cleanInstruction) return prompt;
+  return [
+    prompt,
+    `Manager population instruction: ${cleanInstruction}`,
+    "Treat this instruction as first-party interviewer guidance about what the manager wants this PDF field to capture.",
+    "Use it together with the transcript; when the instruction describes observed reaction or tone, phrase the answer as manager-observed rather than inventing unsupported facts.",
+  ].join(" ");
+}
+
+function buildTargets(
+  record: Record<string, unknown>,
+  options: {
+    autoScoreCandidate?: boolean;
+    targetPdfFieldName?: string;
+    pdfPopulationInstructions?: Map<string, string>;
+  } = {},
+): DraftTarget[] {
   const snapshot = (record.template_snapshot || {}) as Record<string, unknown>;
   const questions = asArray(snapshot.questions || record.question_snapshot);
   const version = (snapshot.version || {}) as Record<string, unknown>;
   const fields = asArray(version.pdf_field_manifest || record.pdf_field_manifest_snapshot);
   const questionByMappedField = new Map<string, Record<string, unknown>>();
+  const targetPdfFieldName = String(options.targetPdfFieldName || "").trim();
+  const pdfPopulationInstructions = options.pdfPopulationInstructions || new Map<string, string>();
 
   for (const question of questions) {
     const mapped = String(question.mapped_pdf_field_name || "").trim();
@@ -71,12 +128,17 @@ function buildTargets(record: Record<string, unknown>, options: { autoScoreCandi
 
   const fieldTargets = fields
     .filter((field) => field.name && field.type !== "signature")
+    .filter((field) => !targetPdfFieldName || String(field.name) === targetPdfFieldName)
     .map((field) => {
       const fieldName = String(field.name);
       const mappedQuestion = questionByMappedField.get(fieldName);
-      const fieldPrompt = mappedQuestion?.prompt
+      const inferredNumberedPrompt = buildNumberedPdfQuestionPrompt(fieldName);
+      const basePrompt = mappedQuestion?.prompt
         ? `PDF field "${fieldName}" should answer this interview prompt: ${String(mappedQuestion.prompt)}`
+        : inferredNumberedPrompt
+          ? inferredNumberedPrompt
         : buildPdfFieldPrompt(fieldName, options);
+      const fieldPrompt = withManagerInstruction(basePrompt, pdfPopulationInstructions.get(fieldName) || "");
       return {
         target_type: "pdf_field" as const,
         key: fieldName,
@@ -86,7 +148,7 @@ function buildTargets(record: Record<string, unknown>, options: { autoScoreCandi
       };
     });
 
-  return [...questionTargets, ...fieldTargets];
+  return targetPdfFieldName ? fieldTargets : [...questionTargets, ...fieldTargets];
 }
 
 function buildPdfFieldPrompt(fieldName: string, options: { autoScoreCandidate?: boolean } = {}) {
@@ -135,6 +197,20 @@ function asBoolean(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.trim().toLowerCase() === "true";
   return false;
+}
+
+function draftJobMatchesRequest(
+  draftJob: Record<string, unknown>,
+  options: { targetPdfFieldName: string; pdfPopulationInstructions: Map<string, string> },
+) {
+  const existingTarget = String(draftJob.target_pdf_field_name || "").trim();
+  if (existingTarget !== options.targetPdfFieldName) return false;
+  const existingInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
+  if (existingInstructions.size !== options.pdfPopulationInstructions.size) return false;
+  for (const [key, instruction] of options.pdfPopulationInstructions.entries()) {
+    if (existingInstructions.get(key) !== instruction) return false;
+  }
+  return true;
 }
 
 async function readProviderError(response: Response, data: Record<string, unknown> | null) {
@@ -252,6 +328,10 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           "You draft K9 Resorts interview notes for a manager.",
           "Use only facts explicitly supported by the supplied transcript.",
           "You may use supplied candidate metadata only for identity/date/role fields, never for interview substance.",
+          "For numbered PDF STAR fields such as q01_situation, q01_task, q01_action, and q01_result, first find the matching numbered interview question and use the candidate's answer that follows it.",
+          "If the interviewer explicitly asks a target question, that direct answer has priority over any similar or hypothetical exchange.",
+          "Do not invent hypothetical scenarios unless the candidate explicitly framed the answer as hypothetical.",
+          "Manager population instructions are allowed source context for what to put in a PDF field, but keep the final wording factual and manager-ready.",
           "If the transcript does not support a field, return an empty draft_text for that field.",
           "Return exactly one response object for every target supplied.",
           "Keep wording concise, factual, and suitable for a manager-edited form.",
@@ -474,8 +554,23 @@ serve(async (req) => {
     const autoScoreCandidate = asBoolean(
       requestBody.auto_score_candidate ?? draftJob.auto_score_candidate ?? metadata.auto_score_candidate ?? false,
     );
+    const requestedTargetPdfFieldName = String(requestBody.target_pdf_field_name || "").trim();
+    const storedTargetPdfFieldName = String(draftJob.target_pdf_field_name || "").trim();
+    const targetPdfFieldName = action === "poll" ? storedTargetPdfFieldName : requestedTargetPdfFieldName;
+    const requestedInstructions = normalizeInstructionMap(requestBody.pdf_population_instructions);
+    const storedInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
+    const pdfPopulationInstructions = action === "poll"
+      ? storedInstructions
+      : requestedInstructions;
+    if (targetPdfFieldName && !pdfPopulationInstructions.has(targetPdfFieldName)) {
+      return jsonResponse({ error: "PDF population instructions are required for targeted AI fill." }, 400);
+    }
 
-    const targets = buildTargets(record as Record<string, unknown>, { autoScoreCandidate });
+    const targets = buildTargets(record as Record<string, unknown>, {
+      autoScoreCandidate,
+      targetPdfFieldName,
+      pdfPopulationInstructions,
+    });
     if (targets.length === 0) {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
     }
@@ -483,7 +578,10 @@ serve(async (req) => {
     const existingRequestId = String(draftJob.request_id || "").trim();
 
     if (action === "start") {
-      if (draftJob.status === "pending" && existingRequestId) {
+      const canReusePending = !targetPdfFieldName
+        ? !String(draftJob.target_pdf_field_name || "").trim()
+        : draftJobMatchesRequest(draftJob, { targetPdfFieldName, pdfPopulationInstructions });
+      if (draftJob.status === "pending" && existingRequestId && canReusePending) {
         return jsonResponse({
           ok: true,
           pending: true,
@@ -510,6 +608,8 @@ serve(async (req) => {
               started_at: startedAt,
               target_count: targets.length,
               auto_score_candidate: autoScoreCandidate,
+              target_pdf_field_name: targetPdfFieldName || null,
+              pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
             auto_score_candidate: autoScoreCandidate,
           },
@@ -550,6 +650,8 @@ serve(async (req) => {
               last_polled_at: polledAt,
               target_count: Number(draftJob.target_count || targets.length),
               auto_score_candidate: autoScoreCandidate,
+              target_pdf_field_name: targetPdfFieldName || null,
+              pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
           },
           updated_by_user_id: userId,
