@@ -63,6 +63,13 @@
       "action": "deploy",
       "note": "Deploy interview polish provider diarization grouping",
       "updatedAt": "2026-04-18T10:27:19.850Z"
+    },
+    "performance-review-signing": {
+      "commit": "2b1702064d6c5f7582e0d28f3256f785dd075063",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "performance review signing ES256 auth fix",
+      "updatedAt": "2026-04-18T15:55:18.664Z"
     }
   }
 }
