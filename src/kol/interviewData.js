@@ -27,16 +27,18 @@ export const LABOR_INTERVIEW_STATUS_LABELS = {
 };
 
 export const INTERVIEW_RECOMMENDATION_OPTIONS = [
-  { value: "pending", label: "Needs Review", tone: "default" },
-  { value: "proceed", label: "Proceed", tone: "success" },
-  { value: "hold", label: "Hold", tone: "warning" },
-  { value: "pass", label: "Pass", tone: "danger" },
+  { value: "approve", label: "Approve", tone: "success" },
+  { value: "reject", label: "Reject", tone: "danger" },
 ];
 
-export const INTERVIEW_RECOMMENDATION_LABELS = INTERVIEW_RECOMMENDATION_OPTIONS.reduce((map, option) => {
-  map[option.value] = option.label;
-  return map;
-}, {});
+export const INTERVIEW_RECOMMENDATION_LABELS = {
+  pending: "Unreviewed",
+  approve: "Approve",
+  reject: "Reject",
+  proceed: "Approve",
+  pass: "Reject",
+  hold: "Unreviewed",
+};
 
 export const LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS = {
   draft: "Draft",
@@ -113,12 +115,16 @@ export function getInterviewRoleLabel(roleKey) {
 }
 
 export function getInterviewRecommendation(record = {}) {
-  return record?.metadata?.hiring_recommendation || record?.metadata?.next_step || "pending";
+  const raw = record?.metadata?.hiring_recommendation || record?.metadata?.next_step || "pending";
+  if (raw === "proceed") return "approve";
+  if (raw === "pass") return "reject";
+  if (raw === "hold") return "pending";
+  return raw;
 }
 
 export function getInterviewRecommendationOption(value) {
   return INTERVIEW_RECOMMENDATION_OPTIONS.find((option) => option.value === value)
-    || INTERVIEW_RECOMMENDATION_OPTIONS[0];
+    || { value: "pending", label: INTERVIEW_RECOMMENDATION_LABELS[value] || "Unreviewed", tone: "default" };
 }
 
 export function sanitizeInterviewFileName(value = "document.pdf") {
@@ -443,10 +449,10 @@ export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
     else if (/interview.*time|time/.test(normalized)) putIfValue(map, name, interviewTime);
     else if (/interviewer|manager/.test(normalized)) putIfValue(map, name, interviewer);
     else if (/location/.test(normalized)) putIfValue(map, name, location);
-    else if (/decision.*do.*not|do.*not.*move|pass/.test(normalized)) putIfValue(map, name, recommendationKey === "pass" ? checkedValue : "");
-    else if (/decision.*reservation|move.*forward.*reservation|hold/.test(normalized)) putIfValue(map, name, recommendationKey === "hold" ? checkedValue : "");
+    else if (/decision.*do.*not|do.*not.*move|pass|reject/.test(normalized)) putIfValue(map, name, ["pass", "reject"].includes(recommendationKey) ? checkedValue : "");
+    else if (/decision.*reservation|move.*forward.*reservation|hold/.test(normalized)) putIfValue(map, name, "");
     else if (/decision.*second|second.*interview/.test(normalized)) putIfValue(map, name, "");
-    else if (/decision.*move.*forward|move.*forward|proceed/.test(normalized)) putIfValue(map, name, recommendationKey === "proceed" ? checkedValue : "");
+    else if (/decision.*move.*forward|move.*forward|proceed|approve/.test(normalized)) putIfValue(map, name, ["proceed", "approve"].includes(recommendationKey) ? checkedValue : "");
     else if (/recommend|decision|next.*step|status/.test(normalized)) putIfValue(map, name, recommendation);
   });
 
@@ -498,6 +504,19 @@ function normalizeProviderWord(word, index, turnId) {
   };
 }
 
+function providerSpeakerLabel(value) {
+  const raw = value == null || value === "" ? null : value;
+  if (raw == null) return "Person";
+  const numeric = Number(raw);
+  if (Number.isInteger(numeric)) return `Person ${numeric + 1}`;
+  const text = String(raw).trim();
+  const speakerMatch = text.match(/speaker[_\s-]*(\d+)/i);
+  if (speakerMatch) return `Person ${Number(speakerMatch[1]) + (speakerMatch[1] === "0" ? 1 : 0)}`;
+  const personMatch = text.match(/person[_\s-]*(\d+)/i);
+  if (personMatch) return `Person ${personMatch[1]}`;
+  return text;
+}
+
 function normalizeProviderTranscriptTurns(turns = []) {
   if (!Array.isArray(turns)) return [];
   return turns.map((turn, index) => {
@@ -505,10 +524,7 @@ function normalizeProviderTranscriptTurns(turns = []) {
     const startSeconds = Number(turn?.startSeconds ?? turn?.start_seconds ?? turn?.start ?? turn?.start_time);
     const endSeconds = Number(turn?.endSeconds ?? turn?.end_seconds ?? turn?.end ?? turn?.end_time);
     const rawSpeaker = turn?.speaker_label ?? turn?.speaker ?? turn?.speaker_id;
-    const numericSpeaker = Number(rawSpeaker);
-    const speaker = rawSpeaker == null || rawSpeaker === ""
-      ? "Speaker"
-      : Number.isInteger(numericSpeaker) ? `Speaker ${numericSpeaker + 1}` : String(rawSpeaker);
+    const speaker = providerSpeakerLabel(rawSpeaker);
     const words = (Array.isArray(turn?.words) ? turn.words : [])
       .map((word, wordIndex) => normalizeProviderWord(word, wordIndex, id))
       .filter(Boolean);
@@ -530,11 +546,41 @@ function normalizeProviderTranscriptTurns(turns = []) {
   }).filter(Boolean);
 }
 
+function combineProviderWordTurns(turns = []) {
+  const normalizedTurns = normalizeProviderTranscriptTurns(turns);
+  const wordTurns = normalizedTurns.filter((turn) => Array.isArray(turn.words) && turn.words.length === 1);
+  if (wordTurns.length !== normalizedTurns.length || wordTurns.length === 0) return normalizedTurns;
+  const hasProviderSpeakers = wordTurns.some((turn) => turn.words[0]?.speaker != null || /^(Speaker|Person) \d+$/i.test(turn.speaker || ""));
+  if (!hasProviderSpeakers) return normalizedTurns;
+  const grouped = [];
+  wordTurns.forEach((turn) => {
+    const word = turn.words[0];
+    const speaker = turn.speaker || "Person";
+    const previous = grouped[grouped.length - 1];
+    const gap = previous?.endSeconds != null && turn.startSeconds != null
+      ? Number(turn.startSeconds) - Number(previous.endSeconds)
+      : 0;
+    if (previous && previous.speaker === speaker && gap <= 2.4) {
+      previous.words.push(word);
+      previous.text = cleanInterviewTranscriptText(`${previous.text} ${word.text}`);
+      previous.endSeconds = turn.endSeconds ?? previous.endSeconds;
+      previous.timestamp = secondsToTranscriptTimestamp(previous.startSeconds);
+    } else {
+      grouped.push({
+        ...turn,
+        id: `provider-speaker-turn-${grouped.length}`,
+        words: [word],
+      });
+    }
+  });
+  return grouped;
+}
+
 export function getInterviewTranscriptTurns(record = {}) {
   const transcription = record?.metadata?.audio_transcription || {};
-  return normalizeProviderTranscriptTurns(
-    transcription.transcript_turns || transcription.provider_turns || transcription.segments || [],
-  );
+  const turns = transcription.transcript_turns || transcription.provider_turns || transcription.segments || [];
+  if (transcription.segmentation_source === "xai_word_segments") return combineProviderWordTurns(turns);
+  return normalizeProviderTranscriptTurns(turns);
 }
 
 export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {
