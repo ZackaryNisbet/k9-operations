@@ -5,11 +5,9 @@ import { Badge, Btn, Card, CustomSelect, Inp, Modal } from "../../shared/ui";
 import {
   buildInterviewAudioPath,
   buildInterviewArtifactPath,
-  buildInterviewSttAudioFileName,
   buildInterviewTemplatePdfPath,
   buildInterviewTemplateSnapshot,
   buildPdfResponseMap,
-  encodePcm16Wav,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewTranscriptTurns,
@@ -20,8 +18,6 @@ import {
   INTERVIEW_AUDIO_ACCEPT,
   INTERVIEW_PDF_ACCEPT,
   INTERVIEW_RECOMMENDATION_OPTIONS,
-  INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE,
-  INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
   normalizeInterviewCandidateDraft,
@@ -452,91 +448,44 @@ async function extractAudioWaveformBars(audioUrl, { count = 72, signal } = {}) {
   }
 }
 
-function downsampleAudioBufferToMono(audioBuffer, targetSampleRate) {
-  const sourceSampleRate = Math.max(1, Number(audioBuffer?.sampleRate) || targetSampleRate);
-  const channelCount = Math.max(1, Math.min(Number(audioBuffer?.numberOfChannels) || 1, 2));
-  const sourceLength = Math.max(1, Number(audioBuffer?.length) || 1);
-  const targetLength = Math.max(1, Math.round((sourceLength / sourceSampleRate) * targetSampleRate));
-  const channelData = Array.from({ length: channelCount }, (_, channel) => audioBuffer.getChannelData(channel));
-  const samples = new Float32Array(targetLength);
-
-  for (let index = 0; index < targetLength; index += 1) {
-    const sourcePosition = (index * sourceSampleRate) / targetSampleRate;
-    const left = Math.min(sourceLength - 1, Math.floor(sourcePosition));
-    const right = Math.min(sourceLength - 1, left + 1);
-    const ratio = sourcePosition - left;
-    let mixed = 0;
-
-    for (let channel = 0; channel < channelCount; channel += 1) {
-      const data = channelData[channel];
-      const first = data[left] || 0;
-      const second = data[right] || first;
-      mixed += first + ((second - first) * ratio);
-    }
-    samples[index] = mixed / channelCount;
-  }
-
-  return samples;
-}
-
-async function prepareInterviewAudioForStt(file) {
-  const original = {
-    fileName: file?.name || "interview-audio",
-    mimeType: getInterviewAudioContentType(file),
-    sizeBytes: Number(file?.size || 0) || null,
-  };
-
-  if (!shouldNormalizeInterviewAudioForStt(file)) {
-    return { file, normalized: false, original };
-  }
-
-  if (typeof window === "undefined") {
-    return { file, normalized: false, original };
-  }
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) {
-    throw new Error("This M4A needs browser audio normalization before transcription. Use Chrome or Safari, or export the recording as WAV/MP3.");
-  }
-
-  const context = new AudioContextClass();
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
-    const samples = downsampleAudioBufferToMono(audioBuffer, INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE);
-    const wavBuffer = encodePcm16Wav(samples, INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE);
-    const normalizedName = buildInterviewSttAudioFileName(file.name);
-    const normalizedFile = new File([wavBuffer], normalizedName, {
-      type: INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE,
-      lastModified: file.lastModified || Date.now(),
-    });
-    const normalizedValidation = validateInterviewAudioFile(normalizedFile);
-    if (!normalizedValidation.ok) {
-      throw new Error(normalizedValidation.error || "Prepared audio is too large for transcription.");
-    }
-    return { file: normalizedFile, normalized: true, original };
-  } catch (error) {
-    throw new Error(
-      safeUiError(
-        error,
-        "This M4A could not be prepared for transcription. Export it as WAV or MP3 and upload that file.",
-      ),
-    );
-  } finally {
-    if (typeof context.close === "function") {
-      try {
-        await context.close();
-      } catch {
-        // Safari may reject close() for already-closed contexts.
-      }
-    }
-  }
-}
-
 function safeUiError(error, fallback) {
-  return String(error?.message || fallback || "Something went wrong.")
+  const message = typeof error === "string" ? error : error?.message;
+  return String(message || fallback || "Something went wrong.")
     .replace(/xAI\s+Grok/gi, "AI")
     .replace(/\bGrok\b/g, "AI")
     .replace(/\bxAI\b/g, "AI");
+}
+
+async function readJsonApiError(response, fallbackMessage) {
+  const raw = await response.text();
+  try {
+    const data = raw ? JSON.parse(raw) : {};
+    return safeUiError(data?.error || data?.message || fallbackMessage, fallbackMessage);
+  } catch {
+    return safeUiError(raw || fallbackMessage, fallbackMessage);
+  }
+}
+
+async function normalizeInterviewAudioForSttOnServer(payload) {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  const token = sessionData?.session?.access_token;
+  if (sessionError || !token) {
+    throw new Error(sessionError?.message || "Your session expired. Sign in again before uploading interview audio.");
+  }
+
+  const response = await fetch("/api/interview-normalize-audio", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readJsonApiError(response, "Failed to convert interview audio"));
+  }
+  return response.json();
 }
 
 function IconButton({ label, onClick, disabled, children, variant = "default", style = {} }) {
@@ -2090,33 +2039,49 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
     setAudioTranscribing(true);
     try {
-      if (shouldNormalizeInterviewAudioForStt(file)) {
-        showToast("Preparing Voice Memos audio for transcription");
+      const requiresServerNormalization = shouldNormalizeInterviewAudioForStt(file);
+      if (requiresServerNormalization) {
+        showToast("Uploading Voice Memos audio for server conversion");
       }
-      const preparedAudio = await prepareInterviewAudioForStt(file);
-      const uploadFile = preparedAudio.file;
-      const uploadValidation = validateInterviewAudioFile(uploadFile);
-      if (!uploadValidation.ok) throw new Error(uploadValidation.error);
-      const path = buildInterviewAudioPath({ locationId, interviewId: selectedRecord.id, fileName: uploadFile.name });
-      const contentType = uploadValidation.contentType || getInterviewAudioContentType(uploadFile);
+      const path = buildInterviewAudioPath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
+      const contentType = validation.contentType || getInterviewAudioContentType(file);
       const { error: uploadError } = await supabase.storage
         .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
-        .upload(path, uploadFile, { upsert: true, contentType });
+        .upload(path, file, { upsert: true, contentType });
       if (uploadError) throw uploadError;
       setAudioFileName(file.name);
 
-      const { data: result, error } = await supabase.functions.invoke("interview-transcribe-audio", {
-        body: {
+      let transcriptionPayload = {
+        interview_id: selectedRecord.id,
+        audio_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+        audio_file_path: path,
+        audio_file_name: file.name,
+        audio_mime_type: contentType,
+        audio_normalized_for_stt: false,
+        original_audio_file_name: file.name || "interview-audio",
+        original_audio_mime_type: contentType,
+        original_audio_size_bytes: Number(file.size || 0) || null,
+      };
+
+      if (requiresServerNormalization) {
+        showToast("Converting Voice Memos audio for transcription");
+        const normalizedAudio = await normalizeInterviewAudioForSttOnServer(transcriptionPayload);
+        transcriptionPayload = {
           interview_id: selectedRecord.id,
-          audio_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
-          audio_file_path: path,
-          audio_file_name: uploadFile.name,
-          audio_mime_type: contentType,
-          audio_normalized_for_stt: preparedAudio.normalized,
-          original_audio_file_name: preparedAudio.original.fileName,
-          original_audio_mime_type: preparedAudio.original.mimeType,
-          original_audio_size_bytes: preparedAudio.original.sizeBytes,
-        },
+          audio_file_bucket: normalizedAudio.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+          audio_file_path: normalizedAudio.audio_file_path,
+          audio_file_name: normalizedAudio.audio_file_name,
+          audio_mime_type: normalizedAudio.audio_mime_type,
+          audio_normalized_for_stt: true,
+          original_audio_file_name: normalizedAudio.original_audio_file_name || file.name,
+          original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
+          original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
+        };
+        showToast("Audio converted. Sending for transcription.");
+      }
+
+      const { data: result, error } = await supabase.functions.invoke("interview-transcribe-audio", {
+        body: transcriptionPayload,
       });
       if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
       if (!result?.transcript_text) throw new Error("AI returned no transcript text.");
