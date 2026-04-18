@@ -103,6 +103,33 @@ function fileToText(file) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readEdgeFunctionError(error, fallbackMessage) {
+  if (!error) return fallbackMessage;
+  try {
+    if (error.context?.json) {
+      const body = await error.context.json();
+      return body?.error || body?.message || fallbackMessage;
+    }
+    if (error.context?.text) {
+      const text = await error.context.text();
+      if (!text) return fallbackMessage;
+      try {
+        const body = JSON.parse(text);
+        return body?.error || body?.message || text;
+      } catch {
+        return text;
+      }
+    }
+  } catch (_) {
+    // Fall through to the SDK message below.
+  }
+  return error.message || fallbackMessage;
+}
+
 function snapshotForRecord(record) {
   if (!record) return {};
   const snapshot = record.template_snapshot || {};
@@ -531,7 +558,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           audio_mime_type: contentType,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
       if (!result?.transcript_text) throw new Error("Grok returned no transcript text.");
 
       const minutes = Number(result.duration_seconds) > 0 ? Math.max(1, Math.round(Number(result.duration_seconds) / 60)) : null;
@@ -552,10 +579,33 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
     setAiDrafting(true);
     try {
-      const { data: result, error } = await supabase.functions.invoke("interview-ai-draft", {
-        body: { interview_id: selectedRecord.id },
+      const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
+        body: { interview_id: selectedRecord.id, action: "start" },
       });
-      if (error) throw error;
+      if (startError) throw new Error(await readEdgeFunctionError(startError, "Grok draft failed"));
+
+      let result = startResult;
+      if (startResult?.pending) {
+        showToast(startResult.reused ? "Resuming Grok draft" : "Grok draft started");
+        const requestId = startResult.request_id;
+        let completed = false;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          await sleep(attempt === 0 ? 5000 : 10000);
+          const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
+            body: { interview_id: selectedRecord.id, action: "poll", request_id: requestId },
+          });
+          if (pollError) throw new Error(await readEdgeFunctionError(pollError, "Grok draft failed"));
+          result = pollResult;
+          if (!pollResult?.pending) {
+            completed = true;
+            break;
+          }
+        }
+        if (!completed) {
+          throw new Error("Grok is still drafting. Click Generate With Grok again in a minute to resume polling without resending the transcript.");
+        }
+      }
+
       showToast(`Grok drafted ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
