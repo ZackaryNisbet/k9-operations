@@ -58,8 +58,9 @@ export function AppCrashScreen({
   error = null,
   details = null,
 }) {
-  const technicalDetails =
-    details || error?.stack || error?.message || (typeof error === "string" ? error : "");
+  const technicalDetails = [error?.message || (typeof error === "string" ? error : ""), details || error?.stack]
+    .filter(Boolean)
+    .join("\n\n");
 
   return (
     <div style={shellStyle}>

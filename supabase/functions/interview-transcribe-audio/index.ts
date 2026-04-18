@@ -82,6 +82,19 @@ function cleanJoinedWords(words: SttWord[]) {
     .trim();
 }
 
+function formatSeconds(value: unknown) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  const rounded = Math.floor(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remainder = rounded % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
 function getFileExtension(fileName = "") {
   const match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
   return match?.[1] || "";
@@ -112,9 +125,10 @@ function buildSpeakerTranscript(result: SttResult) {
 
   return blocks
     .map((block) => {
+      const timestamp = formatSeconds(block.words[0]?.start);
       const label = `Speaker ${block.speaker + 1}`;
       const text = cleanJoinedWords(block.words);
-      return text ? `${label}: ${text}` : "";
+      return text ? `${timestamp ? `[${timestamp}] ` : ""}${label}: ${text}` : "";
     })
     .filter(Boolean)
     .join("\n\n")
