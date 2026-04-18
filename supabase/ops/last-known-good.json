@@ -51,18 +51,18 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "3a8be58b6d3c6e7a3669837dfa7566457935fafa",
+      "commit": "d4e0116ce2858088d07e4bf18b03e5763329cf7a",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "interview assistant UI transcript and PDF prompt improvements",
-      "updatedAt": "2026-04-18T04:02:19.069Z"
+      "note": "Require xAI structured transcript turns and improve interview review UI",
+      "updatedAt": "2026-04-18T04:37:02.911Z"
     },
     "interview-transcribe-audio": {
-      "commit": "3a8be58b6d3c6e7a3669837dfa7566457935fafa",
+      "commit": "d4e0116ce2858088d07e4bf18b03e5763329cf7a",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "interview assistant UI transcript and PDF prompt improvements",
-      "updatedAt": "2026-04-18T04:02:19.069Z"
+      "note": "Require xAI structured transcript turns and improve interview review UI",
+      "updatedAt": "2026-04-18T04:37:02.911Z"
     }
   }
 }
