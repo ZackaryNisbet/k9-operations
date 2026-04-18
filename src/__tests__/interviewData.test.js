@@ -98,6 +98,17 @@ describe("interview audio helpers", () => {
     expect(getInterviewAudioContentType(file)).toBe("audio/mp4");
   });
 
+  it("accepts xAI-supported MKV containers and rejects unsupported WebM containers", () => {
+    expect(validateInterviewAudioFile({ name: "candidate-interview.mkv", type: "", size: 25 * 1024 * 1024 })).toMatchObject({
+      ok: true,
+      contentType: "video/x-matroska",
+    });
+    expect(validateInterviewAudioFile({ name: "candidate-interview.webm", type: "", size: 25 * 1024 * 1024 })).toMatchObject({
+      ok: false,
+      error: "Upload a supported audio file: AAC, FLAC, M4A, MKV, MP3, MP4, OGG, OPUS, or WAV.",
+    });
+  });
+
   it("rejects audio files over the xAI STT interview limit", () => {
     const file = { name: "candidate-interview.mp3", type: "audio/mpeg", size: INTERVIEW_AUDIO_MAX_BYTES + 1 };
 
