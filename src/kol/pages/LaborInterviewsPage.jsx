@@ -371,12 +371,12 @@ function readAutoScoreSetting(storageKey) {
   return window.localStorage.getItem(storageKey) === "true";
 }
 
-function seededWaveBars(seed = "") {
+function seededWaveBars(seed = "", count = 72) {
   let state = 0;
   String(seed || "interview").split("").forEach((char) => {
     state = (state * 31 + char.charCodeAt(0)) % 9973;
   });
-  return Array.from({ length: 56 }, (_, index) => {
+  return Array.from({ length: count }, (_, index) => {
     state = (state * 9301 + 49297 + index) % 233280;
     const ratio = state / 233280;
     return {
@@ -386,6 +386,65 @@ function seededWaveBars(seed = "") {
       opacity: 0.42 + ratio * 0.54,
     };
   });
+}
+
+async function extractAudioWaveformBars(audioUrl, { count = 72, signal } = {}) {
+  if (!audioUrl || typeof window === "undefined") return [];
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return [];
+
+  const response = await fetch(audioUrl, { signal, cache: "force-cache" });
+  if (!response.ok) throw new Error("Audio waveform could not be loaded.");
+  const arrayBuffer = await response.arrayBuffer();
+  if (signal?.aborted) return [];
+
+  const context = new AudioContextClass();
+  try {
+    const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+    if (signal?.aborted) return [];
+
+    const length = audioBuffer.length;
+    const channelCount = Math.min(audioBuffer.numberOfChannels || 1, 2);
+    const bars = [];
+    for (let index = 0; index < count; index += 1) {
+      const start = Math.floor((index / count) * length);
+      const end = Math.max(start + 1, Math.floor(((index + 1) / count) * length));
+      const stride = Math.max(1, Math.floor((end - start) / 420));
+      let peak = 0;
+      let sumSquares = 0;
+      let samples = 0;
+
+      for (let sample = start; sample < end; sample += stride) {
+        let mixed = 0;
+        for (let channel = 0; channel < channelCount; channel += 1) {
+          mixed += audioBuffer.getChannelData(channel)[sample] || 0;
+        }
+        const amplitude = Math.abs(mixed / channelCount);
+        peak = Math.max(peak, amplitude);
+        sumSquares += amplitude * amplitude;
+        samples += 1;
+      }
+
+      const rms = samples ? Math.sqrt(sumSquares / samples) : 0;
+      const normalized = Math.min(1, Math.max(peak * 0.85, rms * 2.2));
+      bars.push({
+        height: 16 + Math.round(Math.pow(normalized, 0.72) * 92),
+        delay: -(index * 0.035).toFixed(2),
+        duration: (0.78 + (index % 9) * 0.08).toFixed(2),
+        opacity: 0.48 + Math.min(0.48, normalized * 0.7),
+        actual: true,
+      });
+    }
+    return bars;
+  } finally {
+    if (typeof context.close === "function") {
+      try {
+        await context.close();
+      } catch {
+        // Safari may reject close() for already-closed contexts.
+      }
+    }
+  }
 }
 
 function safeUiError(error, fallback) {
@@ -638,7 +697,10 @@ function AudioUploadPanel({
   const duration = formatDuration(durationSeconds);
   const fileSize = formatFileSize(sourceAudio.size_bytes);
   const complete = !!record?.transcript_text && !transcribing && !drafting;
-  const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}`), [record?.id, fileName]);
+  const fallbackBars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}`, 72), [record?.id, fileName]);
+  const [audioWaveformBars, setAudioWaveformBars] = useState([]);
+  const [audioWaveformStatus, setAudioWaveformStatus] = useState("idle");
+  const bars = audioWaveformBars.length ? audioWaveformBars : fallbackBars;
   const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
   const hasProviderTurns = safeTranscriptTurns.length > 0;
   const segmentationSource = String(transcription.segmentation_source || "");
@@ -650,6 +712,36 @@ function AudioUploadPanel({
     ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
     : safeTranscriptTurns.slice(0, 4);
   const transcriptPreviewRows = getTranscriptPreviewRows({ turns: visibleTurns, wordSegmentMode, providerWords });
+
+  useEffect(() => {
+    setAudioWaveformBars([]);
+    if (!audioUrl) {
+      setAudioWaveformStatus("idle");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setAudioWaveformStatus("loading");
+    extractAudioWaveformBars(audioUrl, { count: 72, signal: controller.signal })
+      .then((nextBars) => {
+        if (cancelled || controller.signal.aborted) return;
+        if (nextBars?.length) {
+          setAudioWaveformBars(nextBars);
+          setAudioWaveformStatus("ready");
+        } else {
+          setAudioWaveformStatus("fallback");
+        }
+      })
+      .catch(() => {
+        if (!cancelled && !controller.signal.aborted) setAudioWaveformStatus("fallback");
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [audioUrl]);
 
   const handleDrop = (event) => {
     event.preventDefault();
@@ -688,6 +780,8 @@ function AudioUploadPanel({
             <span>{fileName || "M4A, MP3, WAV, MP4, MKV"}</span>
             {duration && <span>{duration}</span>}
             {fileSize && <span>{fileSize}</span>}
+            {audioWaveformStatus === "loading" && <span>Analyzing waveform</span>}
+            {audioWaveformStatus === "ready" && <span>Audio-derived waveform</span>}
             {record?.transcript_text && <span>{hasProviderTurns ? (wordSegmentMode ? "Timestamped transcript" : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}`) : "turn data required"}</span>}
           </div>
         </div>
@@ -758,7 +852,7 @@ function AudioUploadPanel({
         {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
         {complete && <div style={{ position: "absolute", right: 16, top: 16, width: 12, height: 12, borderRadius: 99, background: C.suc, animation: "interviewCompletePulse 1.8s ease-out infinite" }} />}
         <div style={{ position: "absolute", left: 24, top: 18, zIndex: 1, color: "rgba(255,255,255,0.66)", fontSize: 10, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>
-          Interview Audio
+          {audioWaveformStatus === "ready" ? "Audio Fingerprint" : audioWaveformStatus === "loading" ? "Analyzing Audio" : "Interview Audio"}
         </div>
         <div style={{ position: "absolute", right: 24, bottom: 18, zIndex: 1, color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: 850 }}>
           {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
