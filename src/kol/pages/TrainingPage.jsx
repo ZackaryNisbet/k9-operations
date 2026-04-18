@@ -263,6 +263,77 @@ function SectionHeader({ title, count, children }) {
   );
 }
 
+function PerformanceReviewStyles() {
+  return (
+    <style>{`
+      @keyframes performanceReviewPanelEnter {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes performanceReviewStatusPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.16); }
+        50% { box-shadow: 0 0 0 5px rgba(217, 119, 6, 0); }
+      }
+      .performance-review-detail-shell {
+        animation: performanceReviewPanelEnter 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .performance-review-sync-panel {
+        animation: performanceReviewPanelEnter 300ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .performance-review-sync-dot {
+        animation: performanceReviewStatusPulse 2.4s ease-in-out infinite;
+      }
+      @media (max-width: 960px) {
+        .performance-review-detail-grid {
+          grid-template-columns: 1fr !important;
+        }
+        .performance-review-sync-panel {
+          grid-template-columns: 1fr !important;
+        }
+        .performance-review-side-panel {
+          position: static !important;
+        }
+      }
+    `}</style>
+  );
+}
+
+function ReviewTemplateStatusLine({ reviewTemplateName, pdfTemplateName, mismatch }) {
+  return (
+    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 9px",
+          borderRadius: 999,
+          background: mismatch ? "#FFF7ED" : C.sucLt,
+          color: mismatch ? C.warn : C.suc,
+          border: `1px solid ${mismatch ? "rgba(217,119,6,0.22)" : "rgba(22,163,74,0.18)"}`,
+          fontWeight: 900,
+          lineHeight: 1.2,
+        }}
+      >
+        <span
+          className={mismatch ? "performance-review-sync-dot" : ""}
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 99,
+            background: mismatch ? C.warn : C.suc,
+            flexShrink: 0,
+          }}
+        />
+        {mismatch ? "Template sync needed" : "Templates aligned"}
+      </span>
+      <span style={{ color: C.textMut, fontWeight: 700 }}>
+        Form: {reviewTemplateName || "Not loaded"} · PDF: {pdfTemplateName || "Not set"}
+      </span>
+    </div>
+  );
+}
+
 function splitEmployeeName(fullName = "") {
   const tokens = String(fullName || "").trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return { firstName: "", lastName: "" };
@@ -4588,6 +4659,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         && selectedExpectedReviewTemplate.id !== selectedReviewTemplate.id
       );
       const selectedRestartTemplate = selectedExpectedReviewTemplate || selectedReviewTemplate;
+      const selectedRestartLabel = selectedPerformanceTemplate?.roleLabel || "Paired Template";
       const selectedPerformanceTemplateBadgeLabel = selectedPerformanceTemplate
         ? selectedPerformanceTemplateOverrideKey
           ? `Paired: ${selectedPerformanceTemplate.roleLabel}`
@@ -4609,7 +4681,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ];
 
       return (
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 16px 40px" }}>
+        <div className="performance-review-detail-shell" style={{ maxWidth: 1320, margin: "0 auto", padding: "24px 16px 40px" }}>
+          <PerformanceReviewStyles />
           <button
             onClick={() => setSelectedReviewInstanceId(null)}
             style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18, fontFamily: "inherit", padding: 0 }}
@@ -4625,9 +4698,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
                 {selectedLaborEmployeeView.full_name} · {selectedLaborEmployeeView.position_title || "Employee"} · {reviewCycleLabel}
               </div>
-              <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5, marginTop: 4 }}>
-                Review form: {selectedReviewTemplate?.name || "—"} · PDF template: {selectedPerformanceTemplate?.roleLabel || "—"}
-              </div>
+              <ReviewTemplateStatusLine
+                reviewTemplateName={selectedReviewTemplate?.name}
+                pdfTemplateName={selectedPerformanceTemplate?.roleLabel}
+                mismatch={selectedReviewTemplateMismatch}
+              />
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Badge color={reviewStatusColor}>{reviewStatus.replace(/_/g, " ")}</Badge>
@@ -4664,33 +4739,64 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </Card>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 20, alignItems: "start" }}>
+          <div className="performance-review-detail-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 20, alignItems: "start" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               {selectedReviewTemplateMismatch && (
-                <Card style={{ padding: 18, border: `1px solid ${C.warn}`, background: "#FFFBEB" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ maxWidth: 820 }}>
-                      <div style={{ fontSize: 15, fontWeight: 900, color: C.text, marginBottom: 6 }}>Review form does not match the paired PDF template</div>
-                      <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>
-                        This review was started from {selectedReviewTemplate?.name || "another review template"}, but the employee is paired to {selectedPerformanceTemplate?.roleLabel || "the selected PDF template"}.
-                        Restarting will rebuild this review with {selectedExpectedReviewTemplate?.name || selectedPerformanceTemplate?.roleLabel || "the paired template"} and clear the current saved answers/PDF draft fields.
-                      </div>
-                    </div>
-                    <Btn
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => handleRestartSelectedReviewInstance(selectedRestartTemplate)}
-                      disabled={restartingReview || reviewRestartBlocked || !selectedRestartTemplate?.id}
-                    >
-                      {restartingReview ? "Restarting..." : `Restart With ${selectedPerformanceTemplate?.roleLabel || "Paired Template"}`}
-                    </Btn>
+                <div
+                  className="performance-review-sync-panel"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                    gap: 14,
+                    alignItems: "center",
+                    padding: "14px 16px",
+                    border: "1px solid rgba(217,119,6,0.22)",
+                    borderRadius: 8,
+                    background: "linear-gradient(135deg, #fff 0%, #fffaf2 100%)",
+                    boxShadow: "0 8px 24px rgba(15,23,42,0.04)",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 8,
+                      background: "#FFF7ED",
+                      border: "1px solid rgba(217,119,6,0.18)",
+                      color: C.warn,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <I.RefreshCw />
                   </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Sync this review to the paired form</div>
+                      <Badge color="warning">Form mismatch</Badge>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.55, maxWidth: 820 }}>
+                      Current form: <strong style={{ color: C.textSec }}>{selectedReviewTemplate?.name || "Unknown"}</strong>. Paired form: <strong style={{ color: C.textSec }}>{selectedExpectedReviewTemplate?.name || selectedPerformanceTemplate?.roleLabel || "Unknown"}</strong>.
+                      Restarting clears this cycle's saved answers and PDF draft fields.
+                    </div>
+                  </div>
+                  <Btn
+                    variant="secondary"
+                    size="sm"
+                    icon={<I.RefreshCw />}
+                    onClick={() => handleRestartSelectedReviewInstance(selectedRestartTemplate)}
+                    disabled={restartingReview || reviewRestartBlocked || !selectedRestartTemplate?.id}
+                    style={{ whiteSpace: "nowrap", borderColor: "rgba(217,119,6,0.28)", color: C.text }}
+                  >
+                    {restartingReview ? "Restarting..." : `Restart With ${selectedRestartLabel}`}
+                  </Btn>
                   {reviewRestartBlocked && (
-                    <div style={{ marginTop: 8, fontSize: 12, color: C.dan, fontWeight: 700 }}>
+                    <div style={{ gridColumn: "2 / -1", marginTop: -6, fontSize: 12, color: C.dan, fontWeight: 700 }}>
                       Restart is blocked because a signature request has already been {reviewSignatureStatus}.
                     </div>
                   )}
-                </Card>
+                </div>
               )}
               <Card style={{ padding: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
@@ -4839,7 +4945,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               })}
             </div>
 
-            <div style={{ position: "sticky", top: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="performance-review-side-panel" style={{ position: "sticky", top: 24, display: "flex", flexDirection: "column", gap: 12 }}>
               <Card style={{ padding: 18 }}>
                 <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Review Actions</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -4850,14 +4956,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
                   <Btn
-                    variant="ghost"
+                    variant={selectedReviewTemplateMismatch ? "secondary" : "ghost"}
+                    icon={<I.RefreshCw />}
                     onClick={() => handleRestartSelectedReviewInstance(selectedRestartTemplate)}
                     disabled={restartingReview || reviewRestartBlocked || !selectedRestartTemplate?.id}
+                    style={selectedReviewTemplateMismatch ? { borderColor: "rgba(217,119,6,0.28)" } : {}}
                   >
                     {restartingReview
                       ? "Restarting..."
                       : selectedReviewTemplateMismatch && selectedPerformanceTemplate
-                        ? `Restart With ${selectedPerformanceTemplate.roleLabel}`
+                        ? `Restart With ${selectedRestartLabel}`
                         : "Restart Review"}
                   </Btn>
                   <Btn variant="ghost" onClick={() => setSelectedReviewInstanceId(null)}>Back to Employee</Btn>
