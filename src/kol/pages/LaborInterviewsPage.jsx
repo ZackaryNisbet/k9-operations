@@ -7,23 +7,23 @@ import {
   buildInterviewArtifactPath,
   buildInterviewTemplatePdfPath,
   buildInterviewTemplateSnapshot,
-  buildInterviewTranscriptPath,
   buildPdfResponseMap,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewRecommendation,
+  getInterviewRecommendationOption,
   getInterviewAudioContentType,
   getInterviewRoleLabel,
   getPdfFieldTypeLabel,
-  groupQuestionsByCategory,
   INTERVIEW_AUDIO_ACCEPT,
   INTERVIEW_PDF_ACCEPT,
-  INTERVIEW_TRANSCRIPT_ACCEPT,
+  INTERVIEW_RECOMMENDATION_OPTIONS,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
-  LABOR_INTERVIEW_ROLES,
   LABOR_INTERVIEW_STATUS_LABELS,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
   normalizeInterviewCandidateDraft,
   normalizeQuestionKey,
+  parseInterviewTranscriptTurns,
   pdfFieldsFromSnapshot,
   PDF_VERIFICATION_LABELS,
   questionRowsFromSnapshot,
@@ -92,15 +92,6 @@ function responseKeyForPdfField(field) {
 function compactDateTime(row) {
   if (!row?.interview_date && !row?.interview_time) return "No date set";
   return [row.interview_date ? fmtDate(row.interview_date) : "", row.interview_time || ""].filter(Boolean).join(" at ");
-}
-
-function fileToText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
 }
 
 function sleep(ms) {
@@ -194,6 +185,654 @@ function EmptyState({ title, body }) {
   );
 }
 
+function InterviewStyles() {
+  return (
+    <style>{`
+      @keyframes interviewWaveFloat {
+        0%, 100% { transform: scaleY(0.42); opacity: 0.52; }
+        50% { transform: scaleY(1); opacity: 1; }
+      }
+      @keyframes interviewScan {
+        0% { transform: translateX(-26%); opacity: 0; }
+        18% { opacity: 0.95; }
+        82% { opacity: 0.95; }
+        100% { transform: translateX(126%); opacity: 0; }
+      }
+      @keyframes interviewCompletePulse {
+        0% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.24); }
+        70% { transform: scale(1); box-shadow: 0 0 0 18px rgba(22, 163, 74, 0); }
+        100% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+      }
+      .interview-row:hover { background: #f8fafc; }
+      .interview-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 9998;
+        background: rgba(15, 23, 42, 0.54);
+        backdrop-filter: blur(14px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 26px;
+      }
+      .interview-immersive-shell {
+        width: min(1480px, 94vw);
+        height: min(900px, 92vh);
+        background: #ffffff;
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 26px 80px rgba(2, 6, 23, 0.28);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .interview-transcript-line:hover { border-color: #cbd5e1; background: #ffffff; }
+      @media (max-width: 920px) {
+        .interview-immersive-shell { width: 96vw; height: 94vh; }
+        .interview-guide-grid { grid-template-columns: 1fr !important; overflow-y: auto; }
+        .interview-guide-pdf { min-height: 520px; }
+        .interview-roster-table { min-width: 780px; }
+      }
+    `}</style>
+  );
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return "";
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${Math.round(value / (1024 * 1024))} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function formatDuration(seconds) {
+  const value = Number(seconds || 0);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const minutes = Math.floor(value / 60);
+  const remainder = Math.round(value % 60);
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function seededWaveBars(seed = "") {
+  let state = 0;
+  String(seed || "interview").split("").forEach((char) => {
+    state = (state * 31 + char.charCodeAt(0)) % 9973;
+  });
+  return Array.from({ length: 56 }, (_, index) => {
+    state = (state * 9301 + 49297 + index) % 233280;
+    const ratio = state / 233280;
+    return {
+      height: 18 + Math.round(ratio * 74),
+      delay: -(ratio * 1.8).toFixed(2),
+      duration: (0.8 + ratio * 1.4).toFixed(2),
+      opacity: 0.42 + ratio * 0.54,
+    };
+  });
+}
+
+function safeUiError(error, fallback) {
+  return String(error?.message || fallback || "Something went wrong.")
+    .replace(/xAI\s+Grok/gi, "AI")
+    .replace(/\bGrok\b/g, "AI")
+    .replace(/\bxAI\b/g, "AI");
+}
+
+function IconButton({ label, onClick, disabled, children, variant = "default", style = {} }) {
+  const colors = {
+    default: { bg: "#fff", color: C.textSec, border: C.border },
+    primary: { bg: C.pri, color: "#fff", border: C.pri },
+    danger: { bg: C.danLt, color: C.dan, border: "#fecaca" },
+  };
+  const tone = colors[variant] || colors.default;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: 8,
+        border: `1px solid ${tone.border}`,
+        background: tone.bg,
+        color: tone.color,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.48 : 1,
+        fontWeight: 900,
+        fontSize: 15,
+        fontFamily: "inherit",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RecommendationBadge({ value }) {
+  const option = getInterviewRecommendationOption(value);
+  return <Badge color={option.tone}>{option.label}</Badge>;
+}
+
+function StaticField({ label, value }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ marginTop: 4, fontSize: 14, color: C.text, fontWeight: 700, minHeight: 20, overflowWrap: "anywhere" }}>{value || "-"}</div>
+    </div>
+  );
+}
+
+function SegmentedRecommendation({ value, onChange, disabled }) {
+  return (
+    <div style={{ display: "inline-grid", gridTemplateColumns: "repeat(4, minmax(80px, 1fr))", border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+      {INTERVIEW_RECOMMENDATION_OPTIONS.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            type="button"
+            key={option.value}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            style={{
+              border: "none",
+              borderRight: option.value === "pass" ? "none" : `1px solid ${C.border}`,
+              background: selected ? C.pri : "#fff",
+              color: selected ? "#fff" : C.textSec,
+              padding: "9px 12px",
+              fontFamily: "inherit",
+              fontWeight: 850,
+              fontSize: 12,
+              cursor: disabled ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InterviewRoster({ records, onOpen }) {
+  if (records.length === 0) {
+    return <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />;
+  }
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflowX: "auto", background: "#fff" }}>
+      <div className="interview-roster-table" style={{ minWidth: 900 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.5fr) minmax(180px, 1.1fr) 150px 140px 140px 90px", gap: 0, padding: "12px 16px", background: C.surfaceHover, borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          <div>Candidate</div>
+          <div>Position</div>
+          <div>Date Interviewed</div>
+          <div>Next Step</div>
+          <div>Workflow</div>
+          <div />
+        </div>
+        {records.map((record) => (
+          <button
+            type="button"
+            key={record.id}
+            onClick={() => onOpen(record.id)}
+            className="interview-row"
+            style={{
+              width: "100%",
+              display: "grid",
+              gridTemplateColumns: "minmax(220px, 1.5fr) minmax(180px, 1.1fr) 150px 140px 140px 90px",
+              gap: 0,
+              alignItems: "center",
+              padding: "14px 16px",
+              border: "none",
+              borderBottom: `1px solid ${C.borderLight}`,
+              background: "#fff",
+              textAlign: "left",
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{record.candidate_full_name}</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{record.candidate_email || record.candidate_phone || "No contact saved"}</div>
+            </div>
+            <div style={{ fontSize: 13, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
+            <div style={{ fontSize: 13, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
+            <div><RecommendationBadge value={getInterviewRecommendation(record)} /></div>
+            <div><Badge color={STATUS_BADGE_COLORS[record.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[record.status] || record.status}</Badge></div>
+            <div style={{ color: C.pri, fontSize: 13, fontWeight: 900, textAlign: "right" }}>Open</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CandidateHeader({ record, recommendation, onRecommendationChange, onEdit, onDelete, onBack, saving }) {
+  const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: 18, borderBottom: `1px solid ${C.borderLight}`, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
+          <IconButton label="Back to interviews" onClick={onBack}>{"<"}</IconButton>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{ margin: 0, color: C.text, fontSize: 26, lineHeight: 1.1, fontWeight: 950, letterSpacing: 0 }}>{record.candidate_full_name}</h2>
+            <div style={{ marginTop: 7, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: C.textSec, fontWeight: 800 }}>{position || "Interview"}</span>
+              <Badge color={STATUS_BADGE_COLORS[record.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[record.status] || record.status}</Badge>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <SegmentedRecommendation value={recommendation} onChange={onRecommendationChange} disabled={saving} />
+          <IconButton label="Edit candidate details" onClick={onEdit}>{"E"}</IconButton>
+          <IconButton label="Delete interview" variant="danger" onClick={onDelete}>{"x"}</IconButton>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
+        <StaticField label="Date" value={compactDateTime(record)} />
+        <StaticField label="Email" value={record.candidate_email} />
+        <StaticField label="Phone" value={record.candidate_phone} />
+        <StaticField label="Zoom Link" value={record.zoom_recording_url} />
+        <StaticField label="Passcode" value={record.zoom_passcode} />
+      </div>
+    </div>
+  );
+}
+
+function AudioUploadPanel({ record, audioFileName, transcribing, drafting, onUpload, onTranscriptClick, inputRef }) {
+  const sourceAudio = record?.metadata?.audio_transcription?.source_audio || {};
+  const transcription = record?.metadata?.audio_transcription || {};
+  const fileName = audioFileName || sourceAudio.file_name || "";
+  const duration = formatDuration(transcription.duration_seconds);
+  const fileSize = formatFileSize(sourceAudio.size_bytes);
+  const complete = !!record?.transcript_text && !transcribing && !drafting;
+  const bars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}:${record?.updated_at || ""}`), [record?.id, record?.updated_at, fileName]);
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file) onUpload(file);
+  };
+
+  return (
+    <div
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        border: `1px solid ${complete ? "#bbf7d0" : C.border}`,
+        borderRadius: 8,
+        background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 48%, #f0fdf4 100%)",
+        padding: 18,
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept={INTERVIEW_AUDIO_ACCEPT}
+        style={{ display: "none" }}
+        onChange={(event) => {
+          onUpload(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 16, alignItems: "center" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>Upload Interview Audio</div>
+          <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950, color: C.text }}>{drafting ? "Populating interview notes" : transcribing ? "Reading the conversation" : complete ? "Audio processed" : "Drop an audio file here"}</div>
+          <div style={{ marginTop: 8, display: "flex", gap: 10, color: C.textMut, fontSize: 12, flexWrap: "wrap" }}>
+            <span>{fileName || "M4A, MP3, WAV, MP4, MKV"}</span>
+            {duration && <span>{duration}</span>}
+            {fileSize && <span>{fileSize}</span>}
+            {record?.transcript_text && <button type="button" onClick={onTranscriptClick} style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}>Review transcript</button>}
+          </div>
+        </div>
+        <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
+          {transcribing || drafting ? "Processing..." : complete ? "Replace Audio" : "Choose File"}
+        </Btn>
+      </div>
+      <div style={{ marginTop: 18, height: 120, borderRadius: 8, background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderLight}`, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px" }}>
+        <div style={{ position: "absolute", inset: 0, opacity: transcribing || drafting ? 1 : 0.35, background: "radial-gradient(circle at 30% 50%, rgba(132,204,22,0.12), transparent 38%), radial-gradient(circle at 70% 50%, rgba(37,99,235,0.10), transparent 32%)" }} />
+        {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
+        {complete && <div style={{ position: "absolute", right: 16, top: 16, width: 12, height: 12, borderRadius: 99, background: C.suc, animation: "interviewCompletePulse 1.8s ease-out infinite" }} />}
+        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 4, width: "100%", height: 92, justifyContent: "center" }}>
+          {bars.map((bar, index) => (
+            <div
+              key={index}
+              style={{
+                width: 5,
+                height: bar.height,
+                borderRadius: 99,
+                background: index % 3 === 0 ? C.pri : index % 3 === 1 ? C.accDk : C.info,
+                opacity: bar.opacity,
+                transformOrigin: "center",
+                animation: transcribing || drafting ? `interviewWaveFloat ${bar.duration}s ease-in-out ${bar.delay}s infinite` : "none",
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptModal({ text, onClose }) {
+  const turns = parseInterviewTranscriptTurns(text);
+  const hasSpeakers = turns.some((turn) => turn.speaker !== "Transcript");
+  return (
+    <div className="interview-modal-backdrop" onClick={onClose}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 92vw)", maxHeight: "86vh", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 24px 70px rgba(2,6,23,0.24)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
+        <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Transcript</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{turns.length} {hasSpeakers ? "speaker turn" : "transcript segment"}{turns.length === 1 ? "" : "s"}</div>
+          </div>
+          <IconButton label="Close transcript" onClick={onClose}>{"x"}</IconButton>
+        </div>
+        <div style={{ padding: 18, overflowY: "auto", background: C.surfaceHover }}>
+          {turns.length === 0 ? (
+            <EmptyState title="No Transcript" body="Upload interview audio to generate a transcript." />
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {turns.map((turn) => (
+                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px 120px minmax(0, 1fr)", gap: 12, alignItems: "start", background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
+                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 850 }}>{turn.timestamp || "--:--"}</div>
+                  <div style={{ fontSize: 12, color: C.pri, fontWeight: 900 }}>{turn.speaker}</div>
+                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>{turn.text}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewGuideModal({
+  record,
+  fields,
+  artifacts,
+  pdfUrl,
+  loadingPdf,
+  responsesByTarget,
+  responseDrafts,
+  savingKey,
+  exporting,
+  activeIndex,
+  setActiveIndex,
+  getFieldValue,
+  setFieldDraft,
+  saveField,
+  approveField,
+  exportFinalPdf,
+  onClose,
+}) {
+  const activeField = fields[activeIndex] || fields[0] || null;
+  const activeKey = activeField ? responseKeyForPdfField(activeField) : "";
+  const activeResponse = responsesByTarget[activeKey] || {};
+  const approved = !!activeResponse.metadata?.approved;
+  const approvedCount = fields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
+  const activeValue = activeField ? getFieldValue(activeField) : "";
+
+  const goNext = () => {
+    if (!fields.length) return;
+    const nextUnapproved = fields.findIndex((field, index) => index > activeIndex && !responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved);
+    if (nextUnapproved >= 0) setActiveIndex(nextUnapproved);
+    else setActiveIndex(Math.min(fields.length - 1, activeIndex + 1));
+  };
+
+  const approveAndNext = async () => {
+    if (!activeField) return;
+    await approveField(activeField, activeValue);
+    goNext();
+  };
+
+  return (
+    <div className="interview-modal-backdrop" onClick={onClose}>
+      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interview Guide</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{fields.length} approved</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Btn variant="success" size="sm" onClick={exportFinalPdf} disabled={exporting || !pdfUrl}>{exporting ? "Exporting..." : "Export Final PDF"}</Btn>
+            <IconButton label="Close guide" onClick={onClose}>{"x"}</IconButton>
+          </div>
+        </div>
+        <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "260px minmax(0, 1fr) 360px", minHeight: 0 }}>
+          <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fff" }}>
+            <div style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Fields</div>
+            {fields.length === 0 ? (
+              <div style={{ padding: 14, color: C.textMut, fontSize: 13 }}>No PDF fields found.</div>
+            ) : fields.map((field, index) => {
+              const key = responseKeyForPdfField(field);
+              const isActive = index === activeIndex;
+              const isApproved = !!responsesByTarget[key]?.metadata?.approved;
+              const hasDraft = !!(getFieldValue(field) || "").trim();
+              return (
+                <button
+                  type="button"
+                  key={field.name}
+                  onClick={() => setActiveIndex(index)}
+                  style={{
+                    width: "100%",
+                    display: "grid",
+                    gridTemplateColumns: "22px minmax(0, 1fr)",
+                    gap: 8,
+                    alignItems: "start",
+                    padding: "10px 12px",
+                    border: "none",
+                    borderBottom: `1px solid ${C.borderLight}`,
+                    background: isActive ? C.priLt : "#fff",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${isApproved ? C.suc : C.border}`, background: isApproved ? C.suc : "#fff", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>{isApproved ? "✓" : ""}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", color: C.text, fontSize: 12, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{field.name}</span>
+                    <span style={{ display: "block", color: hasDraft ? C.pri : C.textMut, marginTop: 2, fontSize: 11 }}>Page {field.page_number || "-"} - {getPdfFieldTypeLabel(field.type)}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="interview-guide-pdf" style={{ background: "#e5e7eb", padding: 14, minHeight: 0 }}>
+            {loadingPdf ? (
+              <div style={{ height: "100%", minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontWeight: 800 }}>Rendering guide...</div>
+            ) : pdfUrl ? (
+              <iframe title="Filled Interview Guide" src={`${pdfUrl}#page=${activeField?.page_number || 1}&toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", minHeight: 560, border: "none", borderRadius: 6, background: "#fff", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }} />
+            ) : (
+              <EmptyState title="No PDF" body="This interview does not have a source guide PDF." />
+            )}
+          </div>
+          <div style={{ borderLeft: `1px solid ${C.border}`, background: "#fff", padding: 16, overflowY: "auto" }}>
+            {activeField ? (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Field</div>
+                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{activeField.name}</div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"} - {getPdfFieldTypeLabel(activeField.type)}</div>
+                    </div>
+                    <Badge color={approved ? "success" : activeResponse.ai_draft_text ? "warning" : "default"}>{approved ? "Approved" : activeResponse.ai_draft_text ? "AI Draft" : "Manual"}</Badge>
+                  </div>
+                </div>
+                <textarea
+                  value={activeValue}
+                  onChange={(event) => setFieldDraft(activeField, event.target.value)}
+                  onBlur={(event) => saveField(activeField, event.target.value)}
+                  rows={9}
+                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff" }}
+                />
+                {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
+                    {activeResponse.ai_evidence.map((entry, index) => (
+                      <div key={index} style={{ borderLeft: `3px solid ${C.acc}`, paddingLeft: 10, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>{entry}</div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaved by field name"}</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="secondary" size="sm" onClick={() => saveField(activeField, activeValue)}>Save</Btn>
+                    <Btn variant="primary" size="sm" onClick={approveAndNext}>Approve & Next</Btn>
+                  </div>
+                </div>
+                {artifacts.length > 0 && (
+                  <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 12, display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Exports</div>
+                    {artifacts.slice(0, 3).map((artifact) => (
+                      <div key={artifact.id} style={{ fontSize: 12, color: C.textSec, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{artifact.file_name}</span>
+                        <span>{artifact.created_at ? new Date(artifact.created_at).toLocaleDateString() : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <EmptyState title="No Fields" body="Publish a fillable PDF template before reviewing the guide." />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuestionReviewModal({
+  record,
+  questions,
+  responsesByTarget,
+  responseDrafts,
+  savingKey,
+  activeIndex,
+  setActiveIndex,
+  setQuestionDraft,
+  saveQuestionResponse,
+  approveQuestion,
+  onClose,
+}) {
+  const activeQuestion = questions[activeIndex] || questions[0] || null;
+  const activeKey = activeQuestion ? responseKeyForQuestion(activeQuestion) : "";
+  const activeResponse = responsesByTarget[activeKey] || {};
+  const approvedCount = questions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length;
+  const activeValue = activeKey ? (responseDrafts[activeKey] || "") : "";
+
+  const approveAndNext = async () => {
+    if (!activeQuestion) return;
+    await approveQuestion(activeQuestion, activeValue);
+    const nextUnapproved = questions.findIndex((question, index) => index > activeIndex && !responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved);
+    if (nextUnapproved >= 0) setActiveIndex(nextUnapproved);
+    else setActiveIndex(Math.min(questions.length - 1, activeIndex + 1));
+  };
+
+  return (
+    <div className="interview-modal-backdrop" onClick={onClose}>
+      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1120px, 94vw)" }}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{questions.length} approved</div>
+          </div>
+          <IconButton label="Close questions" onClick={onClose}>{"x"}</IconButton>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0, 1fr)", minHeight: 0 }}>
+          <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fff" }}>
+            {questions.map((question, index) => {
+              const key = responseKeyForQuestion(question);
+              const isActive = index === activeIndex;
+              const isApproved = !!responsesByTarget[key]?.metadata?.approved;
+              return (
+                <button
+                  type="button"
+                  key={question.question_key}
+                  onClick={() => setActiveIndex(index)}
+                  style={{
+                    width: "100%",
+                    display: "grid",
+                    gridTemplateColumns: "22px minmax(0, 1fr)",
+                    gap: 8,
+                    padding: "12px 14px",
+                    border: "none",
+                    borderBottom: `1px solid ${C.borderLight}`,
+                    background: isActive ? C.priLt : "#fff",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${isApproved ? C.suc : C.border}`, background: isApproved ? C.suc : "#fff", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>{isApproved ? "✓" : ""}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 12, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{question.prompt}</span>
+                    <span style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut }}>{question.category || "Interview"}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ padding: 18, background: C.surfaceHover, overflowY: "auto" }}>
+            {activeQuestion ? (
+              <div style={{ maxWidth: 760, display: "grid", gap: 14 }}>
+                <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>{activeQuestion.category || "Interview"}</div>
+                      <div style={{ marginTop: 7, fontSize: 18, lineHeight: 1.35, color: C.text, fontWeight: 950 }}>{activeQuestion.prompt}</div>
+                    </div>
+                    <Badge color={activeResponse.metadata?.approved ? "success" : activeResponse.ai_draft_text ? "warning" : "default"}>{activeResponse.metadata?.approved ? "Approved" : activeResponse.ai_draft_text ? "AI Draft" : "Manual"}</Badge>
+                  </div>
+                </div>
+                <textarea
+                  value={activeValue}
+                  onChange={(event) => setQuestionDraft(activeQuestion, event.target.value)}
+                  onBlur={(event) => saveQuestionResponse(activeQuestion, event.target.value)}
+                  rows={12}
+                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 13, fontFamily: "inherit", fontSize: 14, lineHeight: 1.55, color: C.text, resize: "vertical", background: "#fff", outline: "none" }}
+                />
+                {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
+                  <div style={{ background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 13, display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
+                    {activeResponse.ai_evidence.map((entry, index) => (
+                      <div key={index} style={{ borderLeft: `3px solid ${C.acc}`, paddingLeft: 10, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>{entry}</div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaved"}</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="secondary" size="sm" onClick={() => saveQuestionResponse(activeQuestion, activeValue)}>Save</Btn>
+                    <Btn variant="primary" size="sm" onClick={approveAndNext}>Approve & Next</Btn>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <EmptyState title="No Questions" body="Add shared custom questions in configuration." />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
@@ -210,6 +849,19 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [artifacts, setArtifacts] = useState([]);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [showNewInterview, setShowNewInterview] = useState(false);
+  const [showCandidateEdit, setShowCandidateEdit] = useState(false);
+  const [candidateEditDraft, setCandidateEditDraft] = useState(() => buildNewInterviewDraft());
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [showQuestionsModal, setShowQuestionsModal] = useState(false);
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [guidePdfUrl, setGuidePdfUrl] = useState("");
+  const [guidePdfLoading, setGuidePdfLoading] = useState(false);
+  const [pdfReviewIndex, setPdfReviewIndex] = useState(0);
+  const [questionReviewIndex, setQuestionReviewIndex] = useState(0);
+  const [configQuestionsOpen, setConfigQuestionsOpen] = useState(false);
+  const [showNewPosition, setShowNewPosition] = useState(false);
+  const [newPositionDraft, setNewPositionDraft] = useState({ role_label: "", description: "" });
+  const [dragQuestionId, setDragQuestionId] = useState("");
   const [newInterviewDraft, setNewInterviewDraft] = useState(() => buildNewInterviewDraft());
   const [savingNewInterview, setSavingNewInterview] = useState(false);
   const [recordSaving, setRecordSaving] = useState(false);
@@ -219,13 +871,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
   const [templateActionId, setTemplateActionId] = useState("");
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
-  const [transcriptFileName, setTranscriptFileName] = useState("");
   const [audioFileName, setAudioFileName] = useState("");
   const [aiDrafting, setAiDrafting] = useState(false);
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
-  const transcriptInputRef = useRef(null);
   const audioInputRef = useRef(null);
 
   const versionsByTemplate = useMemo(() => {
@@ -249,14 +899,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [versions]);
 
   const selectedRecord = useMemo(() => {
-    return records.find((record) => record.id === selectedRecordId) || records[0] || null;
+    return records.find((record) => record.id === selectedRecordId) || null;
   }, [records, selectedRecordId]);
 
   const selectedSnapshot = useMemo(() => snapshotForRecord(selectedRecord), [selectedRecord]);
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const responsesByTarget = useMemo(() => mapResponsesByTarget(responses), [responses]);
-  const selectedAudioTranscription = selectedRecord?.metadata?.audio_transcription || null;
 
   const metrics = useMemo(() => {
     const completed = records.filter((record) => record.status === "completed").length;
@@ -277,6 +926,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const selectedTemplate = useMemo(() => {
     return templates.find((template) => template.id === selectedTemplateVersion?.template_id) || null;
   }, [selectedTemplateVersion, templates]);
+
+  const draftVersions = useMemo(() => versions.filter((version) => version.status === "draft"), [versions]);
+
+  const sharedQuestionSourceVersion = useMemo(() => {
+    return draftVersions[0] || publishedVersions[0] || versions[0] || null;
+  }, [draftVersions, publishedVersions, versions]);
+
+  const sharedQuestions = useMemo(() => {
+    if (!sharedQuestionSourceVersion?.id) return [];
+    return [...(questionsByVersion[sharedQuestionSourceVersion.id] || [])]
+      .sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
+  }, [questionsByVersion, sharedQuestionSourceVersion]);
 
   const showToast = useCallback((message, type = "success") => {
     addGlobalToast?.(message, type);
@@ -329,14 +990,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       setVersions(versionRows);
       setQuestions(questionRes.data || []);
       setRecords(recordRes.data || []);
-      if (!selectedRecordId && recordRes.data?.[0]?.id) setSelectedRecordId(recordRes.data[0].id);
     } catch (error) {
       const missing = error?.code === "PGRST205" || /labor_interview_/i.test(error?.message || "");
       setSchemaError(missing ? "Interview database tables are not available in this environment yet." : (error?.message || "Unable to load interviews."));
     } finally {
       setLoading(false);
     }
-  }, [locationId, selectedRecordId]);
+  }, [locationId]);
 
   useEffect(() => {
     let active = true;
@@ -371,9 +1031,30 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedRecord?.id, showToast]);
 
   useEffect(() => {
-    setTranscriptFileName("");
     setAudioFileName("");
+    setPdfReviewIndex(0);
+    setQuestionReviewIndex(0);
+    setShowCandidateEdit(false);
+    setShowGuideModal(false);
+    setShowQuestionsModal(false);
+    setShowTranscriptModal(false);
   }, [selectedRecord?.id]);
+
+  useEffect(() => {
+    if (!selectedRecord) return;
+    setCandidateEditDraft({
+      candidate_full_name: selectedRecord.candidate_full_name || "",
+      candidate_email: selectedRecord.candidate_email || "",
+      candidate_phone: selectedRecord.candidate_phone || "",
+      candidate_position: selectedRecord.candidate_position || "",
+      interview_date: selectedRecord.interview_date || "",
+      interview_time: selectedRecord.interview_time || "",
+      interviewer_name: selectedRecord.interviewer_name || actorName || "",
+      zoom_recording_url: selectedRecord.zoom_recording_url || "",
+      zoom_passcode: selectedRecord.zoom_passcode || "",
+      template_version_id: selectedRecord.template_version_id || "",
+    });
+  }, [actorName, selectedRecord]);
 
   useEffect(() => {
     const nextDrafts = {};
@@ -403,8 +1084,49 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return () => { active = false; };
   }, [selectedSnapshot]);
 
+  useEffect(() => {
+    if (!showGuideModal) {
+      setGuidePdfUrl("");
+      return undefined;
+    }
+    const path = selectedSnapshot?.version?.source_pdf_path;
+    const bucket = selectedSnapshot?.version?.source_pdf_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
+    if (!path || !selectedRecord?.id) {
+      setGuidePdfUrl("");
+      return undefined;
+    }
+    let active = true;
+    let objectUrl = "";
+    setGuidePdfLoading(true);
+    supabase.storage.from(bucket).download(path)
+      .then(async ({ data: sourceBlob, error }) => {
+        if (error) throw error;
+        const bytes = await sourceBlob.arrayBuffer();
+        const filledBytes = await fillInterviewPdfBytes(
+          bytes,
+          buildPdfResponseMap(responses, selectedRecord, selectedPdfFields),
+          { flatten: false },
+        );
+        objectUrl = URL.createObjectURL(new Blob([filledBytes], { type: "application/pdf" }));
+        if (active) setGuidePdfUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (active) showToast(safeUiError(error, "Failed to render interview guide"), "error");
+      })
+      .finally(() => {
+        if (active) setGuidePdfLoading(false);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [responses, selectedPdfFields, selectedRecord, selectedSnapshot, showGuideModal, showToast]);
+
   const createNewInterview = async () => {
-    const normalized = normalizeInterviewCandidateDraft(newInterviewDraft);
+    const normalized = normalizeInterviewCandidateDraft({
+      ...newInterviewDraft,
+      interviewer_name: newInterviewDraft.interviewer_name || actorName,
+    });
     if (!normalized.candidate_full_name || !selectedTemplate || !selectedTemplateVersion) {
       showToast("Candidate name and a published role template are required.", "error");
       return;
@@ -424,6 +1146,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         ...normalized,
         status: "draft",
         interviewer_user_id: actorUserId,
+        metadata: {
+          hiring_recommendation: "pending",
+        },
         template_snapshot: snapshot,
         pdf_field_manifest_snapshot: selectedTemplateVersion.pdf_field_manifest || [],
         question_snapshot: snapshot.questions || [],
@@ -455,14 +1180,59 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         .single();
       if (error) throw error;
       setRecords((prev) => prev.map((record) => record.id === updated.id ? updated : record));
+      return updated;
     } catch (error) {
-      showToast(error?.message || "Failed to save interview", "error");
+      showToast(safeUiError(error, "Failed to save interview"), "error");
+      return null;
     } finally {
       setRecordSaving(false);
     }
   };
 
-  const saveResponse = async ({ responseType, key, prompt, value }) => {
+  const saveRecordMetadataPatch = async (metadataPatch) => {
+    if (!selectedRecord?.id) return null;
+    return saveRecordPatch({
+      metadata: {
+        ...(selectedRecord.metadata || {}),
+        ...metadataPatch,
+      },
+    });
+  };
+
+  const deleteSelectedInterview = async () => {
+    if (!selectedRecord?.id) return;
+    if (!window.confirm(`Delete interview for ${selectedRecord.candidate_full_name}?`)) return;
+    setRecordSaving(true);
+    try {
+      const { error } = await supabase
+        .from("labor_interview_records")
+        .delete()
+        .eq("id", selectedRecord.id);
+      if (error) throw error;
+      setRecords((prev) => prev.filter((record) => record.id !== selectedRecord.id));
+      setSelectedRecordId("");
+      showToast("Interview deleted");
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to delete interview"), "error");
+    } finally {
+      setRecordSaving(false);
+    }
+  };
+
+  const saveCandidateEdit = async () => {
+    const normalized = normalizeInterviewCandidateDraft(candidateEditDraft);
+    if (!normalized.candidate_full_name) {
+      showToast("Candidate name is required.", "error");
+      return;
+    }
+    const updated = await saveRecordPatch(normalized);
+    if (updated) {
+      setShowCandidateEdit(false);
+      showToast("Candidate details saved");
+    }
+  };
+
+  const saveResponse = async ({ responseType, key, prompt, value, metadataPatch = null }) => {
     if (!selectedRecord?.id || !key) return;
     const targetKey = fieldKey(responseType, key);
     const existing = responsesByTarget[targetKey];
@@ -474,6 +1244,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           .update({
             response_text: value || null,
             prompt_snapshot: prompt,
+            metadata: metadataPatch ? { ...(existing.metadata || {}), ...metadataPatch } : existing.metadata,
             updated_by_user_id: actorUserId,
             updated_at: new Date().toISOString(),
           })
@@ -490,6 +1261,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           pdf_field_name: responseType === "pdf_field" ? key : null,
           prompt_snapshot: prompt,
           response_text: value || null,
+          metadata: metadataPatch || {},
           created_by_user_id: actorUserId,
           updated_by_user_id: actorUserId,
         };
@@ -504,31 +1276,60 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       if (selectedRecord.status === "draft") {
         await saveRecordPatch({ status: "in_progress" });
       }
+      return true;
     } catch (error) {
-      showToast(error?.message || "Failed to save response", "error");
+      showToast(safeUiError(error, "Failed to save response"), "error");
+      return false;
     } finally {
       setSavingResponseKey("");
     }
   };
 
-  const handleTranscriptUpload = async (file) => {
-    if (!selectedRecord?.id || !file) return;
+  const draftInterview = async (interviewId = selectedRecord?.id, options = {}) => {
+    const { requireLocalTranscript = true, quietStart = false } = options;
+    if (!interviewId) return null;
+    if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
+      showToast("Upload interview audio or a transcript first.", "error");
+      return null;
+    }
+    setAiDrafting(true);
     try {
-      const text = await fileToText(file);
-      const path = buildInterviewTranscriptPath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
-      const { error: uploadError } = await supabase.storage
-        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
-        .upload(path, file, { upsert: true, contentType: file.type || "text/plain" });
-      if (uploadError) throw uploadError;
-      setTranscriptFileName(file.name);
-      await saveRecordPatch({
-        transcript_text: text,
-        transcript_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
-        transcript_file_path: path,
+      const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
+        body: { interview_id: interviewId, action: "start" },
       });
-      showToast("Transcript uploaded");
+      if (startError) throw new Error(await readEdgeFunctionError(startError, "AI draft failed"));
+
+      let result = startResult;
+      if (startResult?.pending) {
+        if (!quietStart) showToast(startResult.reused ? "Resuming AI draft" : "AI draft started");
+        const requestId = startResult.request_id;
+        let completed = false;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          await sleep(attempt === 0 ? 5000 : 10000);
+          const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
+            body: { interview_id: interviewId, action: "poll", request_id: requestId },
+          });
+          if (pollError) throw new Error(await readEdgeFunctionError(pollError, "AI draft failed"));
+          result = pollResult;
+          if (!pollResult?.pending) {
+            completed = true;
+            break;
+          }
+        }
+        if (!completed) {
+          throw new Error("AI is still drafting. Reopen this interview in a minute to resume review without resending the transcript.");
+        }
+      }
+
+      showToast(`AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      await loadAll(locationId);
+      setSelectedRecordId(interviewId);
+      return result;
     } catch (error) {
-      showToast(error?.message || "Failed to upload transcript", "error");
+      showToast(safeUiError(error, "AI draft failed"), "error");
+      return null;
+    } finally {
+      setAiDrafting(false);
     }
   };
 
@@ -559,60 +1360,17 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         },
       });
       if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
-      if (!result?.transcript_text) throw new Error("Grok returned no transcript text.");
+      if (!result?.transcript_text) throw new Error("AI returned no transcript text.");
 
       const minutes = Number(result.duration_seconds) > 0 ? Math.max(1, Math.round(Number(result.duration_seconds) / 60)) : null;
-      showToast(minutes ? `Grok transcribed ${minutes} min of audio` : "Grok transcribed the audio");
+      showToast(minutes ? `Audio processed: ${minutes} min. Drafting responses now.` : "Audio processed. Drafting responses now.");
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
+      await draftInterview(selectedRecord.id, { requireLocalTranscript: false, quietStart: true });
     } catch (error) {
-      showToast(error?.message || "Failed to transcribe audio", "error");
+      showToast(safeUiError(error, "Failed to process audio"), "error");
     } finally {
       setAudioTranscribing(false);
-    }
-  };
-
-  const runAiDraft = async () => {
-    if (!selectedRecord?.id || !String(selectedRecord.transcript_text || "").trim()) {
-      showToast("Paste or upload a transcript before generating drafts.", "error");
-      return;
-    }
-    setAiDrafting(true);
-    try {
-      const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
-        body: { interview_id: selectedRecord.id, action: "start" },
-      });
-      if (startError) throw new Error(await readEdgeFunctionError(startError, "Grok draft failed"));
-
-      let result = startResult;
-      if (startResult?.pending) {
-        showToast(startResult.reused ? "Resuming Grok draft" : "Grok draft started");
-        const requestId = startResult.request_id;
-        let completed = false;
-        for (let attempt = 0; attempt < 60; attempt += 1) {
-          await sleep(attempt === 0 ? 5000 : 10000);
-          const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
-            body: { interview_id: selectedRecord.id, action: "poll", request_id: requestId },
-          });
-          if (pollError) throw new Error(await readEdgeFunctionError(pollError, "Grok draft failed"));
-          result = pollResult;
-          if (!pollResult?.pending) {
-            completed = true;
-            break;
-          }
-        }
-        if (!completed) {
-          throw new Error("Grok is still drafting. Click Generate With Grok again in a minute to resume polling without resending the transcript.");
-        }
-      }
-
-      showToast(`Grok drafted ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
-      await loadAll(locationId);
-      setSelectedRecordId(selectedRecord.id);
-    } catch (error) {
-      showToast(error?.message || "Grok draft failed", "error");
-    } finally {
-      setAiDrafting(false);
     }
   };
 
@@ -625,7 +1383,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       const { data: sourceBlob, error: downloadError } = await supabase.storage.from(bucket).download(path);
       if (downloadError) throw downloadError;
       const bytes = await sourceBlob.arrayBuffer();
-      const filledBytes = await fillInterviewPdfBytes(bytes, buildPdfResponseMap(responses), { flatten: true });
+      const filledBytes = await fillInterviewPdfBytes(bytes, buildPdfResponseMap(responses, selectedRecord, selectedPdfFields), { flatten: true });
       const outputName = `${selectedRecord.candidate_full_name.replace(/[^a-z0-9]+/gi, "-") || "candidate"}-interview.pdf`;
       const artifactPath = buildInterviewArtifactPath({ locationId, interviewId: selectedRecord.id, fileName: outputName });
       const { error: uploadError } = await supabase.storage
@@ -651,11 +1409,66 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       await saveRecordPatch({ status: "completed" });
       showToast("Final PDF exported");
     } catch (error) {
-      showToast(error?.message || "Failed to export PDF", "error");
+      showToast(safeUiError(error, "Failed to export PDF"), "error");
     } finally {
       setExportingPdf(false);
     }
   };
+
+  const getPdfFieldValue = (field) => {
+    const key = responseKeyForPdfField(field);
+    const metadataValue = buildPdfResponseMap([], selectedRecord, [field])[field.name] || "";
+    if (Object.prototype.hasOwnProperty.call(responseDrafts, key)) return responseDrafts[key] || metadataValue || "";
+    return metadataValue;
+  };
+
+  const setPdfFieldDraft = (field, value) => {
+    const key = responseKeyForPdfField(field);
+    setResponseDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const setQuestionResponseDraft = (question, value) => {
+    const key = responseKeyForQuestion(question);
+    setResponseDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const savePdfFieldResponse = (field, value) => saveResponse({
+    responseType: "pdf_field",
+    key: field.name,
+    prompt: field.name,
+    value,
+  });
+
+  const approvePdfField = (field, value) => saveResponse({
+    responseType: "pdf_field",
+    key: field.name,
+    prompt: field.name,
+    value,
+    metadataPatch: {
+      approved: true,
+      approved_at: new Date().toISOString(),
+      approved_by: actorName,
+    },
+  });
+
+  const saveCustomQuestionResponse = (question, value) => saveResponse({
+    responseType: "custom_question",
+    key: question.question_key,
+    prompt: question.prompt,
+    value,
+  });
+
+  const approveCustomQuestion = (question, value) => saveResponse({
+    responseType: "custom_question",
+    key: question.question_key,
+    prompt: question.prompt,
+    value,
+    metadataPatch: {
+      approved: true,
+      approved_at: new Date().toISOString(),
+      approved_by: actorName,
+    },
+  });
 
   const uploadTemplatePdf = async (version, file) => {
     if (!version || !file || version.status !== "draft") return;
@@ -801,89 +1614,173 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
-  const saveQuestion = async (question) => {
-    const draft = questionDrafts[question.id] || {};
+  const createPositionType = async () => {
+    const roleLabel = String(newPositionDraft.role_label || "").trim();
+    if (!roleLabel) {
+      showToast("Position name is required.", "error");
+      return;
+    }
+    const roleKeyBase = normalizeQuestionKey(roleLabel).replace(/^question_1$/, "position");
+    const roleKey = `${roleKeyBase}_${Date.now().toString(36)}`;
+    setTemplateActionId("new-position");
     try {
-      const { data: updated, error } = await supabase
+      const { data: template, error: templateError } = await supabase
+        .from("labor_interview_templates")
+        .insert({
+          location_id: locationId,
+          role_key: roleKey,
+          role_label: roleLabel,
+          description: newPositionDraft.description || null,
+          created_by_user_id: actorUserId,
+          updated_by_user_id: actorUserId,
+        })
+        .select("*")
+        .single();
+      if (templateError) throw templateError;
+      const { data: version, error: versionError } = await supabase
+        .from("labor_interview_template_versions")
+        .insert({
+          template_id: template.id,
+          version_no: 1,
+          status: "draft",
+          is_current: false,
+          pdf_field_manifest: [],
+          pdf_verification_status: "missing_pdf",
+          created_by_user_id: actorUserId,
+        })
+        .select("*")
+        .single();
+      if (versionError) throw versionError;
+      if (sharedQuestions.length) {
+        const rows = sharedQuestions.map((question, index) => ({
+          template_version_id: version.id,
+          question_key: normalizeQuestionKey(question.prompt, index),
+          category: question.category || "Custom",
+          prompt: question.prompt,
+          helper_text: question.helper_text || null,
+          sequence_order: question.sequence_order || ((index + 1) * 10),
+          required: !!question.required,
+          answer_format: question.answer_format || "long_text",
+          mapped_pdf_field_name: question.mapped_pdf_field_name || null,
+          metadata: question.metadata || {},
+        }));
+        const { error: questionError } = await supabase.from("labor_interview_template_questions").insert(rows);
+        if (questionError) throw questionError;
+      }
+      setShowNewPosition(false);
+      setNewPositionDraft({ role_label: "", description: "" });
+      await loadAll(locationId);
+      showToast("Position type created");
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to create position type"), "error");
+    } finally {
+      setTemplateActionId("");
+    }
+  };
+
+  const getDraftQuestionMatches = (question) => {
+    const draftIds = new Set(draftVersions.map((version) => version.id));
+    return questions.filter((row) => {
+      if (!draftIds.has(row.template_version_id)) return false;
+      return row.sequence_order === question.sequence_order || row.question_key === question.question_key;
+    });
+  };
+
+  const saveSharedQuestion = async (question, patch) => {
+    const rows = getDraftQuestionMatches(question);
+    if (!rows.length) {
+      showToast("Create draft template versions before editing shared questions.", "error");
+      return;
+    }
+    try {
+      const updates = rows.map((row) => supabase
         .from("labor_interview_template_questions")
         .update({
-          category: draft.category ?? question.category,
-          prompt: draft.prompt ?? question.prompt,
-          helper_text: draft.helper_text ?? question.helper_text,
-          required: !!(draft.required ?? question.required),
-          mapped_pdf_field_name: draft.mapped_pdf_field_name ?? question.mapped_pdf_field_name,
+          category: patch.category ?? row.category,
+          prompt: patch.prompt ?? row.prompt,
+          helper_text: patch.helper_text ?? row.helper_text,
+          mapped_pdf_field_name: patch.mapped_pdf_field_name ?? row.mapped_pdf_field_name,
+          required: patch.required ?? row.required,
         })
-        .eq("id", question.id)
+        .eq("id", row.id)
         .select("*")
-        .single();
-      if (error) throw error;
-      setQuestions((prev) => prev.map((row) => row.id === updated.id ? updated : row));
-      showToast("Question saved");
+        .single());
+      const results = await Promise.all(updates);
+      const errorResult = results.find((result) => result.error);
+      if (errorResult?.error) throw errorResult.error;
+      const updatedRows = results.map((result) => result.data);
+      setQuestions((prev) => prev.map((row) => updatedRows.find((updated) => updated.id === row.id) || row));
     } catch (error) {
-      showToast(error?.message || "Failed to save question", "error");
+      showToast(safeUiError(error, "Failed to save shared question"), "error");
     }
   };
 
-  const addQuestion = async (version) => {
-    const draft = newQuestionDrafts[version.id] || {};
+  const addSharedQuestion = async () => {
+    const draft = newQuestionDrafts.shared || {};
     const prompt = String(draft.prompt || "").trim();
     if (!prompt) return;
-    const existing = questionsByVersion[version.id] || [];
-    const sequence = Math.max(0, ...existing.map((question) => Number(question.sequence_order || 0))) + 10;
+    if (!draftVersions.length) {
+      showToast("Create draft template versions before adding shared questions.", "error");
+      return;
+    }
+    const sequence = Math.max(0, ...sharedQuestions.map((question) => Number(question.sequence_order || 0))) + 10;
     try {
+      const rows = draftVersions.map((version, index) => ({
+        template_version_id: version.id,
+        question_key: normalizeQuestionKey(prompt, sharedQuestions.length + index),
+        category: draft.category || "Custom",
+        prompt,
+        sequence_order: sequence,
+        required: !!draft.required,
+        answer_format: "long_text",
+        mapped_pdf_field_name: draft.mapped_pdf_field_name || null,
+      }));
       const { data: created, error } = await supabase
         .from("labor_interview_template_questions")
-        .insert({
-          template_version_id: version.id,
-          question_key: normalizeQuestionKey(prompt, existing.length),
-          category: draft.category || "Custom",
-          prompt,
-          sequence_order: sequence,
-          required: !!draft.required,
-          answer_format: "long_text",
-          mapped_pdf_field_name: draft.mapped_pdf_field_name || null,
-        })
-        .select("*")
-        .single();
+        .insert(rows)
+        .select("*");
       if (error) throw error;
-      setQuestions((prev) => [...prev, created]);
-      setNewQuestionDrafts((prev) => ({ ...prev, [version.id]: { category: "Custom", prompt: "", mapped_pdf_field_name: "" } }));
-      showToast("Question added");
+      setQuestions((prev) => [...prev, ...(created || [])]);
+      setNewQuestionDrafts((prev) => ({ ...prev, shared: { category: "Custom", prompt: "", mapped_pdf_field_name: "" } }));
+      showToast("Shared question added");
     } catch (error) {
-      showToast(error?.message || "Failed to add question", "error");
+      showToast(safeUiError(error, "Failed to add shared question"), "error");
     }
   };
 
-  const deleteQuestion = async (question) => {
-    if (!window.confirm("Delete this draft question? Published interviews and old records will not be changed.")) return;
+  const deleteSharedQuestion = async (question) => {
+    if (!window.confirm("Delete this shared draft question from all draft templates?")) return;
+    const rows = getDraftQuestionMatches(question);
+    if (!rows.length) return;
     try {
-      const { error } = await supabase.from("labor_interview_template_questions").delete().eq("id", question.id);
+      const ids = rows.map((row) => row.id);
+      const { error } = await supabase.from("labor_interview_template_questions").delete().in("id", ids);
       if (error) throw error;
-      setQuestions((prev) => prev.filter((row) => row.id !== question.id));
-      showToast("Question deleted");
+      setQuestions((prev) => prev.filter((row) => !ids.includes(row.id)));
+      showToast("Shared question deleted");
     } catch (error) {
-      showToast(error?.message || "Failed to delete question", "error");
+      showToast(safeUiError(error, "Failed to delete shared question"), "error");
     }
   };
 
-  const moveQuestion = async (versionId, question, direction) => {
-    const rows = [...(questionsByVersion[versionId] || [])].sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
-    const index = rows.findIndex((row) => row.id === question.id);
-    const swapIndex = index + direction;
-    if (index < 0 || swapIndex < 0 || swapIndex >= rows.length) return;
-    const swap = rows[swapIndex];
+  const reorderSharedQuestion = async (sourceId, targetId) => {
+    if (!sourceId || !targetId || sourceId === targetId || !draftVersions.length) return;
+    const sourceIndex = sharedQuestions.findIndex((question) => question.id === sourceId);
+    const targetIndex = sharedQuestions.findIndex((question) => question.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const next = [...sharedQuestions];
+    const [moved] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    const orderMap = new Map(next.map((question, index) => [question.sequence_order, (index + 1) * 10]));
+    const rowsToUpdate = questions.filter((row) => draftVersions.some((version) => version.id === row.template_version_id) && orderMap.has(row.sequence_order));
     try {
-      await Promise.all([
-        supabase.from("labor_interview_template_questions").update({ sequence_order: swap.sequence_order }).eq("id", question.id),
-        supabase.from("labor_interview_template_questions").update({ sequence_order: question.sequence_order }).eq("id", swap.id),
-      ]);
-      setQuestions((prev) => prev.map((row) => {
-        if (row.id === question.id) return { ...row, sequence_order: swap.sequence_order };
-        if (row.id === swap.id) return { ...row, sequence_order: question.sequence_order };
-        return row;
-      }));
+      await Promise.all(rowsToUpdate.map((row) => supabase
+        .from("labor_interview_template_questions")
+        .update({ sequence_order: orderMap.get(row.sequence_order) })
+        .eq("id", row.id)));
+      setQuestions((prev) => prev.map((row) => orderMap.has(row.sequence_order) ? { ...row, sequence_order: orderMap.get(row.sequence_order) } : row));
     } catch (error) {
-      showToast(error?.message || "Failed to reorder question", "error");
+      showToast(safeUiError(error, "Failed to reorder shared questions"), "error");
     }
   };
 
@@ -911,6 +1808,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   return (
     <div>
+      <InterviewStyles />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
         <Metric label="Interviews" value={metrics.total} helper={locationName || data?.locationName || "Current location"} />
         <Metric label="AI Drafts" value={metrics.aiDrafted} helper="Waiting on manager review" />
@@ -946,274 +1844,194 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         <Btn variant="primary" onClick={() => setShowNewInterview(true)} disabled={templateOptions.length === 0}>Add New Interview</Btn>
       </div>
 
-      {view === "records" && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
-          <div style={{ display: "grid", gap: 10 }}>
-            {records.length === 0 && <EmptyState title="No Interviews Yet" body={templateOptions.length ? "Create the first interview from a published role template." : "Publish at least one verified role template before interviews can be created."} />}
-            {records.map((record) => (
-              <Card
-                key={record.id}
-                hoverable
-                onClick={() => setSelectedRecordId(record.id)}
-                style={{
-                  borderRadius: 10,
-                  padding: 16,
-                  borderColor: selectedRecord?.id === record.id ? C.pri : C.border,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{record.candidate_full_name}</div>
-                    <div style={{ fontSize: 12, color: C.textMut, marginTop: 3 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
-                  </div>
-                  <Badge color={STATUS_BADGE_COLORS[record.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[record.status] || record.status}</Badge>
-                </div>
-                <div style={{ fontSize: 12, color: C.textSec, marginTop: 12 }}>{compactDateTime(record)}</div>
-              </Card>
-            ))}
-          </div>
+      {view === "records" && !selectedRecord && (
+        <InterviewRoster records={records} onOpen={setSelectedRecordId} />
+      )}
 
-          {selectedRecord ? (
-            <div style={{ display: "grid", gap: 16 }}>
-              <Card style={{ borderRadius: 10 }}>
-                <SectionHeading
-                  title={selectedRecord.candidate_full_name}
-                  detail={`${selectedRecord.candidate_position || "Interview"} - ${compactDateTime(selectedRecord)}`}
-                  action={<Badge color={STATUS_BADGE_COLORS[selectedRecord.status] || "default"}>{LABOR_INTERVIEW_STATUS_LABELS[selectedRecord.status] || selectedRecord.status}</Badge>}
-                />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
-                  <Inp label="Email" value={selectedRecord.candidate_email || ""} onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, candidate_email: value } : row))} onBlur={() => {}} />
-                  <Inp label="Phone" value={selectedRecord.candidate_phone || ""} onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, candidate_phone: value } : row))} />
-                  <Inp label="Interviewer" value={selectedRecord.interviewer_name || ""} onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, interviewer_name: value } : row))} />
-                  <Inp label="Status" type="select" value={selectedRecord.status || "draft"} onChange={(value) => saveRecordPatch({ status: value })} options={Object.entries(LABOR_INTERVIEW_STATUS_LABELS).map(([value, label]) => ({ value, label }))} />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 160px", gap: 12, marginTop: 12 }}>
-                  <Inp label="Zoom Recording Link" value={selectedRecord.zoom_recording_url || ""} onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, zoom_recording_url: value } : row))} />
-                  <Inp label="Passcode" value={selectedRecord.zoom_passcode || ""} onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, zoom_passcode: value } : row))} />
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                  <Btn variant="secondary" onClick={() => saveRecordPatch({
-                    candidate_email: selectedRecord.candidate_email || null,
-                    candidate_phone: selectedRecord.candidate_phone || null,
-                    interviewer_name: selectedRecord.interviewer_name || null,
-                    zoom_recording_url: selectedRecord.zoom_recording_url || null,
-                    zoom_passcode: selectedRecord.zoom_passcode || null,
-                  })} disabled={recordSaving}>{recordSaving ? "Saving..." : "Save Metadata"}</Btn>
-                </div>
-              </Card>
+      {view === "records" && selectedRecord && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <CandidateHeader
+            record={selectedRecord}
+            recommendation={getInterviewRecommendation(selectedRecord)}
+            onRecommendationChange={(value) => saveRecordMetadataPatch({ hiring_recommendation: value })}
+            onEdit={() => setShowCandidateEdit(true)}
+            onDelete={deleteSelectedInterview}
+            onBack={() => setSelectedRecordId("")}
+            saving={recordSaving}
+          />
 
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 0.95fr) minmax(360px, 1.05fr)", gap: 16, alignItems: "start" }}>
-                <div style={{ display: "grid", gap: 16 }}>
-                  <Card style={{ borderRadius: 10 }}>
-                    <SectionHeading title="Transcript and Grok Draft" detail="Drafting is limited to the saved transcript." />
-                    <Inp
-                      label="Transcript"
-                      type="textarea"
-                      rows={7}
-                      value={selectedRecord.transcript_text || ""}
-                      onChange={(value) => setRecords((prev) => prev.map((row) => row.id === selectedRecord.id ? { ...row, transcript_text: value } : row))}
-                      placeholder="Paste Zoom transcript text here."
-                    />
-                    <div style={{ display: "grid", gap: 4, marginTop: 10, fontSize: 12, color: C.textMut }}>
-                      <div>{audioFileName || selectedAudioTranscription?.source_audio?.file_name || "No audio file uploaded"}</div>
-                      {selectedAudioTranscription?.provider && (
-                        <div>
-                          {selectedAudioTranscription.provider === "xai" ? "Grok STT" : selectedAudioTranscription.provider}
-                          {selectedAudioTranscription.duration_seconds ? ` • ${Math.round(selectedAudioTranscription.duration_seconds / 60)} min` : ""}
-                          {selectedAudioTranscription.generated_at ? ` • ${fmtDate(selectedAudioTranscription.generated_at)}` : ""}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginTop: 12, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 12, color: C.textMut }}>{transcriptFileName || selectedRecord.transcript_file_path || "No transcript file uploaded"}</div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <input ref={audioInputRef} type="file" accept={INTERVIEW_AUDIO_ACCEPT} style={{ display: "none" }} onChange={(event) => { handleAudioUpload(event.target.files?.[0]); event.target.value = ""; }} />
-                        <input ref={transcriptInputRef} type="file" accept={INTERVIEW_TRANSCRIPT_ACCEPT} style={{ display: "none" }} onChange={(event) => { handleTranscriptUpload(event.target.files?.[0]); event.target.value = ""; }} />
-                        <Btn variant="secondary" size="sm" disabled={audioTranscribing} onClick={() => audioInputRef.current?.click()}>{audioTranscribing ? "Transcribing..." : "Upload Audio"}</Btn>
-                        <Btn variant="secondary" size="sm" onClick={() => transcriptInputRef.current?.click()}>Upload Transcript</Btn>
-                        <Btn variant="secondary" size="sm" onClick={() => saveRecordPatch({ transcript_text: selectedRecord.transcript_text || null })}>Save Transcript</Btn>
-                        <Btn variant="primary" size="sm" disabled={aiDrafting || audioTranscribing || !String(selectedRecord.transcript_text || "").trim()} onClick={runAiDraft}>{aiDrafting ? "Drafting..." : "Generate With Grok"}</Btn>
-                      </div>
-                    </div>
-                  </Card>
+          <AudioUploadPanel
+            record={selectedRecord}
+            audioFileName={audioFileName}
+            transcribing={audioTranscribing}
+            drafting={aiDrafting}
+            onUpload={handleAudioUpload}
+            onTranscriptClick={() => setShowTranscriptModal(true)}
+            inputRef={audioInputRef}
+          />
 
-                  <Card style={{ borderRadius: 10 }}>
-                    <SectionHeading title="Custom Questions" detail={`${selectedQuestions.length} question${selectedQuestions.length === 1 ? "" : "s"} pinned to this interview version`} />
-                    {Object.entries(groupQuestionsByCategory(selectedQuestions)).map(([category, rows]) => (
-                      <div key={category} style={{ marginTop: 14 }}>
-                        <div style={{ fontSize: 12, fontWeight: 900, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>{category}</div>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          {rows.map((question) => {
-                            const key = responseKeyForQuestion(question);
-                            return (
-                              <div key={question.question_key} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 12, background: C.surfaceHover }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-                                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{question.prompt}</div>
-                                  {responsesByTarget[key]?.ai_draft_text && <Badge color="warning">AI Draft</Badge>}
-                                </div>
-                                <textarea
-                                  value={responseDrafts[key] || ""}
-                                  onChange={(event) => setResponseDrafts((prev) => ({ ...prev, [key]: event.target.value }))}
-                                  onBlur={(event) => saveResponse({ responseType: "custom_question", key: question.question_key, prompt: question.prompt, value: event.target.value })}
-                                  rows={4}
-                                  style={{ width: "100%", boxSizing: "border-box", marginTop: 8, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: 10, resize: "vertical", fontFamily: "inherit", fontSize: 13, lineHeight: 1.45, color: C.text, outline: "none" }}
-                                />
-                                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, color: C.textMut, fontSize: 11 }}>
-                                  <span>Autosaves on blur</span>
-                                  <span>{savingResponseKey === key ? "Saving..." : "Saved by field key"}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </Card>
-                </div>
-
-                <div style={{ display: "grid", gap: 16 }}>
-                  <Card style={{ borderRadius: 10 }}>
-                    <SectionHeading
-                      title="Branded PDF"
-                      detail="Responses are saved by AcroForm field name and exported into PDF-native coordinates."
-                      action={<Btn variant="success" size="sm" onClick={exportFinalPdf} disabled={exportingPdf || !selectedSnapshot?.version?.source_pdf_path}>{exportingPdf ? "Exporting..." : "Export Final PDF"}</Btn>}
-                    />
-                    {pdfPreviewUrl ? (
-                      <iframe title="Interview PDF Preview" src={pdfPreviewUrl} style={{ width: "100%", height: 540, border: `1px solid ${C.border}`, borderRadius: 10, background: C.surfaceHover }} />
-                    ) : (
-                      <EmptyState title="No PDF Source" body="This interview was pinned to a template that does not have a verified source PDF path." />
-                    )}
-                    {artifacts.length > 0 && (
-                      <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
-                        {artifacts.map((artifact) => (
-                          <div key={artifact.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: C.textSec, borderTop: `1px solid ${C.borderLight}`, paddingTop: 8 }}>
-                            <span>{artifact.file_name}</span>
-                            <span>{artifact.created_at ? new Date(artifact.created_at).toLocaleString() : ""}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
-
-                  <Card style={{ borderRadius: 10 }}>
-                    <SectionHeading title="PDF Fields" detail={`${selectedPdfFields.length} field${selectedPdfFields.length === 1 ? "" : "s"} detected in the template`} />
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {selectedPdfFields.map((field) => {
-                        const key = responseKeyForPdfField(field);
-                        return (
-                          <div key={field.name} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 12, background: C.surfaceHover }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                              <div>
-                                <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{field.name}</div>
-                                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>{getPdfFieldTypeLabel(field.type)}{field.page_number ? ` - page ${field.page_number}` : ""}</div>
-                              </div>
-                              {responsesByTarget[key]?.ai_draft_text && <Badge color="warning">AI Draft</Badge>}
-                            </div>
-                            <textarea
-                              value={responseDrafts[key] || ""}
-                              onChange={(event) => setResponseDrafts((prev) => ({ ...prev, [key]: event.target.value }))}
-                              onBlur={(event) => saveResponse({ responseType: "pdf_field", key: field.name, prompt: field.name, value: event.target.value })}
-                              rows={field.type === "text" ? 3 : 1}
-                              style={{ width: "100%", boxSizing: "border-box", marginTop: 8, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: 10, resize: "vertical", fontFamily: "inherit", fontSize: 13, lineHeight: 1.45, color: C.text, outline: "none" }}
-                            />
-                            <div style={{ marginTop: 6, color: C.textMut, fontSize: 11 }}>{savingResponseKey === key ? "Saving..." : "Saved by PDF field name"}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+            <button
+              type="button"
+              onClick={() => setShowGuideModal(true)}
+              disabled={!selectedSnapshot?.version?.source_pdf_path}
+              style={{
+                textAlign: "left",
+                border: `1px solid ${C.border}`,
+                background: "#fff",
+                borderRadius: 8,
+                padding: 18,
+                cursor: selectedSnapshot?.version?.source_pdf_path ? "pointer" : "not-allowed",
+                fontFamily: "inherit",
+                opacity: selectedSnapshot?.version?.source_pdf_path ? 1 : 0.55,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Fill Out Interview Guide</div>
+                <Badge color={selectedPdfFields.length ? "success" : "warning"}>{selectedPdfFields.length} fields</Badge>
               </div>
-            </div>
-          ) : (
-            <EmptyState title="Select An Interview" body="Choose an interview record to edit responses, run Grok drafting, and export the final branded PDF." />
-          )}
+              <div style={{ marginTop: 10, fontSize: 13, color: C.textMut }}>{pdfPreviewUrl ? selectedSnapshot?.version?.source_pdf_file_name || "Branded PDF ready" : "No published guide PDF"}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowQuestionsModal(true)}
+              style={{ textAlign: "left", border: `1px solid ${C.border}`, background: "#fff", borderRadius: 8, padding: 18, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
+                <Badge color={selectedQuestions.length ? "info" : "default"}>{selectedQuestions.length} questions</Badge>
+              </div>
+              <div style={{ marginTop: 10, fontSize: 13, color: C.textMut }}>{selectedQuestions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length} approved</div>
+            </button>
+          </div>
         </div>
       )}
 
       {view === "config" && (
         <div style={{ display: "grid", gap: 16 }}>
-          <SectionHeading title="Interview Configuration" detail="Published versions are immutable. Draft changes only affect future interviews after publish." />
-          {templates.map((template) => {
-            const templateVersions = versionsByTemplate[template.id] || [];
-            const current = templateVersions.find((version) => version.is_current);
-            return (
-              <Card key={template.id} style={{ borderRadius: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
-                  <div>
-                    <div style={{ fontSize: 17, fontWeight: 900, color: C.text }}>{template.role_label}</div>
-                    <div style={{ fontSize: 12, color: C.textMut, marginTop: 3 }}>{current ? `Current published v${current.version_no}` : "No published version yet"}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <SectionHeading title="Interview Configuration" />
+            <Btn variant="primary" onClick={() => setShowNewPosition(true)}>Create Position Type</Btn>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            {templates.map((template) => {
+              const templateVersions = versionsByTemplate[template.id] || [];
+              const current = templateVersions.find((version) => version.is_current);
+              const draft = templateVersions.find((version) => version.status === "draft");
+              const editableVersion = draft || current || templateVersions[0];
+              const pdfFields = Array.isArray(editableVersion?.pdf_field_manifest) ? editableVersion.pdf_field_manifest : [];
+              const editable = editableVersion?.status === "draft";
+              return (
+                <div key={template.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 17, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.role_label}</div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>{current ? `Published v${current.version_no}` : "No published version"}</div>
+                    </div>
+                    <Badge color={editableVersion?.pdf_verification_status === "verified_fields" ? "success" : "warning"}>{pdfFields.length} fields</Badge>
                   </div>
-                  <Btn variant="secondary" size="sm" onClick={() => createDraftVersion(template)} disabled={templateActionId === template.id}>{templateActionId === template.id ? "Creating..." : "New Draft Version"}</Btn>
+                  <div style={{ display: "grid", gap: 5, fontSize: 12, color: C.textSec }}>
+                    <div>{editableVersion?.source_pdf_file_name || "No PDF uploaded"}</div>
+                    <div>{editableVersion ? `${LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS[editableVersion.status] || editableVersion.status} v${editableVersion.version_no}` : "No template version"}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {editableVersion && (
+                      <input
+                        ref={(node) => { if (node) pdfInputRefs.current[editableVersion.id] = node; }}
+                        type="file"
+                        accept={INTERVIEW_PDF_ACCEPT}
+                        style={{ display: "none" }}
+                        disabled={!editable}
+                        onChange={(event) => {
+                          uploadTemplatePdf(editableVersion, event.target.files?.[0]);
+                          event.target.value = "";
+                        }}
+                      />
+                    )}
+                    <Btn variant="secondary" size="sm" onClick={() => editableVersion && pdfInputRefs.current[editableVersion.id]?.click()} disabled={!editable || templateActionId === editableVersion?.id}>Upload PDF</Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => createDraftVersion(template)} disabled={!!draft || templateActionId === template.id}>{draft ? "Draft Ready" : "New Draft"}</Btn>
+                    <Btn variant="primary" size="sm" onClick={() => publishVersion(template, editableVersion)} disabled={!editable || editableVersion?.pdf_verification_status !== "verified_fields" || templateActionId === editableVersion?.id}>Publish</Btn>
+                  </div>
                 </div>
+              );
+            })}
+          </div>
 
-                <div style={{ display: "grid", gap: 14 }}>
-                  {templateVersions.map((version) => {
-                    const versionQuestions = [...(questionsByVersion[version.id] || [])].sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
-                    const editable = version.status === "draft";
-                    const pdfFields = Array.isArray(version.pdf_field_manifest) ? version.pdf_field_manifest : [];
-                    const addDraft = newQuestionDrafts[version.id] || { category: "Custom", prompt: "", mapped_pdf_field_name: "" };
-                    return (
-                      <div key={version.id} style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 14 }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <div style={{ fontSize: 14, fontWeight: 900, color: C.text }}>Version {version.version_no}</div>
-                            <Badge color={TEMPLATE_STATUS_COLORS[version.status] || "default"}>{LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS[version.status] || version.status}</Badge>
-                            <Badge color={VERIFY_STATUS_COLORS[version.pdf_verification_status] || "default"}>{PDF_VERIFICATION_LABELS[version.pdf_verification_status] || version.pdf_verification_status}</Badge>
-                            <span style={{ fontSize: 12, color: C.textMut }}>{pdfFields.length} PDF field{pdfFields.length === 1 ? "" : "s"} / {versionQuestions.length} question{versionQuestions.length === 1 ? "" : "s"}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <input
-                              ref={(node) => { if (node) pdfInputRefs.current[version.id] = node; }}
-                              type="file"
-                              accept={INTERVIEW_PDF_ACCEPT}
-                              style={{ display: "none" }}
-                              disabled={!editable}
-                              onChange={(event) => uploadTemplatePdf(version, event.target.files?.[0])}
-                            />
-                            <Btn variant="secondary" size="sm" onClick={() => pdfInputRefs.current[version.id]?.click()} disabled={!editable || templateActionId === version.id}>Upload PDF</Btn>
-                            <Btn variant="primary" size="sm" onClick={() => publishVersion(template, version)} disabled={!editable || version.pdf_verification_status !== "verified_fields" || templateActionId === version.id}>Publish</Btn>
-                          </div>
-                        </div>
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+            <button
+              type="button"
+              onClick={() => setConfigQuestionsOpen((prev) => !prev)}
+              style={{ width: "100%", padding: "15px 16px", border: "none", background: C.surfaceHover, borderBottom: configQuestionsOpen ? `1px solid ${C.border}` : "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+            >
+              <div>
+                <div style={{ fontSize: 16, color: C.text, fontWeight: 950 }}>Shared Custom Questions</div>
+                <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{sharedQuestions.length} questions</div>
+              </div>
+              <div style={{ color: C.pri, fontWeight: 950 }}>{configQuestionsOpen ? "Collapse" : "Expand"}</div>
+            </button>
 
-                        {version.source_pdf_file_name && (
-                          <div style={{ fontSize: 12, color: C.textSec, marginBottom: 10 }}>PDF: {version.source_pdf_file_name}{version.pdf_page_count ? ` - ${version.pdf_page_count} page${version.pdf_page_count === 1 ? "" : "s"}` : ""}</div>
-                        )}
+            {configQuestionsOpen && (
+              <div style={{ padding: 14, display: "grid", gap: 10 }}>
+                {sharedQuestions.map((question) => {
+                  const draft = questionDrafts[question.id] || question;
+                  const canEdit = draftVersions.length > 0;
+                  return (
+                    <div
+                      key={question.id}
+                      draggable={canEdit}
+                      onDragStart={() => setDragQuestionId(question.id)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => {
+                        reorderSharedQuestion(dragQuestionId, question.id);
+                        setDragQuestionId("");
+                      }}
+                      style={{ display: "grid", gridTemplateColumns: "34px minmax(110px, 160px) minmax(0, 1fr) minmax(120px, 180px) 38px", gap: 8, alignItems: "center", padding: 8, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff" }}
+                    >
+                      <div style={{ color: C.textMut, fontWeight: 950, textAlign: "center", cursor: canEdit ? "grab" : "default" }}>::</div>
+                      <input
+                        value={draft.category || ""}
+                        disabled={!canEdit}
+                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, category: event.target.value } }))}
+                        onBlur={(event) => saveSharedQuestion(question, { category: event.target.value })}
+                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 12, fontFamily: "inherit", color: C.text }}
+                      />
+                      <input
+                        value={draft.prompt || ""}
+                        disabled={!canEdit}
+                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, prompt: event.target.value } }))}
+                        onBlur={(event) => saveSharedQuestion(question, { prompt: event.target.value })}
+                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", color: C.text }}
+                      />
+                      <input
+                        value={draft.mapped_pdf_field_name || ""}
+                        disabled={!canEdit}
+                        onChange={(event) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, mapped_pdf_field_name: event.target.value } }))}
+                        onBlur={(event) => saveSharedQuestion(question, { mapped_pdf_field_name: event.target.value || null })}
+                        placeholder="PDF field"
+                        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 12, fontFamily: "inherit", color: C.text }}
+                      />
+                      <IconButton label="Delete question" variant="danger" disabled={!canEdit} onClick={() => deleteSharedQuestion(question)}>{"x"}</IconButton>
+                    </div>
+                  );
+                })}
 
-                        <div style={{ display: "grid", gap: 8 }}>
-                          {versionQuestions.map((question, index) => {
-                            const draft = questionDrafts[question.id] || question;
-                            return (
-                              <div key={question.id} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 180px) minmax(0, 1fr) minmax(120px, 180px) auto", gap: 8, alignItems: "start", padding: 10, borderRadius: 10, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
-                                <Inp label="Category" value={draft.category || ""} disabled={!editable} onChange={(value) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, category: value } }))} />
-                                <Inp label="Question" type="textarea" rows={2} value={draft.prompt || ""} disabled={!editable} onChange={(value) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, prompt: value } }))} />
-                                <Inp label="PDF Field" value={draft.mapped_pdf_field_name || ""} disabled={!editable} onChange={(value) => setQuestionDrafts((prev) => ({ ...prev, [question.id]: { ...draft, mapped_pdf_field_name: value } }))} />
-                                <div style={{ display: "grid", gap: 6, paddingTop: 18 }}>
-                                  <Btn variant="secondary" size="sm" disabled={!editable || index === 0} onClick={() => moveQuestion(version.id, question, -1)}>Up</Btn>
-                                  <Btn variant="secondary" size="sm" disabled={!editable || index === versionQuestions.length - 1} onClick={() => moveQuestion(version.id, question, 1)}>Down</Btn>
-                                  <Btn variant="primary" size="sm" disabled={!editable} onClick={() => saveQuestion(question)}>Save</Btn>
-                                  <Btn variant="danger" size="sm" disabled={!editable} onClick={() => deleteQuestion(question)}>Delete</Btn>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                {draftVersions.length === 0 && (
+                  <div style={{ padding: 12, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, color: C.textMut, fontSize: 13 }}>Create a draft position template to edit shared questions.</div>
+                )}
 
-                        {editable && (
-                          <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0, 1fr) 180px auto", gap: 8, alignItems: "end", marginTop: 10, padding: 10, border: `1.5px dashed ${C.border}`, borderRadius: 10 }}>
-                            <Inp label="Category" value={addDraft.category || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, [version.id]: { ...addDraft, category: value } }))} />
-                            <Inp label="New Question" value={addDraft.prompt || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, [version.id]: { ...addDraft, prompt: value } }))} />
-                            <Inp label="PDF Field" value={addDraft.mapped_pdf_field_name || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, [version.id]: { ...addDraft, mapped_pdf_field_name: value } }))} />
-                            <Btn variant="secondary" onClick={() => addQuestion(version)}>Add</Btn>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            );
-          })}
+                {draftVersions.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "150px minmax(0, 1fr) minmax(130px, 180px) auto", gap: 8, alignItems: "center", padding: 10, border: `1.5px dashed ${C.border}`, borderRadius: 8 }}>
+                    <Inp label="Category" value={newQuestionDrafts.shared?.category || "Custom"} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), category: value } }))} />
+                    <Inp label="New Question" value={newQuestionDrafts.shared?.prompt || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), prompt: value } }))} />
+                    <Inp label="PDF Field" value={newQuestionDrafts.shared?.mapped_pdf_field_name || ""} onChange={(value) => setNewQuestionDrafts((prev) => ({ ...prev, shared: { ...(prev.shared || {}), mapped_pdf_field_name: value } }))} />
+                    <Btn variant="secondary" onClick={addSharedQuestion}>Add</Btn>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1244,7 +2062,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                 <Inp label="Phone" value={newInterviewDraft.candidate_phone} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_phone: value }))} />
                 <Inp label="Interview Date" type="date" value={newInterviewDraft.interview_date} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, interview_date: value }))} />
                 <Inp label="Interview Time" type="time" value={newInterviewDraft.interview_time} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, interview_time: value }))} />
-                <Inp label="Interviewer" value={newInterviewDraft.interviewer_name} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, interviewer_name: value }))} />
                 <Inp label="Zoom Passcode" value={newInterviewDraft.zoom_passcode} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, zoom_passcode: value }))} />
               </div>
               <Inp label="Zoom Recording Link" value={newInterviewDraft.zoom_recording_url} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, zoom_recording_url: value }))} />
@@ -1255,6 +2072,83 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             </div>
           )}
         </Modal>
+      )}
+
+      {showCandidateEdit && selectedRecord && (
+        <Modal title="Edit Interview Details" onClose={() => setShowCandidateEdit(false)} wide>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Inp label="Candidate Name" required value={candidateEditDraft.candidate_full_name} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, candidate_full_name: value }))} autoFocus />
+              <Inp label="Position" value={candidateEditDraft.candidate_position} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, candidate_position: value }))} />
+              <Inp label="Email" value={candidateEditDraft.candidate_email} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, candidate_email: value }))} />
+              <Inp label="Phone" value={candidateEditDraft.candidate_phone} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, candidate_phone: value }))} />
+              <Inp label="Interview Date" type="date" value={candidateEditDraft.interview_date} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, interview_date: value }))} />
+              <Inp label="Interview Time" type="time" value={candidateEditDraft.interview_time} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, interview_time: value }))} />
+              <Inp label="Zoom Passcode" value={candidateEditDraft.zoom_passcode} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, zoom_passcode: value }))} />
+              <Inp label="Workflow Status" type="select" value={selectedRecord.status || "draft"} onChange={(value) => saveRecordPatch({ status: value })} options={Object.entries(LABOR_INTERVIEW_STATUS_LABELS).map(([value, label]) => ({ value, label }))} />
+            </div>
+            <Inp label="Zoom Recording Link" value={candidateEditDraft.zoom_recording_url} onChange={(value) => setCandidateEditDraft((prev) => ({ ...prev, zoom_recording_url: value }))} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="secondary" onClick={() => setShowCandidateEdit(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={saveCandidateEdit} disabled={recordSaving}>{recordSaving ? "Saving..." : "Save Details"}</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showNewPosition && (
+        <Modal title="Create Position Type" onClose={() => setShowNewPosition(false)}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <Inp label="Position Name" value={newPositionDraft.role_label} onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, role_label: value }))} autoFocus />
+            <Inp label="Description" value={newPositionDraft.description} onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, description: value }))} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="secondary" onClick={() => setShowNewPosition(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={createPositionType} disabled={templateActionId === "new-position"}>{templateActionId === "new-position" ? "Creating..." : "Create"}</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showTranscriptModal && selectedRecord && (
+        <TranscriptModal text={selectedRecord.transcript_text || ""} onClose={() => setShowTranscriptModal(false)} />
+      )}
+
+      {showGuideModal && selectedRecord && (
+        <ReviewGuideModal
+          record={selectedRecord}
+          fields={selectedPdfFields}
+          artifacts={artifacts}
+          pdfUrl={guidePdfUrl}
+          loadingPdf={guidePdfLoading}
+          responsesByTarget={responsesByTarget}
+          responseDrafts={responseDrafts}
+          savingKey={savingResponseKey}
+          exporting={exportingPdf}
+          activeIndex={pdfReviewIndex}
+          setActiveIndex={setPdfReviewIndex}
+          getFieldValue={getPdfFieldValue}
+          setFieldDraft={setPdfFieldDraft}
+          saveField={savePdfFieldResponse}
+          approveField={approvePdfField}
+          exportFinalPdf={exportFinalPdf}
+          onClose={() => setShowGuideModal(false)}
+        />
+      )}
+
+      {showQuestionsModal && selectedRecord && (
+        <QuestionReviewModal
+          record={selectedRecord}
+          questions={selectedQuestions}
+          responsesByTarget={responsesByTarget}
+          responseDrafts={responseDrafts}
+          savingKey={savingResponseKey}
+          activeIndex={questionReviewIndex}
+          setActiveIndex={setQuestionReviewIndex}
+          setQuestionDraft={setQuestionResponseDraft}
+          saveQuestionResponse={saveCustomQuestionResponse}
+          approveQuestion={approveCustomQuestion}
+          onClose={() => setShowQuestionsModal(false)}
+        />
       )}
     </div>
   );

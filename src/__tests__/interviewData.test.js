@@ -1,10 +1,13 @@
 import { PDFDocument } from "pdf-lib";
 import {
+  buildPdfResponseMap,
   buildInterviewTemplateSnapshot,
+  cleanInterviewTranscriptText,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewAudioContentType,
   INTERVIEW_AUDIO_MAX_BYTES,
+  parseInterviewTranscriptTurns,
   validateAiDraftPayload,
   validateInterviewAudioFile,
 } from "../kol/interviewData";
@@ -61,6 +64,30 @@ describe("interview PDF form utilities", () => {
     expect(form.getTextField("candidate_name").getText()).toBe("Jordan Vance");
     expect(form.getTextField("interview_notes").getText()).toBe("Reliable weekend availability.");
     expect(form.getCheckBox("recommend_hire").isChecked()).toBe(true);
+  });
+
+  it("adds candidate metadata defaults for common PDF identity fields", () => {
+    const map = buildPdfResponseMap([], {
+      candidate_full_name: "Lahayla Kern",
+      candidate_position: "Pet Care Technician",
+      interview_date: "2026-04-12",
+      interviewer_name: "Skyler Brooks",
+      metadata: { hiring_recommendation: "proceed" },
+    }, [
+      { name: "candidate_name" },
+      { name: "candidate_position" },
+      { name: "interview_date" },
+      { name: "interviewer_name" },
+      { name: "decision_move_forward" },
+    ]);
+
+    expect(map).toMatchObject({
+      candidate_name: "Lahayla Kern",
+      candidate_position: "Pet Care Technician",
+      interview_date: "2026-04-12",
+      interviewer_name: "Skyler Brooks",
+      decision_move_forward: "Proceed",
+    });
   });
 });
 
@@ -141,5 +168,17 @@ describe("AI draft response validation", () => {
       confidence: 1,
     });
     expect(result.errors[0]).toContain("Unknown target");
+  });
+});
+
+describe("interview transcript display helpers", () => {
+  it("removes stray CJK characters and segments long undiarized transcript text", () => {
+    const raw = `${"Candidate said they can work weekends. ".repeat(35)}漢字`;
+    const cleaned = cleanInterviewTranscriptText(raw);
+    const turns = parseInterviewTranscriptTurns(raw);
+
+    expect(cleaned).not.toContain("漢");
+    expect(turns.length).toBeGreaterThan(1);
+    expect(turns[0]).toMatchObject({ speaker: "Transcript", timestamp: "" });
   });
 });
