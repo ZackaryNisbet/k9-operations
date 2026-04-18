@@ -485,7 +485,7 @@ function secondsToTranscriptTimestamp(value) {
 }
 
 function normalizeProviderWord(word, index, turnId) {
-  const text = String(word?.text || word?.word || word?.value || "").trim();
+  const text = cleanInterviewTranscriptText(word?.text || word?.word || word?.value || "");
   if (!text) return null;
   const startSeconds = Number(word?.start ?? word?.start_seconds ?? word?.start_time);
   const endSeconds = Number(word?.end ?? word?.end_seconds ?? word?.end_time);
@@ -512,7 +512,7 @@ function normalizeProviderTranscriptTurns(turns = []) {
     const words = (Array.isArray(turn?.words) ? turn.words : [])
       .map((word, wordIndex) => normalizeProviderWord(word, wordIndex, id))
       .filter(Boolean);
-    const text = String(turn?.text || words.map((word) => word.text).join(" ") || "").trim();
+    const text = cleanInterviewTranscriptText(turn?.text || words.map((word) => word.text).join(" ") || "");
     if (!text) return null;
     const safeStart = Number.isFinite(startSeconds) ? startSeconds : (words[0]?.startSeconds ?? null);
     const safeEnd = Number.isFinite(endSeconds) ? endSeconds : (words[words.length - 1]?.endSeconds ?? null);

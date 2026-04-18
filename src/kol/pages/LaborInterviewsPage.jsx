@@ -309,6 +309,23 @@ function TranscriptWords({ turn, currentTime, maxWords = null }) {
   );
 }
 
+function wordsFromProviderSegments(turns = []) {
+  return (Array.isArray(turns) ? turns : [])
+    .flatMap((turn) => {
+      const words = Array.isArray(turn?.words) && turn.words.length
+        ? turn.words
+        : [{ id: `${turn?.id || "segment"}-text`, text: turn?.text, startSeconds: turn?.startSeconds, endSeconds: turn?.endSeconds }];
+      return words.map((word, index) => ({
+        ...word,
+        id: word.id || `${turn?.id || "segment"}-${index}`,
+        text: String(word.text || "").trim(),
+        startSeconds: word.startSeconds ?? turn?.startSeconds ?? null,
+        endSeconds: word.endSeconds ?? turn?.endSeconds ?? null,
+      }));
+    })
+    .filter((word) => word.text);
+}
+
 function getAutoScoreStorageKey(actorUserId) {
   return `k9:labor-interviews:auto-score:${actorUserId || "local"}`;
 }
@@ -539,7 +556,9 @@ function AudioUploadPanel({
   const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
   const hasProviderTurns = safeTranscriptTurns.length > 0;
   const segmentationSource = String(transcription.segmentation_source || "");
+  const wordSegmentMode = segmentationSource === "xai_word_segments";
   const providerTurnLabel = segmentationSource === "xai_word_segments" ? "word-timed segment" : "speaker turn";
+  const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTranscriptTurns) : [];
   const activeTurn = safeTranscriptTurns.find((turn) => isTurnActive(turn, currentTime));
   const visibleTurns = activeTurn
     ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
@@ -644,6 +663,31 @@ function AudioUploadPanel({
               <div style={{ padding: 12, color: C.textMut, fontSize: 13 }}>
                 This record was transcribed before structured turn data was stored. Replace the audio to regenerate the transcript with provider timestamps and diarization.
               </div>
+            ) : wordSegmentMode ? (
+              <button
+                type="button"
+                onClick={onTranscriptClick}
+                style={{
+                  border: "none",
+                  background: "#fff",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  padding: "12px",
+                  display: "grid",
+                  gridTemplateColumns: "70px minmax(0, 1fr)",
+                  gap: 10,
+                  fontFamily: "inherit",
+                  alignItems: "start",
+                }}
+              >
+                <span style={{ color: C.textMut, fontSize: 12, fontWeight: 850 }}>{safeTranscriptTurns[0]?.timestamp || "--:--"}</span>
+                <span style={{ color: C.textSec, fontSize: 13, lineHeight: 1.55, overflow: "hidden" }}>
+                  <TranscriptWords
+                    turn={{ id: "provider-word-preview", words: providerWords.slice(0, 72), text: providerWords.slice(0, 72).map((word) => word.text).join(" ") }}
+                    currentTime={currentTime}
+                  />
+                </span>
+              </button>
             ) : visibleTurns.map((turn) => {
               const active = isTurnActive(turn, currentTime);
               return (
@@ -680,8 +724,10 @@ function AudioUploadPanel({
   );
 }
 
-function TranscriptModal({ turns, currentTime, onClose }) {
+function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose }) {
   const safeTurns = Array.isArray(turns) ? turns : [];
+  const wordSegmentMode = segmentationSource === "xai_word_segments";
+  const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTurns) : [];
   const hasSpeakers = safeTurns.some((turn) => turn.speaker !== "Transcript");
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
@@ -696,6 +742,13 @@ function TranscriptModal({ turns, currentTime, onClose }) {
         <div style={{ padding: 18, overflowY: "auto", background: C.surfaceHover }}>
           {safeTurns.length === 0 ? (
             <EmptyState title="No Transcript" body="Replace the audio to regenerate this record with structured transcript turns." />
+          ) : wordSegmentMode ? (
+            <div style={{ background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 16, color: C.textSec, fontSize: 14, lineHeight: 1.7 }}>
+              <TranscriptWords
+                turn={{ id: "provider-word-transcript", words: providerWords, text: providerWords.map((word) => word.text).join(" ") }}
+                currentTime={currentTime}
+              />
+            </div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
               {safeTurns.map((turn) => (
@@ -2386,7 +2439,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {showTranscriptModal && selectedRecord && (
-        <TranscriptModal turns={selectedTranscriptTurns} currentTime={audioCurrentTime} onClose={() => setShowTranscriptModal(false)} />
+        <TranscriptModal
+          turns={selectedTranscriptTurns}
+          currentTime={audioCurrentTime}
+          segmentationSource={selectedRecord?.metadata?.audio_transcription?.segmentation_source || ""}
+          onClose={() => setShowTranscriptModal(false)}
+        />
       )}
 
       {showGuideModal && selectedRecord && (
