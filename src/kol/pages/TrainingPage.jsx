@@ -104,6 +104,22 @@ const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
 const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
+const EMPTY_REVIEW_PDF_DRAFT = {
+  rating: "",
+  managerNotes: "",
+  actionPlan: "",
+  overallRating: "",
+  overallComments: "",
+};
+const RESTARTED_REVIEW_METADATA_KEYS = [
+  "performance_review_rating",
+  "manager_notes",
+  "action_plan",
+  "overall_rating",
+  "overall_comments",
+  "pdf_draft_saved_at",
+  "signature",
+];
 
 const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "first_name", label: "First Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
@@ -186,6 +202,25 @@ function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
   }
 
   return nextMetadata;
+}
+
+function clearRestartedReviewMetadata(existingMetadata = {}, restartDetails = {}) {
+  const nextMetadata = isObjectRow(existingMetadata) ? { ...existingMetadata } : {};
+  RESTARTED_REVIEW_METADATA_KEYS.forEach((key) => {
+    delete nextMetadata[key];
+  });
+  return {
+    ...nextMetadata,
+    performance_review_restart: {
+      ...(isObjectRow(nextMetadata.performance_review_restart) ? nextMetadata.performance_review_restart : {}),
+      ...restartDetails,
+    },
+  };
+}
+
+function getRestartedReviewStatus(dueDate) {
+  if (dueDate && String(dueDate).slice(0, 10) < todayStr()) return "overdue";
+  return "scheduled";
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -633,15 +668,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [savingReviewItemId, setSavingReviewItemId] = useState(null);
   const [completingReview, setCompletingReview] = useState(false);
-  const [reviewPdfDraft, setReviewPdfDraft] = useState({
-    rating: "",
-    managerNotes: "",
-    actionPlan: "",
-    overallRating: "",
-    overallComments: "",
-  });
+  const [reviewPdfDraft, setReviewPdfDraft] = useState(EMPTY_REVIEW_PDF_DRAFT);
   const [savingReviewPdfDraft, setSavingReviewPdfDraft] = useState(false);
   const [savingPerformanceReviewTemplateRole, setSavingPerformanceReviewTemplateRole] = useState(false);
+  const [restartingReview, setRestartingReview] = useState(false);
   const [renderingReviewPdf, setRenderingReviewPdf] = useState(false);
   const [sendingReviewSignature, setSendingReviewSignature] = useState(false);
   const [reviewSignatureDeliveryMethod, setReviewSignatureDeliveryMethod] = useState("sms");
@@ -3216,6 +3246,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }) || templates[0];
   }, [reviewTemplates]);
 
+  const findCurrentPublishedReviewTemplateVersion = useCallback((templateId) => {
+    if (!templateId) return null;
+    const versions = toObjectRows(allReviewTemplateVersions).filter((version) => version.template_id === templateId);
+    return versions.find((version) => version.is_current && version.status === "published")
+      || versions.find((version) => version.status === "published")
+      || null;
+  }, [allReviewTemplateVersions]);
+
   const handleCreateReviewInstanceForEmployee = useCallback(async (employee, reviewCycle) => {
     const employeeId = getLaborEmployeeRowId(employee);
     if (!employeeId) return null;
@@ -3308,6 +3346,91 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setCompletingReview(false);
     addGlobalToast("Review completed", "success");
   }, [actorName, actorUserId, addGlobalToast, selectedReviewInstanceId, refreshLaborData]);
+
+  const handleRestartSelectedReviewInstance = useCallback(async (targetReviewTemplate = null) => {
+    if (!selectedReviewInstance || !selectedLaborEmployeeView) return;
+    const signature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
+    if (["sent", "completed"].includes(String(signature.status || ""))) {
+      addGlobalToast("This review already has a signature request. Start a new review instead of restarting this signed packet.", "error");
+      return;
+    }
+
+    const restartTemplate = targetReviewTemplate?.id ? targetReviewTemplate : selectedReviewTemplate;
+    const restartVersion = findCurrentPublishedReviewTemplateVersion(restartTemplate?.id);
+    if (!restartTemplate?.id || !restartVersion?.id) {
+      addGlobalToast("No current published review template is available for restart", "error");
+      return;
+    }
+
+    const responseCount = selectedReviewResponses.length;
+    const hasPdfDraft = Object.values(reviewPdfDraft).some((value) => String(value || "").trim());
+    const message = [
+      `Restart this ${String(selectedReviewInstance.review_cycle || "").replace(/_/g, " ")} review with ${restartTemplate.name || "the selected template"}?`,
+      "",
+      "This clears saved prompt responses and manager PDF draft fields for this review cycle.",
+      responseCount > 0 ? `Saved prompt responses that will be cleared: ${responseCount}.` : "There are no saved prompt responses yet.",
+      hasPdfDraft ? "Manager PDF notes/action plan fields will also be cleared." : "",
+    ].filter(Boolean).join("\n");
+    if (!window.confirm(message)) return;
+
+    setRestartingReview(true);
+    try {
+      const { error: deleteError } = await supabase
+        .from("employee_review_responses")
+        .delete()
+        .eq("review_instance_id", selectedReviewInstance.id);
+      if (deleteError) throw deleteError;
+
+      const restartedAt = new Date().toISOString();
+      const metadata = clearRestartedReviewMetadata(selectedReviewInstance.metadata, {
+        restarted_at: restartedAt,
+        actor_user_id: actorUserId || null,
+        previous_template_id: selectedReviewInstance.template_id || null,
+        previous_template_version_id: selectedReviewInstance.template_version_id || null,
+        template_id: restartTemplate.id,
+        template_version_id: restartVersion.id,
+      });
+
+      const { data, error } = await supabase
+        .from("employee_review_instances")
+        .update({
+          template_id: restartTemplate.id,
+          template_version_id: restartVersion.id,
+          status: getRestartedReviewStatus(selectedReviewInstance.due_date),
+          completed_at: null,
+          responses_snapshot: {},
+          metadata,
+          reviewer_user_id: actorUserId || null,
+          reviewer_name: actorName || null,
+          updated_by_user_id: actorUserId || null,
+        })
+        .eq("id", selectedReviewInstance.id)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+
+      setReviewDrafts({});
+      setReviewPdfDraft(EMPTY_REVIEW_PDF_DRAFT);
+      await refreshLaborData();
+      if (data?.id) setSelectedReviewInstanceId(data.id);
+      addGlobalToast("Review restarted with the selected template", "success");
+    } catch (error) {
+      addGlobalToast(error?.message || "Failed to restart review", "error");
+    } finally {
+      setRestartingReview(false);
+    }
+  }, [
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    findCurrentPublishedReviewTemplateVersion,
+    refreshLaborData,
+    reviewPdfDraft,
+    selectedLaborEmployeeView,
+    selectedReviewInstance,
+    selectedReviewResponses,
+    selectedReviewTemplate,
+  ]);
 
   const handleReviewPdfDraftChange = useCallback((field, value) => {
     setReviewPdfDraft((current) => ({ ...current, [field]: value }));
@@ -4458,6 +4581,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           : "warning";
       const selectedPerformanceTemplate = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
       const selectedPerformanceTemplateOverrideKey = getPerformanceReviewTemplateOverrideKey(selectedLaborEmployeeView);
+      const selectedExpectedReviewTemplate = selectedPerformanceTemplate ? findReviewTemplateForEmployee(selectedLaborEmployeeView) : null;
+      const selectedReviewTemplateMismatch = Boolean(
+        selectedExpectedReviewTemplate?.id
+        && selectedReviewTemplate?.id
+        && selectedExpectedReviewTemplate.id !== selectedReviewTemplate.id
+      );
+      const selectedRestartTemplate = selectedExpectedReviewTemplate || selectedReviewTemplate;
       const selectedPerformanceTemplateBadgeLabel = selectedPerformanceTemplate
         ? selectedPerformanceTemplateOverrideKey
           ? `Paired: ${selectedPerformanceTemplate.roleLabel}`
@@ -4469,6 +4599,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           ? `Auto: ${selectedPerformanceTemplate.roleLabel}`
           : "Auto by position title";
       const reviewSignature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
+      const reviewSignatureStatus = String(reviewSignature.status || "");
+      const reviewRestartBlocked = ["sent", "completed"].includes(reviewSignatureStatus);
       const ratingOptions = [
         { value: "", label: "Select rating" },
         { value: "Meets Expectations", label: "Meets Expectations" },
@@ -4492,6 +4624,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </div>
               <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
                 {selectedLaborEmployeeView.full_name} · {selectedLaborEmployeeView.position_title || "Employee"} · {reviewCycleLabel}
+              </div>
+              <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5, marginTop: 4 }}>
+                Review form: {selectedReviewTemplate?.name || "—"} · PDF template: {selectedPerformanceTemplate?.roleLabel || "—"}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -4531,6 +4666,32 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 20, alignItems: "start" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {selectedReviewTemplateMismatch && (
+                <Card style={{ padding: 18, border: `1px solid ${C.warn}`, background: "#FFFBEB" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ maxWidth: 820 }}>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: C.text, marginBottom: 6 }}>Review form does not match the paired PDF template</div>
+                      <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>
+                        This review was started from {selectedReviewTemplate?.name || "another review template"}, but the employee is paired to {selectedPerformanceTemplate?.roleLabel || "the selected PDF template"}.
+                        Restarting will rebuild this review with {selectedExpectedReviewTemplate?.name || selectedPerformanceTemplate?.roleLabel || "the paired template"} and clear the current saved answers/PDF draft fields.
+                      </div>
+                    </div>
+                    <Btn
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleRestartSelectedReviewInstance(selectedRestartTemplate)}
+                      disabled={restartingReview || reviewRestartBlocked || !selectedRestartTemplate?.id}
+                    >
+                      {restartingReview ? "Restarting..." : `Restart With ${selectedPerformanceTemplate?.roleLabel || "Paired Template"}`}
+                    </Btn>
+                  </div>
+                  {reviewRestartBlocked && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: C.dan, fontWeight: 700 }}>
+                      Restart is blocked because a signature request has already been {reviewSignatureStatus}.
+                    </div>
+                  )}
+                </Card>
+              )}
               <Card style={{ padding: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
                   <div>
@@ -4688,8 +4849,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || !selectedPerformanceTemplate}>
                     {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
+                  <Btn
+                    variant="ghost"
+                    onClick={() => handleRestartSelectedReviewInstance(selectedRestartTemplate)}
+                    disabled={restartingReview || reviewRestartBlocked || !selectedRestartTemplate?.id}
+                  >
+                    {restartingReview
+                      ? "Restarting..."
+                      : selectedReviewTemplateMismatch && selectedPerformanceTemplate
+                        ? `Restart With ${selectedPerformanceTemplate.roleLabel}`
+                        : "Restart Review"}
+                  </Btn>
                   <Btn variant="ghost" onClick={() => setSelectedReviewInstanceId(null)}>Back to Employee</Btn>
                 </div>
+                {reviewRestartBlocked && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, lineHeight: 1.45 }}>
+                    Restart is disabled after a signature request is sent.
+                  </div>
+                )}
               </Card>
 
               <Card style={{ padding: 18 }}>
