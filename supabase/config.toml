@@ -37,3 +37,8 @@ verify_jwt = false
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.
 verify_jwt = false
+
+[functions.gingr-boh-poll]
+# Scheduled pg_net calls use the vault service key. The function validates that
+# service key in-function so the gateway can accept non-JWT Supabase secret keys.
+verify_jwt = false
