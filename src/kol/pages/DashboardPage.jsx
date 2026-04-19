@@ -1069,10 +1069,32 @@ function DashboardContent({
         if (error) throw error;
         if (!cancelled) setPlatformHealth(health || null);
       } catch (error) {
+        const statusCode = typeof error?.context?.status === "number" ? error.context.status : null;
+        let responsePayload = null;
+        if (error?.context && typeof error.context.clone === "function") {
+          try {
+            responsePayload = await error.context.clone().json();
+          } catch {
+            responsePayload = null;
+          }
+        }
+        const responseAlert = Array.isArray(responsePayload?.alerts) ? responsePayload.alerts[0] : null;
+        const detail = responseAlert?.message || responsePayload?.error || responsePayload?.message || error?.message || "Platform health unavailable.";
         if (!cancelled) {
           setPlatformHealth({
             overall_status: "warning",
-            alerts: [{ severity: "warning", message: error?.message || "Platform health unavailable." }],
+            generated_at: new Date().toISOString(),
+            function_name: "ops-platform-health",
+            alerts: [{
+              severity: "warning",
+              kind: "edge_function",
+              label: "Platform Health",
+              function_name: "ops-platform-health",
+              affects: ["Platform health details", "Data freshness visibility"],
+              last_failure_status_code: statusCode,
+              message: `ops-platform-health returned ${statusCode ? `HTTP ${statusCode}` : "a non-2xx status"}: ${detail}`,
+              action: "The dashboard cannot verify report freshness until this function succeeds.",
+            }],
           });
         }
       }
@@ -1814,7 +1836,7 @@ function DashboardContent({
                 textTransform: "uppercase",
                 letterSpacing: "0.04em",
               }}
-              title="Open platform health"
+              title={platformHealth.alerts?.[0]?.message || "Open platform health"}
             >
               {platformHealth.overall_status === "critical" ? "Platform Critical" : "Health Warning"} · {platformHealth.alerts?.length || 1}
             </button>
