@@ -72,11 +72,11 @@
       "updatedAt": "2026-04-18T15:55:18.664Z"
     },
     "ops-platform-health": {
-      "commit": "8f83744280f2f3cb70e8fc5c2d211e6350fb2590",
+      "commit": "2d9bd44192aaf4f5451ebc0c7bbbbcdfc1764759",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "platform health cron alerts and BOH cron auth guard",
-      "updatedAt": "2026-04-19T10:45:27.943Z"
+      "note": "Narrow sync-state alerts after operational detail schema repair",
+      "updatedAt": "2026-04-19T11:25:00.932Z"
     }
   }
 }
