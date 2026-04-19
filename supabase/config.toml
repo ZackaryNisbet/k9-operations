@@ -32,3 +32,8 @@ verify_jwt = false
 # The function forwards the caller token to Supabase queries so RLS remains authoritative.
 # Gateway verification can reject newer ES256 auth JWTs before function code runs.
 verify_jwt = false
+
+[functions.ops-compute]
+# Scheduled pg_net calls use the vault service key. The function validates that
+# service key in-function so the gateway can accept non-JWT Supabase secret keys.
+verify_jwt = false
