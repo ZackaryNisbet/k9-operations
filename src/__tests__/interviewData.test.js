@@ -7,6 +7,7 @@ import {
   encodePcm16Wav,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewPdfFieldDisplayRect,
   getInterviewAudioContentType,
   getInterviewRecommendation,
   getInterviewTranscriptTurns,
@@ -52,6 +53,10 @@ describe("interview PDF form utilities", () => {
     expect(result.manifest.find((field) => field.name === "candidate_name")).toMatchObject({
       type: "text",
       page_number: 1,
+      page_size: {
+        width: 612,
+        height: 792,
+      },
     });
   });
 
@@ -83,6 +88,61 @@ describe("interview PDF form utilities", () => {
     const filledDoc = await PDFDocument.load(filled);
 
     expect(filledDoc.getForm().getTextField("interviewer_name").getText()).toBe("  Zack Nisbet");
+  });
+
+  it("applies scorecard field geometry overrides to manifests and filled PDFs", async () => {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([612, 792]);
+    const form = pdfDoc.getForm();
+    const overallScore = form.createTextField("overall_score");
+    overallScore.addToPage(page, { x: 318, y: 320.4, width: 58, height: 13 });
+    const decision = form.createTextField("decision_move_forward_with_reservations");
+    decision.addToPage(page, { x: 304, y: 347.6, width: 9.5, height: 10.5 });
+    const bytes = await pdfDoc.save();
+
+    const manifest = await extractPdfFieldManifest(bytes);
+    expect(getInterviewPdfFieldDisplayRect(manifest.manifest.find((field) => field.name === "overall_score"))).toMatchObject({
+      x: 252,
+      width: 68,
+    });
+    expect(manifest.manifest.find((field) => field.name === "decision_move_forward_with_reservations").rect).toMatchObject({
+      x: 303,
+      y: 348,
+      width: 8,
+      height: 8,
+    });
+
+    const filled = await fillInterviewPdfBytes(bytes, {
+      overall_score: "4.5/5",
+      decision_move_forward_with_reservations: "yes",
+    });
+    const filledDoc = await PDFDocument.load(filled);
+    const filledForm = filledDoc.getForm();
+    const filledOverallRect = filledForm.getTextField("overall_score").acroField.getWidgets()[0].getRectangle();
+    const filledDecisionRect = filledForm.getTextField("decision_move_forward_with_reservations").acroField.getWidgets()[0].getRectangle();
+
+    expect(filledForm.getTextField("decision_move_forward_with_reservations").getText()).toBe("X");
+    expect(filledOverallRect).toMatchObject({ x: 252, width: 68 });
+    expect(filledDecisionRect).toMatchObject({ x: 303, y: 348, width: 8, height: 8 });
+  });
+
+  it("does not move matching field names on unrelated PDF layouts", async () => {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([612, 792]);
+    const form = pdfDoc.getForm();
+    const overallScore = form.createTextField("overall_score");
+    overallScore.addToPage(page, { x: 80, y: 120, width: 90, height: 16 });
+    const bytes = await pdfDoc.save();
+
+    const manifest = await extractPdfFieldManifest(bytes);
+    expect(getInterviewPdfFieldDisplayRect(manifest.manifest[0])).toMatchObject(manifest.manifest[0].rect);
+    expect(getInterviewPdfFieldDisplayRect(manifest.manifest[0])).not.toMatchObject({ x: 252, width: 68 });
+
+    const filled = await fillInterviewPdfBytes(bytes, { overall_score: "4/5" });
+    const filledDoc = await PDFDocument.load(filled);
+    const filledRect = filledDoc.getForm().getTextField("overall_score").acroField.getWidgets()[0].getRectangle();
+    expect(filledRect).not.toMatchObject({ x: 252, width: 68 });
+    expect(filledRect).toMatchObject({ x: 79.5, y: 119.5, width: 91, height: 17 });
   });
 
   it("adds candidate metadata defaults for common PDF identity fields", () => {

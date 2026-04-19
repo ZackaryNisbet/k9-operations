@@ -10,6 +10,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const XAI_API_KEY = Deno.env.get("XAI_API_KEY") || "";
 const XAI_DRAFT_MODEL = Deno.env.get("INTERVIEW_XAI_DRAFT_MODEL") || Deno.env.get("XAI_DRAFT_MODEL") || "grok-4.20-0309-reasoning";
+const DOCUMENT_PDF_INSTRUCTION_KEY = "__document";
 
 class InterviewFunctionError extends Error {
   status: number;
@@ -79,8 +80,12 @@ function buildNumberedPdfQuestionPrompt(fieldName: string) {
     : `Q${Number(questionNo)} from the PDF interview guide`;
   return [
     `PDF field "${fieldName}" is the ${sectionLabel} line for ${questionContext}.`,
-    "First locate the interviewer asking this numbered question or near-verbatim prompt in the transcript.",
-    "Use the candidate answer immediately following that question before considering any loosely similar exchange.",
+    "Search the entire transcript, including the final interviewer turns, for this numbered question, a near-verbatim prompt, or the same core phrases.",
+    "Use the candidate answer immediately following the direct question before considering any earlier loosely similar exchange.",
+    questionNo === "01"
+      ? "For Q1, prioritize a direct answer to 'customer was upset or frustrated' or 'how did you handle it' over earlier customer-service hypotheticals or roleplay examples."
+      : "",
+    "If the candidate's answer is conversational rather than neatly labeled as STAR, split the supported facts into Situation, Task, Action, and Result lines without adding outside facts.",
     `Return only the ${sectionLabel} content for this STAR field, not the full answer.`,
   ].join(" ");
 }
@@ -88,12 +93,23 @@ function buildNumberedPdfQuestionPrompt(fieldName: string) {
 function withManagerInstruction(prompt: string, instruction: string) {
   const cleanInstruction = sanitizeManagerInstruction(instruction);
   if (!cleanInstruction) return prompt;
+  const wantsFullInference = /\b(every|all)\s+(pdf\s+)?fields?\b|\binfer\b|\bpopulate\b/i.test(cleanInstruction);
   return [
     prompt,
     `Manager population instruction: ${cleanInstruction}`,
     "Treat this instruction as first-party interviewer guidance about what the manager wants this PDF field to capture.",
     "Use it together with the transcript; when the instruction describes observed reaction or tone, phrase the answer as manager-observed rather than inventing unsupported facts.",
+    wantsFullInference
+      ? "The manager explicitly wants a fully populated guide. For this PDF field, draft the best manager-ready answer from the entire dialogue and manager instruction instead of leaving it blank for merely implicit support. Use neutral wording when the answer is inferred."
+      : "",
   ].join(" ");
+}
+
+function getPdfPopulationInstruction(fieldName: string, instructions: Map<string, string>) {
+  return [
+    instructions.get(DOCUMENT_PDF_INSTRUCTION_KEY) || "",
+    instructions.get(fieldName) || "",
+  ].filter(Boolean).join(" ");
 }
 
 function buildTargets(
@@ -102,6 +118,7 @@ function buildTargets(
     autoScoreCandidate?: boolean;
     targetPdfFieldName?: string;
     pdfPopulationInstructions?: Map<string, string>;
+    pdfOnly?: boolean;
   } = {},
 ): DraftTarget[] {
   const snapshot = (record.template_snapshot || {}) as Record<string, unknown>;
@@ -138,7 +155,7 @@ function buildTargets(
         : inferredNumberedPrompt
           ? inferredNumberedPrompt
         : buildPdfFieldPrompt(fieldName, options);
-      const fieldPrompt = withManagerInstruction(basePrompt, pdfPopulationInstructions.get(fieldName) || "");
+      const fieldPrompt = withManagerInstruction(basePrompt, getPdfPopulationInstruction(fieldName, pdfPopulationInstructions));
       return {
         target_type: "pdf_field" as const,
         key: fieldName,
@@ -148,7 +165,7 @@ function buildTargets(
       };
     });
 
-  return targetPdfFieldName ? fieldTargets : [...questionTargets, ...fieldTargets];
+  return targetPdfFieldName || options.pdfOnly ? fieldTargets : [...questionTargets, ...fieldTargets];
 }
 
 function buildPdfFieldPrompt(fieldName: string, options: { autoScoreCandidate?: boolean } = {}) {
@@ -201,10 +218,11 @@ function asBoolean(value: unknown) {
 
 function draftJobMatchesRequest(
   draftJob: Record<string, unknown>,
-  options: { targetPdfFieldName: string; pdfPopulationInstructions: Map<string, string> },
+  options: { targetPdfFieldName: string; pdfPopulationInstructions: Map<string, string>; pdfOnly: boolean },
 ) {
   const existingTarget = String(draftJob.target_pdf_field_name || "").trim();
   if (existingTarget !== options.targetPdfFieldName) return false;
+  if (asBoolean(draftJob.pdf_only) !== options.pdfOnly) return false;
   const existingInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
   if (existingInstructions.size !== options.pdfPopulationInstructions.size) return false;
   for (const [key, instruction] of options.pdfPopulationInstructions.entries()) {
@@ -222,19 +240,18 @@ async function readProviderError(response: Response, data: Record<string, unknow
   return `xAI Grok request failed with HTTP ${response.status}.`;
 }
 
-async function getAuthenticatedUserId(token: string) {
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "apikey": SUPABASE_ANON_KEY,
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data?.error_description || data?.msg || data?.message || "Unauthorized.";
-    throw new InterviewFunctionError(message, response.status);
+function getAuthenticatedUserId(token: string) {
+  const payload = token.split(".")[1] || "";
+  if (!payload) throw new InterviewFunctionError("Unauthorized.", 401);
+  const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(atob(padded));
+  } catch (_) {
+    throw new InterviewFunctionError("Unauthorized.", 401);
   }
-  const userId = String(data?.id || "").trim();
+  const userId = String(data?.sub || "").trim();
   if (!userId) throw new InterviewFunctionError("Unauthorized.", 401);
   return userId;
 }
@@ -328,11 +345,15 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           "You draft K9 Resorts interview notes for a manager.",
           "Use only facts explicitly supported by the supplied transcript.",
           "You may use supplied candidate metadata only for identity/date/role fields, never for interview substance.",
+          "Manager population instructions are first-party manager context and may be used as factual context for PDF drafting.",
           "For numbered PDF STAR fields such as q01_situation, q01_task, q01_action, and q01_result, first find the matching numbered interview question and use the candidate's answer that follows it.",
           "If the interviewer explicitly asks a target question, that direct answer has priority over any similar or hypothetical exchange.",
+          "Do not skip a numbered STAR field just because the candidate answered conversationally; extract the supported Situation, Task, Action, and Result from that direct answer when possible.",
+          "For Q1 customer-upset fields, search for the interviewer asking about an upset or frustrated customer anywhere in the transcript, including the end of the interview.",
           "Do not invent hypothetical scenarios unless the candidate explicitly framed the answer as hypothetical.",
           "Manager population instructions are allowed source context for what to put in a PDF field, but keep the final wording factual and manager-ready.",
-          "If the transcript does not support a field, return an empty draft_text for that field.",
+          "If neither the transcript, candidate metadata, nor manager population instruction supports a field, return an empty draft_text for that field.",
+          "When a manager population instruction explicitly asks to infer or populate every PDF field, do not leave PDF fields blank just because support is implicit; write the best supported manager-ready draft and keep the language honest about inference.",
           "Return exactly one response object for every target supplied.",
           "Keep wording concise, factual, and suitable for a manager-edited form.",
           "Do not infer, embellish, or fill gaps from general knowledge.",
@@ -435,11 +456,14 @@ async function saveDraftPayload(
   }
 
   let savedCount = 0;
+  let populatedCount = 0;
   for (const row of valid) {
     const key = targetMapKey(row);
     const existing = existingByTarget.get(key);
+    const draftText = String(row.draft_text || "").trim();
+    if (draftText) populatedCount += 1;
     const payload = {
-      ai_draft_text: row.draft_text || null,
+      ai_draft_text: draftText || null,
       ai_confidence: row.confidence,
       ai_evidence: row.evidence || [],
       prompt_snapshot: row.prompt_snapshot,
@@ -491,6 +515,7 @@ async function saveDraftPayload(
           model: options.model,
           generated_at: completedAt,
           saved_count: savedCount,
+          populated_count: populatedCount,
           skipped_count: skipped.length,
           target_count: targets.length,
           request_id: options.requestId,
@@ -502,7 +527,7 @@ async function saveDraftPayload(
     })
     .eq("id", interviewId);
 
-  return { savedCount, skipped };
+  return { savedCount, populatedCount, skipped };
 }
 
 serve(async (req) => {
@@ -527,7 +552,7 @@ serve(async (req) => {
       global: { headers: { Authorization: authorization } },
     });
 
-    const userId = await getAuthenticatedUserId(token);
+    const userId = getAuthenticatedUserId(token);
 
     const requestBody = await req.json();
     const { interview_id } = requestBody;
@@ -557,6 +582,9 @@ serve(async (req) => {
     const requestedTargetPdfFieldName = String(requestBody.target_pdf_field_name || "").trim();
     const storedTargetPdfFieldName = String(draftJob.target_pdf_field_name || "").trim();
     const targetPdfFieldName = action === "poll" ? storedTargetPdfFieldName : requestedTargetPdfFieldName;
+    const requestedPdfOnly = asBoolean(requestBody.pdf_only);
+    const storedPdfOnly = asBoolean(draftJob.pdf_only);
+    const pdfOnly = action === "poll" ? storedPdfOnly : requestedPdfOnly;
     const requestedInstructions = normalizeInstructionMap(requestBody.pdf_population_instructions);
     const storedInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
     const pdfPopulationInstructions = action === "poll"
@@ -570,6 +598,7 @@ serve(async (req) => {
       autoScoreCandidate,
       targetPdfFieldName,
       pdfPopulationInstructions,
+      pdfOnly,
     });
     if (targets.length === 0) {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
@@ -578,9 +607,7 @@ serve(async (req) => {
     const existingRequestId = String(draftJob.request_id || "").trim();
 
     if (action === "start") {
-      const canReusePending = !targetPdfFieldName
-        ? !String(draftJob.target_pdf_field_name || "").trim()
-        : draftJobMatchesRequest(draftJob, { targetPdfFieldName, pdfPopulationInstructions });
+      const canReusePending = draftJobMatchesRequest(draftJob, { targetPdfFieldName, pdfPopulationInstructions, pdfOnly });
       if (draftJob.status === "pending" && existingRequestId && canReusePending) {
         return jsonResponse({
           ok: true,
@@ -609,6 +636,7 @@ serve(async (req) => {
               target_count: targets.length,
               auto_score_candidate: autoScoreCandidate,
               target_pdf_field_name: targetPdfFieldName || null,
+              pdf_only: pdfOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
             auto_score_candidate: autoScoreCandidate,
@@ -651,6 +679,7 @@ serve(async (req) => {
               target_count: Number(draftJob.target_count || targets.length),
               auto_score_candidate: autoScoreCandidate,
               target_pdf_field_name: targetPdfFieldName || null,
+              pdf_only: pdfOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
           },
@@ -669,7 +698,7 @@ serve(async (req) => {
       });
     }
 
-    const { savedCount, skipped } = await saveDraftPayload(
+    const { savedCount, populatedCount, skipped } = await saveDraftPayload(
       supabase,
       record as Record<string, unknown>,
       interview_id,
@@ -687,6 +716,7 @@ serve(async (req) => {
       ok: true,
       pending: false,
       saved_count: savedCount,
+      populated_count: populatedCount,
       skipped_targets: skipped,
       provider: "xai",
       model: String(pollResult.model || draftJob.model || XAI_DRAFT_MODEL),
