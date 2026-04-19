@@ -1040,6 +1040,7 @@ function DashboardContent({
   const [cashReceiptData, setCashReceiptData] = useState(null);
   const [cashReceiptLoading, setCashReceiptLoading] = useState(false);
   const cashReceiptTriggerRef = useRef(null);
+  const [platformHealth, setPlatformHealth] = useState(null);
   const today = todayStr();
 
   /* ─── Stable nav callbacks ─── */
@@ -1054,6 +1055,36 @@ function DashboardContent({
     pages.forEach(p => { map[p] = () => nav(p); });
     return map;
   }, [nav]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let intervalId = null;
+    const healthLocationId = locationId || profile?.location_id || "cherry-hill";
+
+    const loadPlatformHealth = async () => {
+      try {
+        const { data: health, error } = await supabase.functions.invoke("ops-platform-health", {
+          body: { location_id: healthLocationId, date: today },
+        });
+        if (error) throw error;
+        if (!cancelled) setPlatformHealth(health || null);
+      } catch (error) {
+        if (!cancelled) {
+          setPlatformHealth({
+            overall_status: "warning",
+            alerts: [{ severity: "warning", message: error?.message || "Platform health unavailable." }],
+          });
+        }
+      }
+    };
+
+    loadPlatformHealth();
+    intervalId = window.setInterval(loadPlatformHealth, 60000);
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [locationId, profile?.location_id, today]);
 
   // ─── Inventory snapshot status (reads from inventory_snapshots + inventory_counts) ──
   const [invStatus, setInvStatus] = useState({ status: "not_started", itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: null });
@@ -1766,6 +1797,27 @@ function DashboardContent({
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 1.5s infinite" }} />
               {bohLiveLabel}
             </span>
+          )}
+          {platformHealth && platformHealth.overall_status !== "healthy" && (
+            <button
+              onClick={navTo["test-health"]}
+              style={{
+                padding: "2px 7px",
+                borderRadius: 4,
+                border: `1px solid ${platformHealth.overall_status === "critical" ? C.dan : C.warn}`,
+                background: platformHealth.overall_status === "critical" ? C.danLt : C.warnLt,
+                color: platformHealth.overall_status === "critical" ? C.dan : C.warn,
+                fontSize: 8,
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+              title="Open platform health"
+            >
+              {platformHealth.overall_status === "critical" ? "Platform Critical" : "Health Warning"} · {platformHealth.alerts?.length || 1}
+            </button>
           )}
           <button
             onClick={refresh}
