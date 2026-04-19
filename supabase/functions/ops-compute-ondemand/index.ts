@@ -710,8 +710,78 @@ async function computeBathingReport(
     });
   }
 
-  // ─── Suggested baths: boarding dogs staying 2+ nights with no bath ─────
+  // ─── Fresh N Clean auto-detection ─────────────────────────────────────
+  // Boarding dogs staying exactly one night and departing on the target date
+  // need Fresh N Clean when no bath/groom service exists on the reservation.
   const bathDogResIds = new Set([...bathDogs, ...suggestedDogs].map(d => d.gingrReservationId));
+  for (const r of allRes) {
+    const resId = String(r.gingr_id || "");
+    if (bathDogResIds.has(resId)) continue;
+
+    const rd = r.raw_data || {};
+    const startDate = rd.start_date || r.start_date || "";
+    const endDate = rd.end_date || r.end_date || "";
+    const resType = rd.reservation_type || {};
+    const resTypeName = resType.type || r.reservation_type_name || "";
+
+    if (!isBoardingReservation(resTypeName)) continue;
+    if (!endDate.includes(targetDate)) continue;
+    if (calculateNights(startDate, endDate) !== 1) continue;
+
+    const rawSvcs = rd.services || [];
+    const topSvcs = Array.isArray(r.services) ? r.services : [];
+    const bathServices = extractBathLikeServices(rawSvcs, topSvcs);
+    if (bathServices.length > 0) continue;
+
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    if (animalGingrId) animalIds.push(animalGingrId);
+
+    const roomLabel = resolveCanonicalRoomLabel(
+      roomLookup,
+      {
+        reservationId: resId,
+        animalId: animalGingrId,
+        animalName: r.animal_name || rd.animal?.name || "",
+        ownerFirstName: r.owner_first_name || rd.owner?.first_name || "",
+        ownerLastName: r.owner_last_name || rd.owner?.last_name || "",
+      },
+      r.room_assignment || rd.run?.name || "",
+    );
+    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
+      .filter(Boolean)
+      .map((n: string) => n.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    bathDogs.push({
+      animalGingrId,
+      gingrReservationId: resId,
+      bathServiceId: "",
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed: rd.animal?.breed || "",
+      roomLabel,
+      suiteType: resTypeName,
+      reservationType: resTypeName,
+      reservationCategory: classifyReservationCategory(resTypeName),
+      addonType: "",
+      bathServiceName: "",
+      bathModifiers: [],
+      reservationNotes: notesParts.join(" | "),
+      scheduledAt: endDate,
+      scheduledTime: formatTimeHuman(endDate),
+      departureTime: formatTimeHuman(endDate),
+      departureTimeRaw: endDate,
+      startDate,
+      endDate,
+      isCheckedOut: !!r.check_out_date,
+      isDone: false,
+      isFreshNClean: true,
+      status: "scheduled" as string,
+    });
+    bathDogResIds.add(resId);
+  }
+
+  // ─── Suggested baths: boarding dogs staying 2+ nights with no bath ─────
 
   for (const r of allRes) {
     const resId = String(r.gingr_id || "");
@@ -933,7 +1003,7 @@ async function computeBathingReport(
       addonType: d.addonType,
       serviceName: d.bathServiceName,
       rawModifiers: d.bathModifiers,
-      defaultType: "Standard",
+      defaultType: d.isFreshNClean ? "Fresh N Clean" : "Standard",
     });
     const weight = weightMap[d.animalGingrId] ?? null;
     const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
@@ -991,6 +1061,7 @@ async function computeBathingReport(
       departureTimeRaw: d.departureTimeRaw,
       isCheckedOut: d.isCheckedOut,
       isDone: d.isDone,
+      isFreshNClean: !!d.isFreshNClean,
       status: d.status,
       statusContext: d.statusContext || null,
       reservationType: d.reservationType,
@@ -1060,11 +1131,13 @@ async function computeBathingReport(
   const scheduledCount = grouped.filter(d => d.status === "scheduled").length;
   const manualCount = grouped.filter(d => d.status === "manual").length;
   const suggestedCount = grouped.filter(d => d.status === "suggested").length;
+  const freshNCleanCount = grouped.filter(d => d.isFreshNClean).length;
   const byCategory: Record<string, number> = {
     boarding: 0,
     daycare: 0,
     day_boarding: 0,
     evaluation: 0,
+    fresh_n_clean: freshNCleanCount,
     suggested: suggestedCount,
     manual: manualCount,
   };
@@ -1086,6 +1159,7 @@ async function computeBathingReport(
       scheduled: scheduledCount,
       manual: manualCount,
       suggested: suggestedCount,
+      fresh_n_clean: freshNCleanCount,
       byCategory,
     },
     completions,
@@ -1531,6 +1605,30 @@ async function computeLodgingTransfers(
 
 // ─── Main handler ──────────────────────────────────────────────────────────
 
+async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  if (!token) {
+    return new Response(
+      JSON.stringify({ error: "Missing Authorization header" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  if (token === serviceRoleKey) return null;
+
+  const { data, error } = await sb.auth.getUser(token);
+  if (error || !data?.user) {
+    return new Response(
+      JSON.stringify({ error: `Authentication required: ${error?.message || "No user returned"}` }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -1572,6 +1670,8 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(supabaseUrl, supabaseServiceKey);
+    const authFailure = await requireAuthenticatedRequest(req, sb, supabaseServiceKey);
+    if (authFailure) return authFailure;
 
     if (kind === "roll_call_opening" || kind === "roll_call_closing") {
       const session = normalizeRollCallSession(

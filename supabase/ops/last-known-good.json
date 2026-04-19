@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "87d4eca04c5dfc614ec620be1d33255d389b8f98",
+      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "ops compute cron auth guard",
-      "updatedAt": "2026-04-19T10:23:33.831Z"
+      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
+      "updatedAt": "2026-04-19T13:06:50.411Z"
     },
     "ops-compute-ondemand": {
-      "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
+      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room cleaning task timing support",
-      "updatedAt": "2026-04-17T12:24:31.302Z"
+      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
+      "updatedAt": "2026-04-19T13:06:50.411Z"
     },
     "scheduling-audit": {
       "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
@@ -72,11 +72,18 @@
       "updatedAt": "2026-04-18T15:55:18.664Z"
     },
     "ops-platform-health": {
-      "commit": "2d9bd44192aaf4f5451ebc0c7bbbbcdfc1764759",
+      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Narrow sync-state alerts after operational detail schema repair",
-      "updatedAt": "2026-04-19T11:25:00.932Z"
+      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
+      "updatedAt": "2026-04-19T13:06:50.411Z"
+    },
+    "ops-bathing-manual": {
+      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
+      "updatedAt": "2026-04-19T13:06:50.411Z"
     }
   }
 }
