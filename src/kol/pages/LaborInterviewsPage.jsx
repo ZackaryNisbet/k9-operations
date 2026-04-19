@@ -11,6 +11,7 @@ import {
   buildPdfResponseMap,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewPdfFieldDisplayRect,
   getInterviewTranscriptTurns,
   getInterviewRecommendation,
   getInterviewRecommendationOption,
@@ -1463,18 +1464,21 @@ function getPdfPageOverlayBox(containerSize, pageSize) {
 }
 
 function getPdfFieldOverlayStyle(field, pageBox, pageSize) {
-  const rect = field?.rect || {};
+  const rect = getInterviewPdfFieldDisplayRect(field) || {};
   const x = Number(rect.x);
   const y = Number(rect.y);
   const width = Number(rect.width);
   const height = Number(rect.height);
   if (!pageBox || !pageSize?.height || !Number.isFinite(x) || !Number.isFinite(y) || !width || !height) return null;
-  const pad = 5;
+  const isSmallField = width <= 14 && height <= 14;
+  const pad = isSmallField ? 1.5 : 5;
+  const scaledWidth = width * pageBox.scale + pad * 2;
+  const scaledHeight = height * pageBox.scale + pad * 2;
   return {
     left: pageBox.left + (x * pageBox.scale) - pad,
     top: pageBox.top + ((pageSize.height - y - height) * pageBox.scale) - pad,
-    width: Math.max(24, width * pageBox.scale + pad * 2),
-    height: Math.max(18, height * pageBox.scale + pad * 2),
+    width: isSmallField ? Math.max(12, scaledWidth) : Math.max(24, scaledWidth),
+    height: isSmallField ? Math.max(12, scaledHeight) : Math.max(18, scaledHeight),
   };
 }
 
