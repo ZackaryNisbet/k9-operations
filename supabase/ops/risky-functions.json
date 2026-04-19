@@ -11,7 +11,10 @@
       "verifyJwt": false
     },
     "ops-compute-ondemand": {
-      "verifyJwt": true
+      "verifyJwt": false
+    },
+    "ops-bathing-manual": {
+      "verifyJwt": false
     },
     "scheduling-audit": {
       "verifyJwt": true
@@ -23,7 +26,7 @@
       "verifyJwt": false
     },
     "ops-platform-health": {
-      "verifyJwt": true
+      "verifyJwt": false
     },
     "interview-transcribe-audio": {
       "verifyJwt": false

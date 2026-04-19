@@ -1,4 +1,4 @@
-import { normalizeBathDisplay, normalizeBathModifierLabel, normalizeBathTypeLabel } from "./bathing-logic.ts";
+import { normalizeBathDisplay, normalizeBathModifierLabel, normalizeBathTypeLabel, sanitizeBathTypeLabels } from "./bathing-logic.ts";
 
 type SupabaseClient = any;
 
@@ -281,11 +281,11 @@ export function resolveBathDisplayFromIconRows(args: {
     defaultType: args.defaultType,
   });
 
-  const mergedBathIcons = uniqueStrings([
+  const mergedBathIcons = sanitizeBathTypeLabels(uniqueStrings([
     ...fallbackDisplay.bathIcons,
     ...typeLabels,
     ...unmatchedBathTitles,
-  ]);
+  ]), args.defaultType);
   const mergedBathModifiers = uniqueStrings([
     ...fallbackDisplay.bathModifiers,
     ...modifierLabels,
@@ -293,7 +293,7 @@ export function resolveBathDisplayFromIconRows(args: {
 
   return {
     bathType: mergedBathIcons[0] || fallbackDisplay.bathType || "Standard",
-    bathIcons: sortAlpha(mergedBathIcons),
+    bathIcons: mergedBathIcons,
     bathModifiers: sortAlpha(mergedBathModifiers),
     unmatchedBathTitles: sortAlpha(uniqueStrings(unmatchedBathTitles)),
   };
