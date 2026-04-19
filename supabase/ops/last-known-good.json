@@ -16,11 +16,11 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
+      "commit": "87d4eca04c5dfc614ec620be1d33255d389b8f98",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room cleaning task timing support",
-      "updatedAt": "2026-04-17T12:24:31.302Z"
+      "note": "ops compute cron auth guard",
+      "updatedAt": "2026-04-19T10:23:33.831Z"
     },
     "ops-compute-ondemand": {
       "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
