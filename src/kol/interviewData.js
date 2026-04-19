@@ -6,6 +6,7 @@ import {
   PDFRadioGroup,
   PDFSignature,
   PDFTextField,
+  TextAlignment,
 } from "pdf-lib";
 
 export const LABOR_INTERVIEW_DOCUMENT_BUCKET = "labor-interview-documents";
@@ -103,6 +104,39 @@ const PDF_FIELD_TYPE_LABELS = {
   unknown: "Unknown",
 };
 
+const INTERVIEW_PDF_FIELD_GEOMETRY_OVERRIDES = {
+  decision_move_forward: {
+    matchRect: { x: 64, y: 347.6, width: 9.5, height: 10.5 },
+    rect: { x: 62.5, y: 348, width: 8, height: 8 },
+    align: TextAlignment.Center,
+    fontSize: 7,
+  },
+  decision_request_second_interview: {
+    matchRect: { x: 157, y: 347.6, width: 9.5, height: 10.5 },
+    rect: { x: 156, y: 348, width: 8, height: 8 },
+    align: TextAlignment.Center,
+    fontSize: 7,
+  },
+  decision_move_forward_with_reservations: {
+    matchRect: { x: 304, y: 347.6, width: 9.5, height: 10.5 },
+    rect: { x: 303, y: 348, width: 8, height: 8 },
+    align: TextAlignment.Center,
+    fontSize: 7,
+  },
+  decision_do_not_move_forward: {
+    matchRect: { x: 469, y: 347.6, width: 9.5, height: 10.5 },
+    rect: { x: 468, y: 348, width: 8, height: 8 },
+    align: TextAlignment.Center,
+    fontSize: 7,
+  },
+  overall_score: {
+    matchRect: { x: 318, y: 320.4, width: 58, height: 13 },
+    rect: { x: 252, y: 320.4, width: 68, height: 13 },
+    align: TextAlignment.Center,
+    fontSize: 8.5,
+  },
+};
+
 function cloneJson(value, fallback) {
   if (value == null) return fallback;
   try {
@@ -110,6 +144,37 @@ function cloneJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function isPdfRectNear(rect = {}, expected = {}, tolerance = 2) {
+  return ["x", "y", "width", "height"].every((key) => {
+    const actualValue = Number(rect[key]);
+    const expectedValue = Number(expected[key]);
+    return Number.isFinite(actualValue) && Number.isFinite(expectedValue) && Math.abs(actualValue - expectedValue) <= tolerance;
+  });
+}
+
+function getInterviewPdfFieldGeometryOverride(fieldOrName, rect = null) {
+  const fieldName = typeof fieldOrName === "string" ? fieldOrName : fieldOrName?.name;
+  const override = INTERVIEW_PDF_FIELD_GEOMETRY_OVERRIDES[normalizeFieldName(fieldName)];
+  if (!override) return null;
+  const sourceRect = rect || fieldOrName?.rect;
+  if (override.matchRect && !isPdfRectNear(sourceRect, override.matchRect)) return null;
+  return override;
+}
+
+export function getInterviewPdfFieldDisplayRect(field = {}) {
+  const override = getInterviewPdfFieldGeometryOverride(field);
+  if (!override?.rect) return field.rect || null;
+  return {
+    ...(field.rect || {}),
+    ...override.rect,
+  };
+}
+
+function withInterviewPdfFieldGeometry(field = {}) {
+  const rect = getInterviewPdfFieldDisplayRect(field);
+  return rect && rect !== field.rect ? { ...field, rect } : field;
 }
 
 export function getInterviewRoleLabel(roleKey) {
@@ -318,7 +383,7 @@ export function questionRowsFromSnapshot(snapshot = {}) {
 
 export function pdfFieldsFromSnapshot(snapshot = {}) {
   const fields = snapshot?.version?.pdf_field_manifest || snapshot?.pdf_field_manifest || [];
-  return Array.isArray(fields) ? [...fields].sort(sortPdfFields) : [];
+  return Array.isArray(fields) ? fields.map(withInterviewPdfFieldGeometry).sort(sortPdfFields) : [];
 }
 
 export function groupQuestionsByCategory(questions = []) {
@@ -396,6 +461,20 @@ function getWidgetRect(widget) {
   }
 }
 
+function getPageSizeByNumber(pdfDoc, pageNumber) {
+  try {
+    const page = pdfDoc.getPage(Number(pageNumber || 1) - 1);
+    const size = page?.getSize?.();
+    if (!size) return null;
+    return {
+      width: Number(size.width || 0),
+      height: Number(size.height || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getFieldOptions(field, type) {
   try {
     if (type === "dropdown" || type === "option_list" || type === "radio") {
@@ -417,17 +496,19 @@ export async function extractPdfFieldManifest(pdfBytes) {
       const firstWidget = widgets[0] || null;
       const type = getPdfFieldType(field);
       const rect = getWidgetRect(firstWidget);
-      return {
+      const page_number = getWidgetPageNumber(pdfDoc, firstWidget);
+      return withInterviewPdfFieldGeometry({
         name: field.getName(),
         type,
         type_label: getPdfFieldTypeLabel(type),
-        page_number: getWidgetPageNumber(pdfDoc, firstWidget),
+        page_number,
+        page_size: getPageSizeByNumber(pdfDoc, page_number),
         rect,
         widget_count: widgets.length,
         options: getFieldOptions(field, type),
         required: !!field.isRequired?.(),
         read_only: !!field.isReadOnly?.(),
-      };
+      });
     });
     return {
       ok: manifest.length > 0,
@@ -639,10 +720,37 @@ export function getInterviewTranscriptTurns(record = {}) {
 function getPdfTextAppearanceValue(fieldName, value) {
   const textValue = value == null ? "" : String(value);
   const normalized = normalizeFieldName(fieldName);
+  if (/^decision_/.test(normalized) && ["true", "yes", "checked", "1", "x"].includes(textValue.trim().toLowerCase())) {
+    return "X";
+  }
   if (textValue && /interviewer|manager/.test(normalized)) {
     return `  ${textValue}`;
   }
   return textValue;
+}
+
+function applyInterviewPdfFieldGeometry(field) {
+  const name = field?.getName?.();
+  try {
+    const widgets = field.acroField?.getWidgets?.() || [];
+    widgets.forEach((widget) => {
+      const current = widget.getRectangle?.() || {};
+      const override = getInterviewPdfFieldGeometryOverride(name, current);
+      if (!override) return;
+      widget.setRectangle?.({
+        x: Number(override.rect?.x ?? current.x ?? 0),
+        y: Number(override.rect?.y ?? current.y ?? 0),
+        width: Number(override.rect?.width ?? current.width ?? 0),
+        height: Number(override.rect?.height ?? current.height ?? 0),
+      });
+      if (field instanceof PDFTextField) {
+        if (override.align != null) field.setAlignment(override.align);
+        if (override.fontSize) field.setFontSize(override.fontSize);
+      }
+    });
+  } catch {
+    // A malformed widget should not block the rest of the PDF from filling.
+  }
 }
 
 export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {
@@ -651,6 +759,7 @@ export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatte
   const fields = form.getFields();
   fields.forEach((field) => {
     const name = field.getName();
+    applyInterviewPdfFieldGeometry(field);
     if (!Object.prototype.hasOwnProperty.call(responseMap, name)) return;
     const value = responseMap[name];
     const textValue = value == null ? "" : String(value);
