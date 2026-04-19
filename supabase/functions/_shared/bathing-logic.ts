@@ -306,6 +306,35 @@ export function sanitizeBathModifierLabels(labels: Array<string | null | undefin
   return sortByKnownOrder([...modifierSet], MODIFIER_ORDER);
 }
 
+export function sanitizeBathTypeLabels(
+  labels: Array<string | null | undefined>,
+  defaultType?: string | null,
+): string[] {
+  const typeSet = new Set<string>();
+  const normalizedDefault = normalizeBathTypeLabel(defaultType || "") || null;
+
+  for (const label of labels) {
+    const normalized = normalizeBathTypeLabel(label);
+    const cleanLabel = normalized || normalizeWhitespace(String(label || ""));
+    if (cleanLabel) typeSet.add(cleanLabel);
+  }
+
+  if (normalizedDefault === "Fresh N Clean") {
+    typeSet.add(normalizedDefault);
+  }
+
+  if (typeSet.size === 0) {
+    typeSet.add(normalizedDefault || "Standard");
+  }
+
+  const hasSpecificType = [...typeSet].some((label) => label !== "Standard");
+  if (hasSpecificType) {
+    typeSet.delete("Standard");
+  }
+
+  return sortByKnownOrder([...typeSet], TYPE_ORDER);
+}
+
 function sortByKnownOrder(values: string[], order: Map<string, number>): string[] {
   return [...values].sort((a, b) => {
     const aOrder = order.get(a) ?? 999;
@@ -349,12 +378,7 @@ export function normalizeBathDisplay(args: {
     }
   }
 
-  const defaultType = normalizeBathTypeLabel(args.defaultType || "") || null;
-  if (typeSet.size === 0) {
-    typeSet.add(defaultType || "Standard");
-  }
-
-  const bathIcons = sortByKnownOrder([...typeSet], TYPE_ORDER);
+  const bathIcons = sanitizeBathTypeLabels([...typeSet], args.defaultType);
   const bathModifiers = sortByKnownOrder([...modifierSet], MODIFIER_ORDER);
 
   return {

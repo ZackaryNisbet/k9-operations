@@ -113,6 +113,34 @@ const ALERT_SYNC_ERROR_ENTITIES = new Set([
   "today-sync",
 ]);
 
+type HealthAlert = {
+  severity: string;
+  kind: string;
+  message: string;
+  label?: string;
+  function_name?: string | null;
+  jobname?: string | null;
+  key?: string | null;
+  report_id?: string | null;
+  affects?: string[];
+  last_run_at?: string | null;
+  last_run_status?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_failure_status_code?: number | null;
+  age_minutes?: number | null;
+  computed_at?: string | null;
+  updated_at?: string | null;
+  action?: string;
+};
+
+const SYNC_ENTITY_AFFECTS: Record<string, string[]> = {
+  feeding_schedules: ["Feeding schedules", "Daily care notes"],
+  medications: ["Medication visibility", "Daily care notes"],
+  reservations_today: ["Today reservations", "Bathing", "Room cleaning", "Room occupancy"],
+  "today-sync": ["Today reservations", "Runs", "Bathing", "Room cleaning", "Room occupancy"],
+};
+
 function nowEtDate() {
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -485,6 +513,58 @@ async function fetchSupabaseStatus() {
   }
 }
 
+async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  if (!token) {
+    return new Response(JSON.stringify({
+      error: "Missing Authorization header.",
+      generated_at: new Date().toISOString(),
+      function_name: "ops-platform-health",
+      overall_status: "critical",
+      alerts: [{
+        severity: "critical",
+        kind: "auth",
+        label: "Platform Health",
+        function_name: "ops-platform-health",
+        affects: ["Platform health details"],
+        message: "ops-platform-health was called without an Authorization header.",
+        action: "Sign in again before trusting platform-health freshness.",
+      }],
+    }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (token === serviceRoleKey) return null;
+
+  const { data, error } = await sb.auth.getUser(token);
+  if (error || !data?.user) {
+    return new Response(JSON.stringify({
+      error: "Authentication required.",
+      generated_at: new Date().toISOString(),
+      function_name: "ops-platform-health",
+      overall_status: "critical",
+      alerts: [{
+        severity: "critical",
+        kind: "auth",
+        label: "Platform Health",
+        function_name: "ops-platform-health",
+        affects: ["Platform health details"],
+        message: `ops-platform-health could not validate the signed-in user: ${error?.message || "No user returned."}`,
+        action: "Sign in again before trusting platform-health freshness.",
+      }],
+    }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -494,10 +574,13 @@ Deno.serve(async (req: Request) => {
     const { location_id = "cherry-hill", date = nowEtDate() } = await req.json().catch(() => ({}));
     const requestedLocationId = String(location_id || "cherry-hill");
     const locationId = normalizeLocationId(requestedLocationId);
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      serviceRoleKey,
     );
+    const authFailure = await requireAuthenticatedRequest(req, sb, serviceRoleKey);
+    if (authFailure) return authFailure;
 
     const todayNotesId = `ops_gingr_notes_${date}`;
     const [
@@ -596,26 +679,50 @@ Deno.serve(async (req: Request) => {
           error: cronHealthResult.cronError,
         };
 
-    const alerts: Array<{ severity: string; message: string }> = [];
+    const alerts: HealthAlert[] = [];
     for (const job of cronHealth.jobs || []) {
       if (job.status === "critical" || job.status === "warning") {
         alerts.push({
           severity: job.status,
-          message: `${job.label} is ${job.status}: ${job.message}`,
+          kind: "cron_job",
+          label: job.label,
+          jobname: job.jobname,
+          function_name: job.function_name,
+          affects: job.affects || [],
+          last_run_at: job.last_run_at || null,
+          last_run_status: job.last_run_status || null,
+          last_success_at: job.last_success_at || null,
+          last_failure_at: job.last_failure_at || null,
+          last_failure_status_code: job.last_failure_status_code ?? null,
+          age_minutes: job.last_success_age_minutes ?? null,
+          message: `${job.label} (${job.function_name}) is ${job.status}: ${job.message}`,
+          action: `Affected: ${(job.affects || []).join(", ") || "Unknown operational surfaces"}.`,
         });
       }
     }
     if (cronHealth.error) {
       alerts.push({
         severity: "warning",
+        kind: "cron_health",
+        label: "Cron health check",
+        function_name: "ops-platform-health",
+        affects: ["Platform health details"],
         message: `Cron HTTP health could not be checked: ${cronHealth.error}`,
+        action: "Open Test Health for the raw cron-health payload.",
       });
     }
     for (const row of syncState) {
       if (row.status === "error" && ALERT_SYNC_ERROR_ENTITIES.has(row.entity_type)) {
         alerts.push({
           severity: "critical",
+          kind: "sync_state",
+          label: row.entity_type,
+          key: row.entity_type,
+          affects: SYNC_ENTITY_AFFECTS[row.entity_type] || ["GINGR-backed reports"],
+          last_run_at: row.last_sync_at || null,
+          age_minutes: row.age_minutes ?? null,
           message: `${row.entity_type} sync is in error: ${row.error_message || "No error text returned."}`,
+          action: "Data depending on this sync may be incomplete until the sync succeeds.",
         });
       }
     }
@@ -624,12 +731,30 @@ Deno.serve(async (req: Request) => {
       if (report.status === "critical") {
         alerts.push({
           severity: "critical",
+          kind: "report_freshness",
+          label: report.label,
+          key: report.key,
+          report_id: report.id,
+          affects: [report.label],
+          age_minutes: report.age_minutes,
+          computed_at: report.computed_at,
+          updated_at: report.updated_at,
           message: `${report.label} is missing or stale for ${date}.`,
+          action: "The listed report may be incomplete or stale until ops-compute refreshes it.",
         });
       } else if (report.status === "warning") {
         alerts.push({
           severity: "warning",
+          kind: "report_freshness",
+          label: report.label,
+          key: report.key,
+          report_id: report.id,
+          affects: [report.label],
+          age_minutes: report.age_minutes,
+          computed_at: report.computed_at,
+          updated_at: report.updated_at,
           message: `${report.label} has not refreshed in ${report.age_minutes} minutes.`,
+          action: "Use the last refreshed timestamp before trusting today's count.",
         });
       }
     }
@@ -637,14 +762,27 @@ Deno.serve(async (req: Request) => {
     if (freshness.gingr_notes_today.freshness_status === "critical") {
       alerts.push({
         severity: "warning",
+        kind: "report_freshness",
+        label: "GINGR Notes",
+        key: "gingr_notes_today",
+        report_id: freshness.gingr_notes_today.id,
+        affects: ["Checkout notes"],
+        age_minutes: freshness.gingr_notes_today.age_minutes,
+        computed_at: freshness.gingr_notes_today.computed_at,
+        updated_at: freshness.gingr_notes_today.updated_at,
         message: `Today's GINGR notes have not refreshed recently for ${date}.`,
+        action: "Checkout notes may be stale until the notes refresh succeeds.",
       });
     }
 
     if (!["none", "minor"].includes(supabaseStatus.indicator)) {
       alerts.push({
         severity: "warning",
+        kind: "supabase_status",
+        label: "Supabase status",
+        affects: ["Supabase-backed app features"],
         message: `Supabase status page is reporting ${supabaseStatus.description}.`,
+        action: "Check the Supabase public status page for platform incidents.",
       });
     }
 
@@ -676,8 +814,21 @@ Deno.serve(async (req: Request) => {
     });
   } catch (error: any) {
     console.error("ops-platform-health error:", error);
+    const message = error?.message || "Failed to load platform health.";
     return new Response(JSON.stringify({
-      error: error?.message || "Failed to load platform health.",
+      error: message,
+      generated_at: new Date().toISOString(),
+      function_name: "ops-platform-health",
+      overall_status: "critical",
+      alerts: [{
+        severity: "critical",
+        kind: "edge_function",
+        label: "Platform Health",
+        function_name: "ops-platform-health",
+        affects: ["Platform health details", "Data freshness visibility"],
+        message: `ops-platform-health failed: ${message}`,
+        action: "The app cannot verify report freshness until this function succeeds.",
+      }],
     }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
