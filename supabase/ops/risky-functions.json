@@ -8,7 +8,7 @@
       "verifyJwt": false
     },
     "ops-compute": {
-      "verifyJwt": true
+      "verifyJwt": false
     },
     "ops-compute-ondemand": {
       "verifyJwt": true
@@ -17,10 +17,13 @@
       "verifyJwt": true
     },
     "gingr-boh-poll": {
-      "verifyJwt": true
+      "verifyJwt": false
     },
     "gingr-today-notes": {
       "verifyJwt": false
+    },
+    "ops-platform-health": {
+      "verifyJwt": true
     },
     "interview-transcribe-audio": {
       "verifyJwt": false
