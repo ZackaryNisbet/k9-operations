@@ -106,6 +106,13 @@ const CRON_CHECKS = [
   },
 ];
 
+const ALERT_SYNC_ERROR_ENTITIES = new Set([
+  "feeding_schedules",
+  "medications",
+  "reservations_today",
+  "today-sync",
+]);
+
 function nowEtDate() {
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -605,15 +612,10 @@ Deno.serve(async (req: Request) => {
       });
     }
     for (const row of syncState) {
-      if (row.status === "error") {
+      if (row.status === "error" && ALERT_SYNC_ERROR_ENTITIES.has(row.entity_type)) {
         alerts.push({
           severity: "critical",
           message: `${row.entity_type} sync is in error: ${row.error_message || "No error text returned."}`,
-        });
-      } else if (row.freshness_status === "critical") {
-        alerts.push({
-          severity: "warning",
-          message: `${row.entity_type} sync is stale (${row.age_minutes} minutes since the last successful sync).`,
         });
       }
     }
