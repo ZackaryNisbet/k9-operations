@@ -5,6 +5,7 @@ import {
   getBathSchedulingForDate,
   normalizeBathDisplay,
 } from '../../supabase/functions/_shared/bathing-logic.ts';
+import { resolveBathDisplayFromIconRows } from '../../supabase/functions/_shared/gingr-icon-mappings.ts';
 
 describe('bathing logic', () => {
   it('marks a yesterday bath as suggested for today instead of scheduled today', () => {
@@ -46,5 +47,30 @@ describe('bathing logic', () => {
     expect(normalized.bathType).toBe('Hypoallergenic - NO SPRAY');
     expect(normalized.bathIcons).toEqual(['Hypoallergenic - NO SPRAY']);
     expect(normalized.bathModifiers).toEqual(['NO DRYER']);
+  });
+
+  it('suppresses Standard when a specific bath type is present', () => {
+    const normalized = resolveBathDisplayFromIconRows({
+      iconRows: [
+        { icon_title: 'Standard', icon_group: 'Bath' },
+        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath' },
+      ],
+      defaultType: 'Standard',
+    });
+
+    expect(normalized.bathType).toBe('Hypoallergenic - NO SPRAY');
+    expect(normalized.bathIcons).toEqual(['Hypoallergenic - NO SPRAY']);
+  });
+
+  it('keeps Fresh N Clean as the primary one-night boarding classification', () => {
+    const normalized = resolveBathDisplayFromIconRows({
+      iconRows: [
+        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath' },
+      ],
+      defaultType: 'Fresh N Clean',
+    });
+
+    expect(normalized.bathType).toBe('Fresh N Clean');
+    expect(normalized.bathIcons).toEqual(['Fresh N Clean', 'Hypoallergenic - NO SPRAY']);
   });
 });

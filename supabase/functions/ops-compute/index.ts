@@ -1253,12 +1253,8 @@ async function computeBathingReport(
     const rd = r.raw_data || {};
     const rawSvcs = rd.services || [];
     const topSvcs = Array.isArray(r.services) ? r.services : [];
-    const allSvcs = [...rawSvcs, ...topSvcs];
-    const hasBath = allSvcs.some((s: any) => {
-      const n = typeof s === "string" ? s : s?.name || "";
-      return n.toLowerCase().includes("bath");
-    });
-    if (hasBath) continue;
+    const bathServices = extractBathLikeServices(rawSvcs, topSvcs);
+    if (bathServices.length > 0) continue;
 
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
     if (animalGingrId) animalIds.push(animalGingrId);
@@ -1683,11 +1679,13 @@ async function computeBathingReport(
   const scheduledCount = grouped.filter((d: any) => d.status === "scheduled").length;
   const manualCount = grouped.filter((d: any) => d.status === "manual").length;
   const suggestedCount = grouped.filter((d: any) => d.status === "suggested").length;
+  const freshNCleanCount = grouped.filter((d: any) => d.isFreshNClean).length;
   const byCategory: Record<string, number> = {
     boarding: 0,
     daycare: 0,
     day_boarding: 0,
     evaluation: 0,
+    fresh_n_clean: freshNCleanCount,
     suggested: suggestedCount,
     manual: manualCount,
   };
@@ -1709,6 +1707,7 @@ async function computeBathingReport(
       scheduled: scheduledCount,
       manual: manualCount,
       suggested: suggestedCount,
+      fresh_n_clean: freshNCleanCount,
       byCategory,
     },
     completions,
