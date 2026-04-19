@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, Modal } from "../../shared/ui";
@@ -190,6 +191,24 @@ function InterviewStyles() {
         0% { opacity: 0; transform: translateY(18px) scale(0.985); filter: blur(5px); }
         100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
       }
+      @keyframes interviewAiAssistantEnter {
+        0% { opacity: 0; transform: translateY(-10px) scale(0.97); filter: blur(6px); }
+        100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+      }
+      @keyframes interviewAiHalo {
+        0%, 100% { opacity: 0.44; transform: scale(0.96); }
+        50% { opacity: 0.88; transform: scale(1.04); }
+      }
+      @keyframes interviewAiSweep {
+        0% { transform: translateX(-120%); opacity: 0; }
+        15% { opacity: 0.75; }
+        85% { opacity: 0.75; }
+        100% { transform: translateX(120%); opacity: 0; }
+      }
+      @keyframes interviewAiDot {
+        0%, 100% { transform: translateY(0); opacity: 0.4; }
+        50% { transform: translateY(-3px); opacity: 1; }
+      }
       @keyframes interviewBackdropIn {
         from { opacity: 0; }
         to { opacity: 1; }
@@ -225,6 +244,7 @@ function InterviewStyles() {
         animation: interviewBackdropIn 180ms ease-out;
       }
       .interview-immersive-shell {
+        position: relative;
         width: min(1480px, 94vw);
         height: min(900px, 92vh);
         background: #ffffff;
@@ -241,11 +261,44 @@ function InterviewStyles() {
         opacity: 1;
         transform: translateX(0);
       }
+      .interview-pdf-field-hotspot:hover {
+        border-color: rgba(22, 101, 52, 0.72) !important;
+        background: rgba(22, 163, 74, 0.1) !important;
+      }
+      .interview-live-transcript-line:hover {
+        border-color: rgba(190, 242, 100, 0.34) !important;
+        background: rgba(255,255,255,0.075) !important;
+      }
+      .interview-live-transcript-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(190, 242, 100, 0.34) rgba(255,255,255,0.04);
+      }
+      .interview-guide-ai-panel {
+        animation: interviewAiAssistantEnter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .interview-guide-ai-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 10px;
+        pointer-events: none;
+        background: linear-gradient(110deg, transparent 0%, rgba(132, 204, 22, 0.16) 42%, rgba(56, 189, 248, 0.12) 52%, transparent 64%);
+        opacity: 0;
+      }
+      .interview-guide-ai-panel.is-working::before {
+        animation: interviewAiSweep 1.9s ease-in-out infinite;
+      }
+      .interview-ai-dot {
+        animation: interviewAiDot 1s ease-in-out infinite;
+      }
+      .interview-ai-dot:nth-child(2) { animation-delay: 140ms; }
+      .interview-ai-dot:nth-child(3) { animation-delay: 280ms; }
       @media (max-width: 920px) {
         .interview-immersive-shell { width: 96vw; height: 94vh; }
         .interview-guide-grid { grid-template-columns: 1fr !important; overflow-y: auto; }
         .interview-guide-pdf { min-height: 520px; }
         .interview-roster-table { min-width: 780px; }
+        .interview-guide-ai-panel { left: 14px !important; right: 14px !important; width: auto !important; }
       }
     `}</style>
   );
@@ -286,12 +339,25 @@ function isTurnActive(turn, currentTime) {
   return time >= turn.startSeconds && time <= turn.endSeconds;
 }
 
-function TranscriptWords({ turn, currentTime, maxWords = null }) {
+function normalizeTranscriptSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function wordMatchesSearch(wordText, query) {
+  const normalizedQuery = normalizeTranscriptSearch(query);
+  if (!normalizedQuery) return false;
+  const normalizedWord = normalizeTranscriptSearch(wordText).replace(/[^\w\s']/g, "");
+  const queryParts = normalizedQuery.split(/\s+/).filter((part) => part.length >= 2);
+  return normalizedWord.includes(normalizedQuery) || queryParts.some((part) => normalizedWord.includes(part));
+}
+
+function TranscriptWords({ turn, currentTime, maxWords = null, searchQuery = "", tone = "light" }) {
   const words = Array.isArray(turn?.words) && turn.words.length
     ? turn.words
     : String(turn?.text || "").split(/\s+/).filter(Boolean).map((text, index) => ({ id: `${turn?.id || "turn"}-${index}`, text }));
   const visibleWords = maxWords ? words.slice(0, maxWords) : words;
   const time = Number(currentTime || 0);
+  const dark = tone === "dark";
   return (
     <span>
       {visibleWords.map((word) => {
@@ -300,18 +366,24 @@ function TranscriptWords({ turn, currentTime, maxWords = null }) {
           && word.endSeconds != null
           && time >= word.startSeconds
           && time <= word.endSeconds;
+        const searched = wordMatchesSearch(word.text, searchQuery);
         return (
           <span
             key={word.id}
             style={{
               display: "inline-block",
-              marginRight: 4,
-              marginBottom: 2,
-              borderRadius: 4,
-              padding: "0 2px",
-              background: active ? "#dcfce7" : "transparent",
-              color: active ? C.pri : "inherit",
-              transition: "background 120ms ease, color 120ms ease",
+              marginRight: 5,
+              marginBottom: 3,
+              borderRadius: 6,
+              padding: dark ? "0 3px" : "0 2px",
+              background: active
+                ? (dark ? "#bef264" : "#dcfce7")
+                : searched
+                  ? (dark ? "rgba(250,204,21,0.22)" : "#fef3c7")
+                  : "transparent",
+              color: active ? (dark ? "#052e16" : C.pri) : searched ? (dark ? "#fde68a" : "#92400e") : "inherit",
+              boxShadow: active && dark ? "0 0 22px rgba(190, 242, 100, 0.28)" : "none",
+              transition: "background 120ms ease, color 120ms ease, box-shadow 120ms ease",
             }}
           >
             {word.text}
@@ -358,9 +430,119 @@ function chunkProviderWords(words = [], size = 22) {
   return chunks;
 }
 
-function getTranscriptPreviewRows({ turns = [], wordSegmentMode = false, providerWords = [] }) {
-  if (wordSegmentMode) return chunkProviderWords(providerWords, 18).slice(0, 4);
-  return turns.slice(0, 4);
+function buildTimedWordsForTurn(turn, turnIndex = 0) {
+  const baseWords = Array.isArray(turn?.words) && turn.words.length
+    ? turn.words
+    : String(turn?.text || "").split(/\s+/).filter(Boolean).map((text, index) => ({ id: `${turn?.id || "turn"}-word-${index}`, text }));
+  const start = Number(turn?.startSeconds);
+  const end = Number(turn?.endSeconds);
+  const canApproximate = Number.isFinite(start) && Number.isFinite(end) && end > start && baseWords.length > 0;
+  return baseWords
+    .map((word, index) => {
+      const wordStart = Number(word?.startSeconds);
+      const wordEnd = Number(word?.endSeconds);
+      if (Number.isFinite(wordStart) && Number.isFinite(wordEnd) && wordEnd >= wordStart) {
+        return {
+          ...word,
+          id: word.id || `${turn?.id || `turn-${turnIndex}`}-word-${index}`,
+          text: String(word.text || "").trim(),
+          startSeconds: wordStart,
+          endSeconds: wordEnd,
+        };
+      }
+      if (canApproximate) {
+        const sliceStart = start + ((end - start) * index) / baseWords.length;
+        const sliceEnd = start + ((end - start) * (index + 1)) / baseWords.length;
+        return {
+          ...word,
+          id: word.id || `${turn?.id || `turn-${turnIndex}`}-word-${index}`,
+          text: String(word.text || "").trim(),
+          startSeconds: sliceStart,
+          endSeconds: sliceEnd,
+        };
+      }
+      return {
+        ...word,
+        id: word.id || `${turn?.id || `turn-${turnIndex}`}-word-${index}`,
+        text: String(word.text || "").trim(),
+        startSeconds: word.startSeconds ?? turn?.startSeconds ?? null,
+        endSeconds: word.endSeconds ?? turn?.endSeconds ?? null,
+      };
+    })
+    .filter((word) => word.text);
+}
+
+function chunkTurnForLiveTranscript(turn, turnIndex = 0, wordsPerLine = 14) {
+  const words = buildTimedWordsForTurn(turn, turnIndex);
+  if (!words.length) return [];
+  const lines = [];
+  for (let index = 0; index < words.length; index += wordsPerLine) {
+    const slice = words.slice(index, index + wordsPerLine);
+    const first = slice[0] || {};
+    const last = slice[slice.length - 1] || {};
+    lines.push({
+      id: `${turn?.id || `turn-${turnIndex}`}-line-${index}`,
+      parentId: turn?.id || `turn-${turnIndex}`,
+      timestamp: index === 0 ? (turn?.timestamp || formatPlaybackTime(first.startSeconds || turn?.startSeconds || 0)) : "",
+      startSeconds: first.startSeconds ?? turn?.startSeconds ?? null,
+      endSeconds: last.endSeconds ?? turn?.endSeconds ?? null,
+      speaker: index === 0 ? (turn?.speaker || "Transcript") : "",
+      text: slice.map((word) => word.text).join(" "),
+      words: slice,
+      turnIndex,
+      lineOffset: index,
+    });
+  }
+  return lines;
+}
+
+function buildLiveTranscriptLines({ turns = [], wordSegmentMode = false, providerWords = [] }) {
+  if (wordSegmentMode) {
+    return chunkProviderWords(providerWords, 12).flatMap((turn, index) => chunkTurnForLiveTranscript(turn, index, 12));
+  }
+  return (Array.isArray(turns) ? turns : []).flatMap((turn, index) => chunkTurnForLiveTranscript(turn, index, 14));
+}
+
+function findActiveTranscriptLineIndex(lines = [], currentTime = 0) {
+  const time = Number(currentTime || 0);
+  if (!Number.isFinite(time) || !lines.length) return 0;
+  const directIndex = lines.findIndex((line) => {
+    const start = Number(line.startSeconds);
+    const end = Number(line.endSeconds);
+    return Number.isFinite(start) && Number.isFinite(end) && time >= start && time <= end;
+  });
+  if (directIndex >= 0) return directIndex;
+  let closestIndex = 0;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  lines.forEach((line, index) => {
+    const start = Number(line.startSeconds);
+    if (!Number.isFinite(start)) return;
+    const distance = Math.abs(time - start);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  return closestIndex;
+}
+
+function getTranscriptLineProgress(line, currentTime) {
+  const start = Number(line?.startSeconds);
+  const end = Number(line?.endSeconds);
+  const time = Number(currentTime || 0);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !Number.isFinite(time)) return 0;
+  return Math.max(0, Math.min(1, (time - start) / (end - start)));
+}
+
+function getTranscriptSearchResults(lines = [], query = "") {
+  const normalized = normalizeTranscriptSearch(query);
+  if (!normalized) return [];
+  return lines.reduce((matches, line, index) => {
+    const text = normalizeTranscriptSearch(line.text);
+    const tokenMatch = normalized.split(/\s+/).filter(Boolean).every((part) => text.includes(part));
+    if (text.includes(normalized) || tokenMatch) matches.push({ lineIndex: index, line });
+    return matches;
+  }, []);
 }
 
 function getAutoScoreStorageKey(actorUserId) {
@@ -705,6 +887,189 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
   );
 }
 
+function LiveTranscriptPanel({
+  turns,
+  wordSegmentMode,
+  providerWords,
+  currentTime,
+  durationSeconds,
+  audioDuration,
+  hasProviderTurns,
+  providerTurnLabel,
+  duration,
+  onSeek,
+  onOpenFull,
+}) {
+  const [search, setSearch] = useState("");
+  const [activeResult, setActiveResult] = useState(0);
+  const lineRefs = useRef({});
+  const lines = useMemo(() => buildLiveTranscriptLines({ turns, wordSegmentMode, providerWords }), [providerWords, turns, wordSegmentMode]);
+  const activeLineIndex = useMemo(() => findActiveTranscriptLineIndex(lines, currentTime), [currentTime, lines]);
+  const searchResults = useMemo(() => getTranscriptSearchResults(lines, search), [lines, search]);
+  const focusedLineIndex = search ? searchResults[Math.min(activeResult, Math.max(0, searchResults.length - 1))]?.lineIndex : activeLineIndex;
+
+  useEffect(() => {
+    setActiveResult(0);
+  }, [search]);
+
+  useEffect(() => {
+    if (activeResult > Math.max(0, searchResults.length - 1)) setActiveResult(Math.max(0, searchResults.length - 1));
+  }, [activeResult, searchResults.length]);
+
+  useEffect(() => {
+    const node = lineRefs.current[focusedLineIndex];
+    if (node) node.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusedLineIndex]);
+
+  const seekLine = (line) => {
+    const time = Number(line?.startSeconds);
+    if (Number.isFinite(time)) onSeek?.(Math.max(0, time));
+  };
+
+  const jumpSearch = (direction = 1) => {
+    if (!searchResults.length) return;
+    const next = (activeResult + direction + searchResults.length) % searchResults.length;
+    setActiveResult(next);
+    seekLine(searchResults[next]?.line);
+  };
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    if (searchResults.length) seekLine(searchResults[Math.min(activeResult, searchResults.length - 1)]?.line);
+  };
+
+  return (
+    <div className="interview-live-transcript" style={{ marginTop: 14, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(15,23,42,0.12)", background: "#07130d", boxShadow: "0 18px 44px rgba(15,23,42,0.12)" }}>
+      <div style={{ padding: "13px 14px", display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(220px, 360px)", gap: 14, alignItems: "center", background: "linear-gradient(135deg, #07130d 0%, #10251a 44%, #13243f 100%)", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 11, color: "rgba(226,232,240,0.72)", fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em" }}>Transcript</div>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: "#84cc16", boxShadow: "0 0 18px rgba(132,204,22,0.72)" }} />
+          </div>
+          <div style={{ marginTop: 5, color: "rgba(248,250,252,0.9)", fontSize: 13, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {wordSegmentMode ? `Timestamped transcript${duration ? ` across ${duration}` : ""}` : `${turns.length} ${providerTurnLabel}${turns.length === 1 ? "" : "s"}${duration ? ` across ${duration}` : ""}`}
+          </div>
+        </div>
+        <form onSubmit={submitSearch} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 7, alignItems: "center" }}>
+          <div style={{ position: "relative" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "rgba(226,232,240,0.62)" }}>
+              <path d="M10.8 18.1a7.3 7.3 0 1 1 0-14.6 7.3 7.3 0 0 1 0 14.6ZM16.1 16.1 21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search transcript"
+              aria-label="Search transcript"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                border: "1px solid rgba(226,232,240,0.18)",
+                background: "rgba(255,255,255,0.1)",
+                color: "#f8fafc",
+                outline: "none",
+                borderRadius: 999,
+                padding: "9px 36px 9px 34px",
+                fontFamily: "inherit",
+                fontSize: 12,
+                fontWeight: 800,
+              }}
+            />
+            {search && (
+              <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "rgba(226,232,240,0.68)", fontSize: 11, fontWeight: 900 }}>
+                {searchResults.length ? `${Math.min(activeResult + 1, searchResults.length)}/${searchResults.length}` : "0"}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => jumpSearch(-1)}
+            disabled={!searchResults.length}
+            aria-label="Previous transcript search result"
+            style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(226,232,240,0.2)", background: "rgba(255,255,255,0.08)", color: "#f8fafc", cursor: searchResults.length ? "pointer" : "not-allowed", fontWeight: 950 }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 14 12 8l6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => jumpSearch(1)}
+            disabled={!searchResults.length}
+            aria-label="Next transcript search result"
+            style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(226,232,240,0.2)", background: "rgba(255,255,255,0.08)", color: "#f8fafc", cursor: searchResults.length ? "pointer" : "not-allowed", fontWeight: 950 }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 10 6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </form>
+      </div>
+      {!hasProviderTurns ? (
+        <div style={{ padding: 18, color: "rgba(226,232,240,0.72)", fontSize: 13 }}>
+          This record was transcribed before structured turn data was stored. Replace the audio to regenerate the transcript with provider timestamps and diarization.
+        </div>
+      ) : (
+        <>
+          <div className="interview-live-transcript-scroll" style={{ position: "relative", height: 238, overflowY: "auto", padding: "22px 18px", background: "radial-gradient(circle at 14% 20%, rgba(132,204,22,0.14), transparent 28%), radial-gradient(circle at 82% 30%, rgba(56,189,248,0.12), transparent 32%), #08130f" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              {lines.map((line, index) => {
+                const active = index === activeLineIndex;
+                const focused = index === focusedLineIndex;
+                const progress = active ? getTranscriptLineProgress(line, currentTime) : 0;
+                return (
+                  <button
+                    type="button"
+                    key={line.id}
+                    ref={(node) => { if (node) lineRefs.current[index] = node; }}
+                    onClick={() => seekLine(line)}
+                    className="interview-live-transcript-line"
+                    style={{
+                      position: "relative",
+                      border: `1px solid ${active ? "rgba(190,242,100,0.45)" : focused ? "rgba(250,204,21,0.42)" : "rgba(148,163,184,0.1)"}`,
+                      background: active ? "rgba(15, 118, 58, 0.22)" : focused ? "rgba(250,204,21,0.08)" : "rgba(255,255,255,0.035)",
+                      color: active ? "#f8fafc" : "rgba(226,232,240,0.78)",
+                      borderRadius: 8,
+                      padding: "9px 12px",
+                      display: "grid",
+                      gridTemplateColumns: wordSegmentMode ? "54px minmax(0, 1fr)" : "54px 88px minmax(0, 1fr)",
+                      gap: 10,
+                      alignItems: "start",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      opacity: Math.max(0.52, 1 - Math.abs(index - activeLineIndex) * 0.08),
+                      transform: active ? "scale(1.012)" : "scale(1)",
+                      boxShadow: active ? "0 14px 36px rgba(5, 46, 22, 0.32)" : "none",
+                      transition: "border 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease, opacity 160ms ease",
+                    }}
+                  >
+                    <span style={{ color: active ? "#bef264" : "rgba(203,213,225,0.64)", fontSize: 12, fontWeight: 950 }}>{line.timestamp || ""}</span>
+                    {!wordSegmentMode && <span style={{ color: active ? "#dcfce7" : "rgba(203,213,225,0.68)", fontSize: 12, fontWeight: 950, minHeight: 18 }}>{line.speaker}</span>}
+                    <span style={{ fontSize: active ? 15 : 14, lineHeight: 1.55, fontWeight: active ? 850 : 720 }}>
+                      <TranscriptWords turn={line} currentTime={currentTime} searchQuery={search} tone="dark" />
+                    </span>
+                    {active && (
+                      <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 2, overflow: "hidden", borderRadius: "0 0 8px 8px", background: "rgba(255,255,255,0.08)" }}>
+                        <span style={{ display: "block", width: `${Math.round(progress * 100)}%`, height: "100%", background: "linear-gradient(90deg, #84cc16, #38bdf8)", transition: "width 120ms linear" }} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ padding: "9px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center", color: "rgba(226,232,240,0.7)", fontSize: 12, fontWeight: 850, background: "rgba(2,6,23,0.42)" }}>
+            <button type="button" onClick={onOpenFull} style={{ border: "none", background: "transparent", color: "#bef264", fontFamily: "inherit", fontSize: 12, fontWeight: 950, cursor: "pointer", padding: 0 }}>
+              Open full transcript
+            </button>
+            <span>{formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AudioUploadPanel({
   record,
   audioFileName,
@@ -741,11 +1106,6 @@ function AudioUploadPanel({
   const wordSegmentMode = segmentationSource === "xai_word_segments" && safeTranscriptTurns.length > 40 && !safeTranscriptTurns.some((turn) => /^(Speaker|Person)\s+\d+/i.test(turn.speaker || ""));
   const providerTurnLabel = wordSegmentMode ? "timeline row" : "speaker turn";
   const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTranscriptTurns) : [];
-  const activeTurn = safeTranscriptTurns.find((turn) => isTurnActive(turn, currentTime));
-  const visibleTurns = activeTurn
-    ? [activeTurn, ...safeTranscriptTurns.filter((turn) => turn.id !== activeTurn.id)].slice(0, 4)
-    : safeTranscriptTurns.slice(0, 4);
-  const transcriptPreviewRows = getTranscriptPreviewRows({ turns: visibleTurns, wordSegmentMode, providerWords });
 
   useEffect(() => {
     setAudioWaveformBars([]);
@@ -781,6 +1141,12 @@ function AudioUploadPanel({
     event.preventDefault();
     const file = event.dataTransfer.files?.[0];
     if (file) onUpload(file);
+  };
+
+  const seekTranscript = (time) => {
+    const nextTime = Number(time || 0);
+    if (audioRef.current) audioRef.current.currentTime = nextTime;
+    onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
   };
 
   return (
@@ -1000,54 +1366,19 @@ function AudioUploadPanel({
         </div>
       )}
       {record?.transcript_text && (
-        <div style={{ marginTop: 14, border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
-          <div style={{ padding: "11px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Transcript</div>
-              <div style={{ marginTop: 2, fontSize: 13, color: C.textSec, fontWeight: 750 }}>
-                {wordSegmentMode ? `Timestamped transcript${duration ? ` across ${duration}` : ""}` : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}${duration ? ` across ${duration}` : ""}`}
-              </div>
-            </div>
-            <span style={{ minWidth: 92, fontSize: 12, color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-              {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
-            </span>
-          </div>
-          <div style={{ display: "grid" }}>
-            {!hasProviderTurns ? (
-              <div style={{ padding: 12, color: C.textMut, fontSize: 13 }}>
-                This record was transcribed before structured turn data was stored. Replace the audio to regenerate the transcript with provider timestamps and diarization.
-              </div>
-            ) : transcriptPreviewRows.map((turn) => {
-              const active = isTurnActive(turn, currentTime);
-              return (
-                <button
-                  type="button"
-                  key={turn.id}
-                  onClick={onTranscriptClick}
-                  style={{
-                    border: "none",
-                    borderBottom: `1px solid ${C.borderLight}`,
-                    background: active ? "#f0fdf4" : "#fff",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    padding: "10px 12px",
-                    display: "grid",
-                    gridTemplateColumns: wordSegmentMode ? "70px minmax(0, 1fr)" : "70px 104px minmax(0, 1fr)",
-                    gap: 10,
-                    fontFamily: "inherit",
-                    alignItems: "start",
-                  }}
-                >
-                  <span style={{ color: active ? C.pri : C.textMut, fontSize: 12, fontWeight: 850 }}>{turn.timestamp || "--:--"}</span>
-                  {!wordSegmentMode && <span style={{ color: active ? C.pri : C.textSec, fontSize: 12, fontWeight: 900 }}>{turn.speaker}</span>}
-                  <span style={{ color: C.textSec, fontSize: 13, lineHeight: 1.45, overflow: "hidden" }}>
-                    <TranscriptWords turn={turn} currentTime={currentTime} maxWords={wordSegmentMode ? null : 28} />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <LiveTranscriptPanel
+          turns={safeTranscriptTurns}
+          wordSegmentMode={wordSegmentMode}
+          providerWords={providerWords}
+          currentTime={currentTime}
+          durationSeconds={durationSeconds}
+          audioDuration={audioDuration}
+          hasProviderTurns={hasProviderTurns}
+          providerTurnLabel={providerTurnLabel}
+          duration={duration}
+          onSeek={seekTranscript}
+          onOpenFull={onTranscriptClick}
+        />
       )}
     </div>
   );
@@ -1098,6 +1429,380 @@ function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose 
   );
 }
 
+const DOCUMENT_PDF_INSTRUCTION_KEY = "__document";
+const PDF_POINT_TO_CSS_PX = 96 / 72;
+
+function getPdfFieldPageSize(field, pageFields = []) {
+  const sources = [field, ...pageFields];
+  for (const source of sources) {
+    const size = source?.page_size || source?.pageSize || {};
+    const width = Number(source?.page_width || size.width || size.w);
+    const height = Number(source?.page_height || size.height || size.h);
+    if (width > 0 && height > 0) return { width, height };
+  }
+  return { width: 612, height: 792 };
+}
+
+function getPdfPageOverlayBox(containerSize, pageSize) {
+  const width = Number(containerSize?.width || 0);
+  const height = Number(containerSize?.height || 0);
+  if (!width || !height || !pageSize?.width || !pageSize?.height) return null;
+  if (containerSize?.pageAligned) {
+    return {
+      left: 0,
+      top: 0,
+      scale: width / pageSize.width,
+    };
+  }
+  const scale = Math.min(PDF_POINT_TO_CSS_PX, Math.max(0.2, (width - 28) / pageSize.width));
+  return {
+    left: Math.max(0, (width - pageSize.width * scale) / 2),
+    top: 0,
+    scale,
+  };
+}
+
+function getPdfFieldOverlayStyle(field, pageBox, pageSize) {
+  const rect = field?.rect || {};
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (!pageBox || !pageSize?.height || !Number.isFinite(x) || !Number.isFinite(y) || !width || !height) return null;
+  const pad = 5;
+  return {
+    left: pageBox.left + (x * pageBox.scale) - pad,
+    top: pageBox.top + ((pageSize.height - y - height) * pageBox.scale) - pad,
+    width: Math.max(24, width * pageBox.scale + pad * 2),
+    height: Math.max(18, height * pageBox.scale + pad * 2),
+  };
+}
+
+function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, onSelectField }) {
+  const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
+  if (!pageFields.length) return null;
+  const pageSize = explicitPageSize || getPdfFieldPageSize(pageFields[0], pageFields);
+  const pageBox = getPdfPageOverlayBox(containerSize, pageSize);
+  if (!pageBox) return null;
+  return (
+    <div className="interview-pdf-click-layer" style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none" }}>
+      {pageFields.map((field) => {
+        const style = getPdfFieldOverlayStyle(field, pageBox, pageSize);
+        if (!style) return null;
+        const key = responseKeyForPdfField(field);
+        const isActive = key === activeKey;
+        return (
+          <button
+            type="button"
+            key={field.name}
+            aria-label={`Review ${humanizePdfFieldName(field.name)}`}
+            title={humanizePdfFieldName(field.name)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectField?.(field);
+            }}
+            className="interview-pdf-field-hotspot"
+            style={{
+              position: "absolute",
+              left: style.left,
+              top: style.top,
+              width: style.width,
+              height: style.height,
+              borderRadius: 3,
+              border: `1.5px solid ${isActive ? "rgba(22, 101, 52, 0.85)" : "rgba(22, 101, 52, 0)"}`,
+              background: isActive ? "rgba(22, 163, 74, 0.08)" : "rgba(255,255,255,0.001)",
+              cursor: "pointer",
+              padding: 0,
+              pointerEvents: "auto",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeKey, onSelectField }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [pageState, setPageState] = useState({ loading: false, error: "", pageSize: null, renderSize: null });
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return undefined;
+    const update = () => setContainerWidth(node.getBoundingClientRect().width || 0);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!pdfUrl || !containerWidth) return undefined;
+    let cancelled = false;
+    let loadingTask = null;
+    setPageState((prev) => ({ ...prev, loading: true, error: "" }));
+
+    async function renderPage() {
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
+        const pdf = await loadingTask.promise;
+        const pageNumber = Math.max(1, Math.min(Number(activePageNumber || 1), pdf.numPages || 1));
+        const page = await pdf.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const maxWidth = Math.max(260, containerWidth - 28);
+        const scale = Math.min(PDF_POINT_TO_CSS_PX, maxWidth / baseViewport.width);
+        const viewport = page.getViewport({ scale });
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) {
+          await pdf.destroy?.();
+          return;
+        }
+
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        const context = canvas.getContext("2d", { alpha: false });
+        context.save();
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.restore();
+        await page.render({ canvasContext: context, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+        if (!cancelled) {
+          setPageState({
+            loading: false,
+            error: "",
+            pageSize: { width: baseViewport.width, height: baseViewport.height },
+            renderSize: { width: viewport.width, height: viewport.height, pageAligned: true },
+          });
+        }
+        await pdf.destroy?.();
+      } catch (error) {
+        if (!cancelled) {
+          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pageSize: null, renderSize: null });
+        }
+      }
+    }
+
+    renderPage();
+    return () => {
+      cancelled = true;
+      try { loadingTask?.destroy?.(); } catch (_) {}
+    };
+  }, [pdfUrl, activePageNumber, containerWidth]);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", height: "100%", minHeight: 560, overflow: "auto", borderRadius: 6, background: "#f8fafc", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }}>
+      {pageState.error ? (
+        <div style={{ minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: C.textMut, fontSize: 13, fontWeight: 800, textAlign: "center" }}>
+          PDF preview could not render here. Export will still use the filled PDF.
+        </div>
+      ) : (
+        <div style={{ position: "relative", width: pageState.renderSize?.width || 1, minHeight: pageState.renderSize?.height || 540, margin: "0 auto" }}>
+          <canvas ref={canvasRef} style={{ display: "block", background: "#fff" }} />
+          {pageState.pageSize && pageState.renderSize && (
+            <PdfFieldClickLayer
+              fields={fields}
+              activePageNumber={activePageNumber}
+              activeKey={activeKey}
+              containerSize={pageState.renderSize}
+              pageSize={pageState.pageSize}
+              onSelectField={onSelectField}
+            />
+          )}
+        </div>
+      )}
+      {(loadingPdf || pageState.loading) && (
+        <div style={{ position: "absolute", right: 14, top: 14, zIndex: 4, borderRadius: 999, background: "rgba(255,255,255,0.94)", border: `1px solid ${C.borderLight}`, color: C.textSec, fontSize: 11, fontWeight: 900, padding: "5px 9px", boxShadow: "0 8px 20px rgba(15,23,42,0.12)" }}>
+          Updating
+        </div>
+      )}
+    </div>
+  );
+}
+
+const GUIDE_AI_WORK_STEPS = [
+  "Reading the transcript",
+  "Checking PDF fields",
+  "Mapping evidence",
+  "Saving guide updates",
+];
+
+function buildGuideAiCompletionBullets(result, totalFields) {
+  const saved = Number(result?.saved_count || 0);
+  const populated = Number(result?.populated_count ?? saved);
+  const skipped = Number(result?.skipped_count || 0);
+  const reused = result?.reused ? 1 : 0;
+  return [
+    `Reviewed ${totalFields || 0} PDF fields against the transcript and instruction.`,
+    `Wrote text into ${populated} field${populated === 1 ? "" : "s"} and saved ${saved} response row${saved === 1 ? "" : "s"}.`,
+    skipped ? `Skipped ${skipped} malformed AI response${skipped === 1 ? "" : "s"} before saving.` : "No malformed AI responses were skipped.",
+    reused ? "Resumed the existing AI draft job instead of starting a duplicate." : "Saved the new guide draft responses for review.",
+  ];
+}
+
+function GuideAiAssistantPanel({
+  open,
+  messages,
+  working,
+  workStepIndex,
+  fieldCount,
+  reviewedCount,
+  onClose,
+  onSubmit,
+}) {
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    window.setTimeout(() => inputRef.current?.focus(), 80);
+  }, [open]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "42px";
+    input.style.height = `${Math.min(150, Math.max(42, input.scrollHeight))}px`;
+  }, [draft, open]);
+
+  if (!open) return null;
+
+  const submit = async () => {
+    const instruction = draft.trim();
+    if (!instruction || working) return;
+    const ok = await onSubmit?.(instruction);
+    if (ok) setDraft("");
+  };
+
+  return (
+    <div
+      className={`interview-guide-ai-panel${working ? " is-working" : ""}`}
+      style={{
+        position: "absolute",
+        top: 64,
+        right: 18,
+        zIndex: 8,
+        width: "min(430px, calc(100vw - 56px))",
+        maxHeight: "min(620px, calc(92vh - 104px))",
+        borderRadius: 10,
+        border: "1px solid rgba(148, 163, 184, 0.24)",
+        background: "rgba(255,255,255,0.96)",
+        boxShadow: "0 30px 90px rgba(2,6,23,0.26)",
+        backdropFilter: "blur(18px)",
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr) auto",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: 14, borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 54%, #f0fdf4 100%)" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+          <div style={{ position: "relative", width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center", background: "#052e16", color: "#bef264", fontWeight: 950, boxShadow: "0 10px 28px rgba(5,46,22,0.22)" }}>
+            <span style={{ position: "absolute", inset: -4, borderRadius: 13, background: "rgba(132,204,22,0.22)", animation: working ? "interviewAiHalo 1.7s ease-in-out infinite" : "none" }} />
+            <span style={{ position: "relative" }}>AI</span>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: C.text, fontWeight: 950, fontSize: 14 }}>Guide Assistant</div>
+            <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 850 }}>{reviewedCount}/{fieldCount} fields reviewed</div>
+          </div>
+        </div>
+        <IconButton label="Close guide assistant" onClick={onClose}>{"x"}</IconButton>
+      </div>
+      <div style={{ padding: 14, overflowY: "auto", display: "grid", alignContent: "start", gap: 10, background: "#fbfdff" }}>
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            style={{
+              justifySelf: message.role === "user" ? "end" : "start",
+              maxWidth: "92%",
+              borderRadius: message.role === "user" ? "10px 10px 2px 10px" : "10px 10px 10px 2px",
+              border: `1px solid ${message.role === "user" ? "rgba(22,101,52,0.22)" : C.borderLight}`,
+              background: message.role === "user" ? "#ecfdf5" : "#fff",
+              color: C.text,
+              padding: "10px 11px",
+              boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
+            }}
+          >
+            <div style={{ fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</div>
+            {Array.isArray(message.bullets) && message.bullets.length > 0 && (
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, display: "grid", gap: 5, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>
+                {message.bullets.map((item, index) => <li key={index}>{item}</li>)}
+              </ul>
+            )}
+          </div>
+        ))}
+        {working && (
+          <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, background: "#fff", padding: 12, display: "grid", gap: 10, boxShadow: "0 10px 24px rgba(15,23,42,0.05)" }}>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", color: C.pri, fontSize: 12, fontWeight: 950 }}>
+              <span>Working</span>
+              <span className="interview-ai-dot" style={{ width: 4, height: 4, borderRadius: 999, background: C.pri }} />
+              <span className="interview-ai-dot" style={{ width: 4, height: 4, borderRadius: 999, background: C.pri }} />
+              <span className="interview-ai-dot" style={{ width: 4, height: 4, borderRadius: 999, background: C.pri }} />
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {GUIDE_AI_WORK_STEPS.map((step, index) => {
+                const done = index < workStepIndex;
+                const active = index === workStepIndex;
+                return (
+                  <div key={step} style={{ display: "grid", gridTemplateColumns: "18px minmax(0, 1fr)", gap: 8, alignItems: "center", color: done || active ? C.text : C.textMut, fontSize: 12, fontWeight: active ? 950 : 800 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: done ? C.suc : active ? "#84cc16" : C.border, boxShadow: active ? "0 0 18px rgba(132,204,22,0.48)" : "none" }} />
+                    <span>{step}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: 12, borderTop: `1px solid ${C.borderLight}`, background: "#fff" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "end" }}>
+          <textarea
+            ref={inputRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="Tell AI what to infer across this guide"
+            rows={1}
+            disabled={working}
+            style={{
+              width: "100%",
+              minHeight: 42,
+              maxHeight: 150,
+              boxSizing: "border-box",
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 9,
+              padding: "10px 11px",
+              resize: "none",
+              overflowY: "auto",
+              outline: "none",
+              fontFamily: "inherit",
+              fontSize: 13,
+              lineHeight: 1.45,
+              color: C.text,
+              background: working ? C.surfaceHover : "#fff",
+            }}
+          />
+          <Btn variant="primary" size="sm" onClick={submit} disabled={working || !draft.trim()}>{working ? "Running" : "Send"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewGuideModal({
   record,
   fields,
@@ -1113,14 +1818,13 @@ function ReviewGuideModal({
   getFieldValue,
   setFieldDraft,
   approveField,
-  aiFillingKey,
-  onAiFillField,
+  aiDrafting,
+  onAiFillDocument,
   exportFinalPdf,
   downloadArtifact,
   onClose,
 }) {
-  const populatedFields = fields.filter((field) => String(getFieldValue(field) || "").trim());
-  const reviewFields = populatedFields.length ? populatedFields : fields;
+  const reviewFields = fields;
   const boundedIndex = Math.min(activeIndex, Math.max(0, reviewFields.length - 1));
   const activeField = reviewFields[boundedIndex] || reviewFields[0] || null;
   const activeKey = activeField ? responseKeyForPdfField(activeField) : "";
@@ -1128,14 +1832,21 @@ function ReviewGuideModal({
   const approved = !!activeResponse.metadata?.approved;
   const approvedCount = reviewFields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
   const activeValue = activeField ? getFieldValue(activeField) : "";
-  const [aiInstructionOpen, setAiInstructionOpen] = useState(false);
-  const [aiInstructionValue, setAiInstructionValue] = useState("");
-  const aiFillingThisField = !!activeKey && aiFillingKey === activeKey;
+  const [guideAiOpen, setGuideAiOpen] = useState(false);
+  const [guideAiWorking, setGuideAiWorking] = useState(false);
+  const [guideAiStepIndex, setGuideAiStepIndex] = useState(0);
+  const [guideAiMessages, setGuideAiMessages] = useState(() => [
+    {
+      id: "guide-ai-ready",
+      role: "assistant",
+      body: "I can update the whole PDF guide from the transcript, candidate metadata, and any extra instruction you give me.",
+    },
+  ]);
 
-  useEffect(() => {
-    setAiInstructionOpen(false);
-    setAiInstructionValue("");
-  }, [activeKey]);
+  const selectField = (field) => {
+    const index = reviewFields.findIndex((row) => row.name === field?.name);
+    if (index >= 0) setActiveIndex(index);
+  };
 
   const goNext = () => {
     if (!reviewFields.length) return;
@@ -1150,12 +1861,48 @@ function ReviewGuideModal({
     goNext();
   };
 
-  const applyAiInstruction = async () => {
-    if (!activeField || !aiInstructionValue.trim()) return;
-    const ok = await onAiFillField?.(activeField, aiInstructionValue.trim());
-    if (ok) {
-      setAiInstructionOpen(false);
-      setAiInstructionValue("");
+  const submitGuideAiInstruction = async (instruction) => {
+    const trimmed = String(instruction || "").trim();
+    if (!trimmed || guideAiWorking) return false;
+    const messageId = Date.now();
+    setGuideAiOpen(true);
+    setGuideAiStepIndex(0);
+    setGuideAiWorking(true);
+    setGuideAiMessages((prev) => [
+      ...prev,
+      { id: `guide-ai-user-${messageId}`, role: "user", body: trimmed },
+    ]);
+    let stepTimer = null;
+    try {
+      stepTimer = window.setInterval(() => {
+        setGuideAiStepIndex((index) => Math.min(GUIDE_AI_WORK_STEPS.length - 1, index + 1));
+      }, 2400);
+      const result = await onAiFillDocument?.(trimmed);
+      setGuideAiStepIndex(GUIDE_AI_WORK_STEPS.length - 1);
+      if (result) {
+        setGuideAiMessages((prev) => [
+          ...prev,
+          {
+            id: `guide-ai-assistant-${messageId}`,
+            role: "assistant",
+            body: "Guide update ready for review.",
+            bullets: buildGuideAiCompletionBullets(result, reviewFields.length),
+          },
+        ]);
+        return true;
+      }
+      setGuideAiMessages((prev) => [
+        ...prev,
+        {
+          id: `guide-ai-error-${messageId}`,
+          role: "assistant",
+          body: "I could not apply that update. Check the transcript and try a more specific instruction.",
+        },
+      ]);
+      return false;
+    } finally {
+      if (stepTimer) window.clearInterval(stepTimer);
+      setGuideAiWorking(false);
     }
   };
 
@@ -1165,13 +1912,30 @@ function ReviewGuideModal({
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interview Guide</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewFields.length} populated fields reviewed</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewFields.length} fields reviewed</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <IconButton
+              label="AI instructions for this guide"
+              onClick={() => setGuideAiOpen((open) => !open)}
+              variant={guideAiOpen ? "primary" : "default"}
+            >
+              AI
+            </IconButton>
             <Btn variant="success" size="sm" onClick={exportFinalPdf} disabled={exporting || !pdfUrl}>{exporting ? "Exporting..." : "Export Final PDF"}</Btn>
             <IconButton label="Close guide" onClick={onClose}>{"x"}</IconButton>
           </div>
         </div>
+        <GuideAiAssistantPanel
+          open={guideAiOpen}
+          messages={guideAiMessages}
+          working={guideAiWorking || aiDrafting}
+          workStepIndex={guideAiStepIndex}
+          fieldCount={reviewFields.length}
+          reviewedCount={approvedCount}
+          onClose={() => setGuideAiOpen(false)}
+          onSubmit={submitGuideAiInstruction}
+        />
         <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "74px minmax(0, 1fr) 370px", minHeight: 0 }}>
           <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fbfdff", padding: "12px 10px", display: "grid", alignContent: "start", gap: 7 }}>
             {reviewFields.length === 0 ? (
@@ -1206,14 +1970,14 @@ function ReviewGuideModal({
           </div>
           <div className="interview-guide-pdf" style={{ background: "#e5e7eb", padding: 14, minHeight: 0 }}>
             {pdfUrl ? (
-              <div style={{ position: "relative", height: "100%", minHeight: 560 }}>
-                <iframe title="Filled Interview Guide" src={`${pdfUrl}#page=${activeField?.page_number || 1}&toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", minHeight: 560, border: "none", borderRadius: 6, background: "#fff", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }} />
-                {loadingPdf && (
-                  <div style={{ position: "absolute", right: 14, top: 14, borderRadius: 999, background: "rgba(255,255,255,0.94)", border: `1px solid ${C.borderLight}`, color: C.textSec, fontSize: 11, fontWeight: 900, padding: "5px 9px", boxShadow: "0 8px 20px rgba(15,23,42,0.12)" }}>
-                    Updating
-                  </div>
-                )}
-              </div>
+              <PdfGuidePreview
+                pdfUrl={pdfUrl}
+                loadingPdf={loadingPdf}
+                fields={reviewFields}
+                activePageNumber={activeField?.page_number || 1}
+                activeKey={activeKey}
+                onSelectField={selectField}
+              />
             ) : loadingPdf ? (
               <div style={{ height: "100%", minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontWeight: 800 }}>Rendering guide...</div>
             ) : (
@@ -1231,14 +1995,6 @@ function ReviewGuideModal({
                       <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"}</div>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                      <IconButton
-                        label="AI fill this field"
-                        onClick={() => setAiInstructionOpen((open) => !open)}
-                        disabled={aiFillingThisField}
-                        variant={aiInstructionOpen ? "primary" : "default"}
-                      >
-                        AI
-                      </IconButton>
                       <Badge color={approved ? "success" : "default"}>{approved ? "Reviewed" : "Needs Review"}</Badge>
                     </div>
                   </div>
@@ -1249,21 +2005,6 @@ function ReviewGuideModal({
                   rows={fieldValueRows(activeValue)}
                   style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 92 }}
                 />
-                {aiInstructionOpen && (
-                  <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 10, background: "#f8fafc", display: "grid", gap: 8 }}>
-                    <textarea
-                      value={aiInstructionValue}
-                      onChange={(event) => setAiInstructionValue(event.target.value)}
-                      rows={4}
-                      placeholder="AI instruction"
-                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit", fontSize: 13, lineHeight: 1.45, color: C.text, resize: "vertical", outline: "none", background: "#fff" }}
-                    />
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                      <Btn variant="ghost" size="sm" onClick={() => setAiInstructionOpen(false)} disabled={aiFillingThisField}>Cancel</Btn>
-                      <Btn variant="primary" size="sm" onClick={applyAiInstruction} disabled={!aiInstructionValue.trim() || aiFillingThisField}>{aiFillingThisField ? "Applying..." : "Apply AI"}</Btn>
-                    </div>
-                  </div>
-                )}
                 {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
@@ -1502,7 +2243,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [showConfigSettings, setShowConfigSettings] = useState(false);
   const [autoScoreCandidates, setAutoScoreCandidates] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
-  const [aiFillingPdfKey, setAiFillingPdfKey] = useState("");
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
@@ -2033,6 +2773,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       quietStart = false,
       targetPdfFieldName = "",
       pdfPopulationInstruction = "",
+      documentPdfInstruction = "",
+      pdfOnly = false,
     } = options;
     if (!interviewId) return null;
     if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
@@ -2043,6 +2785,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     try {
       const pdfPopulationInstructions = targetPdfFieldName
         ? { [targetPdfFieldName]: pdfPopulationInstruction }
+        : documentPdfInstruction
+          ? { [DOCUMENT_PDF_INSTRUCTION_KEY]: documentPdfInstruction }
         : undefined;
       const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
         body: {
@@ -2051,6 +2795,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           auto_score_candidate: autoScoreCandidates,
           target_pdf_field_name: targetPdfFieldName || undefined,
           pdf_population_instructions: pdfPopulationInstructions,
+          pdf_only: pdfOnly || !!documentPdfInstruction || undefined,
         },
       });
       if (startError) throw new Error(await readEdgeFunctionError(startError, "AI draft failed"));
@@ -2077,7 +2822,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         }
       }
 
-      showToast(targetPdfFieldName ? "AI updated field" : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      const populatedCount = Number(result?.populated_count ?? result?.saved_count ?? 0);
+      showToast(targetPdfFieldName
+        ? "AI updated field"
+        : documentPdfInstruction
+          ? `AI wrote guide text into ${populatedCount} field${populatedCount === 1 ? "" : "s"}`
+          : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
       await loadAll(locationId);
       setSelectedRecordId(interviewId);
       return result;
@@ -2089,24 +2839,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
-  const fillPdfFieldWithAiInstruction = async (field, instruction) => {
-    if (!selectedRecord?.id || !field?.name || !String(instruction || "").trim()) return false;
-    const key = responseKeyForPdfField(field);
-    setAiFillingPdfKey(key);
-    try {
-      const result = await draftInterview(selectedRecord.id, {
-        requireLocalTranscript: true,
-        quietStart: true,
-        targetPdfFieldName: field.name,
-        pdfPopulationInstruction: instruction,
-      });
-      if (!result) return false;
-      await loadAll(locationId);
-      setSelectedRecordId(selectedRecord.id);
-      return true;
-    } finally {
-      setAiFillingPdfKey("");
-    }
+  const fillPdfDocumentWithAiInstruction = async (instruction) => {
+    if (!selectedRecord?.id || !String(instruction || "").trim()) return null;
+    const result = await draftInterview(selectedRecord.id, {
+      requireLocalTranscript: true,
+      quietStart: true,
+      documentPdfInstruction: instruction,
+      pdfOnly: true,
+    });
+    return result;
   };
 
   const handleAudioUpload = async (file) => {
@@ -3033,8 +3774,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
           approveField={approvePdfField}
-          aiFillingKey={aiFillingPdfKey}
-          onAiFillField={fillPdfFieldWithAiInstruction}
+          aiDrafting={aiDrafting}
+          onAiFillDocument={fillPdfDocumentWithAiInstruction}
           exportFinalPdf={exportFinalPdf}
           downloadArtifact={downloadArtifact}
           onClose={() => setShowGuideModal(false)}
