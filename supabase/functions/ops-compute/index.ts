@@ -2654,6 +2654,20 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const authHeader = req.headers.get("authorization") || "";
+    const apiKeyHeader = req.headers.get("apikey") || "";
+    const hasServiceAuth =
+      authHeader === `Bearer ${supabaseServiceKey}` ||
+      apiKeyHeader === supabaseServiceKey;
+
+    if (!hasServiceAuth) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     let locationId: string | null = null;
     let dateOverride: string | null = null;
 
@@ -2678,7 +2692,6 @@ Deno.serve(async (req: Request) => {
 
     // Initialize Supabase
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // ─── Load Gingr credentials for this location ─────────────────────
