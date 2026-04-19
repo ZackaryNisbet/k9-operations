@@ -1524,9 +1524,12 @@ function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize
 
 function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeKey, onSelectField }) {
   const containerRef = useRef(null);
-  const canvasRef = useRef(null);
+  const pageCanvasRefs = useRef(new Map());
+  const pageFrameRefs = useRef(new Map());
+  const pdfDocRef = useRef(null);
+  const renderRunRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [pageState, setPageState] = useState({ loading: false, error: "", pageSize: null, renderSize: null });
+  const [pageState, setPageState] = useState({ loading: false, error: "", pages: [] });
 
   useEffect(() => {
     const node = containerRef.current;
@@ -1546,59 +1549,115 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeK
     if (!pdfUrl || !containerWidth) return undefined;
     let cancelled = false;
     let loadingTask = null;
-    setPageState((prev) => ({ ...prev, loading: true, error: "" }));
+    setPageState({ loading: true, error: "", pages: [] });
+    pageCanvasRefs.current = new Map();
+    pageFrameRefs.current = new Map();
+    renderRunRef.current += 1;
+    if (pdfDocRef.current) {
+      try { pdfDocRef.current.destroy?.(); } catch (_) {}
+      pdfDocRef.current = null;
+    }
 
-    async function renderPage() {
+    async function loadPdfPages() {
       try {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
         const pdf = await loadingTask.promise;
-        const pageNumber = Math.max(1, Math.min(Number(activePageNumber || 1), pdf.numPages || 1));
-        const page = await pdf.getPage(pageNumber);
-        const baseViewport = page.getViewport({ scale: 1 });
         const maxWidth = Math.max(260, containerWidth - 28);
-        const scale = Math.min(PDF_POINT_TO_CSS_PX, maxWidth / baseViewport.width);
-        const viewport = page.getViewport({ scale });
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled) {
-          await pdf.destroy?.();
-          return;
-        }
+        const pages = [];
 
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(viewport.width * dpr);
-        canvas.height = Math.floor(viewport.height * dpr);
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        const context = canvas.getContext("2d", { alpha: false });
-        context.save();
-        context.fillStyle = "#fff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.restore();
-        await page.render({ canvasContext: context, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
-        if (!cancelled) {
-          setPageState({
-            loading: false,
-            error: "",
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          const page = await pdf.getPage(pageNumber);
+          const baseViewport = page.getViewport({ scale: 1 });
+          const scale = Math.min(PDF_POINT_TO_CSS_PX, maxWidth / baseViewport.width);
+          const viewport = page.getViewport({ scale });
+          pages.push({
+            pageNumber,
+            scale,
             pageSize: { width: baseViewport.width, height: baseViewport.height },
             renderSize: { width: viewport.width, height: viewport.height, pageAligned: true },
           });
         }
-        await pdf.destroy?.();
+
+        if (cancelled) {
+          await pdf.destroy?.();
+          return;
+        }
+        pdfDocRef.current = pdf;
+        setPageState({ loading: true, error: "", pages });
       } catch (error) {
         if (!cancelled) {
-          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pageSize: null, renderSize: null });
+          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pages: [] });
         }
       }
     }
 
-    renderPage();
+    loadPdfPages();
     return () => {
       cancelled = true;
       try { loadingTask?.destroy?.(); } catch (_) {}
+      if (pdfDocRef.current) {
+        try { pdfDocRef.current.destroy?.(); } catch (_) {}
+        pdfDocRef.current = null;
+      }
     };
-  }, [pdfUrl, activePageNumber, containerWidth]);
+  }, [pdfUrl, containerWidth]);
+
+  useEffect(() => {
+    const pdf = pdfDocRef.current;
+    const pages = pageState.pages;
+    if (!pdf || !pages.length) return undefined;
+    let cancelled = false;
+    const runId = renderRunRef.current + 1;
+    renderRunRef.current = runId;
+
+    async function renderPages() {
+      try {
+        for (const pageInfo of pages) {
+          if (cancelled || runId !== renderRunRef.current) return;
+          const canvas = pageCanvasRefs.current.get(pageInfo.pageNumber);
+          if (!canvas) continue;
+          const page = await pdf.getPage(pageInfo.pageNumber);
+          const viewport = page.getViewport({ scale: pageInfo.scale });
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = Math.floor(viewport.width * dpr);
+          canvas.height = Math.floor(viewport.height * dpr);
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
+          const context = canvas.getContext("2d", { alpha: false });
+          context.save();
+          context.fillStyle = "#fff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.restore();
+          await page.render({ canvasContext: context, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+        }
+        if (!cancelled && runId === renderRunRef.current) {
+          setPageState((prev) => ({ ...prev, loading: false }));
+        }
+      } catch (error) {
+        if (!cancelled && runId === renderRunRef.current) {
+          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pages: [] });
+        }
+      }
+    }
+
+    renderPages();
+    return () => {
+      cancelled = true;
+    };
+  }, [pageState.pages]);
+
+  useEffect(() => {
+    const pageNumber = Math.max(1, Number(activePageNumber || 1));
+    const node = pageFrameRefs.current.get(pageNumber);
+    const scroller = containerRef.current;
+    if (!node || !scroller) return;
+    scroller.scrollTo({
+      top: Math.max(0, node.offsetTop - 14),
+      behavior: "smooth",
+    });
+  }, [activePageNumber, pageState.pages.length]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", height: "100%", minHeight: 560, overflow: "auto", borderRadius: 6, background: "#f8fafc", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }}>
@@ -1607,17 +1666,44 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeK
           PDF preview could not render here. Export will still use the filled PDF.
         </div>
       ) : (
-        <div style={{ position: "relative", width: pageState.renderSize?.width || 1, minHeight: pageState.renderSize?.height || 540, margin: "0 auto" }}>
-          <canvas ref={canvasRef} style={{ display: "block", background: "#fff" }} />
-          {pageState.pageSize && pageState.renderSize && (
-            <PdfFieldClickLayer
-              fields={fields}
-              activePageNumber={activePageNumber}
-              activeKey={activeKey}
-              containerSize={pageState.renderSize}
-              pageSize={pageState.pageSize}
-              onSelectField={onSelectField}
-            />
+        <div style={{ display: "grid", gap: 18, justifyItems: "center", padding: 0 }}>
+          {pageState.pages.length ? pageState.pages.map((pageInfo) => (
+            <div
+              key={pageInfo.pageNumber}
+              ref={(node) => {
+                if (node) pageFrameRefs.current.set(pageInfo.pageNumber, node);
+                else pageFrameRefs.current.delete(pageInfo.pageNumber);
+              }}
+              style={{
+                position: "relative",
+                width: pageInfo.renderSize?.width || 1,
+                minHeight: pageInfo.renderSize?.height || 540,
+                background: "#fff",
+                boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
+              }}
+            >
+              <canvas
+                ref={(node) => {
+                  if (node) pageCanvasRefs.current.set(pageInfo.pageNumber, node);
+                  else pageCanvasRefs.current.delete(pageInfo.pageNumber);
+                }}
+                style={{ display: "block", background: "#fff" }}
+              />
+              {pageInfo.pageSize && pageInfo.renderSize && (
+                <PdfFieldClickLayer
+                  fields={fields}
+                  activePageNumber={pageInfo.pageNumber}
+                  activeKey={activeKey}
+                  containerSize={pageInfo.renderSize}
+                  pageSize={pageInfo.pageSize}
+                  onSelectField={onSelectField}
+                />
+              )}
+            </div>
+          )) : (
+            <div style={{ minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: C.textMut, fontSize: 13, fontWeight: 800 }}>
+              Loading PDF preview...
+            </div>
           )}
         </div>
       )}
