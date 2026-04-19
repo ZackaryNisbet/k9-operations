@@ -16,11 +16,11 @@
       "updatedAt": "2026-04-14T02:58:44.547Z"
     },
     "ops-compute": {
-      "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
+      "commit": "87d4eca04c5dfc614ec620be1d33255d389b8f98",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "room cleaning task timing support",
-      "updatedAt": "2026-04-17T12:24:31.302Z"
+      "note": "ops compute cron auth guard",
+      "updatedAt": "2026-04-19T10:23:33.831Z"
     },
     "ops-compute-ondemand": {
       "commit": "4968a5c60bd8b1c9c106efb266ffa75fb92cc0c8",
@@ -37,11 +37,11 @@
       "updatedAt": "2026-04-15T14:54:49.229Z"
     },
     "gingr-boh-poll": {
-      "commit": "8ab79c4089917af79ae0d6316c9b79f79d29f8ad",
+      "commit": "8f83744280f2f3cb70e8fc5c2d211e6350fb2590",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "XL recovery cleanup baseline",
-      "updatedAt": "2026-04-14T02:46:41.138Z"
+      "note": "platform health cron alerts and BOH cron auth guard",
+      "updatedAt": "2026-04-19T10:45:27.943Z"
     },
     "gingr-today-notes": {
       "commit": "3f042a4f3fe1b4104242dc5d546d93319a0be303",
@@ -70,6 +70,13 @@
       "action": "deploy",
       "note": "performance review signing ES256 auth fix",
       "updatedAt": "2026-04-18T15:55:18.664Z"
+    },
+    "ops-platform-health": {
+      "commit": "2d9bd44192aaf4f5451ebc0c7bbbbcdfc1764759",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "Narrow sync-state alerts after operational detail schema repair",
+      "updatedAt": "2026-04-19T11:25:00.932Z"
     }
   }
 }
