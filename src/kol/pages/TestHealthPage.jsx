@@ -382,6 +382,11 @@ function PlatformPanel({ platformHealth, loading, error }) {
 
   const reservationsFreshness = platformHealth?.freshness?.reservations || {};
   const notesFreshness = platformHealth?.freshness?.gingr_notes_today || {};
+  const reportHealth = platformHealth?.reports || {};
+  const cronHealth = platformHealth?.cron_health || {};
+  const bohCache = platformHealth?.boh_cache || {};
+  const criticalCronCount = countByStatus(cronHealth.jobs, "critical");
+  const warningCronCount = countByStatus(cronHealth.jobs, "warning");
 
   return (
     <>
@@ -433,6 +438,18 @@ function PlatformPanel({ platformHealth, loading, error }) {
           bg={toneForHealth(notesFreshness.freshness_status).bg}
         />
         <SummaryCard
+          label="Report Freshness"
+          value={(reportHealth.status || "unknown").toUpperCase()}
+          color={toneForHealth(reportHealth.status).color}
+          bg={toneForHealth(reportHealth.status).bg}
+        />
+        <SummaryCard
+          label="Scheduled Jobs"
+          value={criticalCronCount ? `${criticalCronCount} Critical` : warningCronCount ? `${warningCronCount} Warning` : "OK"}
+          color={criticalCronCount ? C.dan : warningCronCount ? C.warn : C.suc}
+          bg={criticalCronCount ? C.danLt : warningCronCount ? C.warnLt : C.sucLt}
+        />
+        <SummaryCard
           label="Supabase Status Page"
           value={(platformHealth.supabase_status?.indicator || "unknown").toUpperCase()}
           color={toneForHealth(platformHealth.supabase_status?.indicator === "none" ? "healthy" : "warning").color}
@@ -465,6 +482,63 @@ function PlatformPanel({ platformHealth, loading, error }) {
             ].filter(Boolean)}
           />
         ))}
+      </div>
+
+      <SectionTitle>Critical Reports</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
+        {(reportHealth.reports || []).map((report) => (
+          <MetricCard
+            key={report.id}
+            title={report.label}
+            tone={toneForHealth(report.status)}
+            lines={[
+              `Status: ${report.status}`,
+              report.total != null ? `${report.total.toLocaleString("en-US")} items` : "No item count available",
+              report.computed_at ? `Computed ${formatTimestamp(report.computed_at)}` : null,
+              report.updated_at ? `Updated ${formatTimestamp(report.updated_at)}` : null,
+              report.age_minutes != null ? `Age ${formatAge(report.age_minutes)}` : "No refresh timestamp",
+            ].filter(Boolean)}
+          />
+        ))}
+      </div>
+
+      <SectionTitle>Scheduled Jobs</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 24 }}>
+        {(cronHealth.jobs || []).map((job) => (
+          <MetricCard
+            key={job.jobname}
+            title={job.label}
+            tone={toneForHealth(job.status)}
+            lines={[
+              `Status: ${job.status}`,
+              job.message,
+              job.last_success_at ? `Last success ${formatTimestamp(job.last_success_at)}` : "No recent success",
+              job.status !== "healthy" && job.last_failure_at ? `Last failure ${formatTimestamp(job.last_failure_at)}` : null,
+              job.status !== "healthy" && job.last_failure_status_code ? `Failure status ${job.last_failure_status_code}` : null,
+              job.status !== "healthy" && job.recent_failure_count ? `${job.recent_failure_count} failures in window` : null,
+            ].filter(Boolean)}
+          />
+        ))}
+        {cronHealth.error ? (
+          <MetricCard
+            title="Cron Health Check"
+            tone={toneForHealth("warning")}
+            lines={[cronHealth.error]}
+          />
+        ) : null}
+      </div>
+
+      <SectionTitle>BOH Cache</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
+        <MetricCard
+          title="Back-of-House Cache"
+          tone={toneForHealth(bohCache.freshness_status)}
+          lines={[
+            `${(bohCache.rows || 0).toLocaleString("en-US")} rows`,
+            bohCache.latest_synced_at ? `Latest sync ${formatTimestamp(bohCache.latest_synced_at)}` : "No sync rows currently cached",
+            bohCache.age_minutes != null ? `Age ${formatAge(bohCache.age_minutes)}` : null,
+          ].filter(Boolean)}
+        />
       </div>
 
       <SectionTitle>Sync State</SectionTitle>
@@ -632,6 +706,10 @@ function toneForHealth(status) {
     default:
       return { color: C.warn, bg: C.warnLt };
   }
+}
+
+function countByStatus(rows, status) {
+  return (rows || []).filter((row) => row.status === status).length;
 }
 
 function humanizeKey(value) {
