@@ -52,6 +52,10 @@ describe("interview PDF form utilities", () => {
     expect(result.manifest.find((field) => field.name === "candidate_name")).toMatchObject({
       type: "text",
       page_number: 1,
+      page_size: {
+        width: 612,
+        height: 792,
+      },
     });
   });
 

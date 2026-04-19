@@ -396,6 +396,20 @@ function getWidgetRect(widget) {
   }
 }
 
+function getPageSizeByNumber(pdfDoc, pageNumber) {
+  try {
+    const page = pdfDoc.getPage(Number(pageNumber || 1) - 1);
+    const size = page?.getSize?.();
+    if (!size) return null;
+    return {
+      width: Number(size.width || 0),
+      height: Number(size.height || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getFieldOptions(field, type) {
   try {
     if (type === "dropdown" || type === "option_list" || type === "radio") {
@@ -417,11 +431,13 @@ export async function extractPdfFieldManifest(pdfBytes) {
       const firstWidget = widgets[0] || null;
       const type = getPdfFieldType(field);
       const rect = getWidgetRect(firstWidget);
+      const page_number = getWidgetPageNumber(pdfDoc, firstWidget);
       return {
         name: field.getName(),
         type,
         type_label: getPdfFieldTypeLabel(type),
-        page_number: getWidgetPageNumber(pdfDoc, firstWidget),
+        page_number,
+        page_size: getPageSizeByNumber(pdfDoc, page_number),
         rect,
         widget_count: widgets.length,
         options: getFieldOptions(field, type),

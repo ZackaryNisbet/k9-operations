@@ -27,3 +27,8 @@ otp_length = 8
 # The function validates the caller token in-function via Supabase Auth.
 # Gateway verification can reject newer ES256 auth JWTs before function code runs.
 verify_jwt = false
+
+[functions.interview-ai-draft]
+# The function forwards the caller token to Supabase queries so RLS remains authoritative.
+# Gateway verification can reject newer ES256 auth JWTs before function code runs.
+verify_jwt = false
