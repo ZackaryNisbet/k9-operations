@@ -30,11 +30,11 @@
       "payload": { "sync_type": "incremental", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
     },
     {
-      "jobname": "gingr-tv-poll",
+      "jobname": "gingr-presence-sync",
       "schedule": "* * * * *",
       "auth": "vault",
       "function": "gingr-sync",
-      "payload": { "sync_type": "tv-poll", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
+      "payload": { "sync_type": "presence-sync", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
     },
     {
       "jobname": "de-expansion-daily",

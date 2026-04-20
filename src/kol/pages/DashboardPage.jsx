@@ -14,6 +14,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
+import { useFacilityPresence } from "../../hooks/useFacilityPresence";
 import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
 import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
@@ -1438,6 +1439,11 @@ function DashboardContent({
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
   const isToday = range === "today";
+  const facilityPresence = useFacilityPresence(locationId, {
+    enabled: isToday && Boolean(locationId),
+    pollMs: 10_000,
+    runSync: true,
+  });
 
   // ─── Live Snapshot: 10-second polling for real-time snapshot counts ───
   // Respects business hours setting — pauses outside configured window
@@ -1458,6 +1464,19 @@ function DashboardContent({
     const iv = setInterval(poll, 10000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [isToday, locationId, bizHoursCheck]);
+  const displayLiveSnap = useMemo(() => {
+    if (!facilityPresence.available) return liveSnap;
+    return {
+      ...(liveSnap || {}),
+      expected: facilityPresence.counts.pendingArrivals,
+      in_house: facilityPresence.counts.inHouse,
+      boarding: facilityPresence.counts.boarding,
+      daycare: facilityPresence.counts.daycare,
+      going_home: facilityPresence.counts.goingHome,
+      occupancy_pct: facilityPresence.counts.occupancyPct,
+      canonical_presence: true,
+    };
+  }, [facilityPresence.available, facilityPresence.counts, liveSnap]);
   // Overlay today's live cash data on trailing week rows too
   const correctedTrailingWeekRows = useMemo(() => buildCashChartRows(trailingWeekRows, todayCashData), [trailingWeekRows, todayCashData]);
   const cashChartData = useMemo(() => {
@@ -1903,16 +1922,16 @@ function DashboardContent({
             </div>
 
             {/* Row 1: Snapshot (7 metrics) + Opening checklist + Baths service */}
-            <MetricCell label="Expected" value={liveSnap ? liveSnap.expected : m.dogsExpected} hero onClick={navTo["checkout-tv"]} sub={null} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            <MetricCell label="In House" value={liveSnap ? liveSnap.in_house : m.dogsInHouse} hero sub={liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} live={!!liveSnap} />
+            <MetricCell label="Expected" value={displayLiveSnap ? displayLiveSnap.expected : m.dogsExpected} hero onClick={navTo["checkout-tv"]} sub={null} trend={showPriorPeriod ? pctChange(displayLiveSnap ? displayLiveSnap.expected : m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} live={!!displayLiveSnap} />
+            <MetricCell label="In House" value={displayLiveSnap ? displayLiveSnap.in_house : m.dogsInHouse} hero sub={displayLiveSnap ? `${displayLiveSnap.boarding}B · ${displayLiveSnap.daycare}D` : `${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(displayLiveSnap ? displayLiveSnap.in_house : m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} live={!!displayLiveSnap} />
             {days > 1
               ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
-              : <MetricCell label="Going Home" value={liveSnap ? liveSnap.going_home : m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} live={!!liveSnap} />
+              : <MetricCell label="Going Home" value={displayLiveSnap ? displayLiveSnap.going_home : m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(displayLiveSnap ? displayLiveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} live={!!displayLiveSnap} />
             }
-            <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            <MetricCell label="New Bookings" value={liveSnap ? liveSnap.new_bookings : m.bookingsToday} hero skeleton={showSkeleton} />
-            <MetricCell label="Tours" value={liveSnap ? liveSnap.tours : m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.tours : m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
-            <MetricCell label="Evals" value={liveSnap ? liveSnap.evals : m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
+            <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (displayLiveSnap ? displayLiveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (displayLiveSnap ? displayLiveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!displayLiveSnap} />
+            <MetricCell label="New Bookings" value={displayLiveSnap?.new_bookings ?? m.bookingsToday} hero skeleton={showSkeleton} />
+            <MetricCell label="Tours" value={displayLiveSnap?.tours ?? m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(displayLiveSnap?.tours ?? m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
+            <MetricCell label="Evals" value={displayLiveSnap?.evals ?? m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
             <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
             <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
 
@@ -2031,42 +2050,42 @@ function DashboardContent({
             <div className="ops-hero-card" onClick={navTo["checkout-tv"]}>
               <div className="ops-hero-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 Dogs In House
-                {liveSnap && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.suc, animation: "dashPulse 1.5s infinite", flexShrink: 0 }} />}
+                {displayLiveSnap && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.suc, animation: "dashPulse 1.5s infinite", flexShrink: 0 }} />}
               </div>
-              <div className="ops-hero-value">{liveSnap ? liveSnap.in_house : m.dogsInHouse}</div>
+              <div className="ops-hero-value">{displayLiveSnap ? displayLiveSnap.in_house : m.dogsInHouse}</div>
               <div className="ops-hero-sub">
-                {liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse || 0}B · ${m.daycareInHouse || 0}D`}
+                {displayLiveSnap ? `${displayLiveSnap.boarding}B · ${displayLiveSnap.daycare}D` : `${m.boardingInHouse || 0}B · ${m.daycareInHouse || 0}D`}
               </div>
-              {showPriorPeriod && <TrendBadge value={pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse)} size="xs" />}
+              {showPriorPeriod && <TrendBadge value={pctChange(displayLiveSnap ? displayLiveSnap.in_house : m.dogsInHouse, pm.dogsInHouse)} size="xs" />}
             </div>
             <div className="ops-hero-card" onClick={navTo["checkout-tv"]}>
               <div className="ops-hero-label">Expected</div>
-              <div className="ops-hero-value">{liveSnap ? liveSnap.expected : m.dogsExpected}</div>
-              {showPriorPeriod && <TrendBadge value={pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected)} size="xs" />}
+              <div className="ops-hero-value">{displayLiveSnap ? displayLiveSnap.expected : m.dogsExpected}</div>
+              {showPriorPeriod && <TrendBadge value={pctChange(displayLiveSnap ? displayLiveSnap.expected : m.dogsExpected, pm.dogsExpected)} size="xs" />}
             </div>
             <div className="ops-hero-card" onClick={navTo["ops-bathing"]}>
               <div className="ops-hero-label">{days > 1 ? "Canceled" : "Going Home"}</div>
               <div className="ops-hero-value">
                 {days > 1
                   ? Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))
-                  : (liveSnap ? liveSnap.going_home : m.dogsGoingHome)}
+                  : (displayLiveSnap ? displayLiveSnap.going_home : m.dogsGoingHome)}
               </div>
-              {showPriorPeriod && days <= 1 && <TrendBadge value={pctChange(liveSnap ? liveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome)} size="xs" />}
+              {showPriorPeriod && days <= 1 && <TrendBadge value={pctChange(displayLiveSnap ? displayLiveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome)} size="xs" />}
             </div>
             <div className="ops-hero-card" onClick={navTo["occupancy-report"]}>
               <div className="ops-hero-label">Occupancy</div>
               <div className="ops-hero-value">
-                {days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%
+                {days > 1 ? Math.round(m.occupancyRate || 0) : (displayLiveSnap ? displayLiveSnap.occupancy_pct : (m.occupancyPct || 0))}%
               </div>
-              {showPriorPeriod && <TrendBadge value={pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0))} size="xs" />}
+              {showPriorPeriod && <TrendBadge value={pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (displayLiveSnap ? displayLiveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0))} size="xs" />}
             </div>
             <div className="ops-hero-card">
               <div className="ops-hero-label">Tours & Evals</div>
               <div className="ops-hero-value">
-                {(liveSnap ? liveSnap.tours : (m.toursToday || 0)) + (liveSnap ? liveSnap.evals : (m.evalsToday || 0))}
+                {(displayLiveSnap?.tours ?? (m.toursToday || 0)) + (displayLiveSnap?.evals ?? (m.evalsToday || 0))}
               </div>
               <div className="ops-hero-sub">
-                {liveSnap ? liveSnap.tours : (m.toursToday || 0)} tours · {liveSnap ? liveSnap.evals : (m.evalsToday || 0)} evals
+                {displayLiveSnap?.tours ?? (m.toursToday || 0)} tours · {displayLiveSnap?.evals ?? (m.evalsToday || 0)} evals
               </div>
             </div>
           </div>

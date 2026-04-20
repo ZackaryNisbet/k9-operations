@@ -783,7 +783,7 @@ function useHomeDashboardSnapshot(locationId, userRole) {
       if (cancelled) return;
       try {
         await supabase.functions.invoke("gingr-sync", {
-          body: { location_id: locationId, sync_type: "tv-poll" },
+          body: { location_id: locationId, sync_type: "presence-sync" },
         });
       } catch {
         // Non-fatal. Snapshot reads still work with the latest persisted data.
