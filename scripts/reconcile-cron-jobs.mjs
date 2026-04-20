@@ -11,6 +11,10 @@ const LEGACY_SCHEDULING_JOBS = [
   "compute-scheduling-matrix-cherry-hill-week-4",
 ];
 
+const LEGACY_GINGR_JOBS = [
+  "gingr-tv-poll",
+];
+
 function quoteLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -119,7 +123,11 @@ const liveJobs = await execSqlSelect(
 const targetJobNames = new Set(manifest.jobs.map((job) => job.jobname));
 const jobsToUnschedule = liveJobs
   .map((job) => job.jobname)
-  .filter((jobname) => targetJobNames.has(jobname) || LEGACY_SCHEDULING_JOBS.includes(jobname));
+  .filter((jobname) => (
+    targetJobNames.has(jobname) ||
+    LEGACY_SCHEDULING_JOBS.includes(jobname) ||
+    LEGACY_GINGR_JOBS.includes(jobname)
+  ));
 
 if (!apply) {
   console.log(

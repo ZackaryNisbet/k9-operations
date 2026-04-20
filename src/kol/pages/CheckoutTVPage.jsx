@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
+import { mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";
 import { idbGet, idbSet, todayStr } from "../../shared/theme";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import {
@@ -20,7 +21,7 @@ import {
   getDisplayTags,
   getOperationalPlaygroup,
 } from "../../shared/playgroupAssignments";
-import { isBohSnapshotStale } from "./checkoutTvFreshness";
+import { isBohSnapshotStale, normalizeBohTransitionGroups } from "./checkoutTvFreshness";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -203,18 +204,21 @@ const DEFAULT_TV_SETTINGS = {
   photoDensity: "large",
 };
 
+const NOTICE_REPEAT_SUPPRESSION_MS = 45_000;
+const OPPOSITE_NOTICE_REPLACE_MS = 45_000;
+
 const CHECKOUT_HEALTH_SPECS = {
   boh: {
-    title: "BOH Transition Polling",
+    title: "Presence Transition Sync",
     frequencyLabel: "Every 10 seconds",
     staleAfterMs: 25_000,
-    description: "Detects live GINGR check-ins and check-outs, then fires TV notices immediately.",
+    description: "Reads canonical facility presence events for live check-in and check-out notices.",
   },
   tvPoll: {
     title: "Supabase Reconciliation",
     frequencyLabel: "Every 60 seconds plus every BOH transition",
     staleAfterMs: 130_000,
-    description: "Runs gingr-sync tv-poll so Supabase catches up to the GINGR TV/check-in source.",
+    description: "Compatibility fallback that runs gingr-sync tv-poll when canonical presence is unavailable.",
   },
   playgroups: {
     title: "Playgroup Assignment",
@@ -241,6 +245,76 @@ const CHECKOUT_HEALTH_SPECS = {
     description: "Loads local profile photos and GINGR profile icons for TV cards and spotlight notices.",
   },
 };
+
+function useCheckoutTvViewport() {
+  const readViewport = () => ({
+    width: typeof window === "undefined" ? 1920 : window.innerWidth,
+    height: typeof window === "undefined" ? 1080 : window.innerHeight,
+  });
+  const [viewport, setViewport] = useState(readViewport);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    let frame = null;
+    const onResize = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setViewport(readViewport()));
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+
+  return viewport;
+}
+
+function normalizeAnimalId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("g") ? raw.slice(1) : raw;
+}
+
+function getReservationAnimalId(res, dog) {
+  return normalizeAnimalId(dog?.gingrId || res?.animalGingrId || res?.animal_gingr_id || res?.dogId);
+}
+
+function getNoticeAnimalIds(entry) {
+  const entries = entry?.dogs || [entry];
+  return [...new Set(entries.map(d => normalizeAnimalId(d?.animalGingrId || d?.animal_id || d?.id)).filter(Boolean))];
+}
+
+function noticeTouchesAnimalIds(entry, animalIds) {
+  const ids = animalIds instanceof Set ? animalIds : new Set(animalIds);
+  return getNoticeAnimalIds(entry).some(id => ids.has(id));
+}
+
+function groupReservationNoticeEntries(records, { firedAt, durationMs }) {
+  const byOwner = new Map();
+  for (const record of records) {
+    const ownerLastName = record.client?.fields?.last_name || record.res?._ownerName?.split(" ").pop() || "";
+    const key = ownerLastName || record.animalId || record.res?.id;
+    if (!byOwner.has(key)) byOwner.set(key, []);
+    byOwner.get(key).push({
+      id: record.res?.gingrId || record.res?.id || record.animalId,
+      animalGingrId: record.animalId,
+      animalName: record.dog?.fields?.name || record.res?._animalName || "Unknown",
+      ownerLastName,
+      breed: record.dog?.fields?.breed || "",
+      room: record.res?.room || record.res?.room_assignment || "",
+      resType: record.res?.type || "boarding",
+    });
+  }
+
+  return [...byOwner.values()].map(group => ({
+    id: group.map(d => d.id).join("+"),
+    dogs: group,
+    ownerLastName: group[0]?.ownerLastName || "",
+    firedAt,
+    durationMs,
+  }));
+}
 
 /* ── Room parser (TV-004) ─────────────────────────────────────────────── */
 function parseRoom(room) {
@@ -546,7 +620,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
           fontSize: nameSize, fontWeight: 900, color: "#fff",
           lineHeight: 1.1, marginBottom: compact ? 2 : 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          letterSpacing: "-0.01em",
+          letterSpacing: 0,
         }}>
           {allNames}
         </div>
@@ -693,7 +767,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
           fontSize: nameSize, fontWeight: 900, color: "#fff",
           lineHeight: 1.1, marginBottom: compact ? 2 : 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          letterSpacing: "-0.01em",
+          letterSpacing: 0,
         }}>
           {allNames}
         </div>
@@ -740,7 +814,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
 }
 
 /* ── TV-005: Navigation Button ────────────────────────────────────────── */
-function TVNavButton({ view, isActive, count, onClick }) {
+function TVNavButton({ view, isActive, count, onClick, compact = false }) {
   const [hovered, setHovered] = useState(false);
   const { label, color, colorRgb } = view;
 
@@ -750,9 +824,12 @@ function TVNavButton({ view, isActive, count, onClick }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
-        height: 64, minWidth: 160, padding: "0 28px",
-        borderRadius: 16,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 6 : 12,
+        height: compact ? 52 : 64,
+        minWidth: 0,
+        width: "100%",
+        padding: compact ? "0 8px" : "0 22px",
+        borderRadius: compact ? 12 : 16,
         border: isActive
           ? `2px solid ${color}`
           : `2px solid rgba(${colorRgb},${hovered ? 0.4 : 0.15})`,
@@ -776,23 +853,30 @@ function TVNavButton({ view, isActive, count, onClick }) {
         }} />
       )}
       <span style={{
-        fontSize: 18, fontWeight: isActive ? 900 : 700,
+        flex: "1 1 auto",
+        minWidth: 0,
+        fontSize: compact ? 14 : 18, fontWeight: isActive ? 900 : 700,
         color: isActive ? color : hovered ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)",
-        letterSpacing: isActive ? "0.02em" : "0",
+        letterSpacing: 0,
+        lineHeight: compact ? 1.05 : 1.15,
         transition: "all 0.25s ease",
         position: "relative", zIndex: 1,
-        whiteSpace: "nowrap",
+        whiteSpace: compact ? "normal" : "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textAlign: "center",
       }}>
         {label}
       </span>
       {/* Count badge */}
       <span style={{
         display: "inline-flex", alignItems: "center", justifyContent: "center",
-        fontSize: 15, fontWeight: 900,
+        flexShrink: 0,
+        fontSize: compact ? 13 : 15, fontWeight: 900,
         color: isActive ? color : "rgba(255,255,255,0.4)",
         background: isActive ? `rgba(${colorRgb},0.2)` : "rgba(255,255,255,0.06)",
         border: `1.5px solid ${isActive ? `rgba(${colorRgb},0.4)` : "rgba(255,255,255,0.08)"}`,
-        borderRadius: 10, padding: "2px 10px", minWidth: 32,
+        borderRadius: compact ? 8 : 10, padding: compact ? "1px 7px" : "2px 10px", minWidth: compact ? 28 : 32,
         transition: "all 0.25s ease",
         position: "relative", zIndex: 1,
         fontVariantNumeric: "tabular-nums",
@@ -803,7 +887,7 @@ function TVNavButton({ view, isActive, count, onClick }) {
   );
 }
 
-function CheckoutTvActionButton({ ariaLabel, title, onClick, children }) {
+function CheckoutTvActionButton({ ariaLabel, title, onClick, children, compact = false }) {
   return (
     <button
       type="button"
@@ -811,7 +895,7 @@ function CheckoutTvActionButton({ ariaLabel, title, onClick, children }) {
       title={title || ariaLabel}
       onClick={onClick}
       style={{
-        width: 48, height: 48, borderRadius: 12,
+        width: compact ? 44 : 48, height: compact ? 44 : 48, borderRadius: compact ? 10 : 12,
         border: "2px solid rgba(255,255,255,0.08)",
         background: "rgba(255,255,255,0.03)",
         color: "rgba(255,255,255,0.75)",
@@ -835,7 +919,7 @@ function CheckoutTvActionButton({ ariaLabel, title, onClick, children }) {
   );
 }
 
-function CheckoutTvHealthButton({ status, onClick }) {
+function CheckoutTvHealthButton({ status, onClick, compact = false }) {
   const tone = healthTone(status);
   return (
     <button
@@ -844,23 +928,24 @@ function CheckoutTvHealthButton({ status, onClick }) {
       aria-label="Open Checkout TV health"
       title="Open Checkout TV health"
       style={{
-        height: 48, padding: "0 18px",
-        borderRadius: 12,
+        height: compact ? 44 : 48, padding: compact ? "0 10px" : "0 18px",
+        borderRadius: compact ? 10 : 12,
         border: `2px solid ${tone.color}55`,
         background: tone.bg,
         color: tone.color,
         cursor: "pointer",
-        display: "flex", alignItems: "center", gap: 10,
-        fontSize: 14, fontWeight: 900,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 7 : 10,
+        fontSize: compact ? 12 : 14, fontWeight: 900,
         transition: "filter 0.2s, transform 0.2s",
       }}
       onMouseEnter={e => { e.currentTarget.style.filter = "brightness(1.15)"; }}
       onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; }}
     >
       <span style={{
-        width: 10, height: 10, borderRadius: 99,
+        width: compact ? 8 : 10, height: compact ? 8 : 10, borderRadius: 99,
         background: tone.color,
         boxShadow: `0 0 18px ${tone.color}99`,
+        flexShrink: 0,
       }} />
       {tone.label}
     </button>
@@ -1095,7 +1180,7 @@ function HealthFact({ label, value, color = "rgba(255,255,255,0.82)" }) {
   );
 }
 
-function SpotlightNoticeCard({ notice, photoHeight, showDetails }) {
+function SpotlightNoticeCard({ notice, photoHeight, showDetails, compactLayout = false }) {
   const isCheckout = notice.type === "out";
   const actionColor = isCheckout ? "#84CC16" : "#38BDF8";
   const actionLabel = isCheckout ? (notice.remaining <= 10 ? "Leaving Now" : "Checking Out") : "Checking In";
@@ -1158,14 +1243,14 @@ function SpotlightNoticeCard({ notice, photoHeight, showDetails }) {
         </div>
       </div>
       <div style={{
-        minHeight: showDetails ? 116 : 68,
-        padding: showDetails ? "13px 14px" : "12px 10px",
+        minHeight: showDetails ? (compactLayout ? 96 : 116) : (compactLayout ? 58 : 68),
+        padding: showDetails ? (compactLayout ? "10px 12px" : "13px 14px") : "12px 10px",
         borderRadius: 14,
         background: "rgba(0,10,26,0.86)",
         border: "1px solid rgba(255,255,255,0.1)",
         textAlign: "center",
       }}>
-        <div style={{ fontSize: 25, fontWeight: 900, color: "#fff", lineHeight: 1.05, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{notice.name}</div>
+        <div style={{ fontSize: compactLayout ? 21 : 25, fontWeight: 900, color: "#fff", lineHeight: 1.05, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{notice.name}</div>
         {showDetails && (
           <>
             <div style={{ marginTop: 7, display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
@@ -1209,32 +1294,38 @@ function SpotlightOverflowRow({ notice }) {
   );
 }
 
-function SpotlightNoticeStage({ notices, overflowNotices, density, showDetails }) {
+function SpotlightNoticeStage({ notices, overflowNotices, density, showDetails, compactLayout = false }) {
   if (!notices.length && !overflowNotices.length) return null;
   const count = Math.max(1, notices.length);
-  const sizeMap = {
-    large: [390, 350, 300, 260, 230],
-    balanced: [340, 305, 270, 235, 205],
-    compact: [290, 260, 230, 200, 176],
-  };
+  const sizeMap = compactLayout
+    ? {
+      large: [270, 240, 215, 190, 170],
+      balanced: [245, 220, 198, 176, 158],
+      compact: [220, 198, 176, 156, 140],
+    }
+    : {
+      large: [390, 350, 300, 260, 230],
+      balanced: [340, 305, 270, 235, 205],
+      compact: [290, 260, 230, 200, 176],
+    };
   const photoHeight = (sizeMap[density] || sizeMap.large)[Math.min(count, 5) - 1];
 
   return (
     <div style={{
-      marginBottom: 18,
-      padding: "18px 16px",
-      borderRadius: 24,
+      marginBottom: compactLayout ? 12 : 18,
+      padding: compactLayout ? "12px 12px" : "18px 16px",
+      borderRadius: compactLayout ? 18 : 24,
       border: "1px solid rgba(255,255,255,0.08)",
       background: "linear-gradient(180deg, rgba(0,26,51,0.88), rgba(0,10,26,0.58))",
       animation: "tvGridFadeIn 0.3s ease-out",
     }}>
       {notices.length > 0 && (
         <div style={{
-          minHeight: photoHeight + (showDetails ? 136 : 88),
+          minHeight: photoHeight + (showDetails ? (compactLayout ? 108 : 136) : (compactLayout ? 70 : 88)),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          gap: count >= 5 ? 12 : 18,
+          gap: compactLayout ? (count >= 5 ? 8 : 12) : (count >= 5 ? 12 : 18),
           transition: "gap 420ms ease",
         }}>
           {notices.map((notice) => (
@@ -1243,6 +1334,7 @@ function SpotlightNoticeStage({ notices, overflowNotices, density, showDetails }
               notice={notice}
               photoHeight={photoHeight}
               showDetails={showDetails}
+              compactLayout={compactLayout}
             />
           ))}
         </div>
@@ -1262,10 +1354,10 @@ function SpotlightNoticeStage({ notices, overflowNotices, density, showDetails }
  * Extracted outside component body to prevent React remounting on every
  * re-render (which caused image flashing every 1s from countdown tick).
  * ──────────────────────────────────────────────────────────────────────── */
-const DogCardImage = React.memo(({ src, name, accentRgb, accent }) => {
+const DogCardImage = React.memo(({ src, name, accentRgb, accent, compact = false }) => {
   const [loaded, setLoaded] = useState(false);
   return (
-    <div style={{ width: "calc(100% - 8px)", maxWidth: 120, maxHeight: 120, aspectRatio: "1/1", borderRadius: 14, position: "relative", overflow: "hidden", border: `2px solid rgba(${accentRgb},0.4)` }}>
+    <div style={{ width: "calc(100% - 8px)", maxWidth: compact ? 104 : 120, maxHeight: compact ? 104 : 120, aspectRatio: "1/1", borderRadius: 14, position: "relative", overflow: "hidden", border: `2px solid rgba(${accentRgb},0.4)` }}>
       {!loaded && (
         <div style={{
           position: "absolute", inset: 0, borderRadius: 12,
@@ -1293,7 +1385,7 @@ const DogCardImage = React.memo(({ src, name, accentRgb, accent }) => {
  * Extracted outside component body + React.memo to prevent remounting.
  * All previously-closed-over variables are now explicit props.
  * ──────────────────────────────────────────────────────────────────────── */
-const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds }) => {
+const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, compact = false }) => {
   const dog = dogs.find(d => d.id === res.dogId);
   const client = clients.find(c => c.id === res.clientId);
   const name = dog?.fields?.name || res._animalName || "Unknown";
@@ -1305,10 +1397,10 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
     : roomInfo.label || "";
 
   // Get dog photo: prefer Supabase Storage (local_photo_url) → icon → Gingr CDN
-  const iconData = animalIcons[dog?.gingrId];
-  const localPhoto = dogPhotoMap?.[dog?.gingrId];
+  const animalId = String(dog?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "");
+  const iconData = animalIcons[animalId];
+  const localPhoto = dogPhotoMap?.[animalId];
   const image = localPhoto || iconData?.icon_url || dog?._image;
-  const animalId = String(dog?.gingrId || res?.animalGingrId || "");
   const assignment = playgroupMap?.[animalId];
   const playgroup = getDisplayPlaygroup(assignment) || sizeGroup || getDogPlaygroup(dog, res, playgroupMap, allDogTags) || "unclassified";
   const themeKey = playgroup === "large" ? "large" : playgroup === "small" ? "small" : playgroup;
@@ -1329,13 +1421,13 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
 
   return (
     <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 8px 12px",
+      display: "flex", flexDirection: "column", alignItems: "center", padding: compact ? "7px 7px 10px" : "8px 8px 12px",
       background: isCheckingOut ? "rgba(132,204,22,0.08)" : "rgba(255,255,255,0.06)",
       borderRadius: 16,
       border: isCheckingOut
         ? "1px solid rgba(132,204,22,0.2)"
         : `2px solid rgba(${theme.accentRgb},0.25)`,
-      minWidth: 140, transition: "transform 0.2s, opacity 0.5s, background 0.3s",
+      minWidth: 0, width: "100%", transition: "transform 0.2s, opacity 0.5s, background 0.3s",
       opacity: isCheckingOut ? 0.35 : 1,
       overflow: "hidden",
     }}>
@@ -1355,10 +1447,10 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
 
       {/* Dog photo/icon — larger, scales with card width */}
       {image ? (
-        <DogCardImage src={image} name={name} accentRgb={theme.accentRgb} accent={theme.accent} />
+        <DogCardImage src={image} name={name} accentRgb={theme.accentRgb} accent={theme.accent} compact={compact} />
       ) : (
         <div style={{
-          width: "calc(100% - 8px)", maxWidth: 120, maxHeight: 120, aspectRatio: "1/1",
+          width: "calc(100% - 8px)", maxWidth: compact ? 104 : 120, maxHeight: compact ? 104 : 120, aspectRatio: "1/1",
           borderRadius: 14,
           background: `rgba(${theme.accentRgb},0.15)`,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -1388,10 +1480,10 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
         {tagList.map(tag => <SizeBadge key={tag} size={tag} />)}
       </div>
 
-      <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
-      {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
-      <div style={{ fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
-      {roomDisplay && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 3, fontWeight: 600 }}>{roomDisplay}</div>}
+      <div style={{ maxWidth: "100%", fontSize: compact ? 15 : 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+      {breed && <div style={{ maxWidth: "100%", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{breed}</div>}
+      <div style={{ maxWidth: "100%", fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ownerLast}</div>
+      {roomDisplay && <div style={{ maxWidth: "100%", fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 3, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{roomDisplay}</div>}
     </div>
   );
 });
@@ -1423,6 +1515,9 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const [tvSettings, setTvSettings] = useState(DEFAULT_TV_SETTINGS);
   const [checkoutHealth, setCheckoutHealth] = useState(() => createInitialCheckoutHealth());
   const nowMs = now.getTime();
+  const viewport = useCheckoutTvViewport();
+  const isCompactTv = viewport.width <= 1500 || viewport.height <= 850;
+  const isShortTv = viewport.height <= 760;
 
   useEffect(() => {
     try {
@@ -1517,6 +1612,56 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const bohSnapshotFreshnessLoadedRef = useRef(false);
   const suppressNextBohTransitionsRef = useRef(false);
   const lastTvPollRef = useRef(0);
+  const previousBohDogCountRef = useRef(null);
+  const recentNoticeByAnimalRef = useRef(new Map());
+  const facilityPresence = useFacilityPresence(tvLocationId, {
+    enabled: Boolean(tvLocationId),
+    pollMs: BOH_DIFF_INTERVAL_MS,
+    runSync: true,
+  });
+  const canonicalPresenceAvailable = facilityPresence.available && Boolean(facilityPresence.latestSync);
+
+  const recordNoticeAnimals = useCallback((entries, type, firedAt = Date.now()) => {
+    const recentMap = recentNoticeByAnimalRef.current;
+    entries.forEach(entry => {
+      getNoticeAnimalIds(entry).forEach(animalId => {
+        recentMap.set(animalId, { type, firedAt });
+      });
+    });
+
+    const oldestAllowed = firedAt - (noticeDurationMs + FADE_DURATION_MS + NOTICE_REPEAT_SUPPRESSION_MS);
+    for (const [animalId, notice] of recentMap.entries()) {
+      if (notice.firedAt < oldestAllowed) recentMap.delete(animalId);
+    }
+  }, [noticeDurationMs]);
+
+  useEffect(() => {
+    if (!facilityPresence.available) return;
+    const status = facilityPresence.status === "critical" ? "critical" : "healthy";
+    updateHealthSection("boh", {
+      status,
+      lastSuccessAt: facilityPresence.lastFetchedAt || new Date().toISOString(),
+      nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+      error: facilityPresence.error,
+      details: {
+        Source: "Canonical facility_presence",
+        "In House": facilityPresence.counts.inHouse,
+        "Checking In": facilityPresence.counts.pendingArrivals,
+        "Going Home": facilityPresence.counts.goingHome,
+        Events: facilityPresence.recentEvents.length,
+        "Latest Run": facilityPresence.latestSync?.started_at || "pending",
+      },
+    });
+  }, [
+    facilityPresence.available,
+    facilityPresence.status,
+    facilityPresence.lastFetchedAt,
+    facilityPresence.error,
+    facilityPresence.counts,
+    facilityPresence.recentEvents.length,
+    facilityPresence.latestSync,
+    updateHealthSection,
+  ]);
 
   /* ── TV-POLL: Supabase reconciliation sync ──────────────────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile
@@ -1524,6 +1669,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
    * (with 10s dedup guard to prevent stacking).
    * ──────────────────────────────────────────────────────────────────── */
   const triggerTvPoll = useCallback(async () => {
+    if (canonicalPresenceAvailable) return;
     if (!tvLocationId) return;
     const now = Date.now();
     if (now - lastTvPollRef.current < 10_000) return;
@@ -1565,20 +1711,23 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         error: e?.message || "tv-poll failed",
       });
     }
-  }, [tvLocationId, refreshData, updateHealthSection]);
+  }, [canonicalPresenceAvailable, tvLocationId, refreshData, updateHealthSection]);
 
   useEffect(() => {
+    if (canonicalPresenceAvailable) return undefined;
     const initTimer = setTimeout(triggerTvPoll, 5000);
     const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL_MS);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
-  }, [triggerTvPoll]);
+  }, [canonicalPresenceAvailable, triggerTvPoll]);
 
   /* ── BOH-DIFF: Server-side transition detection ────────────────────── */
   useEffect(() => {
+    if (canonicalPresenceAvailable) return undefined;
     if (!tvLocationId) return;
     let cancelled = false;
     bohSnapshotFreshnessLoadedRef.current = false;
     suppressNextBohTransitionsRef.current = false;
+    previousBohDogCountRef.current = null;
 
     const loadSnapshotFreshness = async () => {
       if (bohSnapshotFreshnessLoadedRef.current) return suppressNextBohTransitionsRef.current;
@@ -1628,10 +1777,20 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           throw new Error(error?.message || resp?.error || "boh-diff returned an unsuccessful response");
         }
 
+        const previousBohDogCount = previousBohDogCountRef.current;
+        const normalizedTransitions = normalizeBohTransitionGroups({
+          arrivals: resp.arrivals || [],
+          departures: resp.departures || [],
+          currentDogCount: resp.dog_count,
+          previousDogCount: previousBohDogCount,
+        });
+        if (Number.isFinite(Number(resp.dog_count))) {
+          previousBohDogCountRef.current = Number(resp.dog_count);
+        }
         setGingrActiveDogCount(resp.dog_count || 0);
 
-        const rawArrivals = resp.arrivals || [];
-        const rawDepartures = resp.departures || [];
+        const rawArrivals = normalizedTransitions.arrivals;
+        const rawDepartures = normalizedTransitions.departures;
         updateHealthSection("boh", {
           status: "healthy",
           lastSuccessAt: new Date().toISOString(),
@@ -1643,6 +1802,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             "Checking In": rawArrivals.length,
             "Checking Out": rawDepartures.length,
             "Backlog Suppressed": suppressTransitions ? "yes" : "no",
+            Correction: normalizedTransitions.correction || "none",
           },
         });
 
@@ -1665,6 +1825,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             firedAt,
             durationMs: noticeDurationMs,
           }));
+          recordNoticeAnimals(grouped, "in", firedAt);
           setCheckingInRaw(p => {
             const existing = new Set(p.map(e => e.id));
             return [...p, ...grouped.filter(g => !existing.has(g.id))];
@@ -1679,6 +1840,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             firedAt,
             durationMs: noticeDurationMs,
           }));
+          recordNoticeAnimals(grouped, "out", firedAt);
           setCheckingOutRaw(p => {
             const existing = new Set(p.map(e => e.id));
             return [...p, ...grouped.filter(g => !existing.has(g.id))];
@@ -1715,7 +1877,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [tvLocationId, triggerTvPoll, noticeDurationMs, updateHealthSection]);
+  }, [canonicalPresenceAvailable, tvLocationId, triggerTvPoll, noticeDurationMs, updateHealthSection, recordNoticeAnimals]);
 
   /* ── Grid data: Supabase is the sole source of truth ─────────────── *
    * All checked-in dog data comes from Supabase tables (synced by the
@@ -1723,8 +1885,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
    * for hero card notifications and triggers immediate Supabase syncs.
    * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
-    return { reservations: baseReservations, dogs: baseDogs };
-  }, [baseReservations, baseDogs]);
+    return {
+      reservations: canonicalPresenceAvailable ? facilityPresence.reservations : baseReservations,
+      dogs: baseDogs,
+    };
+  }, [canonicalPresenceAvailable, facilityPresence.reservations, baseReservations, baseDogs]);
 
   /* ── Fetch animal profile icons (photos) from Supabase ────────────── */
   const [animalIcons, setAnimalIcons] = useState({}); // keyed by animal_gingr_id
@@ -2310,6 +2475,155 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   // Derived display state — recomputed every tick
   const [checkingOut, setCheckingOut] = useState([]);
   const [checkingIn, setCheckingIn] = useState([]);
+  const processedPresenceEventIdsRef = useRef(new Set());
+  const presenceEventsInitializedRef = useRef(false);
+
+  const checkedInNoticeMap = useMemo(() => {
+    const dogById = new Map(dogs.map(dog => [dog.id, dog]));
+    const clientById = new Map(clients.map(client => [client.id, client]));
+    const map = new Map();
+
+    for (const res of uniqueDogs) {
+      const dog = dogById.get(res.dogId);
+      const animalId = getReservationAnimalId(res, dog);
+      if (!animalId) continue;
+      map.set(animalId, {
+        animalId,
+        res,
+        dog,
+        client: clientById.get(res.clientId),
+      });
+    }
+
+    return map;
+  }, [uniqueDogs, dogs, clients]);
+  const previousCheckedInNoticeMapRef = useRef(null);
+
+  useEffect(() => {
+    previousCheckedInNoticeMapRef.current = null;
+    recentNoticeByAnimalRef.current.clear();
+    processedPresenceEventIdsRef.current.clear();
+    presenceEventsInitializedRef.current = false;
+  }, [locationId]);
+
+  useEffect(() => {
+    if (!canonicalPresenceAvailable) return;
+    const events = facilityPresence.recentEvents || [];
+    const seen = processedPresenceEventIdsRef.current;
+
+    if (!presenceEventsInitializedRef.current) {
+      events.forEach(event => {
+        if (event.id) seen.add(event.id);
+      });
+      presenceEventsInitializedRef.current = true;
+      return;
+    }
+
+    const newCheckIns = [];
+    const newCheckOuts = [];
+    const firedAt = Date.now();
+
+    for (const event of [...events].reverse()) {
+      if (!event.id || seen.has(event.id)) continue;
+      seen.add(event.id);
+      const group = mapPresenceEventToNoticeGroup(event, { firedAt, durationMs: noticeDurationMs });
+      if (!group) continue;
+      if (event.eventType === "checked_in") newCheckIns.push(group);
+      if (event.eventType === "checked_out") newCheckOuts.push(group);
+    }
+
+    if (newCheckIns.length > 0) {
+      recordNoticeAnimals(newCheckIns, "in", firedAt);
+      setCheckingInRaw(prev => {
+        const existing = new Set(prev.map(entry => entry.id));
+        return [...prev, ...newCheckIns.filter(entry => !existing.has(entry.id))];
+      });
+    }
+
+    if (newCheckOuts.length > 0) {
+      recordNoticeAnimals(newCheckOuts, "out", firedAt);
+      setCheckingOutRaw(prev => {
+        const existing = new Set(prev.map(entry => entry.id));
+        return [...prev, ...newCheckOuts.filter(entry => !existing.has(entry.id))];
+      });
+    }
+  }, [canonicalPresenceAvailable, facilityPresence.recentEvents, noticeDurationMs, recordNoticeAnimals]);
+
+  useEffect(() => {
+    const previousMap = previousCheckedInNoticeMapRef.current;
+    if (previousMap === null) {
+      previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
+      return;
+    }
+
+    const arrivals = [];
+    const departures = [];
+    for (const [animalId, record] of checkedInNoticeMap.entries()) {
+      if (!previousMap.has(animalId)) arrivals.push(record);
+    }
+    for (const [animalId, record] of previousMap.entries()) {
+      if (!checkedInNoticeMap.has(animalId)) departures.push(record);
+    }
+
+    if (arrivals.length === 0 && departures.length === 0) {
+      previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
+      return;
+    }
+
+    const enqueueFallback = (records, type) => {
+      if (records.length === 0) return;
+      const firedAt = Date.now();
+      const groups = groupReservationNoticeEntries(records, { firedAt, durationMs: noticeDurationMs });
+      const recentMap = recentNoticeByAnimalRef.current;
+      const groupsToAdd = [];
+      const conflictingAnimalIds = new Set();
+
+      for (const group of groups) {
+        const animalIds = getNoticeAnimalIds(group);
+        const allAnimalsAlreadyAnnounced = animalIds.length > 0 && animalIds.every(animalId => {
+          const recent = recentMap.get(animalId);
+          return recent?.type === type && firedAt - recent.firedAt < NOTICE_REPEAT_SUPPRESSION_MS;
+        });
+
+        for (const animalId of animalIds) {
+          const recent = recentMap.get(animalId);
+          if (recent?.type && recent.type !== type && firedAt - recent.firedAt < OPPOSITE_NOTICE_REPLACE_MS) {
+            conflictingAnimalIds.add(animalId);
+          }
+        }
+
+        if (!allAnimalsAlreadyAnnounced) groupsToAdd.push(group);
+      }
+
+      if (groupsToAdd.length === 0) return;
+
+      if (conflictingAnimalIds.size > 0) {
+        if (type === "in") {
+          setCheckingOutRaw(prev => prev.filter(entry => !noticeTouchesAnimalIds(entry, conflictingAnimalIds)));
+        } else {
+          setCheckingInRaw(prev => prev.filter(entry => !noticeTouchesAnimalIds(entry, conflictingAnimalIds)));
+        }
+      }
+
+      recordNoticeAnimals(groupsToAdd, type, firedAt);
+
+      if (type === "in") {
+        setCheckingInRaw(prev => {
+          const existing = new Set(prev.map(entry => entry.id));
+          return [...prev, ...groupsToAdd.filter(entry => !existing.has(entry.id))];
+        });
+      } else {
+        setCheckingOutRaw(prev => {
+          const existing = new Set(prev.map(entry => entry.id));
+          return [...prev, ...groupsToAdd.filter(entry => !existing.has(entry.id))];
+        });
+      }
+    };
+
+    enqueueFallback(arrivals, "in");
+    enqueueFallback(departures, "out");
+    previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
+  }, [checkedInNoticeMap, noticeDurationMs, recordNoticeAnimals]);
 
   // Single tick drives all notice countdowns
   useEffect(() => {
@@ -2442,25 +2756,25 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   /* DogCard is now extracted outside the component body — see above */
   // Shared props for all DogCard instances (avoids repeating in 6+ places)
   const dogCardProps = useMemo(() => ({
-    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds,
-  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds]);
+    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, compact: isCompactTv,
+  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, isCompactTv]);
 
   /* ── TV-003: Enhanced Section Label with dog count and colored accent ── */
   const SectionLabel = ({ label, count, color, subtitle }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, marginTop: 28 }}>
-      <div style={{ width: 6, height: 32, borderRadius: 3, background: color }} />
+    <div style={{ display: "flex", alignItems: "center", gap: isCompactTv ? 10 : 12, marginBottom: isCompactTv ? 12 : 16, marginTop: isCompactTv ? 22 : 28 }}>
+      <div style={{ width: 6, height: isCompactTv ? 28 : 32, borderRadius: 3, background: color, flexShrink: 0 }} />
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
+          <div style={{ fontSize: isCompactTv ? 19 : 22, fontWeight: 900, color: "#fff", letterSpacing: 0 }}>{label}</div>
           <div style={{
-            fontSize: 18, fontWeight: 800, color, background: `${color}22`,
-            padding: "2px 12px", borderRadius: 8,
+            fontSize: isCompactTv ? 16 : 18, fontWeight: 800, color, background: `${color}22`,
+            padding: isCompactTv ? "1px 10px" : "2px 12px", borderRadius: 8,
           }}>
             {count}
           </div>
         </div>
         {subtitle && (
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", fontWeight: 600, marginTop: 2 }}>{subtitle}</div>
+          <div style={{ fontSize: isCompactTv ? 11 : 12, color: "rgba(255,255,255,0.35)", fontWeight: 600, marginTop: 2 }}>{subtitle}</div>
         )}
       </div>
     </div>
@@ -2488,39 +2802,52 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
   // Get accent color & label for filtered view
   const filteredViewMeta = NAV_VIEWS.find(v => v.id === activeView);
+  const rootPadding = isShortTv ? "14px 20px" : isCompactTv ? "18px 24px" : "32px 40px";
+  const dogGridStyle = {
+    display: "grid",
+    gridTemplateColumns: `repeat(auto-fill, minmax(${isCompactTv ? 132 : 150}px, 1fr))`,
+    gap: isCompactTv ? 10 : 12,
+    alignItems: "start",
+  };
 
   return (
     <div ref={tvRootRef} style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
-      padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
+      padding: rootPadding, fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
+      boxSizing: "border-box",
     }}>
       {/* Header — K9 Operations branding */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: isCompactTv ? 6 : 8, gap: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isCompactTv ? 12 : 16, minWidth: 0 }}>
           {/* K9 Operations logo icon (white for dark bg) */}
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="163.70 160.20 678.60 678.60" style={{ width: 48, height: 48, flexShrink: 0 }}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="163.70 160.20 678.60 678.60" style={{ width: isCompactTv ? 42 : 48, height: isCompactTv ? 42 : 48, flexShrink: 0 }}>
             <g transform="translate(0,1024) scale(0.1,-0.1)" fill="#84CC16" stroke="none">
               <path d="M5710 7969 c-414 -27 -846 -110 -1098 -210 -265 -105 -456 -268 -513-438 -29 -86 -19 -111 46 -111 51 0 141 29 230 73 l60 29 -25 -27 c-79 -86-250 -164 -455 -208 -158 -35 -260 -40 -545 -31 -490 15 -595 10 -800 -38-107 -25 -251 -93 -312 -147 -127 -113 -173 -275 -133 -463 7 -37 21 -79 29-95 15 -27 15 -25 16 60 0 51 4 87 10 87 6 0 10 -17 10 -37 0 -96 52 -308 134-550 19 -57 32 -103 30 -103 -10 0 -74 149 -104 242 -17 51 -33 100 -36 108-8 22 -38 -32 -68 -122 -42 -124 -67 -293 -73 -498 -19 -618 159 -1097 489-1316 67 -45 97 -54 62 -19 -30 29 -123 206 -154 293 -79 219 -77 465 6 599 10 15 33 44 51 64 l34 35 -25 55 c-31 68 -72 216 -91 334 -16 97 -20 221 -7 229 4 2 18 -45 30 -106 46 -224 124 -422 201 -510 29 -32 72 -63 138 -97 125-66 228 -136 393 -267 430 -340 698 -468 1135 -541 84 -14 160 -18 320 -17 215 1 281 9 502 61 40 9 75 14 78 11 11 -11 -7 -56 -37 -92 -127 -154 -504-153 -998 3 -52 17 -96 29 -98 27 -4 -5 77 -50 173 -95 341 -162 704 -218 922-141 229 80 307 285 193 510 -56 110 -121 193 -434 549 -69 79 -126 146 -126 148 0 7 22 -10 84 -65 73 -64 224 -160 371 -237 177 -92 257 -146 345 -235 81-81 140 -177 140 -229 0 -17 5 -31 10 -31 6 0 10 30 10 70 0 78 -23 152 -69 220 -38 56 -138 158 -176 178 -26 14 -27 16 -10 20 46 8 217 67 310 108 324 139 604 361 779 618 122 179 173 338 256 801 62 347 100 485 173 630 154 310 406 498 774 581 l81 18 -66 29 c-78 33 -294 106 -402 136 -201 55 -483 104-790 137 -173 18 -779 27 -980 13z m-2468 -973 c142 -42 242 -106 277 -179 12-24 21 -54 21 -68 0 -33 -19 -99 -29 -99 -4 0 -13 22 -20 50 -9 34 -27 66 -58 100 -83 92 -330 193 -506 207 -43 3 -80 11 -84 16 -4 7 48 8 153 4 129 -4 175-10 246 -31z m-529 -359 c18 -8 39 -22 47 -32 14 -18 14 -18 -10 -2 -14 9 -43 19 -65 22 -36 6 -45 3 -73 -23 -41 -38 -41 -61 1 -165 86 -212 179 -287 322-257 140 29 343 165 472 318 29 34 53 60 53 57 0 -35 -136 -222 -208 -287-282 -252 -600 -248 -720 11 -37 77 -43 210 -14 267 46 89 118 123 195 91z M2633 5000 c-106 -64 -125 -336 -39 -563 86 -229 310 -432 583 -531 140 -50 211 -60 565 -85 116 -8 134 -12 200 -44 88 -42 238 -166 337 -277 39 -44 135-160 213 -258 277 -345 478 -564 628 -683 69 -55 82 -57 20 -3 -187 164 -357 364 -615 724 -194 270 -256 351 -335 434 -41 44 -68 77 -60 74 9 -3 52 -16 95-28 133 -37 335 -124 430 -185 93 -59 101 -57 30 10 -119 111 -301 228 -427 274 -145 54 -254 70 -538 81 -129 5 -270 16 -313 24 -291 57 -503 208 -617 439 -27 56 -57 129 -65 162 -28 109 -15 217 27 231 61 19 191 -39 428 -189 74-47 136 -84 138 -82 9 9 -272 264 -428 390 -129 104 -192 125 -257 85z"/>
             </g>
           </svg>
-          <div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Operations</div>
-            <div style={{ fontSize: 12, color: "rgba(132,204,22,0.6)", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1 }}>The Operating System for Pet Care Facilities</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: isCompactTv ? 24 : 28, fontWeight: 900, color: "#fff", letterSpacing: 0, whiteSpace: "nowrap" }}>K9 Operations</div>
+            <div style={{ fontSize: isCompactTv ? 10 : 12, color: "rgba(132,204,22,0.6)", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>The Operating System for Pet Care Facilities</div>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{dateStr}</div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: isCompactTv ? 31 : 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums", lineHeight: 1.05 }}>{timeStr}</div>
+          <div style={{ fontSize: isCompactTv ? 12 : 13, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{dateStr}</div>
         </div>
       </div>
 
       {/* TV-005: Navigation bar — large, touch-friendly buttons */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "12px 0", marginBottom: 4,
+        display: "grid",
+        gridTemplateColumns: isCompactTv
+          ? "repeat(7, minmax(0, 1fr)) minmax(82px, auto) 44px"
+          : "repeat(7, minmax(150px, 1fr)) minmax(120px, auto) 48px",
+        alignItems: "stretch",
+        gap: isCompactTv ? 8 : 10,
+        padding: isCompactTv ? "10px 0" : "12px 0", marginBottom: 4,
         borderTop: "1px solid rgba(255,255,255,0.06)",
         borderBottom: "1px solid rgba(255,255,255,0.06)",
-        overflowX: "auto",
+        overflow: "hidden",
         animation: "tvNavFadeIn 0.4s ease-out",
       }}>
         {NAV_VIEWS.map(view => (
@@ -2530,40 +2857,39 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             isActive={activeView === view.id}
             count={viewCounts[view.id]}
             onClick={() => handleViewChange(view.id)}
+            compact={isCompactTv}
           />
         ))}
 
-        <div style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
-          <CheckoutTvHealthButton status={checkoutHealthStatus} onClick={() => setHealthOpen(true)} />
-          <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)}>
-            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
-              <path d="M19.4 15a1.9 1.9 0 0 0 .38 2.1l.06.06a2.3 2.3 0 0 1-3.25 3.25l-.06-.06a1.9 1.9 0 0 0-2.1-.38 1.9 1.9 0 0 0-1.15 1.74V22a2.3 2.3 0 0 1-4.6 0v-.09A1.9 1.9 0 0 0 7.54 20a1.9 1.9 0 0 0-2.1.38l-.06.06a2.3 2.3 0 1 1-3.25-3.25l.06-.06A1.9 1.9 0 0 0 2.56 15a1.9 1.9 0 0 0-1.74-1.15H.73a2.3 2.3 0 1 1 0-4.6h.09A1.9 1.9 0 0 0 2.56 8a1.9 1.9 0 0 0-.38-2.1l-.06-.06a2.3 2.3 0 1 1 3.25-3.25l.06.06A1.9 1.9 0 0 0 7.54 3a1.9 1.9 0 0 0 1.15-1.74V1.2a2.3 2.3 0 1 1 4.6 0v.09A1.9 1.9 0 0 0 14.46 3a1.9 1.9 0 0 0 2.1-.38l.06-.06a2.3 2.3 0 1 1 3.25 3.25l-.06.06A1.9 1.9 0 0 0 19.44 8c.21.73.88 1.24 1.64 1.24h.19a2.3 2.3 0 1 1 0 4.6h-.19A1.9 1.9 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </CheckoutTvActionButton>
-        </div>
+        <CheckoutTvHealthButton status={checkoutHealthStatus} onClick={() => setHealthOpen(true)} compact={isCompactTv} />
+        <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)} compact={isCompactTv}>
+          <svg width={isCompactTv ? "19" : "21"} height={isCompactTv ? "19" : "21"} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
+            <path d="M19.4 15a1.9 1.9 0 0 0 .38 2.1l.06.06a2.3 2.3 0 0 1-3.25 3.25l-.06-.06a1.9 1.9 0 0 0-2.1-.38 1.9 1.9 0 0 0-1.15 1.74V22a2.3 2.3 0 0 1-4.6 0v-.09A1.9 1.9 0 0 0 7.54 20a1.9 1.9 0 0 0-2.1.38l-.06.06a2.3 2.3 0 1 1-3.25-3.25l.06-.06A1.9 1.9 0 0 0 2.56 15a1.9 1.9 0 0 0-1.74-1.15H.73a2.3 2.3 0 1 1 0-4.6h.09A1.9 1.9 0 0 0 2.56 8a1.9 1.9 0 0 0-.38-2.1l-.06-.06a2.3 2.3 0 1 1 3.25-3.25l.06.06A1.9 1.9 0 0 0 7.54 3a1.9 1.9 0 0 0 1.15-1.74V1.2a2.3 2.3 0 1 1 4.6 0v.09A1.9 1.9 0 0 0 14.46 3a1.9 1.9 0 0 0 2.1-.38l.06-.06a2.3 2.3 0 1 1 3.25 3.25l-.06.06A1.9 1.9 0 0 0 19.44 8c.21.73.88 1.24 1.64 1.24h.19a2.3 2.3 0 1 1 0 4.6h-.19A1.9 1.9 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </CheckoutTvActionButton>
       </div>
 
       {/* Stats bar — Icon-based classification counts */}
-      <div style={{ display: "flex", gap: 24, padding: "10px 0", marginBottom: 8, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
+      <div style={{ display: "flex", gap: isCompactTv ? 16 : 24, padding: isCompactTv ? "8px 0" : "10px 0", marginBottom: isCompactTv ? 6 : 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
+        <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>
           Large: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{viewCounts["large-daycare"]}</span>
         </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
+        <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>
           Small: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{viewCounts["small-daycare"]}</span>
         </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>PP: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"]}</span></div>
-        {viewCounts["evaluation"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Eval: <span style={{ fontWeight: 800, color: "#EAB308" }}>{viewCounts["evaluation"]}</span></div>}
-        {viewCounts["both-daycares"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Both: <span style={{ fontWeight: 800, color: SIZE_THEME.both_daycares.accent }}>{viewCounts["both-daycares"]}</span></div>}
-        {viewCounts["unclassified"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Unclassified: <span style={{ fontWeight: 800, color: "#6B7280" }}>{viewCounts["unclassified"]}</span></div>}
+        <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>PP: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"]}</span></div>
+        {viewCounts["evaluation"] > 0 && <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>Eval: <span style={{ fontWeight: 800, color: "#EAB308" }}>{viewCounts["evaluation"]}</span></div>}
+        {viewCounts["both-daycares"] > 0 && <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>Both: <span style={{ fontWeight: 800, color: SIZE_THEME.both_daycares.accent }}>{viewCounts["both-daycares"]}</span></div>}
+        {viewCounts["unclassified"] > 0 && <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)" }}>Unclassified: <span style={{ fontWeight: 800, color: "#6B7280" }}>{viewCounts["unclassified"]}</span></div>}
         {hasCheckIns && (
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
+          <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
             Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{viewCheckingIn.filter(e => !e.fading).length}</span>
           </div>
         )}
         {hasCheckouts && (
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckIns ? 0 : "auto" }}>
+          <div style={{ fontSize: isCompactTv ? 13 : 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckIns ? 0 : "auto" }}>
             Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCheckingOut.filter(e => !e.fading).length}</span>
           </div>
         )}
@@ -2577,6 +2903,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             overflowNotices={overflowNotices}
             density={tvSettings.photoDensity}
             showDetails={tvSettings.showNoticeDetails}
+            compactLayout={isCompactTv}
           />
         ) : (
           <div style={{
@@ -2633,7 +2960,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                     `${filteredDogList.length} dogs`
                   }
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {filteredDogList.map(r => (
                     <DogCard
                       key={r.id}
@@ -2672,7 +2999,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color={SIZE_THEME.large.accent}
                   subtitle={`${largeDaycare.length} dogs`}
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {largeDaycare.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="large" />)}
                 </div>
               </div>
@@ -2687,7 +3014,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color={SIZE_THEME.small.accent}
                   subtitle={`${smallDaycare.length} dogs`}
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {smallDaycare.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="small" />)}
                 </div>
               </div>
@@ -2702,7 +3029,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color="#EF4444"
                   subtitle={`${privatePlayDogs.length} dogs`}
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {privatePlayDogs.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="private_play" />)}
                 </div>
               </div>
@@ -2716,7 +3043,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   count={viewCounts["evaluation"]}
                   color="#EAB308"
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {evaluationDogs.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="evaluation" />)}
                 </div>
               </div>
@@ -2731,7 +3058,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color={SIZE_THEME.both_daycares.accent}
                   subtitle="Has both large and small daycare icons"
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {bothDaycareDogs.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="both_daycares" />)}
                 </div>
               </div>
@@ -2746,7 +3073,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color="#6B7280"
                   subtitle="No play icon assigned in Gingr"
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                <div style={dogGridStyle}>
                   {unclassifiedDogs.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="unclassified" />)}
                 </div>
               </div>

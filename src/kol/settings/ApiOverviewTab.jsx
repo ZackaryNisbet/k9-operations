@@ -36,10 +36,10 @@ const SYNC_TYPES = [
     frequency: "manual",
   },
   {
-    key: "tv-poll",
-    label: "TV Live Poll (back_of_house)",
-    entities: ["back_of_house"],
-    desc: "Client-side direct poll to Gingr's Digital Whiteboard API. Returns checking_in/checking_out with real room assignments. Used by the Checkout TV.",
+    key: "presence-sync",
+    label: "Presence Sync",
+    entities: ["reservations", "back_of_house", "facility_presence"],
+    desc: "Server-side checked-in reconciliation that writes the canonical current-presence snapshot and check-in/check-out event ledger.",
     frequency: "configurable",
   },
   {
@@ -183,11 +183,11 @@ function ApiOverviewTab() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{st.label}</div>
                 <div style={{
                   fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6,
-                  background: st.key === "incremental" ? C.priLt : st.key === "tv-poll" ? C.infoLt : C.bg,
-                  color: st.key === "incremental" ? C.pri : st.key === "tv-poll" ? C.info : C.textSec,
-                  border: `1px solid ${st.key === "incremental" ? C.pri + "30" : st.key === "tv-poll" ? C.info + "30" : C.borderLight}`,
+                  background: st.key === "incremental" ? C.priLt : st.key === "presence-sync" ? C.infoLt : C.bg,
+                  color: st.key === "incremental" ? C.pri : st.key === "presence-sync" ? C.info : C.textSec,
+                  border: `1px solid ${st.key === "incremental" ? C.pri + "30" : st.key === "presence-sync" ? C.info + "30" : C.borderLight}`,
                 }}>
-                  {st.key === "incremental" ? `Every ${interval} min` : st.key === "tv-poll" ? `Every ${tvInterval}s` : st.frequency}
+                  {st.key === "incremental" ? `Every ${interval} min` : st.key === "presence-sync" ? `Every ${tvInterval}s` : st.frequency}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginBottom: 8, lineHeight: 1.5 }}>{st.desc}</div>
