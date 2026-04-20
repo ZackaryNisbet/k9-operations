@@ -185,6 +185,7 @@ const DEFAULT_ROLL_CALL_AREA_ORDER = [
   "Single Compartments",
   "Double Compartments",
   "Temporary Lodging",
+  "Unassigned",
   "Other",
 ];
 
