@@ -1605,6 +1605,16 @@ async function computeLodgingTransfers(
 
 // ─── Main handler ──────────────────────────────────────────────────────────
 
+function parseJwtClaims(token: string) {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    return JSON.parse(atob(parts[1]));
+  } catch {
+    return null;
+  }
+}
+
 async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey: string) {
   const authHeader = req.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
@@ -1617,6 +1627,8 @@ async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey
   }
 
   if (token === serviceRoleKey) return null;
+  const claims = parseJwtClaims(token);
+  if (claims?.role === "service_role") return null;
 
   const { data, error } = await sb.auth.getUser(token);
   if (error || !data?.user) {
