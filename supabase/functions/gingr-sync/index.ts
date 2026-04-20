@@ -13,6 +13,11 @@ import {
   upsertAnimalIconsFromGingr,
 } from "../_shared/gingr-icons.ts";
 import {
+  DEFAULT_PLAYGROUP_ASSIGNMENT_COLUMNS,
+  fetchPlaygroupAssignments,
+  type PlaygroupAssignment,
+} from "../_shared/playgroup-assignments.ts";
+import {
   fetchFeedingRowsForAnimals,
   fetchMedicationRowsForAnimals,
 } from "../_shared/gingr-operational-details.ts";
@@ -1527,6 +1532,106 @@ async function syncAnimalIcons(
   return { synced: result.synced, animals: result.animals };
 }
 
+function normalizeAnimalIds(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(
+    values
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function resolveLocationId(
+  supabase: any,
+  locationRef: string,
+  locationSlug?: string | null,
+): Promise<string> {
+  const ref = String(locationRef || "").trim();
+  const slug = String(locationSlug || "").trim();
+
+  if (isUuid(ref)) return ref;
+
+  const lookupSlug = slug || ref;
+  if (!lookupSlug) return ref;
+
+  const { data, error } = await supabase
+    .from("locations")
+    .select("id")
+    .eq("slug", lookupSlug)
+    .maybeSingle();
+
+  if (error) {
+    console.warn(`Location slug resolution failed for ${lookupSlug}: ${error.message}`);
+    return ref;
+  }
+
+  return data?.id || ref;
+}
+
+function serializePlaygroupAssignment(assignment: PlaygroupAssignment) {
+  return {
+    animal_gingr_id: assignment.animalGingrId,
+    size_group: assignment.sizeGroup,
+    has_private_play: assignment.hasPrivatePlay,
+    has_evaluation: assignment.hasEvaluation,
+    is_half_and_half: assignment.isHalfAndHalf,
+    primary_display_playgroup: assignment.primaryDisplayPlaygroup,
+    scheduling_playgroup: assignment.schedulingPlaygroup,
+    playgroup_tags: assignment.playgroupTags,
+    source_icon_titles: assignment.sourceIconTitles,
+    source_icon_comments: assignment.sourceIconComments,
+    half_and_half_note: assignment.halfAndHalfNote,
+    unresolved_reason: assignment.unresolvedReason,
+  };
+}
+
+async function fetchTvPlaygroupAssignments({
+  supabase,
+  subdomain,
+  apiKey,
+  locationId,
+  animalIds,
+}: {
+  supabase: any;
+  subdomain: string;
+  apiKey: string;
+  locationId: string;
+  animalIds: string[];
+}) {
+  const loadAssignments = async () => fetchPlaygroupAssignments({
+    supabase,
+    locationId,
+    animalIds,
+    columns: DEFAULT_PLAYGROUP_ASSIGNMENT_COLUMNS,
+  });
+
+  let assignments = await loadAssignments();
+  let iconsResult = { synced: 0, animals: 0 };
+
+  if (assignments.length === 0) {
+    iconsResult = animalIds.length > 0
+      ? await upsertAnimalIconsFromGingr({
+          supabase,
+          locationId,
+          gingrConfig: { subdomain, apiKey },
+          animalIds,
+        })
+      : await syncAnimalIcons(supabase, subdomain, apiKey, locationId);
+
+    assignments = await loadAssignments();
+  }
+
+  return {
+    assignments: assignments.map(serializePlaygroupAssignment),
+    icons_synced: iconsResult.synced,
+    icon_animals_synced: iconsResult.animals,
+  };
+}
+
 // ─── Mass Icon Pull — ALL animals in gingr_animals ───────────────────────
 // Used for location initialization or backfill. Fetches icons for every
 // animal in the database, not just checked-in dogs. Gingr's get_icons API
@@ -2066,7 +2171,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { location_id, sync_type = "full", entities, test_credentials } = await req.json();
+    let { location_id, sync_type = "full", entities, test_credentials, animal_ids, location_slug } = await req.json();
 
     if (!location_id) {
       return new Response(JSON.stringify({ error: "location_id required" }), {
@@ -2079,6 +2184,7 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    location_id = await resolveLocationId(supabase, location_id, location_slug);
 
     // ── Test mode: just verify Gingr connection, no DB writes ──
     if (sync_type === "test") {
@@ -2126,6 +2232,35 @@ Deno.serve(async (req: Request) => {
     }
 
     const { api_key, subdomain, gingr_location_id } = gingrConfig;
+
+    // ── Checkout TV playgroup assignments ────────────────────────────────
+    // Reads the canonical assignment view with the service client. If the
+    // synced icon rows are empty or incomplete for the requested dogs, refresh
+    // only those GINGR icon assignments, then read the canonical view again.
+    if (sync_type === "playgroup-assignments") {
+      const startTime = Date.now();
+      const animalIds = normalizeAnimalIds(animal_ids);
+      const result = await fetchTvPlaygroupAssignments({
+        supabase,
+        subdomain,
+        apiKey: api_key,
+        locationId: location_id,
+        animalIds,
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sync_type: "playgroup-assignments",
+          requested_animals: animalIds.length,
+          assignments: result.assignments,
+          icons_synced: result.icons_synced,
+          icon_animals_synced: result.icon_animals_synced,
+          duration_ms: Date.now() - startTime,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // ── BOH-DIFF: Ultra-lean server-side BOH transition detection ──────────
     // Single Gingr API call, diffs against boh_snapshot table, returns
