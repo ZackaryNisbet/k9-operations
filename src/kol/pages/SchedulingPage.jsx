@@ -117,6 +117,10 @@ const MATRIX_GROUP_TEMPLATES = [
       { key: "support.evening_feeding_dogs", label: "Evening Feeding Dogs" },
       { key: "support.medication_dogs", label: "Medication Dogs" },
       { key: "support.total_dog_volume", label: "Total Dog Volume", total: true },
+      { key: "play_yard.large_play_dogs", label: "Large Play Demand", alwaysVisible: true },
+      { key: "play_yard.small_play_dogs", label: "Small Play Demand", alwaysVisible: true },
+      { key: "play_yard.private_play_dogs", label: "Private Play Demand", alwaysVisible: true },
+      { key: "play_yard.split_play_dogs", label: "Split Play Demand", optional: true, alwaysVisible: true },
       { key: "comparison.last_year_total_dog_volume", label: "Last Year Total Dog Volume", optional: true, comparison: true },
       { key: "support.tours", label: "Tours" },
     ],
@@ -523,6 +527,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [scheduleView, setScheduleView] = useState("optimal");
+  const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
 
   // Version & override state
   const [savedVersions, setSavedVersions] = useState([]);
@@ -551,6 +556,18 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     [weekData]
   );
   const matrixRowGroups = useMemo(() => buildMatrixRowGroups(workbookDays), [workbookDays]);
+  const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
+  const toggleMatrixGroup = useCallback((section) => {
+    setExpandedMatrixGroups((current) => {
+      const next = new Set(current);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  }, []);
+  const toggleAllMatrixGroups = useCallback(() => {
+    setExpandedMatrixGroups(allMatrixGroupsExpanded ? new Set() : new Set(matrixRowGroups.map((group) => group.section)));
+  }, [allMatrixGroupsExpanded, matrixRowGroups]);
   const auditByDate = useMemo(
     () => new Map((auditResult?.days || []).map((day) => [day.date, day])),
     [auditResult]
@@ -855,6 +872,26 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             <Btn variant="secondary" size="sm" onClick={handleRunAudit} disabled={auditRunning || loading}>
               {auditRunning ? "Running Audit…" : "Run Audit"}
             </Btn>
+            <button
+              onClick={toggleAllMatrixGroups}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: C.surface,
+                color: C.text,
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              <span style={{ display: "flex", transform: allMatrixGroupsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><I.ChevronDown /></span>
+              {allMatrixGroupsExpanded ? "Collapse All" : "Expand All"}
+            </button>
             {[
               { id: "current", label: "Currently Booked" },
               { id: "projected", label: "Projected" },
@@ -970,18 +1007,39 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </thead>
             <tbody>
               {matrixRowGroups.flatMap((group) => {
+                const groupExpanded = expandedMatrixGroups.has(group.section);
+                const visibleRows = group.rows.filter((row) => groupExpanded || row.total || row.alwaysVisible);
                 return (
                   [
                     <tr key={`${group.section}-section`}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "10px 12px 8px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
-                        {group.section}
+                      <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "8px 12px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}` }}>
+                        <button
+                          onClick={() => toggleMatrixGroup(group.section)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            width: "100%",
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            color: C.textMut,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            textAlign: "left",
+                          }}
+                        >
+                          <span style={{ display: "flex", transform: groupExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><I.ChevronDown /></span>
+                          <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>{group.section}</span>
+                          {!groupExpanded && <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>+{Math.max(group.rows.length - visibleRows.length, 0)}</span>}
+                        </button>
                       </td>
                       {workbookDays.map((day, index) => (
                         <td key={`${group.section}-${day.date}`} style={{ background: index === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
                       ))}
                       <td style={{ position: "sticky", right: 0, zIndex: 2, background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
                     </tr>,
-                    ...group.rows.map((row) => (
+                    ...visibleRows.map((row) => (
                       <tr key={row.key}>
                         <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "9px 12px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 12, fontWeight: row.total ? 800 : 600, color: C.text }}>
                           {row.label}
