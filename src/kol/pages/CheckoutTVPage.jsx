@@ -11,14 +11,16 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, todayStr } from "../../shared/theme";
+import { idbGet, idbSet, todayStr } from "../../shared/theme";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import {
   buildPlaygroupAssignmentMap,
+  derivePlaygroupAssignmentsFromIcons,
   getDisplayPlaygroup,
   getDisplayTags,
   getOperationalPlaygroup,
 } from "../../shared/playgroupAssignments";
+import { isBohSnapshotStale } from "./checkoutTvFreshness";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -82,6 +84,19 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       0%, 100% { box-shadow: 0 0 40px 10px rgba(56,189,248,0.35), 0 0 120px 30px rgba(56,189,248,0.1), inset 0 1px 0 rgba(255,255,255,0.08); }
       50% { box-shadow: 0 0 60px 20px rgba(56,189,248,0.55), 0 0 160px 50px rgba(56,189,248,0.2), inset 0 1px 0 rgba(255,255,255,0.08); }
     }
+    @keyframes spotlightEnter {
+      0% { opacity: 0; transform: translateY(26px) scale(0.82); }
+      62% { opacity: 1; transform: translateY(-5px) scale(1.02); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes spotlightExit {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to { opacity: 0; transform: translateY(-18px) scale(0.86); }
+    }
+    @keyframes tvModalIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -132,6 +147,13 @@ const SIZE_THEME = {
     badge: "H&H",
     icon: "H",
   },
+  both_daycares: {
+    accent: "#14B8A6",     // Teal
+    accentRgb: "20,184,166",
+    label: "Both Daycares",
+    badge: "BOTH",
+    icon: "B",
+  },
   evaluation: {
     accent: "#EAB308",     // Yellow
     accentRgb: "234,179,8",
@@ -160,10 +182,65 @@ const NAV_VIEWS = [
   { id: "large-daycare", label: "Large Daycare",  color: "#84CC16",  colorRgb: "132,204,22" },
   { id: "private-play",  label: "Private Play",   color: "#EF4444",  colorRgb: "239,68,68" },
   { id: "evaluation",    label: "Evaluation",     color: "#EAB308",  colorRgb: "234,179,8" },
+  { id: "both-daycares", label: "Both Daycares",  color: "#14B8A6",  colorRgb: "20,184,166" },
   { id: "unclassified",  label: "Unclassified",   color: "#6B7280",  colorRgb: "107,114,128" },
 ];
 
-const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
+const DEFAULT_NOTICE_DURATION_MS = 60_000;
+const FADE_DURATION_MS = 1_200;
+const BOH_DIFF_INTERVAL_MS = 10_000;
+const TV_POLL_INTERVAL_MS = 60_000;
+const PLAYGROUP_REFRESH_INTERVAL_MS = 60_000;
+const FIRST_DAY_REFRESH_INTERVAL_MS = 60_000;
+const ASSET_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const CHECKOUT_TV_SETTINGS_KEY = "checkout_tv_settings_v1";
+const PLAYGROUP_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+const DEFAULT_TV_SETTINGS = {
+  notificationStyle: "spotlight",
+  noticeDurationSec: 60,
+  showNoticeDetails: true,
+  photoDensity: "large",
+};
+
+const CHECKOUT_HEALTH_SPECS = {
+  boh: {
+    title: "BOH Transition Polling",
+    frequencyLabel: "Every 10 seconds",
+    staleAfterMs: 25_000,
+    description: "Detects live GINGR check-ins and check-outs, then fires TV notices immediately.",
+  },
+  tvPoll: {
+    title: "Supabase Reconciliation",
+    frequencyLabel: "Every 60 seconds plus every BOH transition",
+    staleAfterMs: 130_000,
+    description: "Runs gingr-sync tv-poll so Supabase catches up to the GINGR TV/check-in source.",
+  },
+  playgroups: {
+    title: "Playgroup Assignment",
+    frequencyLabel: "Every 60 seconds, restored from local TV cache first",
+    staleAfterMs: 130_000,
+    description: "Reads v_dog_playgroup_assignments_current, falls back to GINGR icons, and prewarms scheduled dogs.",
+  },
+  reservations: {
+    title: "Reservation Window",
+    frequencyLabel: "useGingrData foreground refresh",
+    staleAfterMs: 180_000,
+    description: "Loads checked-in dogs and mid-stay dogs from Supabase reservations synced from GINGR.",
+  },
+  firstDay: {
+    title: "First-Day Evaluation Heuristic",
+    frequencyLabel: "Every 60 seconds",
+    staleAfterMs: 130_000,
+    description: "Flags first-ever daycare visits only. Boarding-only first reservations do not count.",
+  },
+  photos: {
+    title: "Photos + Profile Icons",
+    frequencyLabel: "Every 5 minutes",
+    staleAfterMs: 11 * 60_000,
+    description: "Loads local profile photos and GINGR profile icons for TV cards and spotlight notices.",
+  },
+};
 
 /* ── Room parser (TV-004) ─────────────────────────────────────────────── */
 function parseRoom(room) {
@@ -178,6 +255,146 @@ function parseRoom(room) {
     return { label: fallbackMatch[1], number: "" };
   }
   return { label: room, number: "" };
+}
+
+function sanitizeCheckoutTvSettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const duration = Number(source.noticeDurationSec);
+  return {
+    notificationStyle: source.notificationStyle === "rows" ? "rows" : "spotlight",
+    noticeDurationSec: Number.isFinite(duration) ? Math.min(180, Math.max(20, Math.round(duration))) : DEFAULT_TV_SETTINGS.noticeDurationSec,
+    showNoticeDetails: source.showNoticeDetails === false ? false : true,
+    photoDensity: ["compact", "balanced", "large"].includes(source.photoDensity) ? source.photoDensity : DEFAULT_TV_SETTINGS.photoDensity,
+  };
+}
+
+function isFirstDayDaycareType(typeName) {
+  const value = String(typeName || "").toLowerCase();
+  if (!value || value.includes("tour")) return false;
+  return (
+    value.includes("daycare")
+    || value.includes("day care")
+    || value.includes("dayboarding")
+    || value.includes("day boarding")
+    || value.includes("evaluation")
+    || value.includes("eval")
+  );
+}
+
+function isReservationInPlaygroupPrewarmWindow(res, today = todayStr()) {
+  if (res?.status === "checked-in") return true;
+  const checkIn = String(res?.checkIn || "").slice(0, 10);
+  if (!checkIn) return false;
+  const dayMs = new Date(`${today}T00:00:00`).getTime();
+  const checkInMs = new Date(`${checkIn}T00:00:00`).getTime();
+  if (Number.isNaN(dayMs) || Number.isNaN(checkInMs)) return false;
+  const windowStartMs = dayMs - (30 * 24 * 60 * 60 * 1000);
+  const windowEndMs = dayMs + (14 * 24 * 60 * 60 * 1000);
+  return checkInMs >= windowStartMs && checkInMs <= windowEndMs;
+}
+
+function formatHealthTime(value) {
+  if (!value) return "Not yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+
+function formatHealthDuration(ms) {
+  if (!Number.isFinite(ms)) return null;
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} sec`;
+}
+
+function formatHealthAge(value, nowMs = Date.now()) {
+  if (!value) return "Not yet";
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return "Unknown";
+  const seconds = Math.max(0, Math.round((nowMs - ts) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  return minutes === 1 ? "1 min ago" : `${minutes} min ago`;
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(label)), ms);
+    }),
+  ]);
+}
+
+function healthTone(status) {
+  if (status === "healthy") return { label: "Healthy", color: "#22C55E", bg: "rgba(34,197,94,0.13)" };
+  if (status === "running") return { label: "Running", color: "#38BDF8", bg: "rgba(56,189,248,0.13)" };
+  if (status === "warning") return { label: "Watch", color: "#EAB308", bg: "rgba(234,179,8,0.14)" };
+  if (status === "critical") return { label: "Down", color: "#EF4444", bg: "rgba(239,68,68,0.14)" };
+  return { label: "Waiting", color: "rgba(255,255,255,0.55)", bg: "rgba(255,255,255,0.08)" };
+}
+
+function createInitialCheckoutHealth() {
+  return Object.fromEntries(Object.entries(CHECKOUT_HEALTH_SPECS).map(([key, spec]) => [
+    key,
+    {
+      key,
+      title: spec.title,
+      frequencyLabel: spec.frequencyLabel,
+      description: spec.description,
+      status: "waiting",
+      lastStartedAt: null,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      nextRunAt: null,
+      durationMs: null,
+      error: null,
+      details: {},
+    },
+  ]));
+}
+
+function deriveSectionStatus(section, spec, nowMs) {
+  if (section?.status === "running") return "running";
+  if (section?.error) return "critical";
+  if (!section?.lastSuccessAt) return "waiting";
+  const lastSuccessMs = new Date(section.lastSuccessAt).getTime();
+  if (Number.isNaN(lastSuccessMs)) return "waiting";
+  if (nowMs - lastSuccessMs > spec.staleAfterMs) return "warning";
+  return "healthy";
+}
+
+function deriveCheckoutHealthSummary(sections, nowMs) {
+  const statuses = Object.entries(CHECKOUT_HEALTH_SPECS).map(([key, spec]) => deriveSectionStatus(sections[key], spec, nowMs));
+  if (statuses.includes("critical")) return "critical";
+  if (statuses.includes("warning")) return "warning";
+  if (statuses.includes("running")) return "running";
+  if (statuses.includes("waiting")) return "waiting";
+  return "healthy";
+}
+
+function normalizeNoticeDog(entry, dogEntry, { dogs, animalIcons, dogPhotoMap, playgroupMap, type }) {
+  const dog = dogs.find(dd => dd.gingrId === Number(dogEntry.animalGingrId) || dd.id === `g${dogEntry.animalGingrId}`);
+  const animalId = String(dog?.gingrId || dogEntry.animalGingrId || "");
+  const assignment = playgroupMap?.[animalId];
+  const playgroup = getDisplayPlaygroup(assignment) || getOperationalPlaygroup(assignment) || "unclassified";
+  const theme = SIZE_THEME[playgroup] || SIZE_THEME.unclassified;
+  const iconData = animalIcons[dog?.gingrId] || animalIcons[animalId];
+  return {
+    noticeId: `${type}-${entry.id}-${animalId || dogEntry.id || dogEntry.animalName || "dog"}`,
+    entryId: entry.id,
+    animalGingrId: animalId,
+    type,
+    name: dog?.fields?.name || dogEntry.animalName || "Unknown",
+    breed: dog?.fields?.breed || dogEntry.breed || "",
+    ownerLastName: entry.ownerLastName || dogEntry.ownerLastName || "",
+    image: dogPhotoMap[dog?.gingrId] || dogPhotoMap[animalId] || iconData?.icon_url || dog?._image || "",
+    playgroup,
+    theme,
+    firedAt: entry.firedAt,
+    remaining: entry.remaining,
+    durationMs: entry.durationMs || DEFAULT_NOTICE_DURATION_MS,
+    fading: entry.fading,
+  };
 }
 
 /* ── Large Countdown Timer (SVG circle) — for hero card ──────────────── */
@@ -248,7 +465,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
   const isUrgent = entry.remaining <= 10;
   const allNames = resolvedDogs.map(d => d.name).join(" & ");
   const firstDog = resolvedDogs[0];
-  const theme = SIZE_THEME[firstDog.size];
+  const theme = SIZE_THEME[firstDog.size] || SIZE_THEME.unclassified;
 
   // TV-015: Compact sizing
   const imgSize = compact ? 72 : (resolvedDogs.length > 1 ? 96 : 120);
@@ -322,7 +539,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
             background: `rgba(${theme.accentRgb},0.15)`,
             padding: compact ? "3px 10px" : "5px 14px", borderRadius: 8,
           }}>
-            {theme.badge === "LG" ? "LARGE" : "SMALL"}
+            {(theme.label || "Unclassified").toUpperCase()}
           </span>
         </div>
         <div style={{
@@ -362,7 +579,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
         position: "relative", zIndex: 1,
         animation: isUrgent ? "heroCountdownPulse 1s ease-in-out infinite" : "none",
       }}>
-        <CountdownCircle remaining={entry.remaining} total={60} size={countdownSize} strokeWidth={compact ? 4 : 6} />
+        <CountdownCircle remaining={entry.remaining} total={Math.max(1, Math.round((entry.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000))} size={countdownSize} strokeWidth={compact ? 4 : 6} />
         {!compact && (
           <span style={{
             fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
@@ -508,7 +725,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
         display: "flex", flexDirection: "column", alignItems: "center", gap: compact ? 4 : 8,
         position: "relative", zIndex: 1,
       }}>
-        <CountdownCircle remaining={entry.remaining} total={60} size={countdownSize} strokeWidth={compact ? 4 : 6} accentColor="#38BDF8" />
+        <CountdownCircle remaining={entry.remaining} total={Math.max(1, Math.round((entry.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000))} size={countdownSize} strokeWidth={compact ? 4 : 6} accentColor="#38BDF8" />
         {!compact && (
           <span style={{
             fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
@@ -583,6 +800,461 @@ function TVNavButton({ view, isActive, count, onClick }) {
         {count}
       </span>
     </button>
+  );
+}
+
+function CheckoutTvActionButton({ ariaLabel, title, onClick, children }) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      title={title || ariaLabel}
+      onClick={onClick}
+      style={{
+        width: 48, height: 48, borderRadius: 12,
+        border: "2px solid rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.03)",
+        color: "rgba(255,255,255,0.75)",
+        cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "background 0.2s, border-color 0.2s, color 0.2s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+        e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+        e.currentTarget.style.color = "#fff";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+        e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+        e.currentTarget.style.color = "rgba(255,255,255,0.75)";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CheckoutTvHealthButton({ status, onClick }) {
+  const tone = healthTone(status);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Open Checkout TV health"
+      title="Open Checkout TV health"
+      style={{
+        height: 48, padding: "0 18px",
+        borderRadius: 12,
+        border: `2px solid ${tone.color}55`,
+        background: tone.bg,
+        color: tone.color,
+        cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 10,
+        fontSize: 14, fontWeight: 900,
+        transition: "filter 0.2s, transform 0.2s",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.filter = "brightness(1.15)"; }}
+      onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; }}
+    >
+      <span style={{
+        width: 10, height: 10, borderRadius: 99,
+        background: tone.color,
+        boxShadow: `0 0 18px ${tone.color}99`,
+      }} />
+      {tone.label}
+    </button>
+  );
+}
+
+function TvModalShell({ title, subtitle, onClose, children, width = 760 }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      style={{
+        position: "fixed", inset: 0, zIndex: 500,
+        background: "rgba(0,10,26,0.72)",
+        backdropFilter: "blur(10px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24,
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div style={{
+        width: "100%", maxWidth: width,
+        maxHeight: "88vh", overflow: "auto",
+        borderRadius: 18,
+        background: "linear-gradient(180deg, rgba(7,27,51,0.98), rgba(2,15,32,0.98))",
+        border: "1px solid rgba(255,255,255,0.12)",
+        boxShadow: "0 28px 80px rgba(0,0,0,0.45)",
+        animation: "tvModalIn 0.18s ease-out both",
+      }}>
+        <div style={{
+          display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 18,
+          padding: "24px 26px 18px",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+        }}>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: "#fff" }}>{title}</div>
+            {subtitle && <div style={{ marginTop: 4, fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.45 }}>{subtitle}</div>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              width: 36, height: 36, borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "rgba(255,255,255,0.06)",
+              color: "rgba(255,255,255,0.8)",
+              cursor: "pointer",
+              fontSize: 20, lineHeight: 1,
+            }}
+          >
+            x
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SettingsChoice({ active, label, description, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        textAlign: "left",
+        padding: "14px 16px",
+        borderRadius: 12,
+        border: active ? "2px solid rgba(132,204,22,0.55)" : "2px solid rgba(255,255,255,0.08)",
+        background: active ? "rgba(132,204,22,0.13)" : "rgba(255,255,255,0.04)",
+        cursor: "pointer",
+        color: "#fff",
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 900, color: active ? "#84CC16" : "#fff" }}>{label}</div>
+      {description && <div style={{ marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.46)", lineHeight: 1.35 }}>{description}</div>}
+    </button>
+  );
+}
+
+function CheckoutTvSettingsModal({ settings, onChange, onClose }) {
+  const update = (patch) => onChange(sanitizeCheckoutTvSettings({ ...settings, ...patch }));
+  return (
+    <TvModalShell
+      title="Checkout TV Settings"
+      subtitle="Stored on this TV/browser so the floor display can be tuned without changing the app globally."
+      onClose={onClose}
+      width={720}
+    >
+      <div style={{ padding: 26, display: "grid", gap: 24 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "rgba(255,255,255,0.62)", textTransform: "uppercase", marginBottom: 10 }}>Notification Style</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            <SettingsChoice
+              active={settings.notificationStyle === "spotlight"}
+              label="Spotlight"
+              description="Large centered photos, newest notice on the right, overflow rows beneath."
+              onClick={() => update({ notificationStyle: "spotlight" })}
+            />
+            <SettingsChoice
+              active={settings.notificationStyle === "rows"}
+              label="Rows"
+              description="Original full-width check-in and check-out rows."
+              onClick={() => update({ notificationStyle: "rows" })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: "rgba(255,255,255,0.62)", textTransform: "uppercase" }}>Notice Duration</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: "#84CC16", fontVariantNumeric: "tabular-nums" }}>{settings.noticeDurationSec}s</div>
+          </div>
+          <input
+            type="range"
+            min="20"
+            max="180"
+            step="5"
+            value={settings.noticeDurationSec}
+            onChange={(event) => update({ noticeDurationSec: Number(event.target.value) })}
+            style={{ width: "100%", accentColor: "#84CC16" }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.36)" }}>
+            <span>20 sec</span>
+            <span>3 min</span>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "rgba(255,255,255,0.62)", textTransform: "uppercase", marginBottom: 10 }}>Photo Size Density</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+            <SettingsChoice active={settings.photoDensity === "large"} label="Large" description="Best for a distant TV." onClick={() => update({ photoDensity: "large" })} />
+            <SettingsChoice active={settings.photoDensity === "balanced"} label="Balanced" description="More breathing room." onClick={() => update({ photoDensity: "balanced" })} />
+            <SettingsChoice active={settings.photoDensity === "compact"} label="Compact" description="Fits smaller screens." onClick={() => update({ photoDensity: "compact" })} />
+          </div>
+        </div>
+
+        <label style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18,
+          padding: "16px 18px",
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.04)",
+          cursor: "pointer",
+        }}>
+          <span>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 900, color: "#fff" }}>Show Details Row</span>
+            <span style={{ display: "block", marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.46)" }}>Breed, owner, playgroup, and countdown details beneath spotlight photos.</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.showNoticeDetails}
+            onChange={(event) => update({ showNoticeDetails: event.target.checked })}
+            style={{ width: 22, height: 22, accentColor: "#84CC16", flexShrink: 0 }}
+          />
+        </label>
+      </div>
+    </TvModalShell>
+  );
+}
+
+function CheckoutTvHealthModal({ sections, overallStatus, nowMs, onClose }) {
+  const overallTone = healthTone(overallStatus);
+  return (
+    <TvModalShell
+      title={`Checkout TV Health: ${overallTone.label}`}
+      subtitle="This is scoped to this TV surface only: live GINGR transition detection, Supabase reconciliation, playgroup classification, mid-stay reservations, first-day logic, and photo assets."
+      onClose={onClose}
+      width={980}
+    >
+      <div style={{ padding: 26, display: "grid", gap: 14 }}>
+        {Object.entries(CHECKOUT_HEALTH_SPECS).map(([key, spec]) => {
+          const section = sections[key] || {};
+          const status = deriveSectionStatus(section, spec, nowMs);
+          const tone = healthTone(status);
+          const details = section.details || {};
+          return (
+            <div key={key} style={{
+              padding: 18,
+              borderRadius: 14,
+              border: `1px solid ${tone.color}44`,
+              background: "rgba(255,255,255,0.045)",
+              display: "grid",
+              gridTemplateColumns: "minmax(220px, 1.1fr) minmax(0, 1.8fr)",
+              gap: 18,
+            }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 99, background: tone.color, boxShadow: `0 0 14px ${tone.color}88` }} />
+                  <span style={{ fontSize: 17, fontWeight: 900, color: "#fff" }}>{section.title || spec.title}</span>
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.45, color: "rgba(255,255,255,0.46)" }}>{section.description || spec.description}</div>
+                {section.error && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: "#FCA5A5", lineHeight: 1.4 }}>{section.error}</div>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                <HealthFact label="Status" value={tone.label} color={tone.color} />
+                <HealthFact label="Frequency" value={section.frequencyLabel || spec.frequencyLabel} />
+                <HealthFact label="Last Run" value={formatHealthAge(section.lastSuccessAt || section.lastStartedAt, nowMs)} />
+                <HealthFact label="Next Run" value={formatHealthTime(section.nextRunAt)} />
+                {section.durationMs != null && <HealthFact label="Duration" value={formatHealthDuration(section.durationMs)} />}
+                {Object.entries(details).slice(0, 7).map(([label, value]) => (
+                  <HealthFact key={label} label={label} value={value == null || value === "" ? "None" : String(value)} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </TvModalShell>
+  );
+}
+
+function HealthFact({ label, value, color = "rgba(255,255,255,0.82)" }) {
+  return (
+    <div style={{
+      minHeight: 54,
+      padding: "10px 11px",
+      borderRadius: 10,
+      background: "rgba(0,0,0,0.18)",
+      border: "1px solid rgba(255,255,255,0.06)",
+      overflow: "hidden",
+    }}>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontWeight: 900, textTransform: "uppercase", marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 13, color, fontWeight: 800, lineHeight: 1.25 }}>{value || "Unknown"}</div>
+    </div>
+  );
+}
+
+function SpotlightNoticeCard({ notice, photoHeight, showDetails }) {
+  const isCheckout = notice.type === "out";
+  const actionColor = isCheckout ? "#84CC16" : "#38BDF8";
+  const actionLabel = isCheckout ? (notice.remaining <= 10 ? "Leaving Now" : "Checking Out") : "Checking In";
+  const photoWidth = Math.round(photoHeight * 0.78);
+  const totalSeconds = Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000));
+  return (
+    <div style={{
+      width: photoWidth,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: 10,
+      opacity: notice.fading ? 0 : 1,
+      transform: notice.fading ? "translateY(-18px) scale(0.86)" : "translateY(0) scale(1)",
+      transition: "transform 420ms cubic-bezier(0.22,1,0.36,1), opacity 420ms",
+      animation: notice.fading ? "spotlightExit 0.9s ease-out forwards" : "spotlightEnter 0.42s cubic-bezier(0.22,1,0.36,1)",
+    }}>
+      <div style={{
+        height: photoHeight,
+        borderRadius: 20,
+        border: `4px solid ${actionColor}`,
+        background: `linear-gradient(135deg, ${actionColor}24, rgba(255,255,255,0.05))`,
+        overflow: "hidden",
+        position: "relative",
+        boxShadow: `0 24px 70px ${actionColor}22`,
+      }}>
+        {notice.image ? (
+          <img
+            src={notice.image}
+            alt={notice.name}
+            loading="eager"
+            decoding="async"
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <div style={{
+            width: "100%", height: "100%",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: notice.theme.accent,
+            fontSize: 78, fontWeight: 900,
+          }}>
+            {notice.name[0]}
+          </div>
+        )}
+        <div style={{
+          position: "absolute", top: 12, left: 12,
+          padding: "7px 11px",
+          borderRadius: 9,
+          background: "rgba(0,10,26,0.72)",
+          border: `1px solid ${actionColor}66`,
+          color: actionColor,
+          fontSize: 12,
+          fontWeight: 900,
+          textTransform: "uppercase",
+        }}>
+          {actionLabel}
+        </div>
+        <div style={{ position: "absolute", right: 10, bottom: 10 }}>
+          <CountdownCircle remaining={notice.remaining} total={totalSeconds} size={54} strokeWidth={5} accentColor={actionColor} />
+        </div>
+      </div>
+      <div style={{
+        minHeight: showDetails ? 116 : 68,
+        padding: showDetails ? "13px 14px" : "12px 10px",
+        borderRadius: 14,
+        background: "rgba(0,10,26,0.86)",
+        border: "1px solid rgba(255,255,255,0.1)",
+        textAlign: "center",
+      }}>
+        <div style={{ fontSize: 25, fontWeight: 900, color: "#fff", lineHeight: 1.05, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{notice.name}</div>
+        {showDetails && (
+          <>
+            <div style={{ marginTop: 7, display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
+              <SizeBadge size={notice.playgroup} />
+              {notice.ownerLastName && <span style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,0.64)", background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 7px" }}>{notice.ownerLastName}</span>}
+            </div>
+            {notice.breed && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(255,255,255,0.48)", lineHeight: 1.25 }}>{notice.breed}</div>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SpotlightOverflowRow({ notice }) {
+  const isCheckout = notice.type === "out";
+  const actionColor = isCheckout ? "#84CC16" : "#38BDF8";
+  const actionLabel = isCheckout ? "Checking Out" : "Checking In";
+  return (
+    <div style={{
+      height: 66,
+      display: "flex", alignItems: "center", gap: 14,
+      padding: "8px 12px",
+      borderRadius: 14,
+      border: `1px solid ${actionColor}44`,
+      background: `linear-gradient(90deg, ${actionColor}18, rgba(0,10,26,0.88))`,
+      opacity: notice.fading ? 0.45 : 1,
+    }}>
+      {notice.image ? (
+        <img src={notice.image} alt={notice.name} loading="eager" decoding="async" style={{ width: 48, height: 48, borderRadius: 10, objectFit: "cover" }} />
+      ) : (
+        <div style={{ width: 48, height: 48, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: `${notice.theme.accent}22`, color: notice.theme.accent, fontWeight: 900 }}>{notice.name[0]}</div>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: actionColor, fontWeight: 900, textTransform: "uppercase" }}>{actionLabel}</div>
+        <div style={{ fontSize: 19, color: "#fff", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{notice.name}</div>
+      </div>
+      <SizeBadge size={notice.playgroup} />
+      <CountdownCircle remaining={notice.remaining} total={Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000))} size={44} strokeWidth={4} accentColor={actionColor} />
+    </div>
+  );
+}
+
+function SpotlightNoticeStage({ notices, overflowNotices, density, showDetails }) {
+  if (!notices.length && !overflowNotices.length) return null;
+  const count = Math.max(1, notices.length);
+  const sizeMap = {
+    large: [390, 350, 300, 260, 230],
+    balanced: [340, 305, 270, 235, 205],
+    compact: [290, 260, 230, 200, 176],
+  };
+  const photoHeight = (sizeMap[density] || sizeMap.large)[Math.min(count, 5) - 1];
+
+  return (
+    <div style={{
+      marginBottom: 18,
+      padding: "18px 16px",
+      borderRadius: 24,
+      border: "1px solid rgba(255,255,255,0.08)",
+      background: "linear-gradient(180deg, rgba(0,26,51,0.88), rgba(0,10,26,0.58))",
+      animation: "tvGridFadeIn 0.3s ease-out",
+    }}>
+      {notices.length > 0 && (
+        <div style={{
+          minHeight: photoHeight + (showDetails ? 136 : 88),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: count >= 5 ? 12 : 18,
+          transition: "gap 420ms ease",
+        }}>
+          {notices.map((notice) => (
+            <SpotlightNoticeCard
+              key={notice.noticeId}
+              notice={notice}
+              photoHeight={photoHeight}
+              showDetails={showDetails}
+            />
+          ))}
+        </div>
+      )}
+      {overflowNotices.length > 0 && (
+        <div style={{ marginTop: notices.length ? 14 : 0, display: "grid", gap: 8 }}>
+          {overflowNotices.map((notice) => (
+            <SpotlightOverflowRow key={`overflow-${notice.noticeId}`} notice={notice} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -743,40 +1415,89 @@ function CheckoutTVPage({ data, nav, profile, locationId: propLocationId }) {
 
 function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const locationId = propLocationId || profile?.location_id;
+  const tvRootRef = useRef(null);
   const [now, setNow] = useState(new Date());
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [tvSettings, setTvSettings] = useState(DEFAULT_TV_SETTINGS);
+  const [checkoutHealth, setCheckoutHealth] = useState(() => createInitialCheckoutHealth());
+  const nowMs = now.getTime();
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(CHECKOUT_TV_SETTINGS_KEY);
+      if (stored) setTvSettings(sanitizeCheckoutTvSettings(JSON.parse(stored)));
+    } catch {
+      setTvSettings(DEFAULT_TV_SETTINGS);
+    }
+  }, []);
+
+  const updateTvSettings = useCallback((nextSettings) => {
+    const sanitized = sanitizeCheckoutTvSettings(nextSettings);
+    setTvSettings(sanitized);
+    try {
+      window.localStorage.setItem(CHECKOUT_TV_SETTINGS_KEY, JSON.stringify(sanitized));
+    } catch {
+      // Local settings are a convenience only.
+    }
+  }, []);
+
+  const noticeDurationMs = tvSettings.noticeDurationSec * 1000;
+
+  const updateHealthSection = useCallback((key, patch) => {
+    setCheckoutHealth((current) => {
+      const existing = current[key] || createInitialCheckoutHealth()[key] || {};
+      return {
+        ...current,
+        [key]: {
+          ...existing,
+          ...patch,
+          details: {
+            ...(existing.details || {}),
+            ...(patch.details || {}),
+          },
+        },
+      };
+    });
+  }, []);
+
+  const checkoutHealthStatus = useMemo(
+    () => deriveCheckoutHealthSummary(checkoutHealth, nowMs),
+    [checkoutHealth, nowMs],
+  );
+
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const onFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      await tvRootRef.current?.requestFullscreen?.();
+    } catch (e) {
+      // Fullscreen must be user-initiated; failed requests leave the TV usable.
+    }
+  }, []);
+
   /* ── TV-005: Navigation state ──────────────────────────────────────── */
   const [activeView, setActiveView] = useState("all");
-  const [autoCycle, setAutoCycle] = useState(false);
   const [gridKey, setGridKey] = useState(0); // triggers fade animation on view change
-
-  // TV-005: Auto-cycle through views
-  useEffect(() => {
-    if (!autoCycle) return;
-    const interval = setInterval(() => {
-      setActiveView(prev => {
-        const idx = NAV_VIEWS.findIndex(v => v.id === prev);
-        const next = (idx + 1) % NAV_VIEWS.length;
-        return NAV_VIEWS[next].id;
-      });
-      setGridKey(k => k + 1);
-    }, AUTO_CYCLE_INTERVAL);
-    return () => clearInterval(interval);
-  }, [autoCycle]);
 
   const handleViewChange = useCallback((viewId) => {
     setActiveView(viewId);
     setGridKey(k => k + 1);
-    // Reset auto-cycle timer on manual interaction
-    if (autoCycle) {
-      setAutoCycle(false);
-      setTimeout(() => setAutoCycle(true), 0);
-    }
-  }, [autoCycle]);
+  }, []);
 
   const baseReservations = data.reservations || [];
   const baseDogs = data.dogs || [];
@@ -793,6 +1514,8 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const [gingrActiveDogCount, setGingrActiveDogCount] = useState(0);
   const tvLocationId = propLocationId || profile?.location_id;
   const bohInFlightRef = useRef(false);
+  const bohSnapshotFreshnessLoadedRef = useRef(false);
+  const suppressNextBohTransitionsRef = useRef(false);
   const lastTvPollRef = useRef(0);
 
   /* ── TV-POLL: Supabase reconciliation sync ──────────────────────────
@@ -805,19 +1528,48 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     const now = Date.now();
     if (now - lastTvPollRef.current < 10_000) return;
     lastTvPollRef.current = now;
+    const startedAt = new Date().toISOString();
+    updateHealthSection("tvPoll", {
+      status: "running",
+      lastStartedAt: startedAt,
+      nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
+      error: null,
+      details: { Trigger: "manual/interval", Location: tvLocationId },
+    });
     try {
-      await supabase.functions.invoke("gingr-sync", {
+      const startedMs = Date.now();
+      const { data: resp, error } = await supabase.functions.invoke("gingr-sync", {
         body: { location_id: tvLocationId, sync_type: "tv-poll" },
+      });
+      if (error || resp?.success === false) {
+        throw new Error(error?.message || resp?.error || "tv-poll returned an unsuccessful response");
+      }
+      updateHealthSection("tvPoll", {
+        status: "healthy",
+        lastSuccessAt: new Date().toISOString(),
+        durationMs: Date.now() - startedMs,
+        nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
+        error: null,
+        details: {
+          Reservations: resp?.reservations_synced ?? resp?.reservations_count ?? "synced",
+          "Checked In": resp?.checked_in_count ?? resp?.active_count ?? "synced",
+          Icons: resp?.icons_synced ?? "synced",
+        },
       });
       if (refreshData) refreshData();
     } catch (e) {
-      // Silently ignore — sync will retry on next interval
+      updateHealthSection("tvPoll", {
+        status: "critical",
+        lastErrorAt: new Date().toISOString(),
+        nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
+        error: e?.message || "tv-poll failed",
+      });
     }
-  }, [tvLocationId, refreshData]);
+  }, [tvLocationId, refreshData, updateHealthSection]);
 
   useEffect(() => {
     const initTimer = setTimeout(triggerTvPoll, 5000);
-    const interval = setInterval(triggerTvPoll, 60_000);
+    const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL_MS);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [triggerTvPoll]);
 
@@ -825,12 +1577,45 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   useEffect(() => {
     if (!tvLocationId) return;
     let cancelled = false;
+    bohSnapshotFreshnessLoadedRef.current = false;
+    suppressNextBohTransitionsRef.current = false;
+
+    const loadSnapshotFreshness = async () => {
+      if (bohSnapshotFreshnessLoadedRef.current) return suppressNextBohTransitionsRef.current;
+
+      try {
+        const { data: snap, error } = await supabase
+          .from("boh_snapshot")
+          .select("updated_at")
+          .eq("location_id", tvLocationId)
+          .maybeSingle();
+
+        suppressNextBohTransitionsRef.current = Boolean(error) || isBohSnapshotStale(snap?.updated_at);
+      } catch (e) {
+        suppressNextBohTransitionsRef.current = true;
+      } finally {
+        bohSnapshotFreshnessLoadedRef.current = true;
+      }
+
+      return suppressNextBohTransitionsRef.current;
+    };
 
     const pollBohDiff = async () => {
       if (bohInFlightRef.current || cancelled) return;
       bohInFlightRef.current = true;
+      const startedMs = Date.now();
+      updateHealthSection("boh", {
+        status: "running",
+        lastStartedAt: new Date(startedMs).toISOString(),
+        nextRunAt: new Date(startedMs + BOH_DIFF_INTERVAL_MS).toISOString(),
+        error: null,
+        details: { Source: "GINGR BOH", Location: tvLocationId },
+      });
 
       try {
+        const suppressTransitions = await loadSnapshotFreshness();
+        if (cancelled) return;
+
         const invokePromise = supabase.functions.invoke("gingr-sync", {
           body: { location_id: tvLocationId, sync_type: "boh-diff" },
         });
@@ -838,12 +1623,39 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           setTimeout(() => reject(new Error("boh-diff timeout")), 8000)
         );
         const { data: resp, error } = await Promise.race([invokePromise, timeoutPromise]);
-        if (cancelled || error || !resp?.success) return;
+        if (cancelled) return;
+        if (error || !resp?.success) {
+          throw new Error(error?.message || resp?.error || "boh-diff returned an unsuccessful response");
+        }
 
         setGingrActiveDogCount(resp.dog_count || 0);
 
-        const arrivals = resp.arrivals || [];
-        const departures = resp.departures || [];
+        const rawArrivals = resp.arrivals || [];
+        const rawDepartures = resp.departures || [];
+        updateHealthSection("boh", {
+          status: "healthy",
+          lastSuccessAt: new Date().toISOString(),
+          durationMs: Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+          error: null,
+          details: {
+            "Active Dogs": resp.dog_count || 0,
+            "Checking In": rawArrivals.length,
+            "Checking Out": rawDepartures.length,
+            "Backlog Suppressed": suppressTransitions ? "yes" : "no",
+          },
+        });
+
+        if (suppressTransitions) {
+          suppressNextBohTransitionsRef.current = false;
+          if (resp.changed || rawArrivals.length > 0 || rawDepartures.length > 0) {
+            triggerTvPoll();
+          }
+          return;
+        }
+
+        const arrivals = rawArrivals;
+        const departures = rawDepartures;
 
         if (arrivals.length > 0) {
           const firedAt = Date.now();
@@ -851,7 +1663,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             ...g,
             id: String(g.id),
             firedAt,
-            durationMs: 60_000,
+            durationMs: noticeDurationMs,
           }));
           setCheckingInRaw(p => {
             const existing = new Set(p.map(e => e.id));
@@ -865,7 +1677,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             ...g,
             id: String(g.id),
             firedAt,
-            durationMs: 60_000,
+            durationMs: noticeDurationMs,
           }));
           setCheckingOutRaw(p => {
             const existing = new Set(p.map(e => e.id));
@@ -878,14 +1690,19 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           triggerTvPoll();
         }
       } catch (e) {
-        // Silently ignore — next poll will catch up
+        updateHealthSection("boh", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+          error: e?.message || "BOH polling failed",
+        });
       } finally {
         bohInFlightRef.current = false;
       }
     };
 
     pollBohDiff();
-    const interval = setInterval(pollBohDiff, 10_000);
+    const interval = setInterval(pollBohDiff, BOH_DIFF_INTERVAL_MS);
 
     // Fire immediate poll when tab regains focus (Chrome throttles background tabs)
     const onVisibility = () => {
@@ -898,7 +1715,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [tvLocationId]);
+  }, [tvLocationId, triggerTvPoll, noticeDurationMs, updateHealthSection]);
 
   /* ── Grid data: Supabase is the sole source of truth ─────────────── *
    * All checked-in dog data comes from Supabase tables (synced by the
@@ -917,13 +1734,21 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     let cancelled = false;
 
     const fetchIcons = async () => {
+      const startedMs = Date.now();
+      updateHealthSection("photos", {
+        status: "running",
+        lastStartedAt: new Date(startedMs).toISOString(),
+        nextRunAt: new Date(startedMs + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+        error: null,
+      });
       try {
         const { data: icons, error } = await supabase
           .from("gingr_animal_icons")
           .select("animal_gingr_id,icon_url,icon_type,is_primary")
           .eq("location_id", locationId);
 
-        if (cancelled || error) return;
+        if (cancelled) return;
+        if (error) throw error;
 
         const map = {};
         for (const icon of (icons || [])) {
@@ -933,15 +1758,28 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           }
         }
         setAnimalIcons(map);
+        updateHealthSection("photos", {
+          status: "healthy",
+          lastSuccessAt: new Date().toISOString(),
+          durationMs: Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: null,
+          details: { "GINGR Icons": Object.keys(map).length },
+        });
       } catch (e) {
-        // Silently ignore — icons are a progressive enhancement
+        updateHealthSection("photos", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: e?.message || "Profile icon load failed",
+        });
       }
     };
 
     fetchIcons();
-    const interval = setInterval(fetchIcons, 5 * 60 * 1000);
+    const interval = setInterval(fetchIcons, ASSET_REFRESH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [locationId]);
+  }, [locationId, updateHealthSection]);
 
   /* ── Fetch dog profile photos from Supabase Storage ────────────── */
   const [dogPhotoMap, setDogPhotoMap] = useState({});
@@ -951,6 +1789,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     let cancelled = false;
 
     const fetchPhotos = async () => {
+      const startedMs = Date.now();
       try {
         const { data, error } = await supabase
           .from("gingr_animals")
@@ -958,22 +1797,36 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           .eq("location_id", locationId)
           .not("local_photo_url", "is", null);
 
-        if (cancelled || error) return;
+        if (cancelled) return;
+        if (error) throw error;
 
         const map = {};
         for (const a of (data || [])) {
           map[a.gingr_id] = a.local_photo_url;
         }
         setDogPhotoMap(map);
+        updateHealthSection("photos", {
+          status: "healthy",
+          lastSuccessAt: new Date().toISOString(),
+          durationMs: Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: null,
+          details: { "Local Photos": Object.keys(map).length },
+        });
       } catch (e) {
-        // Silently ignore — photos are a progressive enhancement
+        updateHealthSection("photos", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: e?.message || "Dog photo load failed",
+        });
       }
     };
 
     fetchPhotos();
-    const interval = setInterval(fetchPhotos, 5 * 60 * 1000);
+    const interval = setInterval(fetchPhotos, ASSET_REFRESH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [locationId]);
+  }, [locationId, updateHealthSection]);
 
   /* ── Fetch canonical playgroup assignments from Gingr Play icons ─── *
    * Uses the server-side per-dog canonical assignment view so TV reads
@@ -981,41 +1834,280 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
    * ──────────────────────────────────────────────────────────────────── */
   const [playgroupMap, setPlaygroupMap] = useState({});
   const [allDogTags, setAllDogTags] = useState({});
+  const checkedInAnimalIds = useMemo(() => {
+    const dogById = new Map(dogs.map(dog => [dog.id, dog]));
+    return [...new Set(
+      reservations
+        .filter(res => res.status === "checked-in")
+        .map(res => String(dogById.get(res.dogId)?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "").trim())
+        .filter(Boolean)
+    )];
+  }, [reservations, dogs]);
+  const checkedInAnimalIdsKey = checkedInAnimalIds.join("|");
+  const playgroupLookupAnimalIds = useMemo(() => {
+    const dogById = new Map(dogs.map(dog => [dog.id, dog]));
+    return [...new Set(
+      reservations
+        .filter(res => isReservationInPlaygroupPrewarmWindow(res))
+        .map(res => String(dogById.get(res.dogId)?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "").trim())
+        .filter(Boolean)
+    )].slice(0, 1000);
+  }, [reservations, dogs]);
+  const playgroupLookupAnimalIdsKey = playgroupLookupAnimalIds.join("|");
+  const playgroupCacheKey = locationId ? `checkout_tv_playgroups_${locationId}` : null;
+
+  useEffect(() => {
+    if (!playgroupCacheKey) return;
+    let cancelled = false;
+    idbGet(playgroupCacheKey).then((cached) => {
+      if (cancelled || !cached?.rows || !cached?.updatedAt) return;
+      const updatedAtMs = new Date(cached.updatedAt).getTime();
+      if (Number.isNaN(updatedAtMs) || Date.now() - updatedAtMs > PLAYGROUP_CACHE_TTL_MS) return;
+      const map = buildPlaygroupAssignmentMap(cached.rows);
+      const tagsByDog = {};
+      for (const [id, assignment] of Object.entries(map)) {
+        tagsByDog[id] = getDisplayTags(assignment);
+      }
+      setPlaygroupMap(map);
+      setAllDogTags(tagsByDog);
+      updateHealthSection("playgroups", {
+        status: "healthy",
+        lastSuccessAt: cached.updatedAt,
+        nextRunAt: new Date(Date.now() + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
+        error: null,
+        details: {
+          Source: "local cache",
+          Assignments: cached.rows.length,
+          "Checked In Covered": checkedInAnimalIds.filter(id => map[id]).length,
+        },
+      });
+    });
+    return () => { cancelled = true; };
+  }, [playgroupCacheKey, checkedInAnimalIdsKey, updateHealthSection]);
 
   useEffect(() => {
     if (!locationId) return;
     let cancelled = false;
 
     const fetchPlaygroups = async () => {
+      const startedMs = Date.now();
+      const preferAnimalScoped = playgroupLookupAnimalIds.length > 0;
+      let source = preferAnimalScoped ? "canonical animal prewarm" : "canonical location view";
+      updateHealthSection("playgroups", {
+        status: "running",
+        lastStartedAt: new Date(startedMs).toISOString(),
+        nextRunAt: new Date(startedMs + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
+        error: null,
+        details: {
+          Source: source,
+          "Checked In": checkedInAnimalIds.length,
+          "Prewarm Dogs": playgroupLookupAnimalIds.length,
+        },
+      });
       try {
-        const { data, error } = await supabase
-          .from("v_dog_playgroup_assignments_current")
-          .select("animal_gingr_id, primary_display_playgroup, scheduling_playgroup, has_evaluation, is_half_and_half, playgroup_tags")
-          .eq("location_id", locationId);
+        const assignmentColumns = "animal_gingr_id, size_group, has_private_play, has_evaluation, is_half_and_half, primary_display_playgroup, scheduling_playgroup, playgroup_tags, source_icon_titles, source_icon_comments, half_and_half_note, unresolved_reason";
+        const readAssignments = async ({ byAnimalIds = false } = {}) => {
+          let query = supabase
+            .from("v_dog_playgroup_assignments_current")
+            .select(assignmentColumns);
 
-        if (cancelled || error) return;
+          if (byAnimalIds && playgroupLookupAnimalIds.length > 0) {
+            query = query.in("animal_gingr_id", playgroupLookupAnimalIds);
+          } else {
+            query = query.eq("location_id", locationId);
+          }
 
-        const map = buildPlaygroupAssignmentMap(data || []);
+          return query;
+        };
+
+        let assignmentRead = { data: null, error: null };
+        try {
+          assignmentRead = await withTimeout(
+            readAssignments({ byAnimalIds: preferAnimalScoped }),
+            8_000,
+            "Playgroup assignment read timed out"
+          );
+        } catch (readError) {
+          assignmentRead = { data: null, error: readError };
+        }
+        const { data, error } = assignmentRead;
+
+        if (cancelled) return;
+
+        let assignmentRows = !error && Array.isArray(data) && data.length > 0 ? data : [];
+        let refreshFailed = Boolean(error);
+
+        if (error) {
+          console.warn("[CheckoutTV] canonical playgroup assignment read failed; trying raw GINGR icon fallback.", error.message || error);
+        }
+
+        if (assignmentRows.length === 0) {
+          const readIconRows = async ({ byAnimalIds = false } = {}) => {
+            let query = supabase
+              .from("gingr_animal_icons_live")
+              .select("animal_gingr_id, icon_template_id, icon_identity_key, icon_title, icon_comment, icon_group");
+
+            if (byAnimalIds && playgroupLookupAnimalIds.length > 0) {
+              query = query.in("animal_gingr_id", playgroupLookupAnimalIds);
+            } else {
+              query = query.eq("location_id", locationId);
+            }
+
+            return query;
+          };
+
+          const rawIconSource = preferAnimalScoped ? "raw GINGR icons by prewarm animals" : "raw GINGR icons by location";
+          let mappingRead = { data: [], error: null };
+          let iconRead = { data: [], error: null };
+          try {
+            [mappingRead, iconRead] = await withTimeout(
+              Promise.all([
+                supabase
+                  .from("gingr_icon_mappings")
+                  .select("location_id, capability_key, icon_template_id, icon_identity_key, icon_group, is_active")
+                  .eq("location_id", locationId)
+                  .eq("is_active", true),
+                readIconRows({ byAnimalIds: preferAnimalScoped }),
+              ]),
+              10_000,
+              "Raw GINGR icon read timed out"
+            );
+          } catch (readError) {
+            iconRead = { data: [], error: readError };
+          }
+          const { data: mappings, error: mappingsError } = mappingRead;
+          const { data: iconRows, error: iconError } = iconRead;
+
+          if (cancelled) return;
+
+          if (mappingsError) {
+            console.warn("[CheckoutTV] icon mapping read failed; using title-based play icon fallback.", mappingsError.message || mappingsError);
+          }
+          if (iconError) {
+            refreshFailed = true;
+            console.warn("[CheckoutTV] raw GINGR icon fallback read failed.", iconError.message || iconError);
+          } else {
+            source = rawIconSource;
+            assignmentRows = derivePlaygroupAssignmentsFromIcons(iconRows || [], mappingsError ? [] : (mappings || []));
+          }
+
+          if (assignmentRows.length === 0 && preferAnimalScoped) {
+            source = "raw GINGR icons by location fallback";
+            let locationIconRead = { data: [], error: null };
+            try {
+              locationIconRead = await withTimeout(
+                readIconRows(),
+                10_000,
+                "Raw GINGR icon location fallback timed out"
+              );
+            } catch (readError) {
+              locationIconRead = { data: [], error: readError };
+            }
+            const { data: locationIcons, error: locationIconError } = locationIconRead;
+
+            if (cancelled) return;
+
+            if (locationIconError) {
+              refreshFailed = true;
+              console.warn("[CheckoutTV] location raw GINGR icon fallback read failed.", locationIconError.message || locationIconError);
+            } else {
+              assignmentRows = derivePlaygroupAssignmentsFromIcons(locationIcons || [], mappingsError ? [] : (mappings || []));
+            }
+          }
+        }
+
+        if (assignmentRows.length === 0) {
+          const locationSlug = window.location.pathname.split("/").filter(Boolean)[0] || null;
+          const { data: sessionData } = await supabase.auth.getSession();
+          const accessToken = sessionData?.session?.access_token;
+          const invokeOptions = {
+            body: {
+              location_id: locationId,
+              location_slug: locationSlug,
+              sync_type: "playgroup-assignments",
+              animal_ids: playgroupLookupAnimalIds,
+            },
+          };
+          if (accessToken) {
+            invokeOptions.headers = { Authorization: `Bearer ${accessToken}` };
+          }
+
+          let edgeResult = { data: null, error: null };
+          try {
+            edgeResult = await withTimeout(
+              supabase.functions.invoke("gingr-sync", invokeOptions),
+              20_000,
+              "Playgroup edge refresh timed out"
+            );
+          } catch (invokeError) {
+            edgeResult = { data: null, error: invokeError };
+          }
+          const { data: edgeData, error: edgeError } = edgeResult;
+
+          if (cancelled) return;
+
+          if (edgeError || !edgeData?.success) {
+            refreshFailed = true;
+            console.warn("[CheckoutTV] service playgroup assignment fallback failed.", edgeError?.message || edgeData?.error || edgeError);
+          } else {
+            source = "gingr-sync playgroup refresh";
+            assignmentRows = Array.isArray(edgeData.assignments) ? edgeData.assignments : [];
+          }
+        }
+
+        if (assignmentRows.length === 0 && refreshFailed) {
+          updateHealthSection("playgroups", {
+            status: "critical",
+            lastErrorAt: new Date().toISOString(),
+            nextRunAt: new Date(Date.now() + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
+            error: "Unable to read canonical playgroups or refresh GINGR icons.",
+          });
+          return;
+        }
+
+        const map = buildPlaygroupAssignmentMap(assignmentRows);
         const tagsByDog = {};
         for (const [id, assignment] of Object.entries(map)) {
           tagsByDog[id] = getDisplayTags(assignment);
         }
         setPlaygroupMap(map);
         setAllDogTags(tagsByDog);
+        if (playgroupCacheKey && assignmentRows.length > 0) {
+          idbSet(playgroupCacheKey, { updatedAt: new Date().toISOString(), rows: assignmentRows });
+        }
+        const coveredCheckedIn = checkedInAnimalIds.filter(id => map[id]).length;
+        updateHealthSection("playgroups", {
+          status: "healthy",
+          lastSuccessAt: new Date().toISOString(),
+          durationMs: Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
+          error: null,
+          details: {
+            Source: source,
+            Assignments: assignmentRows.length,
+            "Checked In Covered": `${coveredCheckedIn}/${checkedInAnimalIds.length}`,
+            Unclassified: Math.max(0, checkedInAnimalIds.length - coveredCheckedIn),
+          },
+        });
       } catch (e) {
-        // Silently ignore — classification falls back to unclassified
+        updateHealthSection("playgroups", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
+          error: e?.message || "Playgroup classification refresh failed",
+        });
       }
     };
 
     fetchPlaygroups();
     // Refresh every 60 seconds (icons rarely change mid-day)
-    const interval = setInterval(fetchPlaygroups, 60 * 1000);
+    const interval = setInterval(fetchPlaygroups, PLAYGROUP_REFRESH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [locationId]);
+  }, [locationId, checkedInAnimalIdsKey, playgroupLookupAnimalIdsKey, playgroupCacheKey, checkedInAnimalIds, playgroupLookupAnimalIds, updateHealthSection]);
 
-  /* ── First-day dogs: first-ever non-tour visit at this location ────── *
+  /* ── First-day dogs: first-ever daycare visit at this location ─────── *
    * Own 60-second interval — NOT tied to the 10-15s BOH poll cycle.
-   * First-day status doesn't change intra-day.
+   * This is intentionally not a blanket first-reservation rule for boarding.
    * ──────────────────────────────────────────────────────────────────── */
   const [firstDayDogIds, setFirstDayDogIds] = useState(new Set());
 
@@ -1024,57 +2116,95 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     let cancelled = false;
 
     const fetchFirstDayDogs = async () => {
+      const startedMs = Date.now();
+      updateHealthSection("firstDay", {
+        status: "running",
+        lastStartedAt: new Date(startedMs).toISOString(),
+        nextRunAt: new Date(startedMs + FIRST_DAY_REFRESH_INTERVAL_MS).toISOString(),
+        error: null,
+        details: { Logic: "first-ever daycare visit only" },
+      });
       try {
-        const today = new Date().toISOString().slice(0, 10);
-        // Dogs with a non-tour reservation starting today...
+        const today = todayStr();
+        // Dogs with a daycare/evaluation reservation starting today...
         const { data: todayDogs, error: e1 } = await supabase
           .from("gingr_reservations")
-          .select("animal_gingr_id")
+          .select("animal_gingr_id, reservation_type_name")
           .eq("location_id", locationId)
           .is("cancelled_date", null)
           .gte("start_date", `${today}T00:00:00`)
           .lt("start_date", `${today}T23:59:59`)
           .not("reservation_type_name", "ilike", "%tour%");
 
-        if (cancelled || e1) return;
+        if (cancelled) return;
+        if (e1) throw e1;
 
-        const candidates = [...new Set((todayDogs || []).map(r => r.animal_gingr_id).filter(Boolean))];
+        const candidates = [...new Set((todayDogs || [])
+          .filter(r => isFirstDayDaycareType(r.reservation_type_name))
+          .map(r => r.animal_gingr_id)
+          .filter(Boolean)
+        )];
         if (candidates.length === 0) {
           setFirstDayDogIds(new Set());
+          updateHealthSection("firstDay", {
+            status: "healthy",
+            lastSuccessAt: new Date().toISOString(),
+            durationMs: Date.now() - startedMs,
+            nextRunAt: new Date(Date.now() + FIRST_DAY_REFRESH_INTERVAL_MS).toISOString(),
+            error: null,
+            details: { Candidates: 0, "First Day": 0, Logic: "first-ever daycare visit only" },
+          });
           return;
         }
 
-        // ...who have NO prior non-tour reservations before today
+        // ...who have NO prior daycare/evaluation reservations before today.
         const firstDaySet = new Set();
         for (let i = 0; i < candidates.length; i += 100) {
           const chunk = candidates.slice(i, i + 100);
           const { data: priors, error: e2 } = await supabase
             .from("gingr_reservations")
-            .select("animal_gingr_id")
+            .select("animal_gingr_id, reservation_type_name")
             .eq("location_id", locationId)
             .is("cancelled_date", null)
             .lt("start_date", `${today}T00:00:00`)
             .not("reservation_type_name", "ilike", "%tour%")
             .in("animal_gingr_id", chunk);
 
-          if (cancelled || e2) return;
+          if (cancelled) return;
+          if (e2) throw e2;
 
-          const hadPrior = new Set((priors || []).map(r => r.animal_gingr_id));
+          const hadPrior = new Set((priors || [])
+            .filter(r => isFirstDayDaycareType(r.reservation_type_name))
+            .map(r => r.animal_gingr_id)
+          );
           for (const id of chunk) {
             if (!hadPrior.has(id)) firstDaySet.add(String(id));
           }
         }
 
         setFirstDayDogIds(firstDaySet);
+        updateHealthSection("firstDay", {
+          status: "healthy",
+          lastSuccessAt: new Date().toISOString(),
+          durationMs: Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + FIRST_DAY_REFRESH_INTERVAL_MS).toISOString(),
+          error: null,
+          details: { Candidates: candidates.length, "First Day": firstDaySet.size, Logic: "first-ever daycare visit only" },
+        });
       } catch (e) {
-        // Silently ignore — first-day banner is a progressive enhancement
+        updateHealthSection("firstDay", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + FIRST_DAY_REFRESH_INTERVAL_MS).toISOString(),
+          error: e?.message || "First-day heuristic failed",
+        });
       }
     };
 
     fetchFirstDayDogs();
-    const interval = setInterval(fetchFirstDayDogs, 60 * 1000);
+    const interval = setInterval(fetchFirstDayDogs, FIRST_DAY_REFRESH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [locationId]);
+  }, [locationId, updateHealthSection]);
 
   /* ── TV-001: Fix daycare count ──────────────────────────────────────── *
    * The old filter checked (type === "daycare" || type === "boarding") AND
@@ -1108,30 +2238,50 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return (aD?.fields?.name || "").localeCompare(bD?.fields?.name || "");
   });
 
+  useEffect(() => {
+    updateHealthSection("reservations", {
+      status: "healthy",
+      lastStartedAt: new Date().toISOString(),
+      lastSuccessAt: new Date().toISOString(),
+      nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+      error: null,
+      details: {
+        Source: "Supabase gingr_reservations via useGingrData",
+        Window: "checked-in plus -30/+14 day quick window, then full background load",
+        Reservations: reservations.length,
+        "Checked In": checkedIn.length,
+        "Unique Dogs": uniqueDogs.length,
+        "Mid-Stay/Boarding": checkedIn.filter(res => res.type === "boarding").length,
+      },
+    });
+  }, [reservations.length, checkedIn.length, uniqueDogs.length, updateHealthSection]);
+
   /* ── Icon-based classification — priority-based single assignment ──── *
    * Each dog goes into exactly ONE section based on priority:
-   *   private_play > large > small > evaluation > unclassified
+   *   both_daycares > private_play > large > small > evaluation > unclassified
    * All Gingr-assigned tags are still shown as badges on the dog card.
    * ──────────────────────────────────────────────────────────────────────── */
-  const { largeDaycare, smallDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs } = useMemo(() => {
+  const { largeDaycare, smallDaycare, privatePlayDogs, evaluationDogs, bothDaycareDogs, unclassifiedDogs } = useMemo(() => {
     const large = [];
     const small = [];
     const pp = [];
     const evals = [];
+    const both = [];
     const unclassified = [];
 
     for (const res of uniqueDogs) {
       const dog = dogs.find(d => d.id === res.dogId);
       const playgroup = getDogPlaygroup(dog, res, playgroupMap, allDogTags);
 
-      if (playgroup === "private_play") pp.push(res);
+      if (playgroup === "both_daycares") both.push(res);
+      else if (playgroup === "private_play") pp.push(res);
       else if (playgroup === "evaluation") evals.push(res);
       else if (playgroup === "large") large.push(res);
       else if (playgroup === "small") small.push(res);
       else unclassified.push(res);
     }
 
-    return { largeDaycare: large, smallDaycare: small, privatePlayDogs: pp, evaluationDogs: evals, unclassifiedDogs: unclassified };
+    return { largeDaycare: large, smallDaycare: small, privatePlayDogs: pp, evaluationDogs: evals, bothDaycareDogs: both, unclassifiedDogs: unclassified };
   }, [uniqueDogs, dogs, playgroupMap, allDogTags]);
 
   /* ── Simple counts — each dog in exactly one section ─────────────────── */
@@ -1141,8 +2291,9 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     "large-daycare": largeDaycare.length,
     "private-play": privatePlayDogs.length,
     "evaluation": evaluationDogs.length,
+    "both-daycares": bothDaycareDogs.length,
     "unclassified": unclassifiedDogs.length,
-  }), [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs]);
+  }), [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, bothDaycareDogs, unclassifiedDogs]);
 
   /* ── TV-012/TV-013: Persistent TV notice system ────────────────────── *
    * Notices (check-in / check-out hero cards) are stored with a timestamp
@@ -1152,9 +2303,6 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
    * or React state batching. Once fired, a notice lives for its full
    * duration no matter what.
    * ──────────────────────────────────────────────────────────────────── */
-  const NOTICE_DURATION_MS = 60_000; // 60 seconds
-  const FADE_DURATION_MS = 1_200;    // fade-out animation length
-
   // Raw notice stores — entries have { id, dogs, ownerLastName, firedAt, durationMs }
   const [checkingOutRaw, setCheckingOutRaw] = useState([]);
   const [checkingInRaw, setCheckingInRaw] = useState([]);
@@ -1222,6 +2370,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         case "small-daycare":  return playgroup === "small";
         case "private-play":   return playgroup === "private_play";
         case "evaluation":     return playgroup === "evaluation";
+        case "both-daycares":  return playgroup === "both_daycares";
         case "unclassified":   return playgroup === null;
         default:               return true;
       }
@@ -1234,7 +2383,26 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
    * ──────────────────────────────────────────────────────────────────── */
   const viewCheckingIn = checkingIn.filter(entryMatchesView);
   const viewCheckingOut = checkingOut.filter(entryMatchesView);
-  const totalNotices = viewCheckingIn.length + viewCheckingOut.length;
+  const viewNoticeItems = useMemo(() => {
+    const items = [];
+    const pushEntry = (entry, type) => {
+      const entryDogs = entry.dogs || [entry];
+      entryDogs.forEach((dogEntry, dogIndex) => {
+        items.push({
+          ...normalizeNoticeDog(entry, dogEntry, { dogs, animalIcons, dogPhotoMap, playgroupMap, type }),
+          sortKey: `${entry.firedAt}-${type}-${dogIndex}`,
+        });
+      });
+    };
+    viewCheckingIn.forEach(entry => pushEntry(entry, "in"));
+    viewCheckingOut.forEach(entry => pushEntry(entry, "out"));
+    return items.sort((a, b) => (a.firedAt - b.firedAt) || a.sortKey.localeCompare(b.sortKey));
+  }, [viewCheckingIn, viewCheckingOut, dogs, animalIcons, dogPhotoMap, playgroupMap]);
+  const spotlightNotices = viewNoticeItems.slice(-5);
+  const overflowNotices = viewNoticeItems.slice(0, Math.max(0, viewNoticeItems.length - 5));
+  const totalNotices = tvSettings.notificationStyle === "spotlight"
+    ? viewNoticeItems.length
+    : viewCheckingIn.length + viewCheckingOut.length;
   // compact=true when 2+ notices — shrinks cards to fit more on screen
   const compactNotices = totalNotices >= 2;
 
@@ -1263,11 +2431,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     for (const r of uniqueDogs) {
       const d = dogs.find(dd => dd.id === r.dogId);
       const icon = animalIcons[d?.gingrId];
-      const url = icon?.icon_url || d?._image;
+      const url = dogPhotoMap[d?.gingrId] || icon?.icon_url || d?._image;
       if (url) urls.add(url);
     }
     urls.forEach(u => { const img = new Image(); img.src = u; });
-  }, [uniqueDogs, dogs, animalIcons]);
+  }, [uniqueDogs, dogs, animalIcons, dogPhotoMap]);
 
   /* DogCardImage + DogCard extracted outside component body — see above */
 
@@ -1312,16 +2480,17 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       case "large-daycare": return largeDaycare;
       case "private-play": return privatePlayDogs;
       case "evaluation": return evaluationDogs;
+      case "both-daycares": return bothDaycareDogs;
       case "unclassified": return unclassifiedDogs;
       default: return null; // "all" uses the sectioned layout
     }
-  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs]);
+  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, bothDaycareDogs, unclassifiedDogs]);
 
   // Get accent color & label for filtered view
   const filteredViewMeta = NAV_VIEWS.find(v => v.id === activeView);
 
   return (
-    <div style={{
+    <div ref={tvRootRef} style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
       padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
     }}>
@@ -1364,45 +2533,14 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           />
         ))}
 
-        {/* Auto-cycle toggle */}
-        <div style={{ marginLeft: "auto", flexShrink: 0 }}>
-          <button
-            onClick={() => setAutoCycle(prev => !prev)}
-            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = autoCycle ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.03)"; }}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              height: 48, padding: "0 20px",
-              borderRadius: 12,
-              border: autoCycle ? "2px solid rgba(132,204,22,0.4)" : "2px solid rgba(255,255,255,0.08)",
-              background: autoCycle ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.03)",
-              cursor: "pointer",
-              transition: "all 0.25s ease",
-            }}
-          >
-            {/* Rotating icon indicator */}
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              style={{
-                transition: "transform 0.3s",
-                transform: autoCycle ? "rotate(360deg)" : "rotate(0deg)",
-              }}
-            >
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"
-                stroke={autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)"}
-                strokeWidth="2.5" strokeLinecap="round" />
-              <path d="M22 4l-2 6-6-2"
-                stroke={autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)"}
-                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        <div style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
+          <CheckoutTvHealthButton status={checkoutHealthStatus} onClick={() => setHealthOpen(true)} />
+          <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
+              <path d="M19.4 15a1.9 1.9 0 0 0 .38 2.1l.06.06a2.3 2.3 0 0 1-3.25 3.25l-.06-.06a1.9 1.9 0 0 0-2.1-.38 1.9 1.9 0 0 0-1.15 1.74V22a2.3 2.3 0 0 1-4.6 0v-.09A1.9 1.9 0 0 0 7.54 20a1.9 1.9 0 0 0-2.1.38l-.06.06a2.3 2.3 0 1 1-3.25-3.25l.06-.06A1.9 1.9 0 0 0 2.56 15a1.9 1.9 0 0 0-1.74-1.15H.73a2.3 2.3 0 1 1 0-4.6h.09A1.9 1.9 0 0 0 2.56 8a1.9 1.9 0 0 0-.38-2.1l-.06-.06a2.3 2.3 0 1 1 3.25-3.25l.06.06A1.9 1.9 0 0 0 7.54 3a1.9 1.9 0 0 0 1.15-1.74V1.2a2.3 2.3 0 1 1 4.6 0v.09A1.9 1.9 0 0 0 14.46 3a1.9 1.9 0 0 0 2.1-.38l.06-.06a2.3 2.3 0 1 1 3.25 3.25l-.06.06A1.9 1.9 0 0 0 19.44 8c.21.73.88 1.24 1.64 1.24h.19a2.3 2.3 0 1 1 0 4.6h-.19A1.9 1.9 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span style={{
-              fontSize: 14, fontWeight: 700,
-              color: autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)",
-              transition: "color 0.25s",
-              whiteSpace: "nowrap",
-            }}>
-              {autoCycle ? "Auto" : "Auto"}
-            </span>
-          </button>
+          </CheckoutTvActionButton>
         </div>
       </div>
 
@@ -1417,6 +2555,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>PP: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"]}</span></div>
         {viewCounts["evaluation"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Eval: <span style={{ fontWeight: 800, color: "#EAB308" }}>{viewCounts["evaluation"]}</span></div>}
+        {viewCounts["both-daycares"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Both: <span style={{ fontWeight: 800, color: SIZE_THEME.both_daycares.accent }}>{viewCounts["both-daycares"]}</span></div>}
         {viewCounts["unclassified"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Unclassified: <span style={{ fontWeight: 800, color: "#6B7280" }}>{viewCounts["unclassified"]}</span></div>}
         {hasCheckIns && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
@@ -1432,39 +2571,48 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
       {/* TV-015: Unified notice section — all check-in + check-out cards shown simultaneously */}
       {totalNotices > 0 && (
-        <div style={{
-          display: "flex", flexDirection: "column", gap: compactNotices ? 8 : 12,
-          marginBottom: 16,
-          animation: "tvGridFadeIn 0.35s ease-out",
-        }}>
-          {/* Check-in cards first */}
-          {viewCheckingIn.map(entry => (
-            <HeroCheckInCard
-              key={`in-${entry.id}`}
-              entry={entry}
-              dogs={dogs}
-              animalIcons={animalIcons}
-              dogPhotoMap={dogPhotoMap}
-              fading={entry.fading}
-              compact={compactNotices}
-              playgroupMap={playgroupMap}
-            />
-          ))}
-          {/* Then check-out cards */}
-          {viewCheckingOut.map(entry => (
-            <HeroCheckoutCard
-              key={`out-${entry.id}`}
-              entry={entry}
-              dogs={dogs}
-              clients={clients}
-              fading={entry.fading}
-              animalIcons={animalIcons}
-              dogPhotoMap={dogPhotoMap}
-              compact={compactNotices}
-              playgroupMap={playgroupMap}
-            />
-          ))}
-        </div>
+        tvSettings.notificationStyle === "spotlight" ? (
+          <SpotlightNoticeStage
+            notices={spotlightNotices}
+            overflowNotices={overflowNotices}
+            density={tvSettings.photoDensity}
+            showDetails={tvSettings.showNoticeDetails}
+          />
+        ) : (
+          <div style={{
+            display: "flex", flexDirection: "column", gap: compactNotices ? 8 : 12,
+            marginBottom: 16,
+            animation: "tvGridFadeIn 0.35s ease-out",
+          }}>
+            {/* Check-in cards first */}
+            {viewCheckingIn.map(entry => (
+              <HeroCheckInCard
+                key={`in-${entry.id}`}
+                entry={entry}
+                dogs={dogs}
+                animalIcons={animalIcons}
+                dogPhotoMap={dogPhotoMap}
+                fading={entry.fading}
+                compact={compactNotices}
+                playgroupMap={playgroupMap}
+              />
+            ))}
+            {/* Then check-out cards */}
+            {viewCheckingOut.map(entry => (
+              <HeroCheckoutCard
+                key={`out-${entry.id}`}
+                entry={entry}
+                dogs={dogs}
+                clients={clients}
+                fading={entry.fading}
+                animalIcons={animalIcons}
+                dogPhotoMap={dogPhotoMap}
+                compact={compactNotices}
+                playgroupMap={playgroupMap}
+              />
+            ))}
+          </div>
+        )
       )}
 
       {/* TV-005 + TV-008c: Grid content with smooth reflow transition */}
@@ -1480,6 +2628,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   color={filteredViewMeta?.color || "#fff"}
                   subtitle={
                     activeView === "evaluation" ? "Needs evaluation (Gingr icon)" :
+                    activeView === "both-daycares" ? "Has both large and small daycare icons" :
                     activeView === "unclassified" ? "No play icon in Gingr — please assign" :
                     `${filteredDogList.length} dogs`
                   }
@@ -1495,6 +2644,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                         activeView === "small-daycare" ? "small" :
                         activeView === "private-play" ? "private_play" :
                         activeView === "evaluation" ? "evaluation" :
+                        activeView === "both-daycares" ? "both_daycares" :
                         activeView === "unclassified" ? "unclassified" :
                         undefined
                       }
@@ -1572,6 +2722,21 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               </div>
             )}
 
+            {/* Both Daycares — dogs with both large and small Gingr play icons */}
+            {bothDaycareDogs.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Both Daycares"
+                  count={viewCounts["both-daycares"]}
+                  color={SIZE_THEME.both_daycares.accent}
+                  subtitle="Has both large and small daycare icons"
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {bothDaycareDogs.map(r => <DogCard key={r.id} res={r} {...dogCardProps} sizeGroup="both_daycares" />)}
+                </div>
+              </div>
+            )}
+
             {/* Unclassified — dogs with no play icon in Gingr */}
             {unclassifiedDogs.length > 0 && (
               <div>
@@ -1601,8 +2766,55 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · BOH: {gingrActiveDogCount} active · Supabase: {reservations.filter(r => r.status === "checked-in").length} in-house</div>
       </div>
 
+      {settingsOpen && (
+        <CheckoutTvSettingsModal
+          settings={tvSettings}
+          onChange={updateTvSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {healthOpen && (
+        <CheckoutTvHealthModal
+          sections={checkoutHealth}
+          overallStatus={checkoutHealthStatus}
+          nowMs={nowMs}
+          onClose={() => setHealthOpen(false)}
+        />
+      )}
+
+      {/* Floating Fullscreen Button */}
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = "rgba(255,255,255,0.15)"; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+        aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        style={{
+          position: "fixed", top: 16, left: 60, zIndex: 100,
+          width: 36, height: 36, borderRadius: 10,
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)",
+          color: "rgba(255,255,255,0.8)", cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          opacity: 0.3,
+          transition: "opacity 0.2s, background 0.2s",
+        }}
+        title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+      >
+        {isFullscreen ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+
       {/* Floating Exit Button — subtle, top-left corner */}
       <button
+        type="button"
         onClick={() => nav("ops-hub")}
         onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = "rgba(255,255,255,0.15)"; }}
         onMouseLeave={e => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
