@@ -56,16 +56,16 @@ const CRON_CHECKS = [
     affects: ["Bathing", "Room cleaning", "Room occupancy", "Private play"],
   },
   {
-    jobname: "gingr-tv-poll",
-    label: "GINGR TV Poll",
+    jobname: "gingr-presence-sync",
+    label: "GINGR Presence Sync",
     functionName: "gingr-sync",
-    syncType: "tv-poll",
+    syncType: "presence-sync",
     cadenceMinutes: 1,
     failMinutes: 4,
     criticality: "critical",
-    description: "Pulls the live GINGR TV/check-in view so the dashboard knows which dogs are currently in house.",
-    usedFor: ["Dashboard facility status", "Live checked-in dogs", "Today reservations"],
-    affects: ["Live checked-in dogs", "Today reservations"],
+    description: "Pulls the live GINGR checked-in view, reconciles canonical facility presence, and records check-in/check-out transitions.",
+    usedFor: ["Dashboard facility status", "Checkout TV", "Live checked-in dogs", "Today reservations"],
+    affects: ["Live checked-in dogs", "Checkout TV transitions", "Today reservations"],
   },
   {
     jobname: "gingr-boh-poll-a",
@@ -281,6 +281,7 @@ function isResponseFailure(row: any) {
 function identifyJobFromContent(content: string | null | undefined) {
   const payload = safeJsonParse(content);
   if (!payload || typeof payload !== "object") return null;
+  if (payload.sync_type === "presence-sync") return "gingr-presence-sync";
   if (payload.sync_type === "tv-poll") return "gingr-tv-poll";
   if (payload.sync_type === "today-sync") return "gingr-today-sync";
   if (payload.sync_type === "incremental") return "gingr-incremental-sync";

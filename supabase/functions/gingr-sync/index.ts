@@ -29,6 +29,7 @@ const corsHeaders = {
 };
 
 const SCHEDULING_FUTURE_SYNC_DAYS = 28;
+const PRESENCE_SYNC_FRESH_MS = 5_000;
 
 // ─── Eastern Time helper ─────────────────────────────────────────────────────
 // Edge functions run in UTC. All date-sensitive operations must use ET.
@@ -253,6 +254,401 @@ function mapReservationRow(r: any, locationId: string) {
     transaction: r.transaction || null,
     raw_data: r,
     synced_at: new Date().toISOString(),
+  };
+}
+
+function normalizeText(value: any): string | null {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function normalizeIso(value: any): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value * 1000).toISOString();
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const asNumber = Number(text);
+    if (Number.isFinite(asNumber)) return new Date(asNumber * 1000).toISOString();
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function classifyPresenceType(typeName: any): string {
+  const type = String(typeName || "").toLowerCase();
+  if (type.includes("evaluation") || type.includes("eval") || type.includes("assessment")) return "evaluation";
+  if (type.includes("day boarding") || type.includes("dayboarding")) return "dayboarding";
+  if (type.includes("daycare") || type.includes("day care")) return "daycare";
+  if (
+    type.includes("boarding") ||
+    type.includes("lodging") ||
+    type.includes("overnight") ||
+    type.includes("suite")
+  ) return "boarding";
+  if (type.includes("groom") || type.includes("bath")) return "grooming";
+  if (type.includes("tour")) return "tour";
+  return "other";
+}
+
+function getBohLists(bohData: any) {
+  const root = bohData?.data || bohData || {};
+  return {
+    checkingIn: Array.isArray(root.checking_in) ? root.checking_in : [],
+    checkingOut: Array.isArray(root.checking_out) ? root.checking_out : [],
+  };
+}
+
+function buildBohLookup(bohData: any) {
+  const { checkingOut } = getBohLists(bohData);
+  const byReservation = new Map<string, any>();
+  const byAnimal = new Map<string, any>();
+
+  for (const entry of checkingOut) {
+    const reservationId = normalizeText(entry.reservation_id || entry.id);
+    const animalId = normalizeText(entry.animal_id);
+    if (reservationId) byReservation.set(reservationId, entry);
+    if (animalId) byAnimal.set(animalId, entry);
+  }
+
+  return { byReservation, byAnimal };
+}
+
+function pickPrimaryPresenceReservation(rows: any[]) {
+  return [...rows].sort((a, b) => {
+    const aCheckIn = normalizeIso(a.check_in_date);
+    const bCheckIn = normalizeIso(b.check_in_date);
+    if (aCheckIn && !bCheckIn) return -1;
+    if (!aCheckIn && bCheckIn) return 1;
+    const aStart = normalizeIso(a.start_date) || "";
+    const bStart = normalizeIso(b.start_date) || "";
+    return bStart.localeCompare(aStart);
+  })[0];
+}
+
+function buildFacilityPresenceRows(checkedInReservations: any[], bohData: any, source: string) {
+  const byAnimal = new Map<string, any[]>();
+  for (const reservation of checkedInReservations) {
+    const animalId = normalizeText(reservation?.animal?.id);
+    if (!animalId) continue;
+    if (!byAnimal.has(animalId)) byAnimal.set(animalId, []);
+    byAnimal.get(animalId)!.push(reservation);
+  }
+
+  const bohLookup = buildBohLookup(bohData);
+  const rows: any[] = [];
+
+  for (const [animalId, reservations] of byAnimal.entries()) {
+    const primary = pickPrimaryPresenceReservation(reservations);
+    const reservationIds = reservations
+      .map((reservation) => normalizeText(reservation?.reservation_id))
+      .filter(Boolean) as string[];
+    const primaryReservationId = normalizeText(primary?.reservation_id) || reservationIds[0] || null;
+    const typeName = normalizeText(primary?.reservation_type?.type);
+    const checkInDate = normalizeIso(primary?.check_in_date);
+    const startDate = normalizeIso(primary?.start_date);
+    const endDate = normalizeIso(primary?.end_date);
+    const bohEntry = (primaryReservationId && bohLookup.byReservation.get(primaryReservationId)) || bohLookup.byAnimal.get(animalId) || null;
+    const owner = primary?.owner || {};
+    const animal = primary?.animal || {};
+    const roomName = normalizeText(bohEntry?.run_name || bohEntry?.room_name || bohEntry?.room || primary?.room_name);
+    const areaName = normalizeText(bohEntry?.area_name || bohEntry?.area);
+    const presenceSessionKey = [
+      animalId,
+      primaryReservationId || "reservation-unknown",
+      checkInDate || startDate || dateStrET(),
+    ].join(":");
+
+    rows.push({
+      animal_gingr_id: animalId,
+      reservation_gingr_id: primaryReservationId,
+      reservation_gingr_ids: [...new Set(reservationIds)],
+      owner_gingr_id: normalizeText(owner.id),
+      owner_first_name: normalizeText(owner.first_name),
+      owner_last_name: normalizeText(owner.last_name),
+      animal_name: normalizeText(animal.name),
+      animal_breed: normalizeText(animal.breed),
+      reservation_type_name: typeName,
+      presence_type: classifyPresenceType(typeName),
+      room_name: roomName,
+      area_name: areaName,
+      start_date: startDate,
+      end_date: endDate,
+      check_in_date: checkInDate,
+      scheduled_check_out_date: endDate,
+      presence_session_key: presenceSessionKey,
+      source,
+      source_hash: [
+        primaryReservationId || "",
+        checkInDate || "",
+        endDate || "",
+        reservationIds.join("+"),
+        roomName || "",
+      ].join("|"),
+      source_payload: {
+        primary_reservation: primary,
+        reservations,
+        boh: bohEntry,
+      },
+      duplicate_reservation_count: reservations.length,
+    });
+  }
+
+  return rows;
+}
+
+async function upsertBohCacheFromPayload(supabase: any, locationId: string, bohData: any) {
+  const { checkingIn, checkingOut } = getBohLists(bohData);
+  const nowIso = new Date().toISOString();
+  const rows: any[] = [];
+
+  for (const entry of checkingIn) {
+    rows.push({
+      location_id: locationId,
+      gingr_reservation_id: entry.reservation_id || entry.id ? Number(entry.reservation_id || entry.id) : null,
+      animal_name: entry.animal_name || entry.a_first || null,
+      animal_id: entry.animal_id ? Number(entry.animal_id) : null,
+      owner_name: entry.owner_name || [entry.o_first, entry.o_last].filter(Boolean).join(" ") || null,
+      owner_id: entry.owner_id ? Number(entry.owner_id) : null,
+      reservation_type_name: entry.reservation_type_name || entry.reservation_type || entry.type || null,
+      status: "checking_in",
+      check_in_time: entry.check_in_time || entry.start_date || null,
+      check_out_time: entry.check_out_time || entry.end_date || null,
+      room_name: entry.run_name || entry.room_name || entry.room || null,
+      area_name: entry.area_name || entry.area || null,
+      raw_data: entry,
+      synced_at: nowIso,
+    });
+  }
+
+  for (const entry of checkingOut) {
+    rows.push({
+      location_id: locationId,
+      gingr_reservation_id: entry.reservation_id || entry.id ? Number(entry.reservation_id || entry.id) : null,
+      animal_name: entry.animal_name || entry.a_first || null,
+      animal_id: entry.animal_id ? Number(entry.animal_id) : null,
+      owner_name: entry.owner_name || [entry.o_first, entry.o_last].filter(Boolean).join(" ") || null,
+      owner_id: entry.owner_id ? Number(entry.owner_id) : null,
+      reservation_type_name: entry.reservation_type_name || entry.reservation_type || entry.type || null,
+      status: "checking_out",
+      check_in_time: entry.check_in_time || entry.start_date || null,
+      check_out_time: entry.check_out_time || entry.end_date || null,
+      room_name: entry.run_name || entry.room_name || entry.room || null,
+      area_name: entry.area_name || entry.area || null,
+      raw_data: entry,
+      synced_at: nowIso,
+    });
+  }
+
+  let upserted = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_back_of_house")
+      .upsert(chunk, { onConflict: "location_id,gingr_reservation_id" });
+    if (error) throw new Error(`BOH cache upsert error: ${error.message}`);
+    upserted += chunk.length;
+  }
+
+  const staleCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: deleted } = await supabase
+    .from("gingr_back_of_house")
+    .delete()
+    .eq("location_id", locationId)
+    .lt("synced_at", staleCutoff)
+    .select("id");
+
+  return {
+    checking_in_count: checkingIn.length,
+    checking_out_count: checkingOut.length,
+    upserted,
+    stale_deleted: deleted?.length || 0,
+  };
+}
+
+async function markCheckedOutReservations(
+  supabase: any,
+  locationId: string,
+  checkedInReservations: any[],
+) {
+  const { data: supaCheckedIn } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
+  const gingrCheckedInIds = new Set(
+    checkedInReservations.map((reservation: any) => String(reservation.reservation_id))
+  );
+  const staleIds = (supaCheckedIn || [])
+    .filter((reservation: any) => !gingrCheckedInIds.has(reservation.gingr_id))
+    .map((reservation: any) => reservation.gingr_id);
+
+  const isLikelyApiError =
+    checkedInReservations.length === 0 && (supaCheckedIn || []).length > 20;
+
+  if (staleIds.length === 0 || isLikelyApiError) {
+    return { checked_out_count: 0, skipped_mass_checkout_guard: isLikelyApiError };
+  }
+
+  const nowIso = new Date().toISOString();
+  for (let i = 0; i < staleIds.length; i += 100) {
+    const chunk = staleIds.slice(i, i + 100);
+    const { error } = await supabase
+      .from("gingr_reservations")
+      .update({ check_out_date: nowIso, synced_at: nowIso })
+      .eq("location_id", locationId)
+      .in("gingr_id", chunk);
+    if (error) throw new Error(`Failed to mark checked-out reservations: ${error.message}`);
+  }
+
+  return { checked_out_count: staleIds.length, skipped_mass_checkout_guard: false };
+}
+
+async function syncFacilityPresence({
+  supabase,
+  subdomain,
+  apiKey,
+  gingrLocationId,
+  locationId,
+  source = "gingr-sync:presence-sync",
+}: {
+  supabase: any;
+  subdomain: string;
+  apiKey: string;
+  gingrLocationId: string;
+  locationId: string;
+  source?: string;
+}) {
+  const startTime = Date.now();
+  const errors: any[] = [];
+
+  const { data: latestRun } = await supabase
+    .from("facility_presence_sync_runs")
+    .select("id, status, completed_at, current_count, arrivals_count, departures_count")
+    .eq("location_id", locationId)
+    .eq("status", "completed")
+    .order("completed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const latestCompletedMs = latestRun?.completed_at ? new Date(latestRun.completed_at).getTime() : 0;
+  if (latestCompletedMs && Date.now() - latestCompletedMs < PRESENCE_SYNC_FRESH_MS) {
+    const { data: snapshot } = await supabase.rpc("facility_presence_snapshot", {
+      p_location_id: locationId,
+    });
+
+    return {
+      success: true,
+      sync_type: "presence-sync",
+      location_id: locationId,
+      skipped_fresh_sync: true,
+      latest_run: latestRun,
+      snapshot,
+      duration_ms: Date.now() - startTime,
+    };
+  }
+
+  let todayResResult = { synced: 0 };
+  try {
+    todayResResult = await syncTodayReservations(supabase, subdomain, apiKey, locationId);
+  } catch (err: any) {
+    errors.push({ stage: "today-reservations", message: err.message });
+  }
+
+  const [checkedInResult, bohResult] = await Promise.all([
+    gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "true" }),
+    gingrFetch(subdomain, "back_of_house", apiKey, "GET", {
+      location_id: String(gingrLocationId || "1"),
+      full_day: "true",
+      include_daycare: "true",
+    }).catch((err: any) => {
+      errors.push({ stage: "back-of-house", message: err.message });
+      return null;
+    }),
+  ]);
+
+  const checkedIn = Object.values(checkedInResult.data || {}) as any[];
+
+  if (checkedIn.length > 0) {
+    const rows = checkedIn.map((reservation: any) => mapReservationRow(reservation, locationId));
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500);
+      const { error } = await supabase
+        .from("gingr_reservations")
+        .upsert(chunk, { onConflict: "location_id,gingr_id" });
+      if (error) throw new Error(`Presence sync reservation upsert error: ${error.message}`);
+    }
+  }
+
+  let checkoutReconcile = { checked_out_count: 0, skipped_mass_checkout_guard: false };
+  try {
+    checkoutReconcile = await markCheckedOutReservations(supabase, locationId, checkedIn);
+  } catch (err: any) {
+    errors.push({ stage: "checkout-reconcile", message: err.message });
+  }
+
+  let bohCache = { checking_in_count: 0, checking_out_count: 0, upserted: 0, stale_deleted: 0 };
+  if (bohResult) {
+    try {
+      bohCache = await upsertBohCacheFromPayload(supabase, locationId, bohResult);
+    } catch (err: any) {
+      errors.push({ stage: "boh-cache", message: err.message });
+    }
+  }
+
+  let roomResult = { assigned: 0, bohDogs: 0 };
+  if (bohResult) {
+    try {
+      roomResult = await persistBohRoomAssignments(supabase, subdomain, apiKey, gingrLocationId || "1", locationId);
+    } catch (err: any) {
+      errors.push({ stage: "room-assignments", message: err.message });
+    }
+  }
+
+  const presenceRows = buildFacilityPresenceRows(checkedIn, bohResult, source);
+  const duplicateAnimals = presenceRows.filter((row) => row.duplicate_reservation_count > 1).length;
+  const { data: reconcileResult, error: reconcileError } = await supabase.rpc("reconcile_facility_presence", {
+    p_location_id: locationId,
+    p_current_rows: presenceRows,
+    p_source: source,
+    p_source_checked_in_count: checkedIn.length,
+    p_metadata: {
+      today_reservations_synced: todayResResult.synced,
+      checked_out_count: checkoutReconcile.checked_out_count,
+      skipped_mass_checkout_guard: checkoutReconcile.skipped_mass_checkout_guard,
+      boh_cache: bohCache,
+      rooms_assigned: roomResult.assigned,
+      boh_dogs_in_house: roomResult.bohDogs,
+      duplicate_animals: duplicateAnimals,
+      errors,
+    },
+  });
+
+  if (reconcileError) {
+    throw new Error(`Presence reconcile error: ${reconcileError.message}`);
+  }
+
+  return {
+    success: true,
+    sync_type: "presence-sync",
+    location_id: locationId,
+    today_reservations_synced: todayResResult.synced,
+    checked_in_count: checkedIn.length,
+    checked_out_count: checkoutReconcile.checked_out_count,
+    pending_arrivals_count: bohCache.checking_in_count,
+    boh_cache: bohCache,
+    rooms_assigned: roomResult.assigned,
+    boh_dogs_in_house: roomResult.bohDogs,
+    duplicate_animals: duplicateAnimals,
+    errors,
+    presence: reconcileResult,
+    duration_ms: Date.now() - startTime,
   };
 }
 
@@ -2258,6 +2654,26 @@ Deno.serve(async (req: Request) => {
           icon_animals_synced: result.icon_animals_synced,
           duration_ms: Date.now() - startTime,
         }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── Presence-sync: canonical checked-in state + transition ledger ───────
+    // This is the durable successor to separate dashboard/TV browser polling.
+    // It keeps gingr_reservations and BOH cache compatible while writing the
+    // canonical facility_presence_current/events tables in one server path.
+    if (sync_type === "presence-sync") {
+      const result = await syncFacilityPresence({
+        supabase,
+        subdomain,
+        apiKey: api_key,
+        gingrLocationId: gingr_location_id || "1",
+        locationId: location_id,
+        source: "gingr-sync:presence-sync",
+      });
+
+      return new Response(
+        JSON.stringify(result),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
