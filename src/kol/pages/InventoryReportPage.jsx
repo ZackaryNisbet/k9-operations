@@ -6,6 +6,11 @@ import { supabase } from "../../supabaseClient";
 import { C, todayStr, addDays, fmtDate } from "../../shared/theme";
 import { Btn, Card } from "../../shared/ui";
 import { I } from "../../shared/icons";
+import {
+  addDateDays,
+  buildInventoryDepletionAnalytics,
+  computeDogDaysForRange,
+} from "./inventoryDepletion";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
 const fmtCurrency = (v) => {
@@ -28,23 +33,7 @@ const getStartOfWeek = (dateStr) => {
 };
 
 function getDogDaysForWeek(reservations, weekStart) {
-  if (!reservations || !reservations.length) return 0;
-  const start = new Date(weekStart + "T00:00:00");
-  const end = new Date(start);
-  end.setDate(end.getDate() + 6);
-  let totalDogDays = 0;
-  const validRes = reservations.filter(r => r.status !== "cancelled");
-  for (const res of validRes) {
-    const checkIn = new Date(res.checkIn + "T00:00:00");
-    const checkOut = new Date(res.checkOut + "T00:00:00");
-    const overlapStart = Math.max(checkIn.getTime(), start.getTime());
-    const overlapEnd = Math.min(checkOut.getTime(), end.getTime());
-    if (overlapEnd >= overlapStart) {
-      const days = Math.ceil((overlapEnd - overlapStart) / (1000 * 60 * 60 * 24)) + 1;
-      totalDogDays += days;
-    }
-  }
-  return totalDogDays;
+  return computeDogDaysForRange(reservations, weekStart, addDateDays(weekStart, 6));
 }
 
 const getTimeframeDates = (tf, customFrom, customTo) => {
@@ -617,6 +606,13 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  const depletionAnalytics = useMemo(() => buildInventoryDepletionAnalytics({
+    catalog,
+    snapshots,
+    counts,
+    reservations: data?.reservations || [],
+  }), [catalog, snapshots, counts, data?.reservations]);
+
   // ── Computed metrics ──────────────────────────────────────────────────────
   const metrics = useMemo(() => {
     if (!snapshots.length || !counts.length) return null;
@@ -639,10 +635,13 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
     const latestAdhoc = adhoc.filter((a) => a.snapshot_id === latestSnap?.id);
     latestAdhoc.forEach((a) => { totalValue += (a.stock_count || 0) * (a.unit_price || 0); });
 
-    // Cost per dog-day (using reservations data)
-    const reservations = data?.reservations || [];
-    const latestDogDays = getDogDaysForWeek(reservations, latestSnap?.week_start);
-    const costPerDogDay = latestDogDays > 0 ? totalValue / latestDogDays : null;
+    // Consumed cost per dog-day from the latest completed depletion cycle.
+    // On-hand value is a balance metric and should not be divided by dog-days.
+    const latestConsumptionCycle = depletionAnalytics.cycleSummaries.slice(-1)[0] || null;
+    const latestDogDays = latestConsumptionCycle?.dogDays || 0;
+    const consumedCostPerDogDay = latestDogDays > 0
+      ? (latestConsumptionCycle.usageValue || 0) / latestDogDays
+      : null;
 
     // Items below par
     let belowParCount = 0;
@@ -654,8 +653,8 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
     // Total active catalog items
     const totalItems = catalog.length;
 
-    return { totalValue, costPerDogDay, belowParCount, totalItems, latestSnap, latestDogDays };
-  }, [snapshots, counts, adhoc, catalog, data]);
+    return { totalValue, consumedCostPerDogDay, belowParCount, totalItems, latestSnap, latestDogDays };
+  }, [snapshots, counts, adhoc, catalog, depletionAnalytics.cycleSummaries]);
 
   // ── Inventory value over time ─────────────────────────────────────────────
   const valueOverTime = useMemo(() => {
@@ -680,82 +679,37 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
 
   // ── Cost per dog-day over time ──────────────────────────────────────────────
   const costPerDogDayOverTime = useMemo(() => {
-    return valueOverTime
-      .map((d) => {
-        // Find depletion rate entries for this week to get dog_days
-        const weekRates = depletionRates.filter(r => r.week_start === d.date);
-        const dogDays = weekRates.length > 0 ? weekRates[0].dog_days : 0;
-        return dogDays > 0 ? { ...d, value: d.value / dogDays } : null;
+    return depletionAnalytics.cycleSummaries
+      .map((cycle) => {
+        const dogDays = cycle.dogDays || 0;
+        if (dogDays <= 0) return null;
+        const d = new Date(`${cycle.closingWeekStart}T12:00:00`);
+        return {
+          date: cycle.closingWeekStart,
+          label: `${d.getMonth() + 1}/${d.getDate()}`,
+          value: (cycle.usageValue || 0) / dogDays,
+        };
       })
       .filter(Boolean);
-  }, [valueOverTime, depletionRates]);
+  }, [depletionAnalytics.cycleSummaries]);
 
   // ── Depletion rate (top 15) ────────────────────────────────────────────────
   const depletionData = useMemo(() => {
-    if (snapshots.length < 2) return [];
-    const catMap = {};
-    catalog.forEach((c) => { catMap[c.id] = c; });
-
-    // Build per-item totals across all adjacent week pairs
-    const depMap = {};
-    for (let i = 1; i < snapshots.length; i++) {
-      const prevSnap = snapshots[i - 1];
-      const currSnap = snapshots[i];
-      const prevCounts = counts.filter((c) => c.snapshot_id === prevSnap.id);
-      const currCounts = counts.filter((c) => c.snapshot_id === currSnap.id);
-
-      const prevMap = {};
-      prevCounts.forEach((c) => { prevMap[c.catalog_item_id] = c.stock_count || 0; });
-      currCounts.forEach((c) => {
-        const prev = prevMap[c.catalog_item_id] ?? 0;
-        const depletion = prev - (c.stock_count || 0);
-        if (depletion > 0) {
-          depMap[c.catalog_item_id] = (depMap[c.catalog_item_id] || 0) + depletion;
-        }
-      });
-    }
-
-    return Object.entries(depMap)
-      .map(([id, val]) => ({ label: catMap[id]?.item_name || "Unknown", value: val }))
+    return depletionAnalytics.itemStats
+      .map((item) => ({ label: item.itemName, value: item.totalDepletion }))
+      .filter((item) => item.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 15);
-  }, [snapshots, counts, catalog]);
+  }, [depletionAnalytics.itemStats]);
 
   // ── Depletion per dog-day ───────────────────────────────────────────────────
   const depletionPerDogDay = useMemo(() => {
-    if (snapshots.length < 2) return [];
-    const catMap = {};
-    catalog.forEach((c) => { catMap[c.id] = c; });
-
-    const depMap = {};
-    let totalDogDays = 0;
-    for (let i = 1; i < snapshots.length; i++) {
-      const currSnap = snapshots[i];
-      const prevCounts = counts.filter((c) => c.snapshot_id === snapshots[i - 1].id);
-      const currCounts = counts.filter((c) => c.snapshot_id === currSnap.id);
-      // Get dog-days from depletion_rates if available
-      const weekRates = depletionRates.filter(r => r.week_start === currSnap.week_start);
-      const weekDogDays = weekRates.length > 0 ? (weekRates[0].dog_days || 0) : 0;
-      totalDogDays += weekDogDays;
-
-      const prevMap = {};
-      prevCounts.forEach((c) => { prevMap[c.catalog_item_id] = c.stock_count || 0; });
-      currCounts.forEach((c) => {
-        const prev = prevMap[c.catalog_item_id] ?? 0;
-        const depletion = prev - (c.stock_count || 0);
-        if (depletion > 0) {
-          depMap[c.catalog_item_id] = (depMap[c.catalog_item_id] || 0) + depletion;
-        }
-      });
-    }
-
-    if (totalDogDays === 0) return [];
-
-    return Object.entries(depMap)
-      .map(([id, val]) => ({ label: catMap[id]?.item_name || "Unknown", value: +(val / totalDogDays).toFixed(4) }))
+    return depletionAnalytics.itemStats
+      .filter((item) => item.avgRatePerDogDay != null)
+      .map((item) => ({ label: item.itemName, value: +item.avgRatePerDogDay.toFixed(4) }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 15);
-  }, [snapshots, counts, catalog, depletionRates]);
+  }, [depletionAnalytics.itemStats]);
 
   // ── Low stock alerts ───────────────────────────────────────────────────────
   const lowStockAlerts = useMemo(() => {
@@ -810,53 +764,22 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
 
   // ── Depletion rate intelligence ─────────────────────────────────────────────
   const depletionIntelligence = useMemo(() => {
-    if (!depletionRates.length) return [];
-    const catMap = {};
-    catalog.forEach(c => { catMap[c.id] = c; });
-
-    // Group by catalog_item_id
-    const byItem = {};
-    depletionRates.forEach(r => {
-      if (!byItem[r.catalog_item_id]) byItem[r.catalog_item_id] = [];
-      byItem[r.catalog_item_id].push(r);
-    });
-
-    return Object.entries(byItem)
-      .filter(([, rows]) => rows.length >= 2)
-      .map(([itemId, rows]) => {
-        const cat = catMap[itemId];
-        if (!cat) return null;
-        const sorted = [...rows].sort((a, b) => a.week_start.localeCompare(b.week_start));
-        const avgDepletion = sorted.reduce((s, r) => s + (r.depletion || 0), 0) / sorted.length;
-        const avgRatePerDogDay = sorted.filter(r => r.rate_per_dog_day != null).reduce((s, r) => s + Number(r.rate_per_dog_day), 0) / Math.max(sorted.filter(r => r.rate_per_dog_day != null).length, 1);
-        const avgDogDays = sorted.reduce((s, r) => s + (r.dog_days || 0), 0) / sorted.length;
-
-        // Trend: compare last 2 vs earlier
-        const mid = Math.floor(sorted.length / 2);
-        const recentAvg = sorted.slice(mid).reduce((s, r) => s + (r.depletion || 0), 0) / Math.max(sorted.length - mid, 1);
-        const olderAvg = sorted.slice(0, mid).reduce((s, r) => s + (r.depletion || 0), 0) / Math.max(mid, 1);
-        const trend = recentAvg > olderAvg * 1.05 ? "up" : recentAvg < olderAvg * 0.95 ? "down" : "stable";
-
-        const weeks = sorted.length;
-        const confidence = weeks >= 9 ? "High" : weeks >= 4 ? "Medium" : "Low";
-        const recommendedPar = Math.ceil(avgRatePerDogDay * avgDogDays * 1.2);
-
-        return {
-          itemId,
-          name: cat.item_name,
-          category: cat.category,
-          avgWeeklyUsage: +avgDepletion.toFixed(1),
-          ratePerDogDay: +avgRatePerDogDay.toFixed(4),
-          trend,
-          confidence,
-          weeks,
-          recommendedPar: isFinite(recommendedPar) ? recommendedPar : null,
-          currentPar: cat.par_level,
-        };
-      })
-      .filter(Boolean)
+    return depletionAnalytics.itemStats
+      .filter((item) => item.validCycles > 0)
+      .map((item) => ({
+        itemId: item.itemId,
+        name: item.itemName,
+        category: item.category,
+        avgWeeklyUsage: item.avgCycleUsage != null ? +item.avgCycleUsage.toFixed(1) : 0,
+        ratePerDogDay: item.avgRatePerDogDay != null ? +item.avgRatePerDogDay.toFixed(4) : null,
+        trend: item.trend,
+        confidence: item.confidence,
+        weeks: item.validCycles,
+        recommendedPar: item.recommendedPar,
+        currentPar: item.currentPar,
+      }))
       .sort((a, b) => b.avgWeeklyUsage - a.avgWeeklyUsage);
-  }, [depletionRates, catalog]);
+  }, [depletionAnalytics.itemStats]);
 
   // ── No data flag ──────────────────────────────────────────────────────────
   const hasNoData = !loading && snapshots.length === 0;
@@ -1016,13 +939,13 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
                 color={C.pri}
                 animDelay={0}
               />
-              <MetricCard
-                label="Cost Per Dog-Day"
-                value={metrics?.costPerDogDay != null ? fmtCurrency(metrics.costPerDogDay) : "—"}
-                sub={metrics?.latestDogDays ? `${metrics.latestDogDays} dog-days in latest week` : "No dog-day data available"}
-                icon={<I.TrendingUp />}
-                color={C.acc}
-                animDelay={60}
+	              <MetricCard
+	                label="Consumed / Dog-Day"
+	                value={metrics?.consumedCostPerDogDay != null ? fmtCurrency(metrics.consumedCostPerDogDay) : "—"}
+	                sub={metrics?.latestDogDays ? `${metrics.latestDogDays} dog-days in latest completed cycle` : "No completed depletion cycle"}
+	                icon={<I.TrendingUp />}
+	                color={C.acc}
+	                animDelay={60}
               />
               <MetricCard
                 label="Items Below Par"
@@ -1058,10 +981,10 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
               </div>
 
               <div className="dash-card" style={{ animationDelay: "240ms" }}>
-                <SectionHeader
-                  title="Cost Per Dog-Day Trend"
-                  sub="Inventory cost divided by dog-days per week"
-                />
+	                <SectionHeader
+	                  title="Consumed Cost Per Dog-Day Trend"
+	                  sub="Consumed inventory value divided by dog-days per completed cycle"
+	                />
                 {costPerDogDayOverTime.length >= 2 ? (
                   <LineChart data={costPerDogDayOverTime} color={C.acc} height={180} label="cost-dog" formatY={fmtCurrencyShort} />
                 ) : (
@@ -1360,8 +1283,9 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
 
                   {snapshots.map((snap, i) => {
                     const snapVal = valueOverTime.find((v) => v.date === snap.week_start)?.value ?? 0;
-                    const statusColor = snap.status === "complete" ? C.suc : snap.status === "in_progress" ? C.warn : C.textMut;
-                    const statusBg = snap.status === "complete" ? C.sucLt : snap.status === "in_progress" ? C.warnLt : C.bg;
+                    const isComplete = snap.status === "completed" || snap.status === "complete" || !!snap.completed_at;
+                    const statusColor = isComplete ? C.suc : snap.status === "in_progress" ? C.warn : C.textMut;
+                    const statusBg = isComplete ? C.sucLt : snap.status === "in_progress" ? C.warnLt : C.bg;
 
                     return (
                       <div
@@ -1387,8 +1311,9 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
                         </div>
                         <div style={{ textAlign: "right", fontWeight: 600 }}>
                           {(() => {
+                            const computedCycle = depletionAnalytics.cycleSummaries.find(c => c.closingWeekStart === snap.week_start);
                             const weekRates = depletionRates.filter(r => r.week_start === snap.week_start);
-                            return weekRates.length > 0 && weekRates[0].dog_days ? weekRates[0].dog_days : (snap.dog_count ?? "\u2014");
+                            return computedCycle?.dogDays || (weekRates.length > 0 && weekRates[0].dog_days ? weekRates[0].dog_days : (snap.dog_count ?? "\u2014"));
                           })()}
                         </div>
                         <div style={{ textAlign: "right", fontWeight: 700, color: C.pri }}>
