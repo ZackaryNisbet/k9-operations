@@ -1,5 +1,6 @@
 import {
   extractBathLikeServices,
+  calculateNights,
   getBathSchedulingForDate,
 } from "./bathing-logic.ts";
 import {
@@ -377,6 +378,21 @@ function countDistinctAnimals(rows: ReservationRow[]): number {
   return new Set(rows.map((row) => String(row.animal_gingr_id || row.gingr_id || ""))).size;
 }
 
+function isCheckedOutBeforeDate(row: { check_out_date?: string | null }, targetDate: string): boolean {
+  const checkedOutKey = getDateKey(row.check_out_date);
+  return !!checkedOutKey && checkedOutKey < targetDate;
+}
+
+function isCheckedOutByDate(row: { check_out_date?: string | null }, targetDate: string): boolean {
+  const checkedOutKey = getDateKey(row.check_out_date);
+  return !!checkedOutKey && checkedOutKey <= targetDate;
+}
+
+function wasCheckedInBeforeDate(row: { check_in_date?: string | null }, targetDate: string): boolean {
+  const checkedInKey = getDateKey(row.check_in_date);
+  return !!checkedInKey && checkedInKey < targetDate;
+}
+
 export function buildReservationRecord(
   row: ReservationRow,
   resTypeMaps: { byName: Map<string, ReservationTypeRow>; byId: Map<string, ReservationTypeRow> },
@@ -446,12 +462,32 @@ function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean; u
   return { large, small, privatePlay, halfAndHalf, evaluationBoarding, unknown };
 }
 
-function countDepartureBaths(rows: Array<{ services: any[] }>, targetDate: string): number {
+function countDepartureBaths(
+  rows: Array<{
+    services: any[];
+    startKey?: string;
+    endKey?: string;
+    check_out_date?: string | null;
+  }>,
+  targetDate: string,
+): number {
   let baths = 0;
   for (const row of rows) {
     const bathServices = extractBathLikeServices(row.services || [], []);
     const { scheduledToday } = getBathSchedulingForDate(bathServices, targetDate);
-    if (scheduledToday) baths += 1;
+    if (scheduledToday) {
+      baths += 1;
+      continue;
+    }
+
+    if (
+      row.endKey === targetDate &&
+      calculateNights(row.startKey, row.endKey) === 1 &&
+      bathServices.length === 0 &&
+      !isCheckedOutBeforeDate(row, targetDate)
+    ) {
+      baths += 1;
+    }
   }
   return baths;
 }
@@ -617,6 +653,9 @@ function buildDisplayShape({
   toursCount: number;
 }) {
   const daytimeHalfAndHalf = daycareCounts.halfAndHalf + dayboardingCounts.halfAndHalf;
+  const daytimeLarge = daycareCounts.large + dayboardingCounts.large;
+  const daytimeSmall = daycareCounts.small + dayboardingCounts.small;
+  const daytimePrivatePlay = daycareCounts.privatePlay + dayboardingCounts.privatePlay;
 
   const opening = {
     large_boarding: openingCounts.large,
@@ -636,10 +675,10 @@ function buildDisplayShape({
   };
   const daycare = {
     evaluations: evaluationsCount,
-    private_play_dayboarding: daycareCounts.privatePlay + dayboardingCounts.privatePlay,
+    private_play_dayboarding: daytimePrivatePlay,
     half_and_half_daytime: daytimeHalfAndHalf,
-    large_daycare: daycareCounts.large,
-    small_daycare: daycareCounts.small,
+    large_daycare: daytimeLarge,
+    small_daycare: daytimeSmall,
     unclassified_daycare: daycareCounts.unknown + dayboardingCounts.unknown,
   };
 
@@ -664,6 +703,12 @@ function buildDisplayShape({
     + daycare.large_daycare
     + daycare.small_daycare
     + daycare.unclassified_daycare;
+  const playYard = {
+    large_play_dogs: Math.max(opening.large_boarding, closing.large_boarding) + daycare.large_daycare,
+    small_play_dogs: Math.max(opening.small_boarding, closing.small_boarding) + daycare.small_daycare,
+    private_play_dogs: Math.max(opening.private_play_boarding, closing.private_play_boarding) + daycare.private_play_dayboarding,
+    split_play_dogs: Math.max(opening.half_and_half_boarding, closing.half_and_half_boarding) + daycare.half_and_half_daytime,
+  };
 
   return {
     opening: {
@@ -686,6 +731,7 @@ function buildDisplayShape({
       tours: toursCount,
       total_dog_volume: closingTotal + daycareTotal,
     },
+    play_yard: playYard,
   };
 }
 
@@ -715,6 +761,10 @@ function flattenDisplay(display: any) {
     support_medication_dogs: Number(display?.support?.medication_dogs || 0),
     support_total_dog_volume: Number(display?.support?.total_dog_volume || 0),
     support_tours: Number(display?.support?.tours || 0),
+    play_yard_large_play_dogs: Number(display?.play_yard?.large_play_dogs || 0),
+    play_yard_small_play_dogs: Number(display?.play_yard?.small_play_dogs || 0),
+    play_yard_private_play_dogs: Number(display?.play_yard?.private_play_dogs || 0),
+    play_yard_split_play_dogs: Number(display?.play_yard?.split_play_dogs || 0),
   };
 }
 
@@ -766,6 +816,12 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
       evening_feeding_dogs: Number(flat.support_evening_feeding_dogs ?? display.support.evening_feeding_dogs),
       total_dog_volume: Number(flat.support_total_dog_volume ?? display.support.total_dog_volume),
     },
+    play_yard: {
+      large_play_dogs: Number(flat.play_yard_large_play_dogs ?? display.play_yard.large_play_dogs),
+      small_play_dogs: Number(flat.play_yard_small_play_dogs ?? display.play_yard.small_play_dogs),
+      private_play_dogs: Number(flat.play_yard_private_play_dogs ?? display.play_yard.private_play_dogs),
+      split_play_dogs: Number(flat.play_yard_split_play_dogs ?? display.play_yard.split_play_dogs),
+    },
   };
 }
 
@@ -780,10 +836,22 @@ export function computeDemandSnapshotForDate({
   roomByDate: Record<string, { occupied: number; available: number; total: number }>;
   totalRooms: number;
 }) {
-  const activeToday = reservations.filter((row) => row.startKey <= targetDate && row.endKey >= targetDate);
+  const activeToday = reservations.filter((row) =>
+    row.startKey <= targetDate &&
+    row.endKey >= targetDate &&
+    !isCheckedOutBeforeDate(row, targetDate)
+  );
 
-  const openingBoarding = activeToday.filter((row) => row.cls === "boarding" && row.startKey < targetDate);
-  const closingBoarding = activeToday.filter((row) => row.cls === "boarding" && row.endKey > targetDate);
+  const openingBoarding = activeToday.filter((row) =>
+    row.cls === "boarding" &&
+    row.startKey < targetDate &&
+    wasCheckedInBeforeDate(row, targetDate)
+  );
+  const closingBoarding = activeToday.filter((row) =>
+    row.cls === "boarding" &&
+    row.endKey > targetDate &&
+    !isCheckedOutByDate(row, targetDate)
+  );
   const activeBoardingForPeak = activeToday.filter((row) => row.cls === "boarding" && !isEvaluationBoardingToday(row, targetDate));
   const evaluations = activeToday.filter((row) => row.cls === "evaluation" || row.isFirstEverDaycareVisit);
   const activeDaycare = activeToday.filter((row) => row.cls === "daycare" && !row.isFirstEverDaycareVisit);
@@ -794,7 +862,7 @@ export function computeDemandSnapshotForDate({
   const closingCounts = splitCounts(closingBoarding, targetDate);
   const daycareCounts = splitCounts(activeDaycare, targetDate);
   const dayboardingCounts = splitCounts(activeDayboarding, targetDate);
-  const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare], targetDate);
+  const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare, ...activeDayboarding], targetDate);
 
   const dogsArriving = countDistinctAnimals(
     activeToday.filter((row) => row.startKey === targetDate && row.cls !== "tour" && row.cls !== "grooming"),
@@ -843,6 +911,10 @@ export function computeDemandSnapshotForDate({
       peak_large_daycare: peakCounts.large,
       peak_small_daycare: peakCounts.small,
       peak_unknown_daycare: peakCounts.unknown,
+      play_yard_large_dogs: display.play_yard.large_play_dogs,
+      play_yard_small_dogs: display.play_yard.small_play_dogs,
+      play_yard_private_play_dogs: display.play_yard.private_play_dogs,
+      play_yard_split_play_dogs: display.play_yard.split_play_dogs,
       total_private_play_dogs:
         openingCounts.privatePlay
         + openingCounts.halfAndHalf

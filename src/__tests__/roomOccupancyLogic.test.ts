@@ -219,4 +219,39 @@ describe("room occupancy logic", () => {
     expect(payload.assignments[0].assignment_source).toBe("occupancy");
     expect(payload.assignments[0].assignment_source_date).toBe(PREV_DATE);
   });
+
+  it("excludes reservations checked out before the service date", () => {
+    const payload = buildRoomOccupancySnapshot({
+      date: TARGET_DATE,
+      runs: [makeRun("Executive - 303")],
+      occupancy_rows: [
+        makeOccupancyRow({
+          gingr_run_id: "run-303",
+          run_name: "Executive - 303",
+          occupancy_date: PREV_DATE,
+          animal_names: "Victor (Paula Chung)",
+          end_date: "2026-04-21T12:30:00-04:00",
+        }),
+      ],
+      reservations: [
+        makeReservation({
+          reservation_id: "stale-checked-out",
+          animal_id: "animal-stale",
+          animal_name: "Victor",
+          owner_first_name: "Paula",
+          owner_last_name: "Chung",
+          start_date: "2026-04-02",
+          end_date: "2026-04-21",
+          check_in_date: "2026-04-02T10:00:00-04:00",
+          check_out_date: "2026-04-14T09:00:00-04:00",
+          raw_data: {},
+          room_assignment: "Executive - 303",
+        }),
+      ],
+      include_categories: ["boarding"],
+    });
+
+    expect(payload.assignments).toHaveLength(0);
+    expect(payload.unresolved_assignments).toHaveLength(0);
+  });
 });

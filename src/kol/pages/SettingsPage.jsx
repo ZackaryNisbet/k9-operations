@@ -179,6 +179,144 @@ function RoomCleaningSettingsTab({ profile, addGlobalToast }) {
   );
 }
 
+const DEFAULT_ROLL_CALL_AREA_ORDER = [
+  "Executive Rooms",
+  "Luxury Suites",
+  "Single Compartments",
+  "Double Compartments",
+  "Temporary Lodging",
+  "Other",
+];
+
+function RollCallSettingsTab({ profile, addGlobalToast }) {
+  const locationId = profile?.location_id;
+  const SETTING_KEY = "roll_call_area_order";
+  const [areas, setAreas] = useState(DEFAULT_ROLL_CALL_AREA_ORDER);
+  const [newArea, setNewArea] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+    setLoading(true);
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", SETTING_KEY)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) console.error("Failed to load roll call area order:", error);
+        const setting = data?.setting_value;
+        const loaded = Array.isArray(setting)
+          ? setting
+          : Array.isArray(setting?.area_order)
+            ? setting.area_order
+            : Array.isArray(setting?.areas)
+              ? setting.areas
+              : [];
+        const cleaned = loaded.map((entry) => String(entry || "").trim()).filter(Boolean);
+        setAreas(cleaned.length ? cleaned : DEFAULT_ROLL_CALL_AREA_ORDER);
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [locationId]);
+
+  const updateArea = (index, value) => {
+    setAreas((current) => current.map((entry, i) => i === index ? value : entry));
+  };
+
+  const moveArea = (index, delta) => {
+    setAreas((current) => {
+      const next = [...current];
+      const target = index + delta;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removeArea = (index) => {
+    setAreas((current) => current.filter((_, i) => i !== index));
+  };
+
+  const addArea = () => {
+    const cleaned = newArea.trim();
+    if (!cleaned) return;
+    setAreas((current) => [...current, cleaned]);
+    setNewArea("");
+  };
+
+  const save = async () => {
+    if (!locationId) return;
+    const cleaned = areas.map((entry) => String(entry || "").trim()).filter(Boolean);
+    setSaving(true);
+    const { error } = await supabase.from("lite_settings").upsert({
+      location_id: locationId,
+      setting_key: SETTING_KEY,
+      setting_value: { area_order: cleaned },
+    }, { onConflict: "location_id,setting_key" });
+    setSaving(false);
+    if (error) {
+      addGlobalToast?.("Failed to save roll call area order: " + error.message, "error");
+    } else {
+      setAreas(cleaned);
+      addGlobalToast?.("Roll call area order saved", "success");
+    }
+  };
+
+  const reset = () => {
+    setAreas(DEFAULT_ROLL_CALL_AREA_ORDER);
+  };
+
+  const inputStyle = {
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: `1.5px solid ${C.border}`,
+    background: C.bg,
+    color: C.text,
+    fontSize: 13,
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+  };
+
+  if (loading) {
+    return <K9LoadingAnimation size={48} message="Loading roll call settings..." />;
+  }
+
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 700, color: C.text }}>Roll Call</h3>
+      <div style={{ background: C.surface, borderRadius: 12, padding: "20px 24px", border: `1.5px solid ${C.border}` }}>
+        <div style={{ display: "grid", gap: 10 }}>
+          {areas.map((area, index) => (
+            <div key={`${area}-${index}`} style={{ display: "grid", gridTemplateColumns: "36px 1fr auto", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut, textAlign: "center" }}>{index + 1}</div>
+              <input value={area} onChange={(event) => updateArea(index, event.target.value)} style={inputStyle} />
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => moveArea(index, -1)} disabled={index === 0} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.text, cursor: index === 0 ? "not-allowed" : "pointer", opacity: index === 0 ? 0.4 : 1 }}>↑</button>
+                <button onClick={() => moveArea(index, 1)} disabled={index === areas.length - 1} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.text, cursor: index === areas.length - 1 ? "not-allowed" : "pointer", opacity: index === areas.length - 1 ? 0.4 : 1 }}>↓</button>
+                <button onClick={() => removeArea(index)} style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#DC2626", cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <input value={newArea} onChange={(event) => setNewArea(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addArea(); }} placeholder="Area name" style={inputStyle} />
+          <button onClick={addArea} disabled={!newArea.trim()} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: newArea.trim() ? C.pri : C.surfaceHover, color: newArea.trim() ? "#fff" : C.textMut, fontSize: 12, fontWeight: 800, cursor: newArea.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>Add</button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={reset} style={{ padding: "9px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Reset</button>
+          <button onClick={save} disabled={saving} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: saving ? C.textMut : C.pri, color: "#fff", fontSize: 12, fontWeight: 800, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}>
+            {saving ? "Saving..." : "Save Order"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const ANALYTICS_ONLY_SETTINGS = new Set([
   "ignite-settings",
   "ignite-parser",
@@ -227,6 +365,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
+        { id: "roll-call", label: "Roll Call", desc: "Configure opening and closing roll call room area order" },
         { id: "emergency-contacts", label: "Emergency Contacts", desc: "Configure repeat-verification thresholds for emergency contact prompts" },
         { id: "role-layout", label: "Role Layout", desc: "Matrix view: configure tasks and workflows across PCT, CSR, and MOD for all time-of-day sections" },
       ],
@@ -318,6 +457,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
         return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "room-cleaning":
         return <RoomCleaningSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
+      case "roll-call":
+        return <RollCallSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "emergency-contacts":
         return <EmergencyContactsSettingsTab />;
       default:

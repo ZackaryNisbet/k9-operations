@@ -3155,14 +3155,14 @@ Deno.serve(async (req: Request) => {
         locationId,
         today,
         "opening",
-        { createIfMissing: true },
+        { createIfMissing: true, forceRefresh: true },
       ),
       loadRollCallSessionRow(
         supabase,
         locationId,
         today,
         "closing",
-        { createIfMissing: true },
+        { createIfMissing: true, forceRefresh: true },
       ),
       // ─── Future days upserts (14 days) ────────────────────────────
       ...futureReports.flatMap(fr => [
