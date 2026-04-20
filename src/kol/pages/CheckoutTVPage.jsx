@@ -1638,10 +1638,12 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   useEffect(() => {
     if (!facilityPresence.available) return;
     const status = facilityPresence.status === "critical" ? "critical" : "healthy";
+    const nextRunAt = new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString();
+    const lastSuccessAt = facilityPresence.lastFetchedAt || new Date().toISOString();
     updateHealthSection("boh", {
       status,
-      lastSuccessAt: facilityPresence.lastFetchedAt || new Date().toISOString(),
-      nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+      lastSuccessAt,
+      nextRunAt,
       error: facilityPresence.error,
       details: {
         Source: "Canonical facility_presence",
@@ -1650,6 +1652,17 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         "Going Home": facilityPresence.counts.goingHome,
         Events: facilityPresence.recentEvents.length,
         "Latest Run": facilityPresence.latestSync?.started_at || "pending",
+      },
+    });
+
+    updateHealthSection("tvPoll", {
+      status: "healthy",
+      lastSuccessAt,
+      nextRunAt,
+      error: null,
+      details: {
+        Mode: "Bypassed",
+        Reason: "Canonical facility_presence is active",
       },
     });
   }, [

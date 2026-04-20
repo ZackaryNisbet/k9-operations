@@ -2,11 +2,11 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "950b31c338e980644eaf77057b262279961af60e",
+      "commit": "a57bc05b68b048fc8ced9386791c95c559a1a4e1",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "today-sync room occupancy refresh",
-      "updatedAt": "2026-04-15T17:38:36.883Z"
+      "note": "normalize presence BOH timestamps",
+      "updatedAt": "2026-04-20T22:01:08.036Z"
     },
     "compute-scheduling-matrix": {
       "commit": "86e6b5cbb3b3028bbddd2a0394bcf782cfb53664",
@@ -72,11 +72,11 @@
       "updatedAt": "2026-04-18T15:55:18.664Z"
     },
     "ops-platform-health": {
-      "commit": "33a8ac95b18374b4ab2a2228b61452921b5bf955",
+      "commit": "bfdc2d1cf24921f150060c03bf04c84c525cce1e",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Allow service-role platform health verification",
-      "updatedAt": "2026-04-20T09:20:38.703Z"
+      "note": "canonical facility presence sync",
+      "updatedAt": "2026-04-20T21:56:07.298Z"
     },
     "ops-bathing-manual": {
       "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
