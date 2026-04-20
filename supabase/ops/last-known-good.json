@@ -9,32 +9,32 @@
       "updatedAt": "2026-04-15T17:38:36.883Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "9a561c412197ec3e321c79e24897126769b747e8",
+      "commit": "86e6b5cbb3b3028bbddd2a0394bcf782cfb53664",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Stable post-recovery scheduling compute baseline",
-      "updatedAt": "2026-04-14T02:58:44.547Z"
+      "note": "roll call and scheduling matrix count accuracy",
+      "updatedAt": "2026-04-20T08:45:21.384Z"
     },
     "ops-compute": {
-      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
+      "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
-      "updatedAt": "2026-04-19T13:06:50.411Z"
+      "note": "surface unassigned roll call dogs",
+      "updatedAt": "2026-04-20T08:52:02.318Z"
     },
     "ops-compute-ondemand": {
-      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
+      "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
-      "updatedAt": "2026-04-19T13:06:50.411Z"
+      "note": "surface unassigned roll call dogs",
+      "updatedAt": "2026-04-20T08:52:02.318Z"
     },
     "scheduling-audit": {
-      "commit": "91c6ba2cce757a8c047daa129b87d7af60d0ecca",
+      "commit": "86e6b5cbb3b3028bbddd2a0394bcf782cfb53664",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "mobile finish release",
-      "updatedAt": "2026-04-15T14:54:49.229Z"
+      "note": "roll call and scheduling matrix count accuracy",
+      "updatedAt": "2026-04-20T08:45:21.384Z"
     },
     "gingr-boh-poll": {
       "commit": "8f83744280f2f3cb70e8fc5c2d211e6350fb2590",
