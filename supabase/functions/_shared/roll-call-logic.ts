@@ -54,8 +54,12 @@ export const DEFAULT_ROLL_CALL_AREA_ORDER = [
   "Single Compartments",
   "Double Compartments",
   "Temporary Lodging",
+  "Unassigned",
   "Other",
 ];
+
+const UNASSIGNED_ROLL_CALL_AREA = "Unassigned";
+const UNASSIGNED_ROLL_CALL_ROOM = "No Room Assigned";
 
 function todayET(): string {
   return new Date().toLocaleDateString("en-CA", {
@@ -341,7 +345,6 @@ export async function buildRollCallSnapshot(
     const isClosingDog = endDate > targetDate
       && !isCheckedOutByDate(assignment.check_out_date, targetDate);
     if (session === "opening" ? !isOpeningDog : !isClosingDog) continue;
-    if (!assignment.assigned_room_name) continue;
 
     const animalGingrId = safeText(assignment.animal_id);
     const playgroupAssignment = animalGingrId
@@ -367,8 +370,8 @@ export async function buildRollCallSnapshot(
       reservationTypeName: assignment.reservation_type_name,
       startDate,
       endDate,
-      roomName: normalizeWhitespace(assignment.assigned_room_name),
-      areaName: normalizeWhitespace(assignment.assigned_area_name || "Other"),
+      roomName: normalizeWhitespace(assignment.assigned_room_name || UNASSIGNED_ROLL_CALL_ROOM),
+      areaName: normalizeWhitespace(assignment.assigned_area_name || UNASSIGNED_ROLL_CALL_AREA),
       photoUrl: animalGingrId ? (photoByAnimalId[animalGingrId] || assignment.photo_url || null) : assignment.photo_url || null,
       playgroup,
       tags,
