@@ -764,6 +764,12 @@ async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey
   if (token === serviceRoleKey) return null;
 
   const { data, error } = await sb.auth.getUser(token);
+  if (
+    error?.message?.includes("missing sub claim")
+    && hasServiceRoleJwtRole(token)
+  ) {
+    return null;
+  }
   if (error || !data?.user) {
     return new Response(JSON.stringify({
       error: "Authentication required.",
@@ -786,6 +792,21 @@ async function requireAuthenticatedRequest(req: Request, sb: any, serviceRoleKey
   }
 
   return null;
+}
+
+function hasServiceRoleJwtRole(token: string) {
+  const payloadSegment = token.split(".")[1];
+  if (!payloadSegment) return false;
+  try {
+    const paddedPayload = payloadSegment
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(payloadSegment.length / 4) * 4, "=");
+    const payload = JSON.parse(atob(paddedPayload));
+    return payload?.role === "service_role";
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req: Request) => {
