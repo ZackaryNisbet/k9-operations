@@ -48,6 +48,15 @@ export interface RollCallComputedItems {
   rooms: RollCallRoom[];
 }
 
+export const DEFAULT_ROLL_CALL_AREA_ORDER = [
+  "Executive Rooms",
+  "Luxury Suites",
+  "Single Compartments",
+  "Double Compartments",
+  "Temporary Lodging",
+  "Other",
+];
+
 function todayET(): string {
   return new Date().toLocaleDateString("en-CA", {
     timeZone: "America/New_York",
@@ -76,6 +85,67 @@ function formatDate(value: string): string {
   if (!value) return "";
   const datePart = value.includes("T") ? value.split("T")[0] : value;
   return datePart;
+}
+
+function isCheckedOutBeforeDate(value: string | null | undefined, targetDate: string): boolean {
+  const date = formatDate(String(value || ""));
+  return !!date && date < targetDate;
+}
+
+function isCheckedOutByDate(value: string | null | undefined, targetDate: string): boolean {
+  const date = formatDate(String(value || ""));
+  return !!date && date <= targetDate;
+}
+
+function wasCheckedInBeforeDate(value: string | null | undefined, targetDate: string): boolean {
+  const date = formatDate(String(value || ""));
+  return !!date && date < targetDate;
+}
+
+function normalizeOrderLabel(value: string): string {
+  return normalizeWhitespace(value).toLowerCase().replace(/[^a-z0-9]+/g, " ");
+}
+
+function areaSortIndex(areaName: string, order: string[]): number {
+  const normalizedArea = normalizeOrderLabel(areaName);
+  const exact = order.findIndex((entry) => normalizeOrderLabel(entry) === normalizedArea);
+  if (exact !== -1) return exact;
+
+  const fuzzy = order.findIndex((entry) => {
+    const normalizedEntry = normalizeOrderLabel(entry);
+    return normalizedArea.includes(normalizedEntry) || normalizedEntry.includes(normalizedArea);
+  });
+  return fuzzy === -1 ? Number.MAX_SAFE_INTEGER : fuzzy;
+}
+
+async function fetchRollCallAreaOrder(
+  supabase: any,
+  locationId: string,
+): Promise<string[]> {
+  try {
+    const { data } = await supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "roll_call_area_order")
+      .maybeSingle();
+    const setting = data?.setting_value;
+    const rawOrder = Array.isArray(setting)
+      ? setting
+      : Array.isArray(setting?.areas)
+        ? setting.areas
+        : Array.isArray(setting?.area_order)
+          ? setting.area_order
+          : [];
+    const cleaned = rawOrder
+      .map((entry: unknown) => normalizeWhitespace(String(entry || "")))
+      .filter(Boolean);
+    if (cleaned.length) return cleaned;
+  } catch (error) {
+    console.error("Failed to load roll call area order:", error);
+  }
+
+  return DEFAULT_ROLL_CALL_AREA_ORDER;
 }
 
 function isBoardingReservationType(typeName: string): boolean {
@@ -195,6 +265,7 @@ export async function buildRollCallSnapshot(
   targetDate: string,
   session: RollCallSession,
 ): Promise<RollCallComputedItems> {
+  const configuredAreaOrder = await fetchRollCallAreaOrder(supabase, locationId);
   const { data: reservations, error: reservationError } = await supabase
     .from("gingr_reservations")
     .select(
@@ -228,7 +299,7 @@ export async function buildRollCallSnapshot(
     const runName = safeText(roomGroup.room_name);
     const areaName = safeText(roomGroup.area_name) || "Other";
     if (!areaOrder.has(areaName)) {
-      areaOrder.set(areaName, areaOrder.size);
+      areaOrder.set(areaName, areaSortIndex(areaName, configuredAreaOrder));
     }
     roomOrder.set(`${areaName}::${runName}`, index);
   }
@@ -264,8 +335,11 @@ export async function buildRollCallSnapshot(
   for (const assignment of occupancyModel.assignments) {
     const startDate = formatDate(assignment.start_day);
     const endDate = formatDate(assignment.end_day);
-    const isOpeningDog = startDate < targetDate;
-    const isClosingDog = endDate > targetDate;
+    const isOpeningDog = startDate < targetDate
+      && wasCheckedInBeforeDate(assignment.check_in_date, targetDate)
+      && !isCheckedOutBeforeDate(assignment.check_out_date, targetDate);
+    const isClosingDog = endDate > targetDate
+      && !isCheckedOutByDate(assignment.check_out_date, targetDate);
     if (session === "opening" ? !isOpeningDog : !isClosingDog) continue;
     if (!assignment.assigned_room_name) continue;
 
@@ -336,6 +410,7 @@ export async function buildRollCallSnapshot(
         (areaOrder.get(a.areaName) ?? Number.MAX_SAFE_INTEGER) -
         (areaOrder.get(b.areaName) ?? Number.MAX_SAFE_INTEGER);
       if (areaDiff !== 0) return areaDiff;
+      if (a.areaName !== b.areaName) return a.areaName.localeCompare(b.areaName);
 
       const roomDiff =
         (roomOrder.get(`${a.areaName}::${a.roomName}`) ?? Number.MAX_SAFE_INTEGER) -
@@ -352,9 +427,13 @@ export async function buildRollCallSnapshot(
   }
 
   const areas = [...areaMap.entries()]
-    .sort((a, b) =>
-      (areaOrder.get(a[0]) ?? Number.MAX_SAFE_INTEGER) -
-      (areaOrder.get(b[0]) ?? Number.MAX_SAFE_INTEGER))
+    .sort((a, b) => {
+      const areaDiff =
+        (areaOrder.get(a[0]) ?? Number.MAX_SAFE_INTEGER) -
+        (areaOrder.get(b[0]) ?? Number.MAX_SAFE_INTEGER);
+      if (areaDiff !== 0) return areaDiff;
+      return a[0].localeCompare(b[0]);
+    })
     .map(([name, areaRooms]) => ({
       name,
       roomCount: areaRooms.length,

@@ -627,6 +627,8 @@ function enrichReservations(
     const endDate = normalizeDate(reservation.end_date || reservation.raw_data?.end_date);
     if (!startDate || !endDate) continue;
     if (startDate > serviceDate || endDate < serviceDate) continue;
+    const checkOutDate = normalizeDate(reservation.check_out_date);
+    if (checkOutDate && checkOutDate < serviceDate) continue;
 
     const category = classifyRoomOccupancyReservationType(
       reservation.reservation_type_name || reservation.raw_data?.reservation_type?.type,
