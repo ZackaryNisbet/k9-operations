@@ -326,6 +326,12 @@ function deriveReportTotal(key: string, computedItems: any) {
   return null;
 }
 
+function numericValue(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 async function execSql(sb: any, query: string, params: string[] = []) {
   const { data, error } = await sb.rpc("exec_sql", { query, params });
   if (error) throw error;
@@ -350,6 +356,85 @@ async function fetchLatestAndCount(
   return {
     latest: latestRow || null,
     count: count ?? 0,
+  };
+}
+
+async function fetchCountReconciliationHealth(sb: any, locationId: string, date: string) {
+  const [matrixRes, rollCallRes] = await Promise.all([
+    sb
+      .from("scheduling_matrix_daily")
+      .select("detail_json, computed_at")
+      .eq("location_id", locationId)
+      .eq("matrix_date", date)
+      .maybeSingle(),
+    sb
+      .from("lite_daily_ops")
+      .select("id, computed_items, computed_at, updated_at")
+      .eq("location_id", locationId)
+      .in("id", [
+        `ops_roll_call_opening_${date}`,
+        `ops_roll_call_closing_${date}`,
+      ]),
+  ]);
+
+  if (matrixRes.error) throw matrixRes.error;
+  if (rollCallRes.error) throw rollCallRes.error;
+
+  const matrixDisplay = matrixRes.data?.detail_json?.display || {};
+  const rollCallById = new Map((rollCallRes.data || []).map((row: any) => [row.id, row]));
+  const openingRow: any = rollCallById.get(`ops_roll_call_opening_${date}`) || null;
+  const closingRow: any = rollCallById.get(`ops_roll_call_closing_${date}`) || null;
+  const openingMatrix = numericValue(matrixDisplay.opening?.total_boarding);
+  const closingMatrix = numericValue(matrixDisplay.closing?.total_boarding);
+  const openingRollCall = numericValue(openingRow?.computed_items?.summary?.totalDogs);
+  const closingRollCall = numericValue(closingRow?.computed_items?.summary?.totalDogs);
+
+  const checks = [
+    {
+      key: "opening_boarding",
+      label: "Opening boarding",
+      matrix_total: openingMatrix,
+      roll_call_total: openingRollCall,
+      status: openingMatrix == null || openingRollCall == null
+        ? "warning"
+        : openingMatrix === openingRollCall
+          ? "healthy"
+          : "critical",
+    },
+    {
+      key: "closing_boarding",
+      label: "Closing boarding",
+      matrix_total: closingMatrix,
+      roll_call_total: closingRollCall,
+      status: closingMatrix == null || closingRollCall == null
+        ? "warning"
+        : closingMatrix === closingRollCall
+          ? "healthy"
+          : "critical",
+    },
+  ];
+
+  const missingLabels = checks
+    .filter((check) => check.matrix_total == null || check.roll_call_total == null)
+    .map((check) => check.label);
+  const mismatches = checks
+    .filter((check) => check.status === "critical")
+    .map((check) => `${check.label}: matrix ${check.matrix_total}, roll call ${check.roll_call_total}`);
+  const status = worstStatus(checks.map((check) => check.status));
+  const summary = mismatches.length
+    ? mismatches.join("; ")
+    : missingLabels.length
+      ? `Missing count source for ${missingLabels.join(", ")}`
+      : "Scheduling matrix and roll-call dog totals agree.";
+
+  return {
+    status,
+    summary,
+    date,
+    matrix_computed_at: matrixRes.data?.computed_at || null,
+    opening_roll_call_computed_at: openingRow?.computed_at || openingRow?.updated_at || null,
+    closing_roll_call_computed_at: closingRow?.computed_at || closingRow?.updated_at || null,
+    checks,
   };
 }
 
@@ -575,6 +660,7 @@ function supabaseStatusHealth(indicator: string | null | undefined) {
 function buildHealthFactors({
   cronHealth,
   reportHealth,
+  countReconciliation,
   freshness,
   syncState,
   bohCache,
@@ -582,6 +668,7 @@ function buildHealthFactors({
 }: {
   cronHealth: any;
   reportHealth: any;
+  countReconciliation: any;
   freshness: any;
   syncState: any[];
   bohCache: any;
@@ -613,6 +700,14 @@ function buildHealthFactors({
       summary: `${freshReports}/${reports.length} critical reports fresh`,
       description: "Checks today's lite_daily_ops report outputs for bathing, room cleaning and setups, and room occupancy.",
       healthy_criteria: "Each report has a current computed_at or updated_at timestamp and has not exceeded its warning/failure age.",
+    },
+    {
+      key: "operational_count_reconciliation",
+      label: "Roll Call / Matrix Counts",
+      status: countReconciliation?.status || "unknown",
+      summary: countReconciliation?.summary || "Roll-call and scheduling-matrix reconciliation unavailable.",
+      description: "Compares Scheduling Matrix opening/closing boarding totals with the matching Opening and Closing Roll Call dog totals.",
+      healthy_criteria: "Opening and closing boarding dog counts match across Scheduling Matrix and Roll Call for the same service date.",
     },
     {
       key: "source_sync_state",
@@ -719,6 +814,7 @@ Deno.serve(async (req: Request) => {
       latestOpsMetric,
       todayNotesMetric,
       reportHealth,
+      countReconciliation,
       bohCache,
       cronHealthResult,
       supabaseStatus,
@@ -730,6 +826,7 @@ Deno.serve(async (req: Request) => {
       sb.from("lite_daily_ops").select("id, type_sub, updated_at, computed_at, date").eq("location_id", locationId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
       sb.from("lite_daily_ops").select("id, updated_at, computed_at, date").eq("location_id", locationId).eq("id", todayNotesId).maybeSingle(),
       fetchReportHealth(sb, locationId, date),
+      fetchCountReconciliationHealth(sb, locationId, date),
       fetchBohCacheHealth(sb, locationId),
       fetchCronHealth(sb).then((cronHealth) => ({ cronHealth })).catch((error: any) => ({ cronError: error?.message || "Failed to load cron health." })),
       fetchSupabaseStatus(),
@@ -887,6 +984,18 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    if (countReconciliation?.status && countReconciliation.status !== "healthy") {
+      alerts.push({
+        severity: countReconciliation.status === "critical" ? "critical" : "warning",
+        kind: "count_reconciliation",
+        label: "Roll Call / Matrix Counts",
+        key: "roll_call_matrix_counts",
+        affects: ["Opening Roll Call", "Closing Roll Call", "Scheduling matrix"],
+        message: countReconciliation.summary || "Roll-call and scheduling-matrix counts could not be reconciled.",
+        action: "Audit GINGR reservation check-in/check-out state, room assignment coverage, and recompute roll call plus scheduling matrix before trusting staffing counts.",
+      });
+    }
+
     if (freshness.gingr_notes_today.freshness_status === "critical") {
       alerts.push({
         severity: "warning",
@@ -931,6 +1040,7 @@ Deno.serve(async (req: Request) => {
       health_factors: buildHealthFactors({
         cronHealth,
         reportHealth,
+        countReconciliation,
         freshness,
         syncState,
         bohCache,
@@ -950,6 +1060,7 @@ Deno.serve(async (req: Request) => {
       sync_state: syncState,
       freshness,
       reports: reportHealth,
+      count_reconciliation: countReconciliation,
       cron_health: cronHealth,
       boh_cache: bohCache,
       pitr: {
