@@ -1,10 +1,25 @@
 export const PLAYGROUP_DISPLAY_ORDER = [
   "half_and_half",
+  "both_daycares",
   "private_play",
   "large",
   "small",
   "evaluation",
 ];
+
+const PLAY_ICON_CAPABILITY_TO_TAG = {
+  "play.private_play": "private_play",
+  "play.large_daycare": "large",
+  "play.small_daycare": "small",
+  "play.evaluation": "evaluation",
+};
+
+const PLAY_TITLE_FALLBACK_CAPABILITIES = {
+  "private play": "play.private_play",
+  "large dog playgroup": "play.large_daycare",
+  "small dog playgroup": "play.small_daycare",
+  "evaluation": "play.evaluation",
+};
 
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
@@ -21,6 +36,170 @@ function normalizeDisplayPlaygroup(value) {
 function normalizeSchedulingPlaygroup(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return ["private_play", "large", "small"].includes(normalized) ? normalized : null;
+}
+
+function normalizeString(value) {
+  return String(value || "").trim();
+}
+
+function normalizeKey(value) {
+  return normalizeString(value).toLowerCase();
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => normalizeString(value)).filter(Boolean))];
+}
+
+function mappingMatchesIcon(mapping, icon) {
+  const mappingTemplateId = normalizeString(mapping?.icon_template_id);
+  const iconTemplateId = normalizeString(icon?.icon_template_id);
+  if (mappingTemplateId && iconTemplateId) {
+    return mappingTemplateId === iconTemplateId;
+  }
+
+  const mappingIdentityKey = normalizeString(mapping?.icon_identity_key);
+  const iconIdentityKey = normalizeString(icon?.icon_identity_key);
+  if (mappingIdentityKey && iconIdentityKey) {
+    return mappingIdentityKey === iconIdentityKey;
+  }
+
+  return false;
+}
+
+function getFallbackCapabilities(icon) {
+  const titleKey = normalizeKey(icon?.icon_title);
+  const groupKey = normalizeKey(icon?.icon_group);
+  if (groupKey !== "play") return [];
+
+  const exact = PLAY_TITLE_FALLBACK_CAPABILITIES[titleKey];
+  if (exact) return [exact];
+
+  if (titleKey.includes("private") && titleKey.includes("play")) {
+    return ["play.private_play"];
+  }
+  if (
+    titleKey.includes("large")
+    && (titleKey.includes("playgroup") || titleKey.includes("play group") || titleKey.includes("daycare"))
+  ) {
+    return ["play.large_daycare"];
+  }
+  if (
+    titleKey.includes("small")
+    && (titleKey.includes("playgroup") || titleKey.includes("play group") || titleKey.includes("daycare"))
+  ) {
+    return ["play.small_daycare"];
+  }
+  if (titleKey === "eval" || titleKey.includes("evaluation")) {
+    return ["play.evaluation"];
+  }
+
+  return [];
+}
+
+export function getCapabilitiesForIcon(icon, mappings = []) {
+  const explicitMatches = mappings
+    .filter((mapping) => mapping?.is_active !== false && normalizeString(mapping?.capability_key))
+    .filter((mapping) => mappingMatchesIcon(mapping, icon))
+    .map((mapping) => normalizeString(mapping.capability_key));
+
+  if (explicitMatches.length > 0) {
+    return uniqueStrings(explicitMatches);
+  }
+
+  return getFallbackCapabilities(icon);
+}
+
+function normalizePlaygroupTagFromIcon(icon, mappings = []) {
+  const capabilities = getCapabilitiesForIcon(icon, mappings);
+  for (const capability of capabilities) {
+    const tag = PLAY_ICON_CAPABILITY_TO_TAG[capability];
+    if (tag) return tag;
+  }
+  return null;
+}
+
+export function derivePlaygroupAssignmentsFromIcons(iconRows = [], mappings = []) {
+  const grouped = new Map();
+
+  for (const icon of iconRows || []) {
+    const animalGingrId = normalizeString(icon?.animal_gingr_id);
+    const playgroupTag = normalizePlaygroupTagFromIcon(icon, mappings);
+    if (!animalGingrId || !playgroupTag) continue;
+
+    const entry = grouped.get(animalGingrId) || {
+      hasPrivatePlay: false,
+      hasEvaluation: false,
+      hasLarge: false,
+      hasSmall: false,
+      playgroupTags: new Set(),
+      sourceIconTitles: new Set(),
+      sourceIconComments: new Set(),
+      privatePlayComment: null,
+    };
+
+    const title = normalizeString(icon?.icon_title);
+    const comment = normalizeString(icon?.icon_comment);
+    entry.playgroupTags.add(playgroupTag);
+    if (title) entry.sourceIconTitles.add(title);
+    if (comment) entry.sourceIconComments.add(comment);
+
+    if (playgroupTag === "private_play") {
+      entry.hasPrivatePlay = true;
+      if (comment) entry.privatePlayComment = comment;
+    }
+    if (playgroupTag === "evaluation") entry.hasEvaluation = true;
+    if (playgroupTag === "large") entry.hasLarge = true;
+    if (playgroupTag === "small") entry.hasSmall = true;
+
+    grouped.set(animalGingrId, entry);
+  }
+
+  return Array.from(grouped.entries()).map(([animalGingrId, entry]) => {
+    const hasBothDaycares = entry.hasLarge && entry.hasSmall;
+    const hasResolvedSize = (entry.hasLarge && !entry.hasSmall) || (entry.hasSmall && !entry.hasLarge);
+    const sizeGroup = entry.hasLarge && !entry.hasSmall
+      ? "large"
+      : entry.hasSmall && !entry.hasLarge
+        ? "small"
+        : null;
+    const isHalfAndHalf = entry.hasPrivatePlay && hasResolvedSize;
+
+    let primaryDisplayPlaygroup = null;
+    if (hasBothDaycares) primaryDisplayPlaygroup = "both_daycares";
+    else if (isHalfAndHalf) primaryDisplayPlaygroup = "half_and_half";
+    else if (entry.hasPrivatePlay) primaryDisplayPlaygroup = "private_play";
+    else if (sizeGroup === "large") primaryDisplayPlaygroup = "large";
+    else if (sizeGroup === "small") primaryDisplayPlaygroup = "small";
+    else if (entry.hasEvaluation) primaryDisplayPlaygroup = "evaluation";
+
+    let schedulingPlaygroup = null;
+    if (entry.hasPrivatePlay) schedulingPlaygroup = "private_play";
+    else if (sizeGroup === "large") schedulingPlaygroup = "large";
+    else if (sizeGroup === "small") schedulingPlaygroup = "small";
+
+    let unresolvedReason = null;
+    if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall && entry.hasEvaluation) unresolvedReason = "evaluation_only";
+    else if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall) unresolvedReason = "no_actionable_icon";
+
+    return {
+      animal_gingr_id: animalGingrId,
+      size_group: sizeGroup,
+      has_private_play: entry.hasPrivatePlay,
+      has_evaluation: entry.hasEvaluation,
+      is_half_and_half: isHalfAndHalf,
+      primary_display_playgroup: primaryDisplayPlaygroup,
+      scheduling_playgroup: schedulingPlaygroup,
+      playgroup_tags: ["half_and_half", "both_daycares", "private_play", "large", "small", "evaluation"].filter((tag) => {
+        if (tag === "half_and_half") return isHalfAndHalf;
+        if (tag === "both_daycares") return hasBothDaycares;
+        return entry.playgroupTags.has(tag);
+      }),
+      source_icon_titles: Array.from(entry.sourceIconTitles).sort(),
+      source_icon_comments: Array.from(entry.sourceIconComments).sort(),
+      half_and_half_note: isHalfAndHalf ? entry.privatePlayComment : null,
+      unresolved_reason: unresolvedReason,
+    };
+  });
 }
 
 export function normalizePlaygroupAssignment(row) {
@@ -70,12 +249,14 @@ export function getDisplayPlaygroup(assignment) {
 
 export function getOperationalPlaygroup(assignment) {
   if (!assignment) return null;
+  if (assignment.primary_display_playgroup === "both_daycares") return "both_daycares";
   if (assignment.primary_display_playgroup === "half_and_half") return "private_play";
   return assignment.scheduling_playgroup || (assignment.has_evaluation ? "evaluation" : null);
 }
 
 export function getDisplayTags(assignment, { includeHalfAndHalf = true } = {}) {
   if (!assignment) return [];
+  if (assignment.primary_display_playgroup === "both_daycares") return ["both_daycares"];
   const tags = new Set(assignment.playgroup_tags || []);
   if (includeHalfAndHalf && assignment.is_half_and_half) {
     tags.add("half_and_half");

@@ -42,3 +42,9 @@ verify_jwt = false
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.
 verify_jwt = false
+
+[functions.gingr-sync]
+# Checkout TV and scheduled pg_net calls invoke this function with Supabase
+# publishable/service keys, not user JWTs. The function loads scoped Gingr
+# credentials server-side and validates required parameters in-function.
+verify_jwt = false

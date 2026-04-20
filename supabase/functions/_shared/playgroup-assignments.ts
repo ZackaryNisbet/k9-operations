@@ -8,12 +8,14 @@ type SupabaseClient = any;
 export type PlaygroupSizeGroup = "large" | "small" | null;
 export type PlaygroupDisplayGroup =
   | "half_and_half"
+  | "both_daycares"
   | "private_play"
   | "large"
   | "small"
   | "evaluation"
   | null;
 export type PlaygroupOperationalGroup =
+  | "both_daycares"
   | "private_play"
   | "large"
   | "small"
@@ -75,6 +77,7 @@ function normalizeDisplayGroup(value: unknown): PlaygroupDisplayGroup {
   const normalized = String(value || "").trim().toLowerCase();
   if (
     normalized === "half_and_half"
+    || normalized === "both_daycares"
     || normalized === "private_play"
     || normalized === "large"
     || normalized === "small"
@@ -174,6 +177,7 @@ export function derivePlaygroupAssignmentsFromIcons(
   }
 
   return Array.from(grouped.entries()).map(([animalGingrId, entry]) => {
+    const hasBothDaycares = entry.hasLarge && entry.hasSmall;
     const hasResolvedSize = (entry.hasLarge && !entry.hasSmall) || (entry.hasSmall && !entry.hasLarge);
     const sizeGroup: PlaygroupSizeGroup = entry.hasLarge && !entry.hasSmall
       ? "large"
@@ -183,7 +187,8 @@ export function derivePlaygroupAssignmentsFromIcons(
     const isHalfAndHalf = entry.hasPrivatePlay && hasResolvedSize;
 
     let primaryDisplayPlaygroup: PlaygroupDisplayGroup = null;
-    if (isHalfAndHalf) primaryDisplayPlaygroup = "half_and_half";
+    if (hasBothDaycares) primaryDisplayPlaygroup = "both_daycares";
+    else if (isHalfAndHalf) primaryDisplayPlaygroup = "half_and_half";
     else if (entry.hasPrivatePlay) primaryDisplayPlaygroup = "private_play";
     else if (sizeGroup === "large") primaryDisplayPlaygroup = "large";
     else if (sizeGroup === "small") primaryDisplayPlaygroup = "small";
@@ -195,8 +200,7 @@ export function derivePlaygroupAssignmentsFromIcons(
     else if (sizeGroup === "small") schedulingPlaygroup = "small";
 
     let unresolvedReason: string | null = null;
-    if (entry.hasLarge && entry.hasSmall) unresolvedReason = "conflicting_size_icons";
-    else if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall && entry.hasEvaluation) unresolvedReason = "evaluation_only";
+    if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall && entry.hasEvaluation) unresolvedReason = "evaluation_only";
     else if (!entry.hasPrivatePlay && !entry.hasLarge && !entry.hasSmall) unresolvedReason = "no_actionable_icon";
 
     return {
@@ -207,8 +211,9 @@ export function derivePlaygroupAssignmentsFromIcons(
       isHalfAndHalf,
       primaryDisplayPlaygroup,
       schedulingPlaygroup,
-      playgroupTags: ["half_and_half", "private_play", "large", "small", "evaluation"].filter((tag) => {
+      playgroupTags: ["half_and_half", "both_daycares", "private_play", "large", "small", "evaluation"].filter((tag) => {
         if (tag === "half_and_half") return isHalfAndHalf;
+        if (tag === "both_daycares") return hasBothDaycares;
         return entry.playgroupTags.has(tag);
       }),
       sourceIconTitles: Array.from(entry.sourceIconTitles).sort(),
@@ -260,6 +265,7 @@ export function getOperationalPlaygroupKey(
   assignment: PlaygroupAssignment | null | undefined,
 ): PlaygroupOperationalGroup {
   if (!assignment) return null;
+  if (assignment.primaryDisplayPlaygroup === "both_daycares") return "both_daycares";
   if (assignment.schedulingPlaygroup) return assignment.schedulingPlaygroup;
   if (assignment.hasEvaluation) return "evaluation";
   return null;
@@ -270,7 +276,8 @@ export function getCanonicalPlaygroupTags(
   { includeHalfAndHalf = false } = {},
 ): string[] {
   if (!assignment) return [];
-  const ordered = ["half_and_half", "private_play", "large", "small", "evaluation"];
+  if (assignment.primaryDisplayPlaygroup === "both_daycares") return ["both_daycares"];
+  const ordered = ["half_and_half", "both_daycares", "private_play", "large", "small", "evaluation"];
   const tags = new Set<string>(assignment.playgroupTags);
   if (includeHalfAndHalf && assignment.isHalfAndHalf) {
     tags.add("half_and_half");
@@ -282,6 +289,8 @@ export function humanizePlaygroupTag(tag: string | null | undefined): string | n
   switch (String(tag || "").trim().toLowerCase()) {
     case "half_and_half":
       return "Half & Half";
+    case "both_daycares":
+      return "Both Daycares";
     case "private_play":
       return "Private Play";
     case "large":
