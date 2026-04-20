@@ -278,6 +278,14 @@ function normalizeIso(value: any): string | null {
   return parsed.toISOString();
 }
 
+function firstNormalizedIso(...values: any[]): string | null {
+  for (const value of values) {
+    const iso = normalizeIso(value);
+    if (iso) return iso;
+  }
+  return null;
+}
+
 function classifyPresenceType(typeName: any): string {
   const type = String(typeName || "").toLowerCase();
   if (type.includes("evaluation") || type.includes("eval") || type.includes("assessment")) return "evaluation";
@@ -415,8 +423,8 @@ async function upsertBohCacheFromPayload(supabase: any, locationId: string, bohD
       owner_id: entry.owner_id ? Number(entry.owner_id) : null,
       reservation_type_name: entry.reservation_type_name || entry.reservation_type || entry.type || null,
       status: "checking_in",
-      check_in_time: entry.check_in_time || entry.start_date || null,
-      check_out_time: entry.check_out_time || entry.end_date || null,
+      check_in_time: firstNormalizedIso(entry.check_in_time, entry.start_date),
+      check_out_time: firstNormalizedIso(entry.check_out_time, entry.end_date),
       room_name: entry.run_name || entry.room_name || entry.room || null,
       area_name: entry.area_name || entry.area || null,
       raw_data: entry,
@@ -434,8 +442,8 @@ async function upsertBohCacheFromPayload(supabase: any, locationId: string, bohD
       owner_id: entry.owner_id ? Number(entry.owner_id) : null,
       reservation_type_name: entry.reservation_type_name || entry.reservation_type || entry.type || null,
       status: "checking_out",
-      check_in_time: entry.check_in_time || entry.start_date || null,
-      check_out_time: entry.check_out_time || entry.end_date || null,
+      check_in_time: firstNormalizedIso(entry.check_in_time, entry.start_date),
+      check_out_time: firstNormalizedIso(entry.check_out_time, entry.end_date),
       room_name: entry.run_name || entry.room_name || entry.room || null,
       area_name: entry.area_name || entry.area || null,
       raw_data: entry,
