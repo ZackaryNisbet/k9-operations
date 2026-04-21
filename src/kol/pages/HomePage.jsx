@@ -776,29 +776,6 @@ function useHomeDashboardSnapshot(locationId, userRole) {
   }, [locationId, userRole]);
 
   useEffect(() => {
-    if (!locationId) return undefined;
-    let cancelled = false;
-
-    const triggerSync = async () => {
-      if (cancelled) return;
-      try {
-        await supabase.functions.invoke("gingr-sync", {
-          body: { location_id: locationId, sync_type: "presence-sync" },
-        });
-      } catch {
-        // Non-fatal. Snapshot reads still work with the latest persisted data.
-      }
-    };
-
-    triggerSync();
-    const interval = setInterval(triggerSync, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [locationId]);
-
-  useEffect(() => {
     loadSnapshot();
     const interval = setInterval(loadSnapshot, 10_000);
     return () => clearInterval(interval);
