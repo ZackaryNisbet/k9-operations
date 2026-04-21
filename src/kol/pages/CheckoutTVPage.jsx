@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";
+import { getEffectivePresenceCadence, usePresenceSyncConfig } from "../../hooks/presenceSyncConfig";
 import { idbGet, idbSet, todayStr } from "../../shared/theme";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import {
@@ -21,7 +22,6 @@ import {
   getDisplayTags,
   getOperationalPlaygroup,
 } from "../../shared/playgroupAssignments";
-import { isBohSnapshotStale, normalizeBohTransitionGroups } from "./checkoutTvFreshness";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -198,8 +198,7 @@ const NAV_VIEWS = [
 
 const DEFAULT_NOTICE_DURATION_MS = 60_000;
 const FADE_DURATION_MS = 1_200;
-const BOH_DIFF_INTERVAL_MS = 10_000;
-const TV_POLL_INTERVAL_MS = 60_000;
+const PRESENCE_READ_INTERVAL_MS = 5_000;
 const PLAYGROUP_REFRESH_INTERVAL_MS = 60_000;
 const FIRST_DAY_REFRESH_INTERVAL_MS = 60_000;
 const ASSET_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -218,16 +217,10 @@ const OPPOSITE_NOTICE_REPLACE_MS = 45_000;
 
 const CHECKOUT_HEALTH_SPECS = {
   boh: {
-    title: "Presence Transition Sync",
-    frequencyLabel: "Every 10 seconds",
-    staleAfterMs: 25_000,
+    title: "Server Presence Sync",
+    frequencyLabel: "Every 5 seconds",
+    staleAfterMs: 20_000,
     description: "Reads canonical facility presence events for live check-in and check-out notices.",
-  },
-  tvPoll: {
-    title: "Supabase Reconciliation",
-    frequencyLabel: "Every 60 seconds plus every BOH transition",
-    staleAfterMs: 130_000,
-    description: "Compatibility fallback that runs gingr-sync tv-poll when canonical presence is unavailable.",
   },
   playgroups: {
     title: "Playgroup Assignment",
@@ -340,6 +333,13 @@ function parseRoom(room) {
   return { label: room, number: "" };
 }
 
+function formatRoomDisplay(room, area) {
+  const roomInfo = parseRoom(room);
+  if (roomInfo.number) return `${roomInfo.label} ${roomInfo.number}`.trim();
+  if (roomInfo.label) return roomInfo.label;
+  return area || "No room";
+}
+
 function sanitizeCheckoutTvSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   const duration = Number(source.noticeDurationSec);
@@ -442,7 +442,7 @@ function deriveSectionStatus(section, spec, nowMs) {
   if (!section?.lastSuccessAt) return "waiting";
   const lastSuccessMs = new Date(section.lastSuccessAt).getTime();
   if (Number.isNaN(lastSuccessMs)) return "waiting";
-  if (nowMs - lastSuccessMs > spec.staleAfterMs) return "warning";
+  if (nowMs - lastSuccessMs > (section.staleAfterMs || spec.staleAfterMs)) return "warning";
   return "healthy";
 }
 
@@ -473,7 +473,7 @@ function getHealthRefreshState(section, intervalMs, nowMs) {
 
   const progress = 1 - Math.min(msRemaining, intervalMs) / intervalMs;
   return {
-    label: `Next ${seconds}s`,
+    label: `Next sync in ${seconds}`,
     seconds,
     progress: Math.max(0, Math.min(1, progress)),
     isRefreshing: false,
@@ -497,6 +497,7 @@ function normalizeNoticeDog(entry, dogEntry, { dogs, animalIcons, dogPhotoMap, p
     ownerLastName: entry.ownerLastName || dogEntry.ownerLastName || "",
     image: dogPhotoMap[dog?.gingrId] || dogPhotoMap[animalId] || iconData?.icon_url || dog?._image || "",
     playgroup,
+    room: dogEntry.room || dogEntry.area || "",
     theme,
     firedAt: entry.firedAt,
     remaining: entry.remaining,
@@ -567,6 +568,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
       breed: dog?.fields?.breed || "",
       image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
       size: getDisplayPlaygroup(playgroupMap[animalId]) || "unclassified",
+      room: d.room || d.area || "",
     };
   });
   const ownerLast = entry.ownerLastName || "";
@@ -574,6 +576,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
   const allNames = resolvedDogs.map(d => d.name).join(" & ");
   const firstDog = resolvedDogs[0];
   const theme = SIZE_THEME[firstDog.size] || SIZE_THEME.unclassified;
+  const roomLabels = [...new Set(resolvedDogs.map(d => formatRoomDisplay(d.room)).filter(Boolean))];
 
   // TV-015: Compact sizing
   const imgSize = compact ? 72 : (resolvedDogs.length > 1 ? 96 : 120);
@@ -673,11 +676,16 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
                 Owner: {ownerLast}
               </span>
             )}
+            {roomLabels.length > 0 && (
+              <span style={{ fontSize: 17, color: "rgba(255,255,255,0.62)", fontWeight: 700 }}>
+                Room: {roomLabels.join(" · ")}
+              </span>
+            )}
           </div>
         )}
-        {compact && ownerLast && (
-          <span style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600 }}>
-            {firstDog.breed ? `${firstDog.breed} · ` : ""}Owner: {ownerLast}
+        {compact && (ownerLast || roomLabels.length > 0) && (
+          <span style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {firstDog.breed ? `${firstDog.breed} · ` : ""}{ownerLast ? `Owner: ${ownerLast}` : ""}{ownerLast && roomLabels.length > 0 ? " · " : ""}{roomLabels.length > 0 ? `Room: ${roomLabels.join(" · ")}` : ""}
           </span>
         )}
       </div>
@@ -714,12 +722,14 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
       breed: dog?.fields?.breed || "",
       image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
       size: getDisplayPlaygroup(playgroupMap[animalId]) || "unclassified",
+      room: d.room || d.area || "",
     };
   });
   const ownerLast = entry.ownerLastName || "";
   const allNames = resolvedDogs.map(d => d.name).join(" & ");
   const firstDog = resolvedDogs[0];
   const theme = SIZE_THEME[firstDog.size] || SIZE_THEME.unclassified;
+  const roomLabels = [...new Set(resolvedDogs.map(d => formatRoomDisplay(d.room)).filter(Boolean))];
 
   const groupLabel = (theme.label || "Unclassified").toUpperCase();
   const groupColor = theme.accent;
@@ -820,11 +830,16 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, 
                 Owner: {ownerLast}
               </span>
             )}
+            {roomLabels.length > 0 && (
+              <span style={{ fontSize: 17, color: "rgba(255,255,255,0.62)", fontWeight: 700 }}>
+                Room: {roomLabels.join(" · ")}
+              </span>
+            )}
           </div>
         )}
-        {compact && ownerLast && (
-          <span style={{ fontSize: 13, color: "rgba(56,189,248,0.7)", fontWeight: 600 }}>
-            {firstDog.breed ? `${firstDog.breed} · ` : ""}Owner: {ownerLast}
+        {compact && (ownerLast || roomLabels.length > 0) && (
+          <span style={{ fontSize: 13, color: "rgba(56,189,248,0.7)", fontWeight: 600, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {firstDog.breed ? `${firstDog.breed} · ` : ""}{ownerLast ? `Owner: ${ownerLast}` : ""}{ownerLast && roomLabels.length > 0 ? " · " : ""}{roomLabels.length > 0 ? `Room: ${roomLabels.join(" · ")}` : ""}
           </span>
         )}
       </div>
@@ -1190,7 +1205,7 @@ function CheckoutTvSettingsModal({ settings, onChange, onClose }) {
   );
 }
 
-function CheckoutTvHealthModal({ sections, overallStatus, nowMs, onClose }) {
+function CheckoutTvHealthModal({ sections, overallStatus, nowMs, audit, auditLoading, onClose }) {
   const overallTone = healthTone(overallStatus);
   return (
     <TvModalShell
@@ -1238,6 +1253,101 @@ function CheckoutTvHealthModal({ sections, overallStatus, nowMs, onClose }) {
             </div>
           );
         })}
+        <div style={{
+          padding: 18,
+          borderRadius: 14,
+          border: "1px solid rgba(56,189,248,0.28)",
+          background: "rgba(255,255,255,0.045)",
+          display: "grid",
+          gap: 14,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 900, color: "#fff" }}>Presence Audit</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.46)", lineHeight: 1.4 }}>
+                Recent canonical check-in/check-out events and server sync runs for this location.
+              </div>
+            </div>
+            {auditLoading && <div style={{ fontSize: 12, color: "#38BDF8", fontWeight: 900 }}>Loading...</div>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 14 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,0.42)", textTransform: "uppercase", marginBottom: 8 }}>Recent Events</div>
+              <div style={{ display: "grid", gap: 8, maxHeight: 280, overflow: "auto" }}>
+                {(audit?.events || []).length === 0 && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.42)" }}>No recent events found.</div>}
+                {(audit?.events || []).map(event => {
+                  const state = event.event_type === "checked_out" ? event.previous_state : event.next_state;
+                  const room = formatRoomDisplay(state?.room_name || event.room_name, state?.area_name || event.area_name);
+                  const owner = [state?.owner_first_name || event.owner_first_name, state?.owner_last_name || event.owner_last_name].filter(Boolean).join(" ");
+                  return (
+                    <div key={event.id || event.event_key} style={{
+                      padding: "10px 11px",
+                      borderRadius: 10,
+                      background: "rgba(0,0,0,0.18)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 900, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {state?.animal_name || event.animal_name || "Unknown dog"}
+                          </div>
+                          <div style={{ marginTop: 3, fontSize: 11, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {owner || "Unknown owner"} · {room}
+                          </div>
+                        </div>
+                        <div style={{
+                          fontSize: 10,
+                          color: event.event_type === "checked_out" ? "#84CC16" : "#38BDF8",
+                          fontWeight: 900,
+                          textTransform: "uppercase",
+                          flexShrink: 0,
+                        }}>
+                          {event.event_type === "checked_out" ? "Out" : "In"}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.34)", fontVariantNumeric: "tabular-nums" }}>
+                        {formatHealthAge(event.computed_at, nowMs)} · animal {event.animal_gingr_id || "unknown"} · reservation {event.reservation_gingr_id || "none"}
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: 10, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums" }}>
+                        Observed {formatHealthAge(event.source_observed_at || event.computed_at, nowMs)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,0.42)", textTransform: "uppercase", marginBottom: 8 }}>Recent Runs</div>
+              <div style={{ display: "grid", gap: 8, maxHeight: 280, overflow: "auto" }}>
+                {(audit?.runs || []).length === 0 && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.42)" }}>No recent sync runs found.</div>}
+                {(audit?.runs || []).map(run => (
+                  <div key={run.id} style={{
+                    padding: "10px 11px",
+                    borderRadius: 10,
+                    background: "rgba(0,0,0,0.18)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 900, color: "#fff" }}>{run.status || "unknown"}</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.48)", fontVariantNumeric: "tabular-nums" }}>{formatHealthAge(run.completed_at || run.started_at, nowMs)}</div>
+                    </div>
+                    <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
+                      <HealthFact label="Current" value={run.current_count ?? 0} />
+                      <HealthFact label="In" value={run.arrivals_count ?? 0} />
+                      <HealthFact label="Out" value={run.departures_count ?? 0} />
+                      <HealthFact label="Dupes" value={run.duplicate_animals_count ?? 0} />
+                    </div>
+                    {Array.isArray(run.errors) && run.errors.length > 0 && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "#FCA5A5", lineHeight: 1.35 }}>
+                        {run.errors.map(error => error?.message || String(error)).filter(Boolean).slice(0, 2).join("; ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </TvModalShell>
   );
@@ -1263,7 +1373,7 @@ function HealthFact({ label, value, color = "rgba(255,255,255,0.82)" }) {
         overflowWrap: "anywhere",
         wordBreak: "break-word",
       }}>
-        {value || "Unknown"}
+        {value == null || value === "" ? "Unknown" : value}
       </div>
     </div>
   );
@@ -1275,6 +1385,8 @@ function SpotlightNoticeCard({ notice, photoHeight, showDetails, compactLayout =
   const actionLabel = isCheckout ? (notice.remaining <= 10 ? "Leaving Now" : "Checking Out") : "Checking In";
   const photoWidth = Math.round(photoHeight * 0.78);
   const totalSeconds = Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000));
+  const roomDisplay = formatRoomDisplay(notice.room);
+  const hasRoom = roomDisplay !== "No room";
   return (
     <div style={{
       width: photoWidth,
@@ -1345,6 +1457,20 @@ function SpotlightNoticeCard({ notice, photoHeight, showDetails, compactLayout =
             <div style={{ marginTop: 7, display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
               <SizeBadge size={notice.playgroup} />
               {notice.ownerLastName && <span style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,0.64)", background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 7px" }}>{notice.ownerLastName}</span>}
+              <span style={{
+                maxWidth: "100%",
+                fontSize: 11,
+                fontWeight: 900,
+                color: hasRoom ? actionColor : "rgba(255,255,255,0.42)",
+                background: hasRoom ? `${actionColor}18` : "rgba(255,255,255,0.06)",
+                borderRadius: 6,
+                padding: "2px 7px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>
+                {roomDisplay}
+              </span>
             </div>
             {notice.breed && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(255,255,255,0.48)", lineHeight: 1.25 }}>{notice.breed}</div>}
           </>
@@ -1358,6 +1484,7 @@ function SpotlightOverflowRow({ notice }) {
   const isCheckout = notice.type === "out";
   const actionColor = isCheckout ? "#84CC16" : "#38BDF8";
   const actionLabel = isCheckout ? "Checking Out" : "Checking In";
+  const roomDisplay = formatRoomDisplay(notice.room);
   return (
     <div style={{
       height: 66,
@@ -1376,6 +1503,7 @@ function SpotlightOverflowRow({ notice }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, color: actionColor, fontWeight: 900, textTransform: "uppercase" }}>{actionLabel}</div>
         <div style={{ fontSize: 19, color: "#fff", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{notice.name}</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roomDisplay}</div>
       </div>
       <SizeBadge size={notice.playgroup} />
       <CountdownCircle remaining={notice.remaining} total={Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000))} size={44} strokeWidth={4} accentColor={actionColor} />
@@ -1480,10 +1608,8 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
   const name = dog?.fields?.name || res._animalName || "Unknown";
   const breed = dog?.fields?.breed || "";
   const ownerLast = client?.fields?.last_name || res._ownerName?.split(" ").pop() || "";
-  const roomInfo = parseRoom(res.room);
-  const roomDisplay = roomInfo.number
-    ? `${roomInfo.label} ${roomInfo.number}`
-    : roomInfo.label || "";
+  const roomDisplay = formatRoomDisplay(res.room, res.area);
+  const hasRoom = roomDisplay !== "No room";
 
   // Get dog photo: prefer Supabase Storage (local_photo_url) → icon → Gingr CDN
   const animalId = String(dog?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "");
@@ -1572,7 +1698,16 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
       <div style={{ maxWidth: "100%", fontSize: compact ? 15 : 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
       {breed && <div style={{ maxWidth: "100%", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{breed}</div>}
       <div style={{ maxWidth: "100%", fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ownerLast}</div>
-      {roomDisplay && <div style={{ maxWidth: "100%", fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 3, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{roomDisplay}</div>}
+      <div style={{
+        maxWidth: "100%",
+        fontSize: 12,
+        color: hasRoom ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.34)",
+        marginTop: 3,
+        fontWeight: 700,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}>{roomDisplay}</div>
     </div>
   );
 });
@@ -1603,10 +1738,19 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const [healthOpen, setHealthOpen] = useState(false);
   const [tvSettings, setTvSettings] = useState(DEFAULT_TV_SETTINGS);
   const [checkoutHealth, setCheckoutHealth] = useState(() => createInitialCheckoutHealth());
+  const [presenceAudit, setPresenceAudit] = useState({ events: [], runs: [] });
+  const [presenceAuditLoading, setPresenceAuditLoading] = useState(false);
   const nowMs = now.getTime();
   const viewport = useCheckoutTvViewport();
   const isCompactTv = viewport.width <= 1500 || viewport.height <= 850;
   const isShortTv = viewport.height <= 760;
+  const tvLocationId = propLocationId || profile?.location_id;
+  const presenceSyncConfig = usePresenceSyncConfig(tvLocationId);
+  const effectivePresenceCadence = useMemo(
+    () => getEffectivePresenceCadence(presenceSyncConfig.config, now),
+    [presenceSyncConfig.config, now],
+  );
+  const presenceIntervalMs = Math.max(1000, (effectivePresenceCadence.intervalSeconds || 5) * 1000);
 
   useEffect(() => {
     try {
@@ -1651,8 +1795,8 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     [checkoutHealth, nowMs],
   );
   const checkoutHealthRefreshState = useMemo(
-    () => getHealthRefreshState(checkoutHealth.boh, BOH_DIFF_INTERVAL_MS, nowMs),
-    [checkoutHealth.boh, nowMs],
+    () => getHealthRefreshState(checkoutHealth.boh, presenceIntervalMs, nowMs),
+    [checkoutHealth.boh, presenceIntervalMs, nowMs],
   );
 
   useEffect(() => {
@@ -1690,29 +1834,13 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const baseReservations = data.reservations || [];
   const baseDogs = data.dogs || [];
   const clients = data.clients || [];
-  const refreshData = data.refresh;
 
-  /* ── Server-side BOH transition detection ──────────────────────────
-   * Polls the gingr-sync edge function in boh-diff mode every 10s.
-   * The server fetches BOH from Gingr, diffs against a boh_snapshot
-   * table, and returns arrivals/departures grouped by owner.
-   * Replaces direct browser→Gingr polling (which was unreliable due
-   * to CORS, browser tab throttling, and missing timeouts).
-   * ──────────────────────────────────────────────────────────────────── */
-  const [gingrActiveDogCount, setGingrActiveDogCount] = useState(0);
-  const tvLocationId = propLocationId || profile?.location_id;
-  const bohInFlightRef = useRef(false);
-  const bohSnapshotFreshnessLoadedRef = useRef(false);
-  const suppressNextBohTransitionsRef = useRef(false);
-  const lastTvPollRef = useRef(0);
-  const previousBohDogCountRef = useRef(null);
   const recentNoticeByAnimalRef = useRef(new Map());
   const facilityPresence = useFacilityPresence(tvLocationId, {
     enabled: Boolean(tvLocationId),
-    pollMs: BOH_DIFF_INTERVAL_MS,
-    runSync: true,
+    pollMs: Math.min(PRESENCE_READ_INTERVAL_MS, presenceIntervalMs),
   });
-  const canonicalPresenceAvailable = facilityPresence.available && Boolean(facilityPresence.latestSync);
+  const canonicalPresenceAvailable = facilityPresence.available;
 
   const recordNoticeAnimals = useCallback((entries, type, firedAt = Date.now()) => {
     const recentMap = recentNoticeByAnimalRef.current;
@@ -1730,266 +1858,96 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
   useEffect(() => {
     if (!facilityPresence.available) return;
-    const status = facilityPresence.status === "critical" ? "critical" : "healthy";
-    const nextRunAt = new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString();
-    const lastSuccessAt = facilityPresence.lastFetchedAt || new Date().toISOString();
+    const latestSync = facilityPresence.latestSync;
+    const lastSuccessAt = latestSync?.completed_at || facilityPresence.lastFetchedAt || new Date().toISOString();
+    const lastSuccessMs = new Date(lastSuccessAt).getTime();
+    const nextRunAt = Number.isFinite(lastSuccessMs)
+      ? new Date(lastSuccessMs + presenceIntervalMs).toISOString()
+      : new Date(Date.now() + presenceIntervalMs).toISOString();
+    const status = facilityPresence.error
+      ? "critical"
+      : latestSync?.status === "running"
+        ? "running"
+        : "healthy";
     updateHealthSection("boh", {
       status,
       lastSuccessAt,
       nextRunAt,
+      frequencyLabel: `Every ${effectivePresenceCadence.intervalSeconds}s (${effectivePresenceCadence.mode})`,
+      staleAfterMs: (effectivePresenceCadence.intervalSeconds * 6 * 1000) + 10_000,
       error: facilityPresence.error,
       details: {
-        Source: "Canonical facility_presence",
+        Source: "Server presence worker",
+        Cadence: `${effectivePresenceCadence.intervalSeconds}s`,
+        Mode: effectivePresenceCadence.mode,
         "In House": facilityPresence.counts.inHouse,
         "Checking In": facilityPresence.counts.pendingArrivals,
         "Going Home": facilityPresence.counts.goingHome,
         Events: facilityPresence.recentEvents.length,
-        "Latest Run": facilityPresence.latestSync?.started_at || "pending",
-      },
-    });
-
-    updateHealthSection("tvPoll", {
-      status: "healthy",
-      lastSuccessAt,
-      nextRunAt,
-      error: null,
-      details: {
-        Mode: "Bypassed",
-        Reason: "Canonical facility_presence is active",
+        "Latest Run": latestSync?.started_at || "pending",
       },
     });
   }, [
     facilityPresence.available,
-    facilityPresence.status,
     facilityPresence.lastFetchedAt,
     facilityPresence.error,
     facilityPresence.counts,
     facilityPresence.recentEvents.length,
     facilityPresence.latestSync,
+    effectivePresenceCadence.intervalSeconds,
+    effectivePresenceCadence.mode,
+    presenceIntervalMs,
     updateHealthSection,
   ]);
 
-  /* ── TV-POLL: Supabase reconciliation sync ──────────────────────────
-   * Calls the gingr-sync edge function in tv-poll mode to reconcile
-   * stale Supabase records. Called on an interval AND on BOH transitions
-   * (with 10s dedup guard to prevent stacking).
-   * ──────────────────────────────────────────────────────────────────── */
-  const triggerTvPoll = useCallback(async () => {
-    if (canonicalPresenceAvailable) return;
-    if (!tvLocationId) return;
-    const now = Date.now();
-    if (now - lastTvPollRef.current < 10_000) return;
-    lastTvPollRef.current = now;
-    const startedAt = new Date().toISOString();
-    updateHealthSection("tvPoll", {
-      status: "running",
-      lastStartedAt: startedAt,
-      nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
-      error: null,
-      details: { Trigger: "manual/interval", Location: tvLocationId },
-    });
-    try {
-      const startedMs = Date.now();
-      const { data: resp, error } = await supabase.functions.invoke("gingr-sync", {
-        body: { location_id: tvLocationId, sync_type: "tv-poll" },
-      });
-      if (error || resp?.success === false) {
-        throw new Error(error?.message || resp?.error || "tv-poll returned an unsuccessful response");
-      }
-      updateHealthSection("tvPoll", {
-        status: "healthy",
-        lastSuccessAt: new Date().toISOString(),
-        durationMs: Date.now() - startedMs,
-        nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
-        error: null,
-        details: {
-          Reservations: resp?.reservations_synced ?? resp?.reservations_count ?? "synced",
-          "Checked In": resp?.checked_in_count ?? resp?.active_count ?? "synced",
-          Icons: resp?.icons_synced ?? "synced",
-        },
-      });
-      if (refreshData) refreshData();
-    } catch (e) {
-      updateHealthSection("tvPoll", {
-        status: "critical",
-        lastErrorAt: new Date().toISOString(),
-        nextRunAt: new Date(Date.now() + TV_POLL_INTERVAL_MS).toISOString(),
-        error: e?.message || "tv-poll failed",
-      });
-    }
-  }, [canonicalPresenceAvailable, tvLocationId, refreshData, updateHealthSection]);
-
   useEffect(() => {
-    if (canonicalPresenceAvailable) return undefined;
-    const initTimer = setTimeout(triggerTvPoll, 5000);
-    const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL_MS);
-    return () => { clearTimeout(initTimer); clearInterval(interval); };
-  }, [canonicalPresenceAvailable, triggerTvPoll]);
-
-  /* ── BOH-DIFF: Server-side transition detection ────────────────────── */
-  useEffect(() => {
-    if (canonicalPresenceAvailable) return undefined;
-    if (!tvLocationId) return;
+    if (!healthOpen || !tvLocationId) return undefined;
     let cancelled = false;
-    bohSnapshotFreshnessLoadedRef.current = false;
-    suppressNextBohTransitionsRef.current = false;
-    previousBohDogCountRef.current = null;
 
-    const loadSnapshotFreshness = async () => {
-      if (bohSnapshotFreshnessLoadedRef.current) return suppressNextBohTransitionsRef.current;
-
+    const loadAudit = async () => {
+      setPresenceAuditLoading(true);
       try {
-        const { data: snap, error } = await supabase
-          .from("boh_snapshot")
-          .select("updated_at")
-          .eq("location_id", tvLocationId)
-          .maybeSingle();
+        const [eventsRes, runsRes] = await Promise.all([
+          supabase
+            .from("facility_presence_events")
+            .select("event_key,event_type,animal_gingr_id,reservation_gingr_id,animal_name,owner_first_name,owner_last_name,room_name,area_name,source_observed_at,computed_at,previous_state,next_state")
+            .eq("location_id", tvLocationId)
+            .order("computed_at", { ascending: false })
+            .limit(25),
+          supabase
+            .from("facility_presence_sync_runs")
+            .select("id,status,started_at,completed_at,duration_ms,current_count,arrivals_count,departures_count,duplicate_animals_count,errors,metadata")
+            .eq("location_id", tvLocationId)
+            .order("started_at", { ascending: false })
+            .limit(15),
+        ]);
 
-        suppressNextBohTransitionsRef.current = Boolean(error) || isBohSnapshotStale(snap?.updated_at);
-      } catch (e) {
-        suppressNextBohTransitionsRef.current = true;
-      } finally {
-        bohSnapshotFreshnessLoadedRef.current = true;
-      }
-
-      return suppressNextBohTransitionsRef.current;
-    };
-
-    const pollBohDiff = async () => {
-      if (bohInFlightRef.current || cancelled) return;
-      bohInFlightRef.current = true;
-      const startedMs = Date.now();
-      updateHealthSection("boh", {
-        status: "running",
-        lastStartedAt: new Date(startedMs).toISOString(),
-        nextRunAt: new Date(startedMs + BOH_DIFF_INTERVAL_MS).toISOString(),
-        error: null,
-        details: { Source: "GINGR BOH", Location: tvLocationId },
-      });
-
-      try {
-        const suppressTransitions = await loadSnapshotFreshness();
         if (cancelled) return;
-
-        const invokePromise = supabase.functions.invoke("gingr-sync", {
-          body: { location_id: tvLocationId, sync_type: "boh-diff" },
+        if (eventsRes.error) throw eventsRes.error;
+        if (runsRes.error) throw runsRes.error;
+        setPresenceAudit({
+          events: eventsRes.data || [],
+          runs: runsRes.data || [],
         });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("boh-diff timeout")), 8000)
-        );
-        const { data: resp, error } = await Promise.race([invokePromise, timeoutPromise]);
-        if (cancelled) return;
-        if (error || !resp?.success) {
-          throw new Error(error?.message || resp?.error || "boh-diff returned an unsuccessful response");
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[CheckoutTV] presence audit load failed", error?.message || error);
+          setPresenceAudit({ events: [], runs: [] });
         }
-
-        const previousBohDogCount = previousBohDogCountRef.current;
-        const normalizedTransitions = normalizeBohTransitionGroups({
-          arrivals: resp.arrivals || [],
-          departures: resp.departures || [],
-          currentDogCount: resp.dog_count,
-          previousDogCount: previousBohDogCount,
-        });
-        if (Number.isFinite(Number(resp.dog_count))) {
-          previousBohDogCountRef.current = Number(resp.dog_count);
-        }
-        setGingrActiveDogCount(resp.dog_count || 0);
-
-        const rawArrivals = normalizedTransitions.arrivals;
-        const rawDepartures = normalizedTransitions.departures;
-        updateHealthSection("boh", {
-          status: "healthy",
-          lastSuccessAt: new Date().toISOString(),
-          durationMs: Date.now() - startedMs,
-          nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
-          error: null,
-          details: {
-            "Active Dogs": resp.dog_count || 0,
-            "Checking In": rawArrivals.length,
-            "Checking Out": rawDepartures.length,
-            "Backlog Suppressed": suppressTransitions ? "yes" : "no",
-            Correction: normalizedTransitions.correction || "none",
-          },
-        });
-
-        if (suppressTransitions) {
-          suppressNextBohTransitionsRef.current = false;
-          if (resp.changed || rawArrivals.length > 0 || rawDepartures.length > 0) {
-            triggerTvPoll();
-          }
-          return;
-        }
-
-        const arrivals = rawArrivals;
-        const departures = rawDepartures;
-
-        if (arrivals.length > 0) {
-          const firedAt = Date.now();
-          const grouped = arrivals.map(g => ({
-            ...g,
-            id: String(g.id),
-            firedAt,
-            durationMs: noticeDurationMs,
-          }));
-          recordNoticeAnimals(grouped, "in", firedAt);
-          setCheckingInRaw(p => {
-            const existing = new Set(p.map(e => e.id));
-            return [...p, ...grouped.filter(g => !existing.has(g.id))];
-          });
-        }
-
-        if (departures.length > 0) {
-          const firedAt = Date.now();
-          const grouped = departures.map(g => ({
-            ...g,
-            id: String(g.id),
-            firedAt,
-            durationMs: noticeDurationMs,
-          }));
-          recordNoticeAnimals(grouped, "out", firedAt);
-          setCheckingOutRaw(p => {
-            const existing = new Set(p.map(e => e.id));
-            return [...p, ...grouped.filter(g => !existing.has(g.id))];
-          });
-        }
-
-        // Trigger Supabase reconciliation on transitions (fire-and-forget)
-        if (arrivals.length > 0 || departures.length > 0) {
-          triggerTvPoll();
-        }
-      } catch (e) {
-        updateHealthSection("boh", {
-          status: "critical",
-          lastErrorAt: new Date().toISOString(),
-          nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
-          error: e?.message || "BOH polling failed",
-        });
       } finally {
-        bohInFlightRef.current = false;
+        if (!cancelled) setPresenceAuditLoading(false);
       }
     };
 
-    pollBohDiff();
-    const interval = setInterval(pollBohDiff, BOH_DIFF_INTERVAL_MS);
-
-    // Fire immediate poll when tab regains focus (Chrome throttles background tabs)
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") pollBohDiff();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
+    loadAudit();
+    const interval = setInterval(loadAudit, 15_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [canonicalPresenceAvailable, tvLocationId, triggerTvPoll, noticeDurationMs, updateHealthSection, recordNoticeAnimals]);
+  }, [healthOpen, tvLocationId]);
 
-  /* ── Grid data: Supabase is the sole source of truth ─────────────── *
-   * All checked-in dog data comes from Supabase tables (synced by the
-   * gingr-sync edge function). BOH polling only detects transitions
-   * for hero card notifications and triggers immediate Supabase syncs.
-   * ──────────────────────────────────────────────────────────────────── */
+  /* ── Grid data: Supabase is the sole source of truth ───────────────── */
   const { reservations, dogs } = useMemo(() => {
     return {
       reservations: canonicalPresenceAvailable ? facilityPresence.reservations : baseReservations,
@@ -2517,7 +2475,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       status: "healthy",
       lastStartedAt: new Date().toISOString(),
       lastSuccessAt: new Date().toISOString(),
-      nextRunAt: new Date(Date.now() + BOH_DIFF_INTERVAL_MS).toISOString(),
+      nextRunAt: new Date(Date.now() + PRESENCE_READ_INTERVAL_MS).toISOString(),
       error: null,
       details: {
         Source: "Supabase gingr_reservations via useGingrData",
@@ -3203,7 +3161,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · BOH: {gingrActiveDogCount} active · Supabase: {reservations.filter(r => r.status === "checked-in").length} in-house</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Server presence sync · Canonical: {facilityPresence.counts.inHouse} active · Supabase: {reservations.filter(r => r.status === "checked-in").length} in-house</div>
       </div>
 
       {settingsOpen && (
@@ -3219,6 +3177,8 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           sections={checkoutHealth}
           overallStatus={checkoutHealthStatus}
           nowMs={nowMs}
+          audit={presenceAudit}
+          auditLoading={presenceAuditLoading}
           onClose={() => setHealthOpen(false)}
         />
       )}

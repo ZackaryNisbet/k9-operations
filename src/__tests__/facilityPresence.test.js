@@ -75,6 +75,7 @@ describe("facility presence mapping", () => {
         reservation_gingr_id: "987",
         animal_name: "Betty White",
         owner_last_name: "White",
+        room_name: "Small Daycare",
         presence_type: "daycare",
       },
     };
@@ -84,6 +85,7 @@ describe("facility presence mapping", () => {
       id: "987",
       animalName: "Betty White",
       ownerLastName: "White",
+      room: "Small Daycare",
       resType: "daycare",
     });
   });

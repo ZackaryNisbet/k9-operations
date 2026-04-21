@@ -2,13 +2,6 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "jobs": [
     {
-      "jobname": "gingr-boh-poll-a",
-      "schedule": "* * * * *",
-      "auth": "vault",
-      "function": "gingr-boh-poll",
-      "payload": { "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
-    },
-    {
       "jobname": "gingr-today-sync",
       "schedule": "*/5 * * * *",
       "auth": "vault",
@@ -34,7 +27,7 @@
       "schedule": "* * * * *",
       "auth": "vault",
       "function": "gingr-sync",
-      "payload": { "sync_type": "presence-sync", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
+      "payload": { "sync_type": "presence-worker", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }
     },
     {
       "jobname": "de-expansion-daily",

@@ -14,7 +14,7 @@ import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
 import useGingrData from "../hooks/useGingrData";
 import { useRefreshSettings } from "../hooks/useRefreshSettings";
-import { useBackOfHouse } from "../hooks/useBackOfHouse";
+import { useFacilityPresence } from "../hooks/useFacilityPresence";
 import { applyStructuredFilters } from "../hooks/useFilters";
 import useRealtimeOps from "../hooks/useRealtimeOps";
 // Page imports
@@ -350,11 +350,22 @@ function LeanAppInner() {
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
   const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
 
-  // Live BOH poll — runs every 10s, shared across Home + Analytics Dashboard + Checkout TV surfaces
+  // Canonical facility presence — server-owned sync, browser reads Supabase only.
   const bohEnabled = page === "home" || page === "dashboard" || page === "checkout-tv";
-  const boh = useBackOfHouse(currentLocation, bohEnabled);
-  const bohStats = boh.stats;  // { total, boardingCount, daycareCount, expectedCount, pendingCount, pendingDaycare, pendingBoarding, goingHomeCount }
-  const bohLastFetch = boh.lastFetch;
+  const facilityPresence = useFacilityPresence(currentLocation, { enabled: bohEnabled, pollMs: 5000 });
+  const bohStats = useMemo(() => ({
+    total: facilityPresence.counts.inHouse,
+    boardingCount: facilityPresence.counts.boarding,
+    daycareCount: facilityPresence.counts.daycare,
+    expectedCount: facilityPresence.counts.inHouse + facilityPresence.counts.pendingArrivals,
+    pendingCount: facilityPresence.counts.pendingArrivals,
+    pendingDaycare: null,
+    pendingBoarding: null,
+    goingHomeCount: facilityPresence.counts.goingHome,
+    fetchCount: facilityPresence.latestSync?.id ? 1 : 0,
+    canonicalPresence: facilityPresence.available,
+  }), [facilityPresence.available, facilityPresence.counts, facilityPresence.latestSync?.id]);
+  const bohLastFetch = facilityPresence.latestSync?.completed_at || facilityPresence.latestSync?.started_at || facilityPresence.lastFetchedAt;
 
   // Gingr data from Supabase (clients, dogs, reservations, rooms, etc.)
   const mockData = useGingrData(currentLocation, refreshOptions);

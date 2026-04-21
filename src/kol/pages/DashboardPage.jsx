@@ -1441,8 +1441,7 @@ function DashboardContent({
   const isToday = range === "today";
   const facilityPresence = useFacilityPresence(locationId, {
     enabled: isToday && Boolean(locationId),
-    pollMs: 10_000,
-    runSync: true,
+    pollMs: 5_000,
   });
 
   // ─── Live Snapshot: 10-second polling for real-time snapshot counts ───
@@ -1609,9 +1608,8 @@ function DashboardContent({
 
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
 
-      // Supplement with cached live Gingr data for today (daycare/day-boarding
-      // are same-day and may not be in Supabase yet if the sync hasn't run today).
-      // gingrLiveRows comes from the background 60s polling cache — no await needed.
+      // Compatibility hook for older live rows. Browser GINGR reads are disabled;
+      // same-day freshness comes from the server sync pipeline.
       const todayD = new Date().toISOString().split("T")[0];
       let rawRes = supabaseRes;
       if (dateTo >= todayD && gingrLiveRows && gingrLiveRows.length > 0) {

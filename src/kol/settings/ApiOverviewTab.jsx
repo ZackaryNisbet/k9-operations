@@ -1,14 +1,20 @@
 // K9 Operations — API Overview Settings Tab
 // Shows all Gingr API call types, frequencies, projected daily calls, time windows, and thresholds.
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { Card } from "../../shared/ui";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useAuth } from "../../AuthProvider";
 import { REFRESH_DEFAULTS, REFRESH_SETTING_KEY } from "../../hooks/useRefreshSettings";
-import { TV_POLL_DEFAULTS, TV_POLL_SETTING_KEY } from "../../hooks/useBackOfHouse";
+import {
+  PRESENCE_SYNC_DEFAULTS,
+  PRESENCE_SYNC_SETTING_KEY,
+  computePresenceDailyCalls,
+  getEffectivePresenceCadence,
+  sanitizePresenceSyncConfig,
+} from "../../hooks/presenceSyncConfig";
 
 // ── Gingr entity definitions ──
 const ENTITY_TYPES = [
@@ -37,9 +43,9 @@ const SYNC_TYPES = [
   },
   {
     key: "presence-sync",
-    label: "Presence Sync",
-    entities: ["reservations", "back_of_house", "facility_presence"],
-    desc: "Server-side checked-in reconciliation that writes the canonical current-presence snapshot and check-in/check-out event ledger.",
+    label: "Server Presence Sync",
+    entities: ["presence_worker", "reservations_checked_in", "back_of_house", "facility_presence"],
+    desc: "Server-owned checked-in reconciliation. Browsers read the canonical Supabase snapshot and event ledger only.",
     frequency: "configurable",
   },
   {
@@ -61,6 +67,7 @@ function ApiOverviewTab() {
   const { profile } = useAuth();
   const [syncState, setSyncState] = useState([]);
   const [refreshSettings, setRefreshSettings] = useState(REFRESH_DEFAULTS);
+  const [presenceConfig, setPresenceConfig] = useState(PRESENCE_SYNC_DEFAULTS);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -68,11 +75,13 @@ function ApiOverviewTab() {
     Promise.all([
       supabase.from("gingr_sync_state").select("*").eq("location_id", locationId),
       supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", REFRESH_SETTING_KEY),
-    ]).then(([syncRes, settingsRes]) => {
+      supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", PRESENCE_SYNC_SETTING_KEY).maybeSingle(),
+    ]).then(([syncRes, settingsRes, presenceRes]) => {
       if (syncRes.data) setSyncState(syncRes.data);
       if (settingsRes.data?.[0]?.setting_value) {
         setRefreshSettings(prev => ({ ...prev, ...settingsRes.data[0].setting_value }));
       }
+      setPresenceConfig(sanitizePresenceSyncConfig(presenceRes.data?.setting_value));
       setLoaded(true);
     });
   }, [profile?.location_id]);
@@ -94,19 +103,8 @@ function ApiOverviewTab() {
   const totalGingrCallsPerDay = pollsPerDay * apiCallsPerSync;
   const totalRpcsPerDay = pollsPerDay * rpcsPerSync;
 
-  // TV poll: configurable interval (default 10s), during business hours
-  const [tvConfig, setTvConfig] = useState(TV_POLL_DEFAULTS);
-  useEffect(() => {
-    const locationId = profile?.location_id || "cherry-hill";
-    supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", TV_POLL_SETTING_KEY).maybeSingle()
-      .then(({ data: row }) => { if (row?.setting_value) setTvConfig(prev => ({ ...prev, ...row.setting_value })); });
-  }, [profile?.location_id]);
-  const tvInterval = tvConfig.pollIntervalSeconds || 10;
-  const tvBhEnabled = tvConfig.businessHoursEnabled;
-  const [tvStartH, tvStartM] = (tvConfig.businessHoursStart || "06:30").split(":").map(Number);
-  const [tvEndH, tvEndM] = (tvConfig.businessHoursEnd || "19:30").split(":").map(Number);
-  const tvBhMinutes = tvBhEnabled ? (tvEndH * 60 + tvEndM) - (tvStartH * 60 + tvStartM) : 24 * 60;
-  const tvPollsPerDay = Math.floor(tvBhMinutes * 60 / tvInterval);
+  const presenceProjection = useMemo(() => computePresenceDailyCalls(presenceConfig), [presenceConfig]);
+  const effectivePresenceCadence = useMemo(() => getEffectivePresenceCadence(presenceConfig), [presenceConfig]);
 
   if (!loaded) {
     return (
@@ -153,7 +151,8 @@ function ApiOverviewTab() {
             { label: "Syncs / Day", value: pollsPerDay.toLocaleString() },
             { label: "Gingr API Calls / Day", value: totalGingrCallsPerDay.toLocaleString(), accent: true },
             { label: "Post-Sync RPCs / Day", value: totalRpcsPerDay.toLocaleString() },
-            { label: "TV Poll Calls / Day", value: tvPollsPerDay.toLocaleString() },
+            { label: "Presence Calls / Day", value: presenceProjection.totalCalls.toLocaleString() },
+            { label: "Presence Cadence", value: `${effectivePresenceCadence.intervalSeconds}s` },
           ].map(item => (
             <div key={item.label} style={{ padding: "14px 16px", background: C.bg, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>
@@ -166,8 +165,8 @@ function ApiOverviewTab() {
           ))}
         </div>
         <div style={{ marginTop: 12, fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
-          Projections based on current refresh interval ({interval}m) and business hours settings.
-          Adjust these in <span style={{ fontWeight: 600 }}>Dashboard Refresh</span> settings.
+          Projections combine dashboard refresh settings and the server-owned presence sync cadence.
+          Presence settings live in the <span style={{ fontWeight: 600 }}>API Dashboard</span>.
         </div>
       </Card>
 
@@ -187,7 +186,7 @@ function ApiOverviewTab() {
                   color: st.key === "incremental" ? C.pri : st.key === "presence-sync" ? C.info : C.textSec,
                   border: `1px solid ${st.key === "incremental" ? C.pri + "30" : st.key === "presence-sync" ? C.info + "30" : C.borderLight}`,
                 }}>
-                  {st.key === "incremental" ? `Every ${interval} min` : st.key === "presence-sync" ? `Every ${tvInterval}s` : st.frequency}
+                  {st.key === "incremental" ? `Every ${interval} min` : st.key === "presence-sync" ? `Every ${effectivePresenceCadence.intervalSeconds}s` : st.frequency}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginBottom: 8, lineHeight: 1.5 }}>{st.desc}</div>
@@ -299,9 +298,10 @@ function ApiOverviewTab() {
             <div>1. <span style={{ fontWeight: 600 }}>Incremental sync</span> runs every <span style={{ fontWeight: 700, color: C.pri }}>{interval} minutes</span> during {bhEnabled ? `business hours (${bhStart} – ${bhEnd})` : "all hours (24/7)"}</div>
             <div>2. Pulls owners (500/batch), animals (500/batch), and reservations (last 90 days)</div>
             <div>3. Full sync pulls all historical data using resumable 30-day reservation chunks</div>
-            <div>4. Checkout TV polls Gingr's <code style={{ fontSize: 11, color: C.pri }}>back_of_house</code> API directly from the browser every <span style={{ fontWeight: 700, color: C.pri }}>{tvInterval}s</span> — configurable in API Dashboard settings</div>
-            <div>5. Post-sync RPCs recompute client stats and dashboard metrics</div>
-            <div>6. Ignite email webhooks process leads independently — not affected by business hours</div>
+            <div>4. Server Presence Sync reconciles checked-in state every <span style={{ fontWeight: 700, color: C.pri }}>{effectivePresenceCadence.intervalSeconds}s</span> right now and writes canonical Supabase presence rows/events.</div>
+            <div>5. Checkout TV, Home, and Dashboard read Supabase snapshots and realtime events; they do not call GINGR directly.</div>
+            <div>6. Post-sync RPCs recompute client stats and dashboard metrics.</div>
+            <div>7. Ignite email webhooks process leads independently and are not affected by business hours.</div>
           </div>
         </div>
       </Card>

@@ -30,6 +30,24 @@ const corsHeaders = {
 
 const SCHEDULING_FUTURE_SYNC_DAYS = 28;
 const PRESENCE_SYNC_FRESH_MS = 5_000;
+const PRESENCE_SYNC_SETTING_KEY = "presence_sync_config_v1";
+const PRESENCE_WORKER_MAX_RUN_MS = 55_000;
+const PRESENCE_ALLOWED_INTERVAL_SECONDS = [3, 5, 10, 15, 30];
+
+const PRESENCE_SYNC_DEFAULT_CONFIG = {
+  enabled: true,
+  normalIntervalSeconds: 5,
+  offHoursIntervalSeconds: 30,
+  businessHoursEnabled: true,
+  businessHoursStart: "06:30",
+  businessHoursEnd: "19:30",
+  peakEnabled: false,
+  peakIntervalSeconds: 3,
+  peakWindows: [
+    { start: "07:00", end: "09:30" },
+    { start: "16:00", end: "18:30" },
+  ],
+};
 
 // ─── Eastern Time helper ─────────────────────────────────────────────────────
 // Edge functions run in UTC. All date-sensitive operations must use ET.
@@ -39,6 +57,95 @@ function nowET(): Date {
 function dateStrET(d?: Date): string {
   const dt = d || nowET();
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function isAllowedPresenceInterval(value: any): value is number {
+  return PRESENCE_ALLOWED_INTERVAL_SECONDS.includes(Number(value));
+}
+
+function normalizePresenceInterval(value: any, fallback: number) {
+  const numeric = Number(value);
+  return isAllowedPresenceInterval(numeric) ? numeric : fallback;
+}
+
+function isTimeValue(value: any) {
+  return typeof value === "string" && /^\d{2}:\d{2}$/.test(value);
+}
+
+function sanitizePresenceSyncConfig(value: any) {
+  const source = value && typeof value === "object" ? value : {};
+  const windows = Array.isArray(source.peakWindows) ? source.peakWindows : PRESENCE_SYNC_DEFAULT_CONFIG.peakWindows;
+  return {
+    enabled: source.enabled === false ? false : PRESENCE_SYNC_DEFAULT_CONFIG.enabled,
+    normalIntervalSeconds: normalizePresenceInterval(
+      source.normalIntervalSeconds,
+      PRESENCE_SYNC_DEFAULT_CONFIG.normalIntervalSeconds,
+    ),
+    offHoursIntervalSeconds: normalizePresenceInterval(
+      source.offHoursIntervalSeconds,
+      PRESENCE_SYNC_DEFAULT_CONFIG.offHoursIntervalSeconds,
+    ),
+    businessHoursEnabled: source.businessHoursEnabled === false ? false : PRESENCE_SYNC_DEFAULT_CONFIG.businessHoursEnabled,
+    businessHoursStart: isTimeValue(source.businessHoursStart) ? source.businessHoursStart : PRESENCE_SYNC_DEFAULT_CONFIG.businessHoursStart,
+    businessHoursEnd: isTimeValue(source.businessHoursEnd) ? source.businessHoursEnd : PRESENCE_SYNC_DEFAULT_CONFIG.businessHoursEnd,
+    peakEnabled: source.peakEnabled === true,
+    peakIntervalSeconds: normalizePresenceInterval(
+      source.peakIntervalSeconds,
+      PRESENCE_SYNC_DEFAULT_CONFIG.peakIntervalSeconds,
+    ),
+    peakWindows: windows
+      .map((window: any) => ({
+        start: isTimeValue(window?.start) ? window.start : null,
+        end: isTimeValue(window?.end) ? window.end : null,
+      }))
+      .filter((window: any) => window.start && window.end)
+      .slice(0, 6),
+  };
+}
+
+function minutesFromTime(value: string) {
+  const [hours, minutes] = value.split(":").map((part) => Number(part));
+  return (hours * 60) + minutes;
+}
+
+function minutesForDate(date: Date) {
+  return (date.getHours() * 60) + date.getMinutes();
+}
+
+function isWithinMinuteWindow(currentMinutes: number, start: string, end: string) {
+  const startMinutes = minutesFromTime(start);
+  const endMinutes = minutesFromTime(end);
+  if (startMinutes === endMinutes) return true;
+  if (startMinutes < endMinutes) return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+}
+
+function getEffectivePresenceCadence(config: any, date: Date = nowET()) {
+  const sanitized = sanitizePresenceSyncConfig(config);
+  if (!sanitized.enabled) {
+    return { ...sanitized, active: false, mode: "disabled", intervalSeconds: sanitized.offHoursIntervalSeconds };
+  }
+
+  const currentMinutes = minutesForDate(date);
+  const withinBusinessHours = !sanitized.businessHoursEnabled
+    || isWithinMinuteWindow(currentMinutes, sanitized.businessHoursStart, sanitized.businessHoursEnd);
+  if (!withinBusinessHours) {
+    return { ...sanitized, active: true, mode: "off-hours", intervalSeconds: sanitized.offHoursIntervalSeconds };
+  }
+
+  const inPeakWindow = sanitized.peakEnabled
+    && sanitized.peakWindows.some((window: any) => isWithinMinuteWindow(currentMinutes, window.start, window.end));
+
+  return {
+    ...sanitized,
+    active: true,
+    mode: inPeakWindow ? "peak" : "normal",
+    intervalSeconds: inPeakWindow ? sanitized.peakIntervalSeconds : sanitized.normalIntervalSeconds,
+  };
 }
 
 // ─── Gingr API helper ──────────────────────────────────────────────────────
@@ -525,6 +632,7 @@ async function syncFacilityPresence({
   gingrLocationId,
   locationId,
   source = "gingr-sync:presence-sync",
+  minIntervalMs = PRESENCE_SYNC_FRESH_MS,
 }: {
   supabase: any;
   subdomain: string;
@@ -532,21 +640,28 @@ async function syncFacilityPresence({
   gingrLocationId: string;
   locationId: string;
   source?: string;
+  minIntervalMs?: number;
 }) {
   const startTime = Date.now();
   const errors: any[] = [];
+  const ownerToken = `${source}:${locationId}:${crypto.randomUUID()}`;
 
-  const { data: latestRun } = await supabase
-    .from("facility_presence_sync_runs")
-    .select("id, status, completed_at, current_count, arrivals_count, departures_count")
-    .eq("location_id", locationId)
-    .eq("status", "completed")
-    .order("completed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: claimResult, error: claimError } = await supabase.rpc("claim_facility_presence_sync", {
+    p_location_id: locationId,
+    p_owner_token: ownerToken,
+    p_lock_ttl_seconds: 25,
+    p_min_interval_ms: Math.max(1000, Math.min(60000, Number(minIntervalMs) || PRESENCE_SYNC_FRESH_MS)),
+    p_metadata: {
+      source,
+      requested_at: new Date().toISOString(),
+    },
+  });
 
-  const latestCompletedMs = latestRun?.completed_at ? new Date(latestRun.completed_at).getTime() : 0;
-  if (latestCompletedMs && Date.now() - latestCompletedMs < PRESENCE_SYNC_FRESH_MS) {
+  if (claimError) {
+    throw new Error(`Presence sync claim error: ${claimError.message}`);
+  }
+
+  if (!claimResult?.claimed) {
     const { data: snapshot } = await supabase.rpc("facility_presence_snapshot", {
       p_location_id: locationId,
     });
@@ -555,108 +670,233 @@ async function syncFacilityPresence({
       success: true,
       sync_type: "presence-sync",
       location_id: locationId,
-      skipped_fresh_sync: true,
-      latest_run: latestRun,
+      skipped_sync: true,
+      skipped_reason: claimResult?.reason || "not_claimed",
+      claim: claimResult,
       snapshot,
       duration_ms: Date.now() - startTime,
     };
   }
 
-  let todayResResult = { synced: 0 };
   try {
-    todayResResult = await syncTodayReservations(supabase, subdomain, apiKey, locationId);
-  } catch (err: any) {
-    errors.push({ stage: "today-reservations", message: err.message });
-  }
-
-  const [checkedInResult, bohResult] = await Promise.all([
-    gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "true" }),
-    gingrFetch(subdomain, "back_of_house", apiKey, "GET", {
-      location_id: String(gingrLocationId || "1"),
-      full_day: "true",
-      include_daycare: "true",
-    }).catch((err: any) => {
-      errors.push({ stage: "back-of-house", message: err.message });
-      return null;
-    }),
-  ]);
-
-  const checkedIn = Object.values(checkedInResult.data || {}) as any[];
-
-  if (checkedIn.length > 0) {
-    const rows = checkedIn.map((reservation: any) => mapReservationRow(reservation, locationId));
-    for (let i = 0; i < rows.length; i += 500) {
-      const chunk = rows.slice(i, i + 500);
-      const { error } = await supabase
-        .from("gingr_reservations")
-        .upsert(chunk, { onConflict: "location_id,gingr_id" });
-      if (error) throw new Error(`Presence sync reservation upsert error: ${error.message}`);
-    }
-  }
-
-  let checkoutReconcile = { checked_out_count: 0, skipped_mass_checkout_guard: false };
-  try {
-    checkoutReconcile = await markCheckedOutReservations(supabase, locationId, checkedIn);
-  } catch (err: any) {
-    errors.push({ stage: "checkout-reconcile", message: err.message });
-  }
-
-  let bohCache = { checking_in_count: 0, checking_out_count: 0, upserted: 0, stale_deleted: 0 };
-  if (bohResult) {
+    let todayResResult = { synced: 0 };
     try {
-      bohCache = await upsertBohCacheFromPayload(supabase, locationId, bohResult);
+      todayResResult = await syncTodayReservations(supabase, subdomain, apiKey, locationId);
     } catch (err: any) {
-      errors.push({ stage: "boh-cache", message: err.message });
+      errors.push({ stage: "today-reservations", message: err.message });
     }
-  }
 
-  let roomResult = { assigned: 0, bohDogs: 0 };
-  if (bohResult) {
+    const [checkedInResult, bohResult] = await Promise.all([
+      gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "true" }),
+      gingrFetch(subdomain, "back_of_house", apiKey, "GET", {
+        location_id: String(gingrLocationId || "1"),
+        full_day: "true",
+        include_daycare: "true",
+      }).catch((err: any) => {
+        errors.push({ stage: "back-of-house", message: err.message });
+        return null;
+      }),
+    ]);
+
+    const checkedIn = Object.values(checkedInResult.data || {}) as any[];
+
+    if (checkedIn.length > 0) {
+      const rows = checkedIn.map((reservation: any) => mapReservationRow(reservation, locationId));
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error } = await supabase
+          .from("gingr_reservations")
+          .upsert(chunk, { onConflict: "location_id,gingr_id" });
+        if (error) throw new Error(`Presence sync reservation upsert error: ${error.message}`);
+      }
+    }
+
+    let checkoutReconcile = { checked_out_count: 0, skipped_mass_checkout_guard: false };
     try {
-      roomResult = await persistBohRoomAssignments(supabase, subdomain, apiKey, gingrLocationId || "1", locationId);
+      checkoutReconcile = await markCheckedOutReservations(supabase, locationId, checkedIn);
     } catch (err: any) {
-      errors.push({ stage: "room-assignments", message: err.message });
+      errors.push({ stage: "checkout-reconcile", message: err.message });
     }
-  }
 
-  const presenceRows = buildFacilityPresenceRows(checkedIn, bohResult, source);
-  const duplicateAnimals = presenceRows.filter((row) => row.duplicate_reservation_count > 1).length;
-  const { data: reconcileResult, error: reconcileError } = await supabase.rpc("reconcile_facility_presence", {
-    p_location_id: locationId,
-    p_current_rows: presenceRows,
-    p_source: source,
-    p_source_checked_in_count: checkedIn.length,
-    p_metadata: {
+    let bohCache = { checking_in_count: 0, checking_out_count: 0, upserted: 0, stale_deleted: 0 };
+    if (bohResult) {
+      try {
+        bohCache = await upsertBohCacheFromPayload(supabase, locationId, bohResult);
+      } catch (err: any) {
+        errors.push({ stage: "boh-cache", message: err.message });
+      }
+    }
+
+    let roomResult = { assigned: 0, bohDogs: 0 };
+    if (bohResult) {
+      try {
+        roomResult = await persistBohRoomAssignments(supabase, subdomain, apiKey, gingrLocationId || "1", locationId);
+      } catch (err: any) {
+        errors.push({ stage: "room-assignments", message: err.message });
+      }
+    }
+
+    const presenceRows = buildFacilityPresenceRows(checkedIn, bohResult, source);
+    const duplicateAnimals = presenceRows.filter((row) => row.duplicate_reservation_count > 1).length;
+    const { data: reconcileResult, error: reconcileError } = await supabase.rpc("reconcile_facility_presence", {
+      p_location_id: locationId,
+      p_current_rows: presenceRows,
+      p_source: source,
+      p_source_checked_in_count: checkedIn.length,
+      p_metadata: {
+        today_reservations_synced: todayResResult.synced,
+        checked_out_count: checkoutReconcile.checked_out_count,
+        skipped_mass_checkout_guard: checkoutReconcile.skipped_mass_checkout_guard,
+        boh_cache: bohCache,
+        rooms_assigned: roomResult.assigned,
+        boh_dogs_in_house: roomResult.bohDogs,
+        duplicate_animals: duplicateAnimals,
+        errors,
+        claim: claimResult,
+      },
+    });
+
+    if (reconcileError) {
+      throw new Error(`Presence reconcile error: ${reconcileError.message}`);
+    }
+
+    return {
+      success: true,
+      sync_type: "presence-sync",
+      location_id: locationId,
       today_reservations_synced: todayResResult.synced,
+      checked_in_count: checkedIn.length,
       checked_out_count: checkoutReconcile.checked_out_count,
-      skipped_mass_checkout_guard: checkoutReconcile.skipped_mass_checkout_guard,
+      pending_arrivals_count: bohCache.checking_in_count,
       boh_cache: bohCache,
       rooms_assigned: roomResult.assigned,
       boh_dogs_in_house: roomResult.bohDogs,
       duplicate_animals: duplicateAnimals,
       errors,
-    },
-  });
+      presence: reconcileResult,
+      claim: claimResult,
+      duration_ms: Date.now() - startTime,
+    };
+  } finally {
+    try {
+      await supabase.rpc("release_facility_presence_sync", {
+        p_location_id: locationId,
+        p_owner_token: ownerToken,
+        p_metadata: {
+          source,
+          released_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+        },
+      });
+    } catch (releaseErr: any) {
+      console.error("Presence sync release error:", releaseErr?.message || releaseErr);
+    }
+  }
+}
 
-  if (reconcileError) {
-    throw new Error(`Presence reconcile error: ${reconcileError.message}`);
+async function loadPresenceSyncConfig(supabase: any, locationId: string) {
+  const { data, error } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", PRESENCE_SYNC_SETTING_KEY)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Presence config load error:", error.message);
   }
 
+  return sanitizePresenceSyncConfig(data?.setting_value);
+}
+
+async function runPresenceWorker({
+  supabase,
+  subdomain,
+  apiKey,
+  gingrLocationId,
+  locationId,
+  maxRunMs = PRESENCE_WORKER_MAX_RUN_MS,
+}: {
+  supabase: any;
+  subdomain: string;
+  apiKey: string;
+  gingrLocationId: string;
+  locationId: string;
+  maxRunMs?: number;
+}) {
+  const workerStartedAt = Date.now();
+  const safeMaxRunMs = Math.max(5_000, Math.min(PRESENCE_WORKER_MAX_RUN_MS, Number(maxRunMs) || PRESENCE_WORKER_MAX_RUN_MS));
+  const cycles: any[] = [];
+  let lastCadence: any = null;
+
+  while (Date.now() - workerStartedAt < safeMaxRunMs - 1_000) {
+    const cycleStartedAt = Date.now();
+    const config = await loadPresenceSyncConfig(supabase, locationId);
+    const cadence = getEffectivePresenceCadence(config);
+    lastCadence = cadence;
+
+    if (!cadence.active) {
+      cycles.push({
+        started_at: new Date(cycleStartedAt).toISOString(),
+        mode: cadence.mode,
+        interval_seconds: cadence.intervalSeconds,
+        skipped: true,
+      });
+      break;
+    }
+
+    try {
+      const result = await syncFacilityPresence({
+        supabase,
+        subdomain,
+        apiKey,
+        gingrLocationId,
+        locationId,
+        source: "gingr-sync:presence-worker",
+        minIntervalMs: cadence.intervalSeconds * 1000,
+      });
+
+      cycles.push({
+        started_at: new Date(cycleStartedAt).toISOString(),
+        mode: cadence.mode,
+        interval_seconds: cadence.intervalSeconds,
+        skipped: Boolean(result?.skipped_sync),
+        skipped_reason: result?.skipped_reason || null,
+        checked_in_count: result?.checked_in_count ?? null,
+        arrivals_count: result?.presence?.arrivals_count ?? null,
+        departures_count: result?.presence?.departures_count ?? null,
+        duration_ms: Date.now() - cycleStartedAt,
+      });
+    } catch (err: any) {
+      cycles.push({
+        started_at: new Date(cycleStartedAt).toISOString(),
+        mode: cadence.mode,
+        interval_seconds: cadence.intervalSeconds,
+        success: false,
+        error: err?.message || "presence worker cycle failed",
+        duration_ms: Date.now() - cycleStartedAt,
+      });
+    }
+
+    const intervalMs = Math.max(1000, cadence.intervalSeconds * 1000);
+    const nextCycleAt = cycleStartedAt + intervalMs;
+    const sleepMs = nextCycleAt - Date.now();
+    if (Date.now() + Math.max(0, sleepMs) - workerStartedAt >= safeMaxRunMs - 1_000) break;
+    await sleep(sleepMs);
+  }
+
+  const failures = cycles.filter((cycle) => cycle.success === false);
   return {
-    success: true,
-    sync_type: "presence-sync",
+    success: failures.length === 0,
+    sync_type: "presence-worker",
     location_id: locationId,
-    today_reservations_synced: todayResResult.synced,
-    checked_in_count: checkedIn.length,
-    checked_out_count: checkoutReconcile.checked_out_count,
-    pending_arrivals_count: bohCache.checking_in_count,
-    boh_cache: bohCache,
-    rooms_assigned: roomResult.assigned,
-    boh_dogs_in_house: roomResult.bohDogs,
-    duplicate_animals: duplicateAnimals,
-    errors,
-    presence: reconcileResult,
-    duration_ms: Date.now() - startTime,
+    started_at: new Date(workerStartedAt).toISOString(),
+    completed_at: new Date().toISOString(),
+    duration_ms: Date.now() - workerStartedAt,
+    cycles,
+    cycle_count: cycles.length,
+    failure_count: failures.length,
+    effective_cadence: lastCadence,
   };
 }
 
@@ -2575,7 +2815,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    let { location_id, sync_type = "full", entities, test_credentials, animal_ids, location_slug } = await req.json();
+    const body = await req.json();
+    let { location_id, sync_type = "full", entities, test_credentials, animal_ids, location_slug, max_run_ms } = body;
 
     if (!location_id) {
       return new Response(JSON.stringify({ error: "location_id required" }), {
@@ -2670,6 +2911,22 @@ Deno.serve(async (req: Request) => {
     // This is the durable successor to separate dashboard/TV browser polling.
     // It keeps gingr_reservations and BOH cache compatible while writing the
     // canonical facility_presence_current/events tables in one server path.
+    if (sync_type === "presence-worker") {
+      const result = await runPresenceWorker({
+        supabase,
+        subdomain,
+        apiKey: api_key,
+        gingrLocationId: gingr_location_id || "1",
+        locationId: location_id,
+        maxRunMs: max_run_ms,
+      });
+
+      return new Response(
+        JSON.stringify(result),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     if (sync_type === "presence-sync") {
       const result = await syncFacilityPresence({
         supabase,

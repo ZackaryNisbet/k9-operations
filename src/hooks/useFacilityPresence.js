@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-const DEFAULT_POLL_MS = 10_000;
+const DEFAULT_POLL_MS = 5_000;
 const RECENT_EVENT_WINDOW_MS = 15 * 60_000;
 
 function parseSnapshot(raw) {
@@ -68,7 +68,8 @@ export function mapPresenceRowToReservation(row) {
     checkOutTime: endDate ? String(endDate).split("T")[1]?.slice(0, 5) : null,
     scheduledCheckOutTime: endDate ? String(endDate).split("T")[1]?.slice(0, 5) : null,
     status: "checked-in",
-    room: row.room_name || null,
+    room: row.room_name || row.area_name || null,
+    area: row.area_name || null,
     _resTypeName: row.reservation_type_name,
     _animalName: row.animal_name,
     _ownerName: ownerName,
@@ -97,7 +98,8 @@ export function mapPresenceEventToNoticeGroup(event, { firedAt = Date.now(), dur
       animalName: state?.animal_name || event.animal_name || "Unknown",
       ownerLastName,
       breed: state?.animal_breed || event.animal_breed || "",
-      room: state?.room_name || event.room_name || "",
+      room: state?.room_name || event.room_name || state?.area_name || event.area_name || "",
+      area: state?.area_name || event.area_name || "",
       resType: state?.presence_type || event.presence_type || "other",
     }],
   };
@@ -106,14 +108,12 @@ export function mapPresenceEventToNoticeGroup(event, { firedAt = Date.now(), dur
 export function useFacilityPresence(locationId, {
   enabled = true,
   pollMs = DEFAULT_POLL_MS,
-  runSync = true,
 } = {}) {
   const [available, setAvailable] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
-  const inFlightRef = useRef(false);
   const disabledRef = useRef(false);
 
   const loadSnapshot = useCallback(async () => {
@@ -138,28 +138,6 @@ export function useFacilityPresence(locationId, {
     return parsed;
   }, [locationId, enabled]);
 
-  const syncNow = useCallback(async () => {
-    if (!locationId || !enabled || disabledRef.current || inFlightRef.current) return null;
-    inFlightRef.current = true;
-    setStatus("running");
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke("gingr-sync", {
-        body: { location_id: locationId, sync_type: "presence-sync" },
-      });
-      if (invokeError || data?.success === false) {
-        throw new Error(invokeError?.message || data?.error || "presence-sync failed");
-      }
-      await loadSnapshot();
-      return data;
-    } catch (syncError) {
-      setStatus("critical");
-      setError(syncError?.message || "presence-sync failed");
-      return null;
-    } finally {
-      inFlightRef.current = false;
-    }
-  }, [locationId, enabled, loadSnapshot]);
-
   useEffect(() => {
     disabledRef.current = false;
     setAvailable(false);
@@ -173,9 +151,8 @@ export function useFacilityPresence(locationId, {
     let cancelled = false;
 
     const tick = async () => {
-      const loaded = await loadSnapshot();
-      if (cancelled || !loaded || !runSync) return;
-      await syncNow();
+      if (cancelled) return;
+      await loadSnapshot();
     };
 
     tick();
@@ -184,7 +161,7 @@ export function useFacilityPresence(locationId, {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [locationId, enabled, pollMs, runSync, loadSnapshot, syncNow]);
+  }, [locationId, enabled, pollMs, loadSnapshot]);
 
   useEffect(() => {
     if (!locationId || !enabled || !available) return undefined;
@@ -207,6 +184,20 @@ export function useFacilityPresence(locationId, {
               recent_events: [payload.new, ...(current.recent_events || [])].slice(0, 50),
             };
           });
+          loadSnapshot();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "facility_presence_current", filter: `location_id=eq.${locationId}` },
+        () => {
+          loadSnapshot();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "facility_presence_sync_runs", filter: `location_id=eq.${locationId}` },
+        () => {
           loadSnapshot();
         }
       )
@@ -238,7 +229,6 @@ export function useFacilityPresence(locationId, {
     current,
     reservations,
     recentEvents,
-    syncNow,
     refresh: loadSnapshot,
   };
 }
