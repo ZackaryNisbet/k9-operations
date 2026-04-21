@@ -333,11 +333,15 @@ function parseRoom(room) {
   return { label: room, number: "" };
 }
 
-function formatRoomDisplay(room, area) {
+function formatRoomDisplay(room) {
   const roomInfo = parseRoom(room);
   if (roomInfo.number) return `${roomInfo.label} ${roomInfo.number}`.trim();
   if (roomInfo.label) return roomInfo.label;
-  return area || "No room";
+  return "";
+}
+
+function formatAuditRoomDisplay(room, area) {
+  return formatRoomDisplay(room) || area || "";
 }
 
 function sanitizeCheckoutTvSettings(value) {
@@ -1277,7 +1281,7 @@ function CheckoutTvHealthModal({ sections, overallStatus, nowMs, audit, auditLoa
                 {(audit?.events || []).length === 0 && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.42)" }}>No recent events found.</div>}
                 {(audit?.events || []).map(event => {
                   const state = event.event_type === "checked_out" ? event.previous_state : event.next_state;
-                  const room = formatRoomDisplay(state?.room_name || event.room_name, state?.area_name || event.area_name);
+                  const room = formatAuditRoomDisplay(state?.room_name || event.room_name, state?.area_name || event.area_name);
                   const owner = [state?.owner_first_name || event.owner_first_name, state?.owner_last_name || event.owner_last_name].filter(Boolean).join(" ");
                   return (
                     <div key={event.id || event.event_key} style={{
@@ -1292,7 +1296,7 @@ function CheckoutTvHealthModal({ sections, overallStatus, nowMs, audit, auditLoa
                             {state?.animal_name || event.animal_name || "Unknown dog"}
                           </div>
                           <div style={{ marginTop: 3, fontSize: 11, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {owner || "Unknown owner"} · {room}
+                            {[owner || "Unknown owner", room].filter(Boolean).join(" · ")}
                           </div>
                         </div>
                         <div style={{
@@ -1386,7 +1390,7 @@ function SpotlightNoticeCard({ notice, photoHeight, showDetails, compactLayout =
   const photoWidth = Math.round(photoHeight * 0.78);
   const totalSeconds = Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000));
   const roomDisplay = formatRoomDisplay(notice.room);
-  const hasRoom = roomDisplay !== "No room";
+  const hasRoom = Boolean(roomDisplay);
   return (
     <div style={{
       width: photoWidth,
@@ -1457,20 +1461,22 @@ function SpotlightNoticeCard({ notice, photoHeight, showDetails, compactLayout =
             <div style={{ marginTop: 7, display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
               <SizeBadge size={notice.playgroup} />
               {notice.ownerLastName && <span style={{ fontSize: 11, fontWeight: 900, color: "rgba(255,255,255,0.64)", background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 7px" }}>{notice.ownerLastName}</span>}
-              <span style={{
-                maxWidth: "100%",
-                fontSize: 11,
-                fontWeight: 900,
-                color: hasRoom ? actionColor : "rgba(255,255,255,0.42)",
-                background: hasRoom ? `${actionColor}18` : "rgba(255,255,255,0.06)",
-                borderRadius: 6,
-                padding: "2px 7px",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}>
-                {roomDisplay}
-              </span>
+              {hasRoom && (
+                <span style={{
+                  maxWidth: "100%",
+                  fontSize: 11,
+                  fontWeight: 900,
+                  color: actionColor,
+                  background: `${actionColor}18`,
+                  borderRadius: 6,
+                  padding: "2px 7px",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}>
+                  {roomDisplay}
+                </span>
+              )}
             </div>
             {notice.breed && <div style={{ marginTop: 6, fontSize: 12, color: "rgba(255,255,255,0.48)", lineHeight: 1.25 }}>{notice.breed}</div>}
           </>
@@ -1485,6 +1491,7 @@ function SpotlightOverflowRow({ notice }) {
   const actionColor = isCheckout ? "#84CC16" : "#38BDF8";
   const actionLabel = isCheckout ? "Checking Out" : "Checking In";
   const roomDisplay = formatRoomDisplay(notice.room);
+  const hasRoom = Boolean(roomDisplay);
   return (
     <div style={{
       height: 66,
@@ -1503,7 +1510,9 @@ function SpotlightOverflowRow({ notice }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, color: actionColor, fontWeight: 900, textTransform: "uppercase" }}>{actionLabel}</div>
         <div style={{ fontSize: 19, color: "#fff", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{notice.name}</div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roomDisplay}</div>
+        {hasRoom && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roomDisplay}</div>
+        )}
       </div>
       <SizeBadge size={notice.playgroup} />
       <CountdownCircle remaining={notice.remaining} total={Math.max(1, Math.round((notice.durationMs || DEFAULT_NOTICE_DURATION_MS) / 1000))} size={44} strokeWidth={4} accentColor={actionColor} />
@@ -1608,8 +1617,8 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
   const name = dog?.fields?.name || res._animalName || "Unknown";
   const breed = dog?.fields?.breed || "";
   const ownerLast = client?.fields?.last_name || res._ownerName?.split(" ").pop() || "";
-  const roomDisplay = formatRoomDisplay(res.room, res.area);
-  const hasRoom = roomDisplay !== "No room";
+  const roomDisplay = formatRoomDisplay(res.room);
+  const hasRoom = Boolean(roomDisplay);
 
   // Get dog photo: prefer Supabase Storage (local_photo_url) → icon → Gingr CDN
   const animalId = String(dog?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "");
@@ -1698,16 +1707,18 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
       <div style={{ maxWidth: "100%", fontSize: compact ? 15 : 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
       {breed && <div style={{ maxWidth: "100%", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{breed}</div>}
       <div style={{ maxWidth: "100%", fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ownerLast}</div>
-      <div style={{
-        maxWidth: "100%",
-        fontSize: 12,
-        color: hasRoom ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.34)",
-        marginTop: 3,
-        fontWeight: 700,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}>{roomDisplay}</div>
+      {hasRoom && (
+        <div style={{
+          maxWidth: "100%",
+          fontSize: 12,
+          color: "rgba(255,255,255,0.72)",
+          marginTop: 3,
+          fontWeight: 700,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}>{roomDisplay}</div>
+      )}
     </div>
   );
 });

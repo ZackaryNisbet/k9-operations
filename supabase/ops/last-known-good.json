@@ -2,11 +2,11 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "a57bc05b68b048fc8ced9386791c95c559a1a4e1",
+      "commit": "8ee4b07ee52d8f9f619dca3084fd901cdc6d831c",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "normalize presence BOH timestamps",
-      "updatedAt": "2026-04-20T22:01:08.036Z"
+      "note": "enterprise presence sync worker",
+      "updatedAt": "2026-04-21T03:28:17.499Z"
     },
     "compute-scheduling-matrix": {
       "commit": "86e6b5cbb3b3028bbddd2a0394bcf782cfb53664",
@@ -72,11 +72,11 @@
       "updatedAt": "2026-04-18T15:55:18.664Z"
     },
     "ops-platform-health": {
-      "commit": "bfdc2d1cf24921f150060c03bf04c84c525cce1e",
+      "commit": "8ee4b07ee52d8f9f619dca3084fd901cdc6d831c",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "canonical facility presence sync",
-      "updatedAt": "2026-04-20T21:56:07.298Z"
+      "note": "enterprise presence sync worker",
+      "updatedAt": "2026-04-21T03:28:17.499Z"
     },
     "ops-bathing-manual": {
       "commit": "3568033bf063a73762e771a8eb371dfb319d6174",

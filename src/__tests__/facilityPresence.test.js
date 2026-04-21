@@ -35,6 +35,22 @@ describe("facility presence mapping", () => {
     });
   });
 
+  it("keeps area labels separate from room labels", () => {
+    const row = {
+      location_id: "cherry-hill",
+      animal_gingr_id: "123",
+      reservation_gingr_id: "987",
+      animal_name: "Betty White",
+      presence_type: "daycare",
+      area_name: "Small Daycare",
+    };
+
+    expect(mapPresenceRowToReservation(row)).toMatchObject({
+      room: null,
+      area: "Small Daycare",
+    });
+  });
+
   it("maps canonical check-in events to TV notice groups", () => {
     const event = {
       event_key: "event-1",
