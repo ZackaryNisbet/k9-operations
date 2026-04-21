@@ -98,6 +98,15 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       from { opacity: 0; transform: translateY(14px) scale(0.98); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
+    @keyframes tvHealthRefreshPulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 14px currentColor; }
+      50% { transform: scale(1.3); box-shadow: 0 0 26px currentColor; }
+    }
+    @keyframes tvHealthRefreshSweep {
+      0% { transform: translateX(-100%); opacity: 0.15; }
+      45% { opacity: 0.75; }
+      100% { transform: translateX(100%); opacity: 0.15; }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -444,6 +453,31 @@ function deriveCheckoutHealthSummary(sections, nowMs) {
   if (statuses.includes("running")) return "running";
   if (statuses.includes("waiting")) return "waiting";
   return "healthy";
+}
+
+function getHealthRefreshState(section, intervalMs, nowMs) {
+  if (section?.status === "running") {
+    return { label: "Refreshing", seconds: 0, progress: 1, isRefreshing: true };
+  }
+
+  const nextRunMs = section?.nextRunAt ? new Date(section.nextRunAt).getTime() : Number.NaN;
+  if (!Number.isFinite(nextRunMs)) {
+    return { label: "Waiting", seconds: null, progress: 0, isRefreshing: false };
+  }
+
+  const msRemaining = Math.max(0, nextRunMs - nowMs);
+  const seconds = Math.ceil(msRemaining / 1000);
+  if (seconds <= 0) {
+    return { label: "Refreshing", seconds: 0, progress: 1, isRefreshing: true };
+  }
+
+  const progress = 1 - Math.min(msRemaining, intervalMs) / intervalMs;
+  return {
+    label: `Next ${seconds}s`,
+    seconds,
+    progress: Math.max(0, Math.min(1, progress)),
+    isRefreshing: false,
+  };
 }
 
 function normalizeNoticeDog(entry, dogEntry, { dogs, animalIcons, dogPhotoMap, playgroupMap, type }) {
@@ -824,11 +858,12 @@ function TVNavButton({ view, isActive, count, onClick, compact = false }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 6 : 12,
-        height: compact ? 52 : 64,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 7 : 12,
+        minHeight: compact ? 54 : 64,
         minWidth: 0,
         width: "100%",
-        padding: compact ? "0 8px" : "0 22px",
+        height: "100%",
+        padding: compact ? "0 10px" : "0 18px",
         borderRadius: compact ? 12 : 16,
         border: isActive
           ? `2px solid ${color}`
@@ -861,10 +896,11 @@ function TVNavButton({ view, isActive, count, onClick, compact = false }) {
         lineHeight: compact ? 1.05 : 1.15,
         transition: "all 0.25s ease",
         position: "relative", zIndex: 1,
-        whiteSpace: compact ? "normal" : "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
+        overflow: "visible",
+        textOverflow: "clip",
         textAlign: "center",
+        textWrap: "balance",
       }}>
         {label}
       </span>
@@ -901,6 +937,8 @@ function CheckoutTvActionButton({ ariaLabel, title, onClick, children, compact =
         color: "rgba(255,255,255,0.75)",
         cursor: "pointer",
         display: "flex", alignItems: "center", justifyContent: "center",
+        alignSelf: "center",
+        justifySelf: "center",
         transition: "background 0.2s, border-color 0.2s, color 0.2s",
       }}
       onMouseEnter={(e) => {
@@ -919,8 +957,9 @@ function CheckoutTvActionButton({ ariaLabel, title, onClick, children, compact =
   );
 }
 
-function CheckoutTvHealthButton({ status, onClick, compact = false }) {
+function CheckoutTvHealthButton({ status, refreshState, onClick, compact = false }) {
   const tone = healthTone(status);
+  const progressPct = `${Math.round((refreshState?.progress || 0) * 100)}%`;
   return (
     <button
       type="button"
@@ -928,26 +967,66 @@ function CheckoutTvHealthButton({ status, onClick, compact = false }) {
       aria-label="Open Checkout TV health"
       title="Open Checkout TV health"
       style={{
-        height: compact ? 44 : 48, padding: compact ? "0 10px" : "0 18px",
+        minHeight: compact ? 54 : 64,
+        height: "100%",
+        minWidth: compact ? 136 : 154,
+        padding: compact ? "0 12px" : "0 16px",
         borderRadius: compact ? 10 : 12,
         border: `2px solid ${tone.color}55`,
         background: tone.bg,
         color: tone.color,
         cursor: "pointer",
-        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 7 : 10,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: compact ? 8 : 10,
         fontSize: compact ? 12 : 14, fontWeight: 900,
         transition: "filter 0.2s, transform 0.2s",
+        position: "relative",
+        overflow: "hidden",
       }}
       onMouseEnter={e => { e.currentTarget.style.filter = "brightness(1.15)"; }}
       onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; }}
     >
       <span style={{
+        position: "absolute", inset: 0,
+        background: `linear-gradient(90deg, transparent, ${tone.color}22, transparent)`,
+        animation: refreshState?.isRefreshing ? "tvHealthRefreshSweep 1.1s ease-in-out infinite" : "none",
+        pointerEvents: "none",
+      }} />
+      <span style={{
+        position: "absolute", left: 0, bottom: 0, height: 3, width: progressPct,
+        background: tone.color,
+        opacity: refreshState?.isRefreshing ? 0.95 : 0.65,
+        transition: "width 0.35s ease",
+        pointerEvents: "none",
+      }} />
+      <span style={{
         width: compact ? 8 : 10, height: compact ? 8 : 10, borderRadius: 99,
         background: tone.color,
         boxShadow: `0 0 18px ${tone.color}99`,
         flexShrink: 0,
+        color: tone.color,
+        animation: refreshState?.isRefreshing ? "tvHealthRefreshPulse 0.9s ease-in-out infinite" : "none",
+        position: "relative",
+        zIndex: 1,
       }} />
-      {tone.label}
+      <span style={{
+        display: "grid",
+        gap: 2,
+        minWidth: 0,
+        lineHeight: 1.05,
+        position: "relative",
+        zIndex: 1,
+      }}>
+        <span style={{ whiteSpace: "nowrap" }}>{tone.label}</span>
+        <span style={{
+          fontSize: compact ? 9 : 10,
+          color: "rgba(255,255,255,0.64)",
+          fontWeight: 850,
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+        }}>
+          {refreshState?.label || "Waiting"}
+        </span>
+      </span>
     </button>
   );
 }
@@ -1168,6 +1247,7 @@ function HealthFact({ label, value, color = "rgba(255,255,255,0.82)" }) {
   return (
     <div style={{
       minHeight: 54,
+      minWidth: 0,
       padding: "10px 11px",
       borderRadius: 10,
       background: "rgba(0,0,0,0.18)",
@@ -1175,7 +1255,16 @@ function HealthFact({ label, value, color = "rgba(255,255,255,0.82)" }) {
       overflow: "hidden",
     }}>
       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontWeight: 900, textTransform: "uppercase", marginBottom: 5 }}>{label}</div>
-      <div style={{ fontSize: 13, color, fontWeight: 800, lineHeight: 1.25 }}>{value || "Unknown"}</div>
+      <div style={{
+        fontSize: 13,
+        color,
+        fontWeight: 800,
+        lineHeight: 1.25,
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+      }}>
+        {value || "Unknown"}
+      </div>
     </div>
   );
 }
@@ -1561,6 +1650,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     () => deriveCheckoutHealthSummary(checkoutHealth, nowMs),
     [checkoutHealth, nowMs],
   );
+  const checkoutHealthRefreshState = useMemo(
+    () => getHealthRefreshState(checkoutHealth.boh, BOH_DIFF_INTERVAL_MS, nowMs),
+    [checkoutHealth.boh, nowMs],
+  );
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -1922,7 +2015,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       try {
         const { data: icons, error } = await supabase
           .from("gingr_animal_icons")
-          .select("animal_gingr_id,icon_url,icon_type,is_primary")
+          .select("animal_gingr_id,image_url")
           .eq("location_id", locationId);
 
         if (cancelled) return;
@@ -1930,10 +2023,13 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
         const map = {};
         for (const icon of (icons || [])) {
-          const existing = map[icon.animal_gingr_id];
-          if (!existing || icon.is_primary || (!existing.is_primary && icon.icon_type === "photo")) {
-            map[icon.animal_gingr_id] = icon;
-          }
+          if (!icon?.animal_gingr_id || !icon?.image_url) continue;
+          map[icon.animal_gingr_id] = {
+            ...icon,
+            icon_url: icon.image_url,
+            icon_type: "profile",
+            is_primary: true,
+          };
         }
         setAnimalIcons(map);
         updateHealthSection("photos", {
@@ -1942,7 +2038,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           durationMs: Date.now() - startedMs,
           nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
           error: null,
-          details: { "GINGR Icons": Object.keys(map).length },
+          details: { "Profile Icons": Object.keys(map).length },
         });
       } catch (e) {
         updateHealthSection("photos", {
@@ -2852,15 +2948,14 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       {/* TV-005: Navigation bar — large, touch-friendly buttons */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: isCompactTv
-          ? "repeat(7, minmax(0, 1fr)) minmax(82px, auto) 44px"
-          : "repeat(7, minmax(150px, 1fr)) minmax(120px, auto) 48px",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${isCompactTv ? 148 : 172}px, 1fr))`,
+        gridAutoRows: isCompactTv ? 54 : 64,
         alignItems: "stretch",
         gap: isCompactTv ? 8 : 10,
         padding: isCompactTv ? "10px 0" : "12px 0", marginBottom: 4,
         borderTop: "1px solid rgba(255,255,255,0.06)",
         borderBottom: "1px solid rgba(255,255,255,0.06)",
-        overflow: "hidden",
+        overflow: "visible",
         animation: "tvNavFadeIn 0.4s ease-out",
       }}>
         {NAV_VIEWS.map(view => (
@@ -2874,7 +2969,12 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           />
         ))}
 
-        <CheckoutTvHealthButton status={checkoutHealthStatus} onClick={() => setHealthOpen(true)} compact={isCompactTv} />
+        <CheckoutTvHealthButton
+          status={checkoutHealthStatus}
+          refreshState={checkoutHealthRefreshState}
+          onClick={() => setHealthOpen(true)}
+          compact={isCompactTv}
+        />
         <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)} compact={isCompactTv}>
           <svg width={isCompactTv ? "19" : "21"} height={isCompactTv ? "19" : "21"} viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
