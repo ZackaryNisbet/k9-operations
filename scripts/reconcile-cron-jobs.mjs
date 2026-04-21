@@ -13,6 +13,8 @@ const LEGACY_SCHEDULING_JOBS = [
 
 const LEGACY_GINGR_JOBS = [
   "gingr-tv-poll",
+  "gingr-boh-poll-a",
+  "gingr-boh-poll-b",
 ];
 
 function quoteLiteral(value) {
