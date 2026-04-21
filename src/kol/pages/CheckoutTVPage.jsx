@@ -1805,6 +1805,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     () => deriveCheckoutHealthSummary(checkoutHealth, nowMs),
     [checkoutHealth, nowMs],
   );
+  const checkoutPresenceHealthStatus = useMemo(
+    () => deriveSectionStatus(checkoutHealth.boh, CHECKOUT_HEALTH_SPECS.boh, nowMs),
+    [checkoutHealth.boh, nowMs],
+  );
   const checkoutHealthRefreshState = useMemo(
     () => getHealthRefreshState(checkoutHealth.boh, presenceIntervalMs, nowMs),
     [checkoutHealth.boh, presenceIntervalMs, nowMs],
@@ -2939,7 +2943,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         ))}
 
         <CheckoutTvHealthButton
-          status={checkoutHealthStatus}
+          status={checkoutPresenceHealthStatus}
           refreshState={checkoutHealthRefreshState}
           onClick={() => setHealthOpen(true)}
           compact={isCompactTv}
