@@ -54,9 +54,8 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
       if (fetchId !== fetchIdRef.current) return; // stale
       if (error) { console.error("Accrual fetch error:", error); setLoading(false); return; }
 
-      // If the date range includes today and we have cached live Gingr data,
-      // merge it in. This no longer blocks — gingrLiveRows comes from the
-      // background polling cache (useGingrLiveCache).
+      // Kept for compatibility with older callers. The browser no longer
+      // fetches live GINGR rows, so this normally stays empty.
       const today = new Date().toISOString().split("T")[0];
       let rawRes = supabaseRes;
       if (latest >= today && gingrLiveRows && gingrLiveRows.length > 0) {

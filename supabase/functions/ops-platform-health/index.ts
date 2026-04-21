@@ -57,26 +57,15 @@ const CRON_CHECKS = [
   },
   {
     jobname: "gingr-presence-sync",
-    label: "GINGR Presence Sync",
+    label: "GINGR Presence Worker",
     functionName: "gingr-sync",
-    syncType: "presence-sync",
+    syncType: "presence-worker",
     cadenceMinutes: 1,
     failMinutes: 4,
     criticality: "critical",
-    description: "Pulls the live GINGR checked-in view, reconciles canonical facility presence, and records check-in/check-out transitions.",
+    description: "Starts the server-owned presence worker loop that reconciles canonical facility presence every few seconds.",
     usedFor: ["Dashboard facility status", "Checkout TV", "Live checked-in dogs", "Today reservations"],
     affects: ["Live checked-in dogs", "Checkout TV transitions", "Today reservations"],
-  },
-  {
-    jobname: "gingr-boh-poll-a",
-    label: "GINGR BOH Poll",
-    functionName: "gingr-boh-poll",
-    cadenceMinutes: 1,
-    failMinutes: 4,
-    criticality: "warning",
-    description: "Refreshes the back-of-house check-in/check-out cache used for front-desk and operational live status.",
-    usedFor: ["BOH cache", "Check-in/check-out visibility"],
-    affects: ["Back-of-house check-in/check-out cache"],
   },
   {
     jobname: "gingr-today-sync",
@@ -210,6 +199,40 @@ function freshnessStatus(age: number | null, warnMinutes: number, failMinutes: n
   return "healthy";
 }
 
+function ageSeconds(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  return Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+}
+
+const PRESENCE_HEALTH_DEFAULT_CONFIG = {
+  normalIntervalSeconds: 5,
+  offHoursIntervalSeconds: 30,
+  businessHoursEnabled: true,
+  businessHoursStart: "06:30",
+  businessHoursEnd: "19:30",
+  peakEnabled: false,
+  peakIntervalSeconds: 3,
+  peakWindows: [] as any[],
+};
+
+function presenceHealthInterval(configValue: any) {
+  const config = configValue && typeof configValue === "object" ? configValue : {};
+  const normal = Number(config.normalIntervalSeconds);
+  const peak = Number(config.peakIntervalSeconds);
+  if (config.peakEnabled === true && Number.isFinite(peak) && peak > 0) return peak;
+  return Number.isFinite(normal) && normal > 0 ? normal : PRESENCE_HEALTH_DEFAULT_CONFIG.normalIntervalSeconds;
+}
+
+function presenceRunErrorMessage(run: any) {
+  const errors = Array.isArray(run?.errors) ? run.errors : [];
+  const messages = errors
+    .map((entry: any) => entry?.message || entry?.error || (typeof entry === "string" ? entry : null))
+    .filter(Boolean);
+  return messages.length ? messages.slice(0, 3).join("; ") : null;
+}
+
 function severityRank(value: string) {
   if (value === "critical") return 3;
   if (value === "warning") return 2;
@@ -281,6 +304,7 @@ function isResponseFailure(row: any) {
 function identifyJobFromContent(content: string | null | undefined) {
   const payload = safeJsonParse(content);
   if (!payload || typeof payload !== "object") return null;
+  if (payload.sync_type === "presence-worker") return "gingr-presence-sync";
   if (payload.sync_type === "presence-sync") return "gingr-presence-sync";
   if (payload.sync_type === "tv-poll") return "gingr-tv-poll";
   if (payload.sync_type === "today-sync") return "gingr-today-sync";
@@ -357,6 +381,64 @@ async function fetchLatestAndCount(
   return {
     latest: latestRow || null,
     count: count ?? 0,
+  };
+}
+
+async function fetchPresenceSyncHealth(sb: any, locationId: string) {
+  const [{ data: latestRun, error: latestError }, { data: latestEvent, error: eventError }, { data: configRow, error: configError }] = await Promise.all([
+    sb
+      .from("facility_presence_sync_runs")
+      .select("id, status, started_at, completed_at, duration_ms, current_count, arrivals_count, departures_count, duplicate_animals_count, errors")
+      .eq("location_id", locationId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb
+      .from("facility_presence_events")
+      .select("id, event_type, computed_at, animal_name, animal_gingr_id")
+      .eq("location_id", locationId)
+      .order("computed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "presence_sync_config_v1")
+      .maybeSingle(),
+  ]);
+
+  if (latestError) throw latestError;
+  if (eventError) throw eventError;
+  if (configError) throw configError;
+
+  const intervalSeconds = presenceHealthInterval(configRow?.setting_value);
+  const completedAge = ageSeconds(latestRun?.completed_at || null);
+  const warnSeconds = (intervalSeconds * 3) + 5;
+  const failSeconds = (intervalSeconds * 6) + 10;
+  let status = freshnessStatus(completedAge == null ? null : completedAge / 60, warnSeconds / 60, failSeconds / 60);
+  let message = latestRun?.completed_at
+    ? `Last presence sync completed ${completedAge}s ago.`
+    : "No completed presence sync run found.";
+
+  if (latestRun?.status === "failed") {
+    status = "critical";
+    message = presenceRunErrorMessage(latestRun) || "Latest presence sync run failed.";
+  } else if (latestRun?.status === "running" && ageSeconds(latestRun.started_at) != null && ageSeconds(latestRun.started_at)! > 120) {
+    status = "critical";
+    message = "Presence sync has been running for more than 2 minutes.";
+  }
+
+  return {
+    status,
+    message,
+    interval_seconds: intervalSeconds,
+    warn_seconds: warnSeconds,
+    fail_seconds: failSeconds,
+    latest_run: latestRun || null,
+    latest_event: latestEvent || null,
+    latest_completed_age_seconds: completedAge,
+    config: configRow?.setting_value || null,
   };
 }
 
@@ -665,6 +747,7 @@ function buildHealthFactors({
   freshness,
   syncState,
   bohCache,
+  presenceHealth,
   supabaseStatus,
 }: {
   cronHealth: any;
@@ -673,6 +756,7 @@ function buildHealthFactors({
   freshness: any;
   syncState: any[];
   bohCache: any;
+  presenceHealth: any;
   supabaseStatus: any;
 }) {
   const jobs = cronHealth?.jobs || [];
@@ -725,6 +809,14 @@ function buildHealthFactors({
       summary: bohCache?.latest_synced_at ? `Latest BOH sync ${ageMinutes(bohCache.latest_synced_at) ?? "unknown"}m ago` : "No BOH cache timestamp",
       description: "Checks the freshness of the live back-of-house check-in/check-out cache.",
       healthy_criteria: "The cache has recent synced rows and has not exceeded its stale-data threshold.",
+    },
+    {
+      key: "facility_presence",
+      label: "Facility Presence",
+      status: presenceHealth?.status || "unknown",
+      summary: presenceHealth?.message || "Facility presence freshness unavailable.",
+      description: "Checks the canonical current-presence reconciliation used by Checkout TV and live facility counts.",
+      healthy_criteria: "A server-owned presence sync run has completed inside the cadence-specific freshness window.",
     },
     {
       key: "supabase_status",
@@ -838,6 +930,7 @@ Deno.serve(async (req: Request) => {
       reportHealth,
       countReconciliation,
       bohCache,
+      presenceHealth,
       cronHealthResult,
       supabaseStatus,
     ] = await Promise.all([
@@ -850,6 +943,7 @@ Deno.serve(async (req: Request) => {
       fetchReportHealth(sb, locationId, date),
       fetchCountReconciliationHealth(sb, locationId, date),
       fetchBohCacheHealth(sb, locationId),
+      fetchPresenceSyncHealth(sb, locationId),
       fetchCronHealth(sb).then((cronHealth) => ({ cronHealth })).catch((error: any) => ({ cronError: error?.message || "Failed to load cron health." })),
       fetchSupabaseStatus(),
     ]);
@@ -956,6 +1050,20 @@ Deno.serve(async (req: Request) => {
         affects: ["Platform health details"],
         message: `Cron HTTP health could not be checked: ${cronHealth.error}`,
         action: "Open Test Health for the raw cron-health payload.",
+      });
+    }
+    if (presenceHealth.status === "critical" || presenceHealth.status === "warning") {
+      alerts.push({
+        severity: presenceHealth.status,
+        kind: "presence_sync_freshness",
+        label: "Facility Presence",
+        function_name: "gingr-sync",
+        affects: ["Checkout TV transitions", "Live checked-in dogs", "Dashboard facility status"],
+        last_run_at: presenceHealth.latest_run?.started_at || null,
+        last_success_at: presenceHealth.latest_run?.completed_at || null,
+        age_minutes: presenceHealth.latest_completed_age_seconds == null ? null : Math.round(presenceHealth.latest_completed_age_seconds / 60),
+        message: `Facility presence is ${presenceHealth.status}: ${presenceHealth.message}`,
+        action: "Verify the GINGR Presence Worker cron, the sync lock state, and the latest facility_presence_sync_runs rows before trusting live dog counts.",
       });
     }
     for (const row of syncState) {
@@ -1066,6 +1174,7 @@ Deno.serve(async (req: Request) => {
         freshness,
         syncState,
         bohCache,
+        presenceHealth,
         supabaseStatus,
       }),
       self_check: {
@@ -1085,6 +1194,7 @@ Deno.serve(async (req: Request) => {
       count_reconciliation: countReconciliation,
       cron_health: cronHealth,
       boh_cache: bohCache,
+      presence_sync: presenceHealth,
       pitr: {
         status: "manual-check-required",
         note: "PITR is configured at the Supabase project level. This app can monitor data freshness and Supabase public status, but it cannot confirm restore points without separate management credentials.",
