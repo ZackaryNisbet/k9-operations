@@ -2,11 +2,11 @@
   "projectRef": "YOUR_SUPABASE_PROJECT_REF",
   "functions": {
     "gingr-sync": {
-      "commit": "8ee4b07ee52d8f9f619dca3084fd901cdc6d831c",
+      "commit": "5892c174a62977e226fe7d9e593192271999d86d",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "enterprise presence sync worker",
-      "updatedAt": "2026-04-21T03:28:17.499Z"
+      "note": "presence room resolution",
+      "updatedAt": "2026-04-21T03:57:01.187Z"
     },
     "compute-scheduling-matrix": {
       "commit": "86e6b5cbb3b3028bbddd2a0394bcf782cfb53664",
