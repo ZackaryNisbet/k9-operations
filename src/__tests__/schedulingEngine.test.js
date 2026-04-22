@@ -78,7 +78,7 @@ function makeStaffPlan(overrides = {}) {
 }
 
 describe('Projected matrix display', () => {
-  it('derives projected totals from projected components instead of trusting stale stored totals', () => {
+  it('uses canonical projected totals while deriving play-yard demand from components', () => {
     const display = getMatrixProjectedDisplay(makeMatrix({
       detail_json: {
         projection: {
@@ -90,7 +90,7 @@ describe('Projected matrix display', () => {
               half_and_half_boarding: 0,
               evaluation_boarding: 0,
               unclassified_boarding: 1,
-              total_boarding: 500,
+              total_boarding: 50,
             },
             closing: {
               large_boarding: 3,
@@ -99,7 +99,7 @@ describe('Projected matrix display', () => {
               half_and_half_boarding: 0,
               evaluation_boarding: 0,
               unclassified_boarding: 1,
-              total_boarding: 700,
+              total_boarding: 70,
             },
             daycare: {
               evaluations: 1,
@@ -108,14 +108,14 @@ describe('Projected matrix display', () => {
               large_daycare: 6,
               small_daycare: 2,
               unclassified_daycare: 0,
-              total_daycare: 900,
+              total_daycare: 90,
             },
             support: {
               departure_baths: 2,
               morning_feeding_dogs: 111,
               evening_feeding_dogs: 222,
               medication_dogs: 3,
-              total_dog_volume: 1,
+              total_dog_volume: 160,
               tours: 0,
             },
             play_yard: {
@@ -129,12 +129,12 @@ describe('Projected matrix display', () => {
       },
     }));
 
-    expect(display.opening.total_boarding).toBe(5);
-    expect(display.closing.total_boarding).toBe(7);
-    expect(display.daycare.total_daycare).toBe(10);
-    expect(display.support.morning_feeding_dogs).toBe(5);
-    expect(display.support.evening_feeding_dogs).toBe(7);
-    expect(display.support.total_dog_volume).toBe(17);
+    expect(display.opening.total_boarding).toBe(50);
+    expect(display.closing.total_boarding).toBe(70);
+    expect(display.daycare.total_daycare).toBe(90);
+    expect(display.support.morning_feeding_dogs).toBe(50);
+    expect(display.support.evening_feeding_dogs).toBe(70);
+    expect(display.support.total_dog_volume).toBe(160);
     expect(display.play_yard.large_play_dogs).toBe(9);
   });
 });

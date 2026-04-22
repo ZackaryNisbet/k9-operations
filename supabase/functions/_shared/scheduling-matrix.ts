@@ -1146,18 +1146,21 @@ function flattenDisplay(display: any) {
     opening_half_and_half_boarding: Number(display?.opening?.half_and_half_boarding || 0),
     opening_evaluation_boarding: Number(display?.opening?.evaluation_boarding || 0),
     opening_unclassified_boarding: Number(display?.opening?.unclassified_boarding || 0),
+    opening_total_boarding: Number(display?.opening?.total_boarding || 0),
     closing_large_boarding: Number(display?.closing?.large_boarding || 0),
     closing_small_boarding: Number(display?.closing?.small_boarding || 0),
     closing_private_play_boarding: Number(display?.closing?.private_play_boarding || 0),
     closing_half_and_half_boarding: Number(display?.closing?.half_and_half_boarding || 0),
     closing_evaluation_boarding: Number(display?.closing?.evaluation_boarding || 0),
     closing_unclassified_boarding: Number(display?.closing?.unclassified_boarding || 0),
+    closing_total_boarding: Number(display?.closing?.total_boarding || 0),
     daycare_evaluations: Number(display?.daycare?.evaluations || 0),
     daycare_private_play_dayboarding: Number(display?.daycare?.private_play_dayboarding || 0),
     daycare_half_and_half_daytime: Number(display?.daycare?.half_and_half_daytime || 0),
     daycare_large_daycare: Number(display?.daycare?.large_daycare || 0),
     daycare_small_daycare: Number(display?.daycare?.small_daycare || 0),
     daycare_unclassified_daycare: Number(display?.daycare?.unclassified_daycare || 0),
+    daycare_total_daycare: Number(display?.daycare?.total_daycare || 0),
     support_departure_baths: Number(display?.support?.departure_baths || 0),
     support_morning_feeding_dogs: Number(display?.support?.morning_feeding_dogs || 0),
     support_evening_feeding_dogs: Number(display?.support?.evening_feeding_dogs || 0),
@@ -1174,15 +1177,19 @@ function flattenDisplay(display: any) {
 const DERIVED_PROJECTION_METRIC_KEYS = new Set([
   "support_morning_feeding_dogs",
   "support_evening_feeding_dogs",
-  "support_total_dog_volume",
   "play_yard_large_play_dogs",
   "play_yard_small_play_dogs",
   "play_yard_private_play_dogs",
   "play_yard_split_play_dogs",
 ]);
 
+function getFiniteFlatNumber(flat: Record<string, number>, key: string) {
+  const value = Number(flat[key]);
+  return Number.isFinite(value) ? value : null;
+}
+
 function buildDisplayFromFlat(flat: Record<string, number>) {
-  return buildDisplayShape({
+  const display = buildDisplayShape({
     openingCounts: {
       large: Number(flat.opening_large_boarding || 0),
       small: Number(flat.opening_small_boarding || 0),
@@ -1220,6 +1227,22 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
     medicationDogs: Number(flat.support_medication_dogs || 0),
     toursCount: Number(flat.support_tours || 0),
   });
+
+  const openingTotal = getFiniteFlatNumber(flat, "opening_total_boarding");
+  const closingTotal = getFiniteFlatNumber(flat, "closing_total_boarding");
+  const daycareTotal = getFiniteFlatNumber(flat, "daycare_total_daycare");
+  const supportTotal = getFiniteFlatNumber(flat, "support_total_dog_volume");
+
+  if (openingTotal !== null) display.opening.total_boarding = openingTotal;
+  if (closingTotal !== null) display.closing.total_boarding = closingTotal;
+  if (daycareTotal !== null) display.daycare.total_daycare = daycareTotal;
+  display.support.morning_feeding_dogs = display.opening.total_boarding;
+  display.support.evening_feeding_dogs = display.closing.total_boarding;
+  if (supportTotal !== null) {
+    display.support.total_dog_volume = supportTotal;
+  }
+
+  return display;
 }
 
 export function computeDemandSnapshotForDate({
@@ -1430,21 +1453,16 @@ export function buildProjectionForDate({
   });
 
   const metricKeys = Object.keys(currentFlat);
+  const fallbackModes = [
+    "exact_prior_year",
+    "same_weekday_prior_year",
+    "exact_prior_years_2_to_4",
+    "same_weekday_prior_years_2_to_4",
+  ] as ProjectionFallbackMode[];
 
-  for (const metricKey of metricKeys) {
-    const currentValue = Number(currentFlat[metricKey] || 0);
-    const exactSample = samples.find((sample) => sample.fallbackMode === "exact_prior_year") || null;
-    const exactLastYearFinal = exactSample ? Number(exactSample.finalFlat[metricKey] || 0) : 0;
-    const exactLastYearAsOf = exactSample ? Number(exactSample.asOfFlat[metricKey] || 0) : 0;
-    const explanationKey = metricKey.replaceAll(".", "_");
-
+  const selectSamplesForMetric = (metricKey: string, currentValue: number) => {
     const usableByMode = new Map<ProjectionFallbackMode, any[]>();
-    for (const mode of [
-      "exact_prior_year",
-      "same_weekday_prior_year",
-      "exact_prior_years_2_to_4",
-      "same_weekday_prior_years_2_to_4",
-    ] as ProjectionFallbackMode[]) {
+    for (const mode of fallbackModes) {
       usableByMode.set(
         mode,
         samples.filter((sample) => {
@@ -1470,10 +1488,47 @@ export function buildProjectionForDate({
               : null
     ) as ProjectionFallbackMode | null;
 
-    const usableSamples = chosenMode ? usableByMode.get(chosenMode) || [] : [];
+    return {
+      chosenMode,
+      usableSamples: chosenMode ? usableByMode.get(chosenMode) || [] : [],
+    };
+  };
+
+  const getCompletionRateFromSamples = (usableSamples: any[]) => {
+    const weights = usableSamples.map((sample) => sample.weight);
+    const finalValues = usableSamples.map((sample) => Number(sample.finalFlat.support_total_dog_volume || 0));
+    const asOfValues = usableSamples.map((sample) => Number(sample.asOfFlat.support_total_dog_volume || 0));
+    const weightedFinal = weightedAverage(finalValues, weights, 0);
+    const weightedAsOf = weightedAverage(asOfValues, weights, 0);
+    const completionRate = weightedFinal > 0 && weightedAsOf > 0
+      ? clampNumber(weightedAsOf / weightedFinal, 0.01, 1)
+      : 0;
+    return {
+      weightedFinal,
+      weightedAsOf,
+      completionRate,
+    };
+  };
+
+  const basisSelection = selectSamplesForMetric(
+    "support_total_dog_volume",
+    Number(currentFlat.support_total_dog_volume || 0),
+  );
+  const basis = getCompletionRateFromSamples(basisSelection.usableSamples);
+
+  for (const metricKey of metricKeys) {
+    const currentValue = Number(currentFlat[metricKey] || 0);
+    const exactSample = samples.find((sample) => sample.fallbackMode === "exact_prior_year") || null;
+    const exactLastYearFinal = exactSample ? Number(exactSample.finalFlat[metricKey] || 0) : 0;
+    const exactLastYearAsOf = exactSample ? Number(exactSample.asOfFlat[metricKey] || 0) : 0;
+    const explanationKey = metricKey.replaceAll(".", "_");
+
+    const { chosenMode, usableSamples } = selectSamplesForMetric(metricKey, currentValue);
     sampleCount = Math.max(sampleCount, usableSamples.length);
 
-    if (!usableSamples.length) {
+    const usesTotalVolumeBasis = currentValue > 0 && basis.completionRate > 0;
+
+    if (!usableSamples.length && !usesTotalVolumeBasis) {
       explanations[explanationKey] = {
         target_date: targetDate,
         as_of_date: currentDate,
@@ -1496,9 +1551,12 @@ export function buildProjectionForDate({
     const asOfValues = usableSamples.map((sample) => Number(sample.asOfFlat[metricKey] || 0));
     const weightedFinal = weightedAverage(finalValues, weights, currentValue);
     const weightedAsOf = weightedAverage(asOfValues, weights, 0);
-    const completionRate = currentValue === 0
+    const metricCompletionRate = currentValue === 0
       ? (weightedFinal > 0 ? clampNumber(weightedAsOf / weightedFinal, 0, 1) : 0)
       : (weightedFinal > 0 && weightedAsOf > 0 ? clampNumber(weightedAsOf / weightedFinal, 0.01, 1) : 0);
+    const completionRate = usesTotalVolumeBasis ? basis.completionRate : metricCompletionRate;
+    const projectionMode = usesTotalVolumeBasis ? basisSelection.chosenMode : chosenMode;
+    const projectionSamples = usesTotalVolumeBasis ? basisSelection.usableSamples : usableSamples;
 
     const projectedValue = currentValue === 0
       ? Math.round(weightedFinal)
@@ -1516,9 +1574,10 @@ export function buildProjectionForDate({
       exact_prior_year_as_of: exactLastYearAsOf || null,
       exact_prior_year_final: exactLastYearFinal || null,
       completion_rate: completionRate > 0 ? Number(completionRate.toFixed(4)) : null,
-      fallback_mode: chosenMode,
-      sample_count: usableSamples.length,
-      sample_dates: usableSamples.map((sample) => sample.sampleDate),
+      completion_basis: usesTotalVolumeBasis ? "support_total_dog_volume" : metricKey,
+      fallback_mode: projectionMode,
+      sample_count: projectionSamples.length,
+      sample_dates: projectionSamples.map((sample) => sample.sampleDate),
       baseline_final_average: Number(weightedFinal.toFixed(2)),
     };
   }
