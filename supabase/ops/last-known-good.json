@@ -9,11 +9,11 @@
       "updatedAt": "2026-04-21T03:57:01.187Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "1b06a551e5ab6bbab471f921c510d015ce5a4bab",
+      "commit": "dd54ed5d4b63fd71b742f40b72dbc8ef7ff99c31",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Fix reservation_widget_data active total parsing",
-      "updatedAt": "2026-04-22T14:09:59.032Z"
+      "note": "Use total dog booking pace for scheduling projections",
+      "updatedAt": "2026-04-22T15:06:05.834Z"
     },
     "ops-compute": {
       "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
