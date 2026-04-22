@@ -1788,7 +1788,7 @@ export async function computeSchedulingMatrixRows({
     const projection = buildProjectionForDate({
       targetDate,
       currentDate,
-      currentSnapshot: snapshot,
+      currentSnapshot: { ...snapshot, display },
       historicalReservations,
       roomByDate,
       totalRooms,
