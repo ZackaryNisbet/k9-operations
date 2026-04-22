@@ -74,6 +74,18 @@ function TrustBadge({ state, blocked }) {
 
 const MATRIX_GROUP_TEMPLATES = [
   {
+    section: "GINGR Source Counts",
+    rows: [
+      { key: "source.check_ins", label: "GINGR Check-Ins", source: true },
+      { key: "source.check_outs", label: "GINGR Check-Outs", source: true },
+      { key: "source.overnight", label: "GINGR Overnight", source: true },
+      { key: "source.boarding_opening", label: "Boarding Dogs Opening", total: true, source: true },
+      { key: "source.boarding_closing", label: "Boarding Dogs Closing", total: true, source: true },
+      { key: "source.daytime_total", label: "GINGR Daytime Dogs", total: true, source: true },
+      { key: "source.total", label: "GINGR Total Volume", total: true, source: true },
+    ],
+  },
+  {
     section: "Opening Boarding",
     rows: [
       { key: "opening.large_boarding", label: "Large Boarding Opening" },
@@ -152,7 +164,7 @@ function getDayMatrixValue(day, row, mode = "current") {
     return getNestedValue({ comparison: getDayComparison(day) }, row.key);
   }
 
-  const source = mode === "projected" ? getDayProjectedDisplay(day) : getDayCurrentDisplay(day);
+  const source = (row.source || mode === "current") ? getDayCurrentDisplay(day) : getDayProjectedDisplay(day);
   return getNestedValue(source, row.key);
 }
 
@@ -883,7 +895,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           </div>
         </div>
         <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
-          Total dog volume equals total boarding dogs closing plus total daycare dogs. Tours stay separate so the operational dog count is easy to read.
+          GINGR source rows mirror Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
           {matrixMode === "projected" && " Projected mode shows currently booked values moving to a statistically projected final count based on historical pickup pace from Gingr reservation created dates."}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
