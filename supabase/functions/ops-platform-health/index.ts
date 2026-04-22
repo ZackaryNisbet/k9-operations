@@ -526,7 +526,7 @@ async function fetchPresenceSyncHealth(sb: any, locationId: string) {
       .maybeSingle(),
     sb
       .from("facility_presence_events")
-      .select("id, event_type, computed_at, animal_name, animal_gingr_id")
+      .select("event_key, event_type, computed_at, animal_name, animal_gingr_id")
       .eq("location_id", locationId)
       .order("computed_at", { ascending: false })
       .limit(1)
