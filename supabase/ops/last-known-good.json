@@ -9,11 +9,11 @@
       "updatedAt": "2026-04-21T03:57:01.187Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
+      "commit": "1b06a551e5ab6bbab471f921c510d015ce5a4bab",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "scheduling projection integrity and health",
-      "updatedAt": "2026-04-22T12:32:05.741Z"
+      "note": "Fix reservation_widget_data active total parsing",
+      "updatedAt": "2026-04-22T14:09:59.032Z"
     },
     "ops-compute": {
       "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
