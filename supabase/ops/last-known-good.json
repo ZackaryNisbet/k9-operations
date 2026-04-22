@@ -9,11 +9,11 @@
       "updatedAt": "2026-04-21T03:57:01.187Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "8f2d9331deb80cee04eadd7b71bfd2646b239218",
+      "commit": "17e68aaf6f395e6dca4b822fc9d0cd2a44b2630f",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Use GINGR-adjusted current counts for scheduling projections",
-      "updatedAt": "2026-04-22T15:30:57.682Z"
+      "note": "Normalize Adair Forsythe scheduling location aliases before matrix writes",
+      "updatedAt": "2026-04-22T18:37:02.826Z"
     },
     "ops-compute": {
       "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
