@@ -1,10 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   annotateReservationsWithOperationalHistory,
+  applyGingrWidgetSourceCountsToDisplay,
   buildBlockerDetails,
+  buildGingrWidgetSourceCountsByDate,
   buildProjectionForDate,
+  buildReservationTypeMaps,
   buildTrustPayload,
   computeDemandSnapshotForDate,
+  normalizeGingrReservationWidgetPayload,
 } from "../../supabase/functions/_shared/scheduling-matrix.ts";
 
 function makeReservation(overrides: Record<string, unknown> = {}) {
@@ -30,6 +34,118 @@ function makeReservation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("scheduling matrix logic", () => {
+  it("normalizes GINGR Calendar Details widget totals and derives opening boarding from source counts", () => {
+    const widgetRow = normalizeGingrReservationWidgetPayload({
+      locationId: "ch",
+      widgetDate: "2026-04-27",
+      payload: {
+        data: {
+          totals: {
+            check_in_total: 22,
+            check_out_total: 37,
+            active_total: 22,
+          },
+          per_type: {
+            "Daycare | Full Day": { check_ins: 16, check_outs: 16, active: 0 },
+            "Boarding | Executive Room (All Inclusive)": { check_ins: 2, check_outs: 11, active: 13 },
+            "Boarding | Single Compartment (All Inclusive)": { check_ins: 1, check_outs: 3, active: 5 },
+            "Boarding | Double Compartment (All Inclusive)": { check_ins: 0, check_outs: 2, active: 2 },
+            "Day Boarding": { check_ins: 3, check_outs: 3, active: 0 },
+            "Boarding | Luxury Suite (All Inclusive)": { check_ins: 0, check_outs: 2, active: 2 },
+          },
+        },
+      },
+    });
+    const sourceByDate = buildGingrWidgetSourceCountsByDate(
+      [widgetRow],
+      buildReservationTypeMaps([]),
+    );
+    const source = sourceByDate.get("2026-04-27");
+
+    expect(widgetRow.check_in_total).toBe(22);
+    expect(widgetRow.check_out_total).toBe(37);
+    expect(widgetRow.overnight_total).toBe(22);
+    expect(widgetRow.total_reservation_volume).toBe(59);
+    expect(source?.boarding.check_ins).toBe(3);
+    expect(source?.boarding.check_outs).toBe(18);
+    expect(source?.boarding.overnight).toBe(22);
+    expect(source?.boarding.opening).toBe(37);
+    expect(source?.daytime.total).toBe(19);
+  });
+
+  it("uses GINGR widget source totals for displayed top-line matrix counts", () => {
+    const widgetRow = normalizeGingrReservationWidgetPayload({
+      locationId: "ch",
+      widgetDate: "2026-04-27",
+      payload: {
+        data: {
+          totals: { check_in_total: 22, check_out_total: 37, active_total: 22 },
+          per_type: {
+            "Daycare | Full Day": { check_ins: 16, check_outs: 16, active: 0 },
+            "Boarding | Executive Room (All Inclusive)": { check_ins: 2, check_outs: 11, active: 13 },
+            "Boarding | Single Compartment (All Inclusive)": { check_ins: 1, check_outs: 3, active: 5 },
+            "Boarding | Double Compartment (All Inclusive)": { check_ins: 0, check_outs: 2, active: 2 },
+            "Day Boarding": { check_ins: 3, check_outs: 3, active: 0 },
+            "Boarding | Luxury Suite (All Inclusive)": { check_ins: 0, check_outs: 2, active: 2 },
+          },
+        },
+      },
+    });
+    const source = buildGingrWidgetSourceCountsByDate([widgetRow], buildReservationTypeMaps([])).get("2026-04-27");
+    const adjustment = applyGingrWidgetSourceCountsToDisplay({
+      opening: {
+        large_boarding: 4,
+        small_boarding: 0,
+        private_play_boarding: 0,
+        half_and_half_boarding: 0,
+        evaluation_boarding: 0,
+        unclassified_boarding: 0,
+        total_boarding: 4,
+      },
+      closing: {
+        large_boarding: 12,
+        small_boarding: 7,
+        private_play_boarding: 3,
+        half_and_half_boarding: 0,
+        evaluation_boarding: 0,
+        unclassified_boarding: 0,
+        total_boarding: 22,
+      },
+      daycare: {
+        evaluations: 2,
+        private_play_dayboarding: 3,
+        half_and_half_daytime: 1,
+        large_daycare: 12,
+        small_daycare: 3,
+        unclassified_daycare: 0,
+        total_daycare: 21,
+      },
+      support: {
+        departure_baths: 0,
+        morning_feeding_dogs: 4,
+        evening_feeding_dogs: 22,
+        medication_dogs: 0,
+        tours: 0,
+        total_dog_volume: 43,
+      },
+      play_yard: {
+        large_play_dogs: 24,
+        small_play_dogs: 10,
+        private_play_dogs: 6,
+        split_play_dogs: 1,
+      },
+    }, source);
+
+    expect(adjustment.display.opening.total_boarding).toBe(37);
+    expect(adjustment.display.closing.total_boarding).toBe(22);
+    expect(adjustment.display.daycare.total_daycare).toBe(19);
+    expect(adjustment.display.support.total_dog_volume).toBe(59);
+    expect(adjustment.display.source.check_ins).toBe(22);
+    expect(adjustment.reconciliation?.deltas.opening_boarding).toBe(33);
+    expect(adjustment.reconciliation?.deltas.daytime_total).toBe(-2);
+    expect(adjustment.reconciliation?.deltas.total_dog_volume).toBe(16);
+  });
+
   it("treats first-ever daycare visits as evaluations instead of standard daycare", () => {
     const baseRows = [
       makeReservation({
