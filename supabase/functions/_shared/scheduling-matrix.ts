@@ -768,8 +768,18 @@ function flattenDisplay(display: any) {
   };
 }
 
+const DERIVED_PROJECTION_METRIC_KEYS = new Set([
+  "support_morning_feeding_dogs",
+  "support_evening_feeding_dogs",
+  "support_total_dog_volume",
+  "play_yard_large_play_dogs",
+  "play_yard_small_play_dogs",
+  "play_yard_private_play_dogs",
+  "play_yard_split_play_dogs",
+]);
+
 function buildDisplayFromFlat(flat: Record<string, number>) {
-  const display = buildDisplayShape({
+  return buildDisplayShape({
     openingCounts: {
       large: Number(flat.opening_large_boarding || 0),
       small: Number(flat.opening_small_boarding || 0),
@@ -807,22 +817,6 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
     medicationDogs: Number(flat.support_medication_dogs || 0),
     toursCount: Number(flat.support_tours || 0),
   });
-
-  return {
-    ...display,
-    support: {
-      ...display.support,
-      morning_feeding_dogs: Number(flat.support_morning_feeding_dogs ?? display.support.morning_feeding_dogs),
-      evening_feeding_dogs: Number(flat.support_evening_feeding_dogs ?? display.support.evening_feeding_dogs),
-      total_dog_volume: Number(flat.support_total_dog_volume ?? display.support.total_dog_volume),
-    },
-    play_yard: {
-      large_play_dogs: Number(flat.play_yard_large_play_dogs ?? display.play_yard.large_play_dogs),
-      small_play_dogs: Number(flat.play_yard_small_play_dogs ?? display.play_yard.small_play_dogs),
-      private_play_dogs: Number(flat.play_yard_private_play_dogs ?? display.play_yard.private_play_dogs),
-      split_play_dogs: Number(flat.play_yard_split_play_dogs ?? display.play_yard.split_play_dogs),
-    },
-  };
 }
 
 export function computeDemandSnapshotForDate({
@@ -1127,6 +1121,24 @@ export function buildProjectionForDate({
   }
 
   const projectedDisplay = buildDisplayFromFlat(projectedFlat);
+  const derivedProjectedFlat = flattenDisplay(projectedDisplay);
+  for (const metricKey of DERIVED_PROJECTION_METRIC_KEYS) {
+    const explanationKey = metricKey.replaceAll(".", "_");
+    const existing = explanations[explanationKey] || {};
+    const derivedProjectedValue = Number(derivedProjectedFlat[metricKey] || 0);
+    const existingProjectedValue = Number(existing.projected_value);
+    const projectedValueChanged = !Number.isFinite(existingProjectedValue) || existingProjectedValue !== derivedProjectedValue;
+    explanations[explanationKey] = {
+      ...existing,
+      target_date: targetDate,
+      as_of_date: currentDate,
+      current_value: Number(currentFlat[metricKey] || 0),
+      projected_value: derivedProjectedValue,
+      lead_days: leadDays,
+      completion_rate: projectedValueChanged ? null : existing.completion_rate,
+      fallback_mode: projectedValueChanged ? "derived_from_projected_components" : existing.fallback_mode,
+    };
+  }
 
   return {
     as_of_date: currentDate,

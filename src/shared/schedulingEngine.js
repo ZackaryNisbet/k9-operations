@@ -122,6 +122,10 @@ function toNullableNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function sumDemandValues(values) {
+  return values.reduce((sum, value) => sum + toNumber(value, 0), 0);
+}
+
 function normalizeShiftPosition(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (["pct", "pet care technician", "petcaretechnician", "pet_care_technician"].includes(normalized)) return "pct";
@@ -474,47 +478,74 @@ export function getMatrixProjectedDisplay(matrix) {
     return getMatrixDisplay(matrix);
   }
 
+  const opening = {
+    large_boarding: toNullableNumber(projected.opening?.large_boarding) ?? 0,
+    small_boarding: toNullableNumber(projected.opening?.small_boarding) ?? 0,
+    private_play_boarding: toNullableNumber(projected.opening?.private_play_boarding) ?? 0,
+    half_and_half_boarding: toNullableNumber(projected.opening?.half_and_half_boarding) ?? 0,
+    evaluation_boarding: toNullableNumber(projected.opening?.evaluation_boarding) ?? 0,
+    unclassified_boarding: toNullableNumber(projected.opening?.unclassified_boarding) ?? 0,
+  };
+  opening.total_boarding = sumDemandValues([
+    opening.large_boarding,
+    opening.small_boarding,
+    opening.private_play_boarding,
+    opening.half_and_half_boarding,
+    opening.evaluation_boarding,
+    opening.unclassified_boarding,
+  ]);
+
+  const closing = {
+    large_boarding: toNullableNumber(projected.closing?.large_boarding) ?? 0,
+    small_boarding: toNullableNumber(projected.closing?.small_boarding) ?? 0,
+    private_play_boarding: toNullableNumber(projected.closing?.private_play_boarding) ?? 0,
+    half_and_half_boarding: toNullableNumber(projected.closing?.half_and_half_boarding) ?? 0,
+    evaluation_boarding: toNullableNumber(projected.closing?.evaluation_boarding) ?? 0,
+    unclassified_boarding: toNullableNumber(projected.closing?.unclassified_boarding) ?? 0,
+  };
+  closing.total_boarding = sumDemandValues([
+    closing.large_boarding,
+    closing.small_boarding,
+    closing.private_play_boarding,
+    closing.half_and_half_boarding,
+    closing.evaluation_boarding,
+    closing.unclassified_boarding,
+  ]);
+
+  const daycare = {
+    evaluations: toNullableNumber(projected.daycare?.evaluations) ?? 0,
+    private_play_dayboarding: toNullableNumber(projected.daycare?.private_play_dayboarding) ?? 0,
+    half_and_half_daytime: toNullableNumber(projected.daycare?.half_and_half_daytime) ?? 0,
+    large_daycare: toNullableNumber(projected.daycare?.large_daycare) ?? 0,
+    small_daycare: toNullableNumber(projected.daycare?.small_daycare) ?? 0,
+    unclassified_daycare: toNullableNumber(projected.daycare?.unclassified_daycare) ?? 0,
+  };
+  daycare.total_daycare = sumDemandValues([
+    daycare.evaluations,
+    daycare.private_play_dayboarding,
+    daycare.half_and_half_daytime,
+    daycare.large_daycare,
+    daycare.small_daycare,
+    daycare.unclassified_daycare,
+  ]);
+
   return {
-    opening: {
-      large_boarding: toNullableNumber(projected.opening?.large_boarding) ?? 0,
-      small_boarding: toNullableNumber(projected.opening?.small_boarding) ?? 0,
-      private_play_boarding: toNullableNumber(projected.opening?.private_play_boarding) ?? 0,
-      half_and_half_boarding: toNullableNumber(projected.opening?.half_and_half_boarding) ?? 0,
-      evaluation_boarding: toNullableNumber(projected.opening?.evaluation_boarding) ?? 0,
-      unclassified_boarding: toNullableNumber(projected.opening?.unclassified_boarding) ?? 0,
-      total_boarding: toNullableNumber(projected.opening?.total_boarding) ?? 0,
-    },
-    closing: {
-      large_boarding: toNullableNumber(projected.closing?.large_boarding) ?? 0,
-      small_boarding: toNullableNumber(projected.closing?.small_boarding) ?? 0,
-      private_play_boarding: toNullableNumber(projected.closing?.private_play_boarding) ?? 0,
-      half_and_half_boarding: toNullableNumber(projected.closing?.half_and_half_boarding) ?? 0,
-      evaluation_boarding: toNullableNumber(projected.closing?.evaluation_boarding) ?? 0,
-      unclassified_boarding: toNullableNumber(projected.closing?.unclassified_boarding) ?? 0,
-      total_boarding: toNullableNumber(projected.closing?.total_boarding) ?? 0,
-    },
-    daycare: {
-      evaluations: toNullableNumber(projected.daycare?.evaluations) ?? 0,
-      private_play_dayboarding: toNullableNumber(projected.daycare?.private_play_dayboarding) ?? 0,
-      half_and_half_daytime: toNullableNumber(projected.daycare?.half_and_half_daytime) ?? 0,
-      large_daycare: toNullableNumber(projected.daycare?.large_daycare) ?? 0,
-      small_daycare: toNullableNumber(projected.daycare?.small_daycare) ?? 0,
-      unclassified_daycare: toNullableNumber(projected.daycare?.unclassified_daycare) ?? 0,
-      total_daycare: toNullableNumber(projected.daycare?.total_daycare) ?? 0,
-    },
+    opening,
+    closing,
+    daycare,
     support: {
       departure_baths: toNullableNumber(projected.support?.departure_baths) ?? 0,
-      morning_feeding_dogs: toNullableNumber(projected.support?.morning_feeding_dogs) ?? 0,
-      evening_feeding_dogs: toNullableNumber(projected.support?.evening_feeding_dogs) ?? 0,
+      morning_feeding_dogs: opening.total_boarding,
+      evening_feeding_dogs: closing.total_boarding,
       medication_dogs: toNullableNumber(projected.support?.medication_dogs) ?? 0,
-      total_dog_volume: toNullableNumber(projected.support?.total_dog_volume) ?? 0,
+      total_dog_volume: closing.total_boarding + daycare.total_daycare,
       tours: toNullableNumber(projected.support?.tours) ?? 0,
     },
     play_yard: {
-      large_play_dogs: toNullableNumber(projected.play_yard?.large_play_dogs) ?? 0,
-      small_play_dogs: toNullableNumber(projected.play_yard?.small_play_dogs) ?? 0,
-      private_play_dogs: toNullableNumber(projected.play_yard?.private_play_dogs) ?? 0,
-      split_play_dogs: toNullableNumber(projected.play_yard?.split_play_dogs) ?? 0,
+      large_play_dogs: Math.max(opening.large_boarding, closing.large_boarding) + daycare.large_daycare,
+      small_play_dogs: Math.max(opening.small_boarding, closing.small_boarding) + daycare.small_daycare,
+      private_play_dogs: Math.max(opening.private_play_boarding, closing.private_play_boarding) + daycare.private_play_dayboarding,
+      split_play_dogs: Math.max(opening.half_and_half_boarding, closing.half_and_half_boarding) + daycare.half_and_half_daytime,
     },
   };
 }

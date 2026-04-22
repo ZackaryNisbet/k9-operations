@@ -128,6 +128,10 @@ function toNullableNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function sumDemandValues(values: unknown[]) {
+  return values.reduce((sum, value) => sum + toNumber(value, 0), 0);
+}
+
 export function timeToMinutes(timeStr: string) {
   const [hours, minutes] = String(timeStr || "00:00").split(":").map(Number);
   return (hours || 0) * 60 + (minutes || 0);
@@ -223,40 +227,51 @@ function getMatrixDisplay(matrix: any) {
 function getMatrixProjectedDisplay(matrix: any) {
   const projected = matrix?.detail_json?.projection?.display;
   if (!projected) return getMatrixDisplay(matrix);
+
+  const opening = {
+    large_boarding: toNumber(projected.opening?.large_boarding, 0),
+    small_boarding: toNumber(projected.opening?.small_boarding, 0),
+    private_play_boarding: toNumber(projected.opening?.private_play_boarding, 0),
+    half_and_half_boarding: toNumber(projected.opening?.half_and_half_boarding, 0),
+    evaluation_boarding: toNumber(projected.opening?.evaluation_boarding, 0),
+    unclassified_boarding: toNumber(projected.opening?.unclassified_boarding, 0),
+  };
+  const closing = {
+    large_boarding: toNumber(projected.closing?.large_boarding, 0),
+    small_boarding: toNumber(projected.closing?.small_boarding, 0),
+    private_play_boarding: toNumber(projected.closing?.private_play_boarding, 0),
+    half_and_half_boarding: toNumber(projected.closing?.half_and_half_boarding, 0),
+    evaluation_boarding: toNumber(projected.closing?.evaluation_boarding, 0),
+    unclassified_boarding: toNumber(projected.closing?.unclassified_boarding, 0),
+  };
+  const daycare = {
+    evaluations: toNumber(projected.daycare?.evaluations, 0),
+    private_play_dayboarding: toNumber(projected.daycare?.private_play_dayboarding, 0),
+    half_and_half_daytime: toNumber(projected.daycare?.half_and_half_daytime, 0),
+    large_daycare: toNumber(projected.daycare?.large_daycare, 0),
+    small_daycare: toNumber(projected.daycare?.small_daycare, 0),
+    unclassified_daycare: toNumber(projected.daycare?.unclassified_daycare, 0),
+  };
+
   return {
     opening: {
-      large_boarding: toNumber(projected.opening?.large_boarding, 0),
-      small_boarding: toNumber(projected.opening?.small_boarding, 0),
-      private_play_boarding: toNumber(projected.opening?.private_play_boarding, 0),
-      half_and_half_boarding: toNumber(projected.opening?.half_and_half_boarding, 0),
-      evaluation_boarding: toNumber(projected.opening?.evaluation_boarding, 0),
-      unclassified_boarding: toNumber(projected.opening?.unclassified_boarding, 0),
-      total_boarding: toNumber(projected.opening?.total_boarding, 0),
+      ...opening,
+      total_boarding: sumDemandValues(Object.values(opening)),
     },
     closing: {
-      large_boarding: toNumber(projected.closing?.large_boarding, 0),
-      small_boarding: toNumber(projected.closing?.small_boarding, 0),
-      private_play_boarding: toNumber(projected.closing?.private_play_boarding, 0),
-      half_and_half_boarding: toNumber(projected.closing?.half_and_half_boarding, 0),
-      evaluation_boarding: toNumber(projected.closing?.evaluation_boarding, 0),
-      unclassified_boarding: toNumber(projected.closing?.unclassified_boarding, 0),
-      total_boarding: toNumber(projected.closing?.total_boarding, 0),
+      ...closing,
+      total_boarding: sumDemandValues(Object.values(closing)),
     },
     daycare: {
-      evaluations: toNumber(projected.daycare?.evaluations, 0),
-      private_play_dayboarding: toNumber(projected.daycare?.private_play_dayboarding, 0),
-      half_and_half_daytime: toNumber(projected.daycare?.half_and_half_daytime, 0),
-      large_daycare: toNumber(projected.daycare?.large_daycare, 0),
-      small_daycare: toNumber(projected.daycare?.small_daycare, 0),
-      unclassified_daycare: toNumber(projected.daycare?.unclassified_daycare, 0),
-      total_daycare: toNumber(projected.daycare?.total_daycare, 0),
+      ...daycare,
+      total_daycare: sumDemandValues(Object.values(daycare)),
     },
     support: {
       departure_baths: toNumber(projected.support?.departure_baths, 0),
-      morning_feeding_dogs: toNumber(projected.support?.morning_feeding_dogs, 0),
-      evening_feeding_dogs: toNumber(projected.support?.evening_feeding_dogs, 0),
+      morning_feeding_dogs: sumDemandValues(Object.values(opening)),
+      evening_feeding_dogs: sumDemandValues(Object.values(closing)),
       medication_dogs: toNumber(projected.support?.medication_dogs, 0),
-      total_dog_volume: toNumber(projected.support?.total_dog_volume, 0),
+      total_dog_volume: sumDemandValues(Object.values(closing)) + sumDemandValues(Object.values(daycare)),
       tours: toNumber(projected.support?.tours, 0),
     },
   };
