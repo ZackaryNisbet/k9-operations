@@ -33,6 +33,16 @@ verify_jwt = false
 # Gateway verification can reject newer ES256 auth JWTs before function code runs.
 verify_jwt = false
 
+[functions.scheduling-audit]
+# The function validates location access in-function before using the service role.
+# Gateway verification can reject newer ES256 auth JWTs before function code runs.
+verify_jwt = false
+
+[functions.compute-rotation-schedule]
+# The function validates location access in-function before computing schedules.
+# Gateway verification can reject newer ES256 auth JWTs before function code runs.
+verify_jwt = false
+
 [functions.ops-compute]
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.

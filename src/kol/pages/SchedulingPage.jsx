@@ -520,7 +520,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     publishSchedule,
     applyScheduleOverride,
     fetchScheduleVersions,
-    runAudit,
     computeRotationSchedule,
   } = useSchedulingData(locationId, viewStartDate);
 
@@ -542,8 +541,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [rotationLoading, setRotationLoading] = useState(false);
   const [rotationError, setRotationError] = useState(null);
   const [dragFillState, setDragFillState] = useState(null); // { laneId, startSlot, task, notes }
-  const [auditResult, setAuditResult] = useState(null);
-  const [auditRunning, setAuditRunning] = useState(false);
 
   const workbookDays = useMemo(
     () => weekData.map(day => ({
@@ -568,11 +565,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const toggleAllMatrixGroups = useCallback(() => {
     setExpandedMatrixGroups(allMatrixGroupsExpanded ? new Set() : new Set(matrixRowGroups.map((group) => group.section)));
   }, [allMatrixGroupsExpanded, matrixRowGroups]);
-  const auditByDate = useMemo(
-    () => new Map((auditResult?.days || []).map((day) => [day.date, day])),
-    [auditResult]
-  );
-
   const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
   const selectedShiftEntries = useMemo(() => getShiftEntries(selectedDay?.staffPlan), [selectedDay?.staffPlan]);
   const visibleRotation = scheduleView === "actual_staffing" && actualRotation ? actualRotation : optimalRotation;
@@ -638,7 +630,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   React.useEffect(() => {
     setSelectedDayIdx(viewStartDate === getMondayStart(today) ? getDayIndexFromMonday(today) : 0);
-    setAuditResult(null);
   }, [viewStartDate, today]);
 
   const handleStaffPlanSave = useCallback(async (plan) => {
@@ -732,27 +723,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       // Silently handle if table not deployed
     }
   }, [selectedDay, fetchScheduleVersions]);
-
-  const handleRunAudit = useCallback(async () => {
-    try {
-      setAuditRunning(true);
-      const result = await runAudit({
-        dateFrom: viewStartDate,
-        dateTo: addDays(viewStartDate, 6),
-      });
-      setAuditResult(result);
-      const summary = result?.summary || {};
-      if ((summary.mismatching_days || 0) > 0 || (summary.missing_days || 0) > 0) {
-        addGlobalToast?.(`Audit finished: ${summary.matching_days || 0} matched, ${summary.mismatching_days || 0} mismatched, ${summary.missing_days || 0} missing matrix day(s).`, "info");
-      } else {
-        addGlobalToast?.(`Audit finished: all ${summary.matching_days || 0} visible day(s) match live Gingr data.`, "success");
-      }
-    } catch (err) {
-      addGlobalToast?.("Scheduling audit failed: " + (err.message || "unknown error"), "error");
-    } finally {
-      setAuditRunning(false);
-    }
-  }, [runAudit, viewStartDate, addGlobalToast]);
 
   const handleCellSelect = useCallback((laneId, slotTime, rect) => {
     const currentGrid = localGrid || visibleRotation?.grid?.cells || {};
@@ -866,12 +836,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(getMondayStart(today))}>This Week</Btn>
             <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, 7))}>Next Week →</Btn>
             {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading week…</span>}
-            {auditRunning && <span style={{ fontSize: 11, color: C.textMut }}>Auditing live Gingr…</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <Btn variant="secondary" size="sm" onClick={handleRunAudit} disabled={auditRunning || loading}>
-              {auditRunning ? "Running Audit…" : "Run Audit"}
-            </Btn>
             <button
               onClick={toggleAllMatrixGroups}
               style={{
@@ -931,12 +897,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   const selected = index === selectedDayIdx;
                   const blocked = !day.canGenerate;
                   const comparison = getMatrixComparison(day.matrix || day);
-                  const auditDay = auditByDate.get(day.date);
-                  const baseBackground = auditDay?.status === "match"
-                    ? "#F0FDF4"
-                    : auditDay?.status === "mismatch"
-                      ? "#FEF2F2"
-                      : "#F8FAFC";
                   return (
                     <th
                       key={day.date}
@@ -947,14 +907,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                         padding: "10px 8px 12px",
                         textAlign: "center",
                         borderBottom: `1px solid ${C.border}`,
-                        background: selected ? "#EEF4FF" : baseBackground,
-                        boxShadow: selected
-                          ? `inset 0 -2px 0 ${C.pri}`
-                          : auditDay?.status === "match"
-                            ? "inset 0 -2px 0 #16A34A"
-                            : auditDay?.status === "mismatch"
-                              ? "inset 0 -2px 0 #DC2626"
-                              : "none",
+                        background: selected ? "#EEF4FF" : "#F8FAFC",
+                        boxShadow: selected ? `inset 0 -2px 0 ${C.pri}` : "none",
                       }}
                     >
                       <div style={{ fontSize: 16, fontWeight: 800, color: selected ? C.pri : C.text, lineHeight: 1.1 }}>
@@ -981,15 +935,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           {getProjectionSummaryLines(day).map((line) => (
                             <div key={`${day.date}-${line}`}>{line}</div>
                           ))}
-                        </div>
-                      )}
-                      {auditDay && (
-                        <div style={{ fontSize: 10, color: auditDay.status === "match" ? C.suc : auditDay.status === "mismatch" ? C.dan : C.textMut, marginTop: 6, minHeight: 14 }}>
-                          {auditDay.status === "match"
-                            ? "Audit OK"
-                            : auditDay.status === "mismatch"
-                              ? `Audit Δ${auditDay.mismatch_count}`
-                              : "Audit missing"}
                         </div>
                       )}
                     </th>
@@ -1134,64 +1079,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <span style={{ fontSize: 11, color: C.textMut }}>
             Weekly totals shown in the workbook are dog-days, not unique reservations.
           </span>
-          {auditResult?.summary && (
-            <span style={{ fontSize: 11, color: C.textMut }}>
-              Audit: {auditResult.summary.matching_days} matched, {auditResult.summary.mismatching_days} mismatched, {auditResult.summary.missing_days} missing.
-            </span>
-          )}
         </div>
-        {auditResult?.days?.length > 0 && (
-          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            {auditResult.days.map((dayAudit) => (
-              <div
-                key={dayAudit.date}
-                style={{
-                  border: `1px solid ${dayAudit.status === "match" ? "#86EFAC" : dayAudit.status === "mismatch" ? "#FCA5A5" : C.border}`,
-                  background: dayAudit.status === "match" ? "#F0FDF4" : dayAudit.status === "mismatch" ? "#FEF2F2" : C.surface,
-                  borderRadius: 12,
-                  padding: "12px 14px",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
-                    {new Date(`${dayAudit.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                  </div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: dayAudit.status === "match" ? C.suc : dayAudit.status === "mismatch" ? C.dan : C.textMut }}>
-                    {dayAudit.status === "match" ? "MATCH" : dayAudit.status === "mismatch" ? "MISMATCH" : "MISSING"}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>
-                  {dayAudit.status === "match"
-                    ? "Visible matrix matches live Gingr reservation and icon data."
-                    : dayAudit.status === "missing_matrix"
-                      ? "This day has no matrix row to compare yet."
-                      : `${dayAudit.mismatch_count} audit issue${dayAudit.mismatch_count === 1 ? "" : "s"} found.`}
-                </div>
-                {dayAudit.status === "mismatch" && (
-                  <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
-                    {dayAudit.mismatches.slice(0, 4).map((mismatch) => (
-                      <div key={mismatch.key} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
-                        <span style={{ fontWeight: 700 }}>{mismatch.label}:</span> matrix {mismatch.matrix_value}, Gingr {mismatch.gingr_value}
-                        <span style={{ color: C.textMut }}> ({mismatch.category.replaceAll("_", " ")})</span>
-                      </div>
-                    ))}
-                    {(dayAudit.projection_issues || []).map((issue, index) => (
-                      <div key={`${dayAudit.date}-projection-${index}`} style={{ fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
-                        <span style={{ fontWeight: 700 }}>{issue.label}</span>
-                        <span style={{ color: C.textMut }}> ({issue.category.replaceAll("_", " ")})</span>
-                      </div>
-                    ))}
-                    {dayAudit.mismatches.length > 4 && (
-                      <div style={{ fontSize: 11, color: C.textMut }}>
-                        {dayAudit.mismatches.length - 4} more difference{dayAudit.mismatches.length - 4 === 1 ? "" : "s"} hidden.
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
       </SectionCard>
 
       {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}

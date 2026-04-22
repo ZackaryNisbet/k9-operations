@@ -7,6 +7,9 @@
     "compute-scheduling-matrix": {
       "verifyJwt": false
     },
+    "compute-rotation-schedule": {
+      "verifyJwt": false
+    },
     "ops-compute": {
       "verifyJwt": false
     },
@@ -17,7 +20,7 @@
       "verifyJwt": false
     },
     "scheduling-audit": {
-      "verifyJwt": true
+      "verifyJwt": false
     },
     "gingr-boh-poll": {
       "verifyJwt": false

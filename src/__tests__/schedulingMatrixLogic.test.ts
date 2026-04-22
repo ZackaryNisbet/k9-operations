@@ -175,6 +175,78 @@ describe("scheduling matrix logic", () => {
     expect(projection.explanations.support_total_dog_volume.fallback_mode).toBe("exact_prior_year");
   });
 
+  it("keeps projected derived totals equal to their projected components", () => {
+    const currentReservations = Array.from({ length: 10 }, (_, index) =>
+      makeReservation({
+        gingr_id: `current-boarding-${index}`,
+        animalId: `current-boarding-dog-${index}`,
+        animal_gingr_id: `current-boarding-dog-${index}`,
+        cls: "boarding",
+        startKey: "2026-04-20",
+        endKey: "2026-04-21",
+        playgroup: "large",
+        bookedDateKey: "2026-04-09",
+      }),
+    );
+    const currentSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-04-20",
+      reservations: currentReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    const historicalReservations = [
+      ...Array.from({ length: 10 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-boarding-${index}`,
+          animalId: `hist-boarding-dog-${index}`,
+          animal_gingr_id: `hist-boarding-dog-${index}`,
+          cls: "boarding",
+          startKey: "2025-04-20",
+          endKey: "2025-04-21",
+          playgroup: "large",
+          bookedDateKey: "2025-04-01",
+        }),
+      ),
+      makeReservation({
+        gingr_id: "hist-daycare-early",
+        animalId: "hist-daycare-dog-early",
+        animal_gingr_id: "hist-daycare-dog-early",
+        cls: "daycare",
+        startKey: "2025-04-20",
+        endKey: "2025-04-20",
+        playgroup: "large",
+        bookedDateKey: "2025-04-08",
+      }),
+      ...Array.from({ length: 8 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-daycare-late-${index}`,
+          animalId: `hist-daycare-dog-late-${index}`,
+          animal_gingr_id: `hist-daycare-dog-late-${index}`,
+          cls: "daycare",
+          startKey: "2025-04-20",
+          endKey: "2025-04-20",
+          playgroup: "large",
+          bookedDateKey: "2025-04-15",
+        }),
+      ),
+    ];
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-04-20",
+      currentDate: "2026-04-10",
+      currentSnapshot,
+      historicalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    const closingTotal = projection.display.closing.total_boarding;
+    const daycareTotal = projection.display.daycare.total_daycare;
+    expect(projection.display.support.total_dog_volume).toBe(closingTotal + daycareTotal);
+    expect(projection.explanations.support_total_dog_volume.projected_value).toBe(projection.display.support.total_dog_volume);
+  });
+
   it("uses checked-in prior-night dogs for opening boarding and ignores stale checked-out rows", () => {
     const reservations = [
       makeReservation({
