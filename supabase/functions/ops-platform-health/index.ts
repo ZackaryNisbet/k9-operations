@@ -357,6 +357,76 @@ function numericValue(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function addDaysStr(dateStr: string, days: number) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function sumMetricValues(values: Array<number | null>) {
+  return values.reduce((sum, value) => sum + (value ?? 0), 0);
+}
+
+function projectionDisplayIssues(row: any) {
+  const projection = row?.detail_json?.projection;
+  const display = projection?.display;
+  if (projection?.state !== "projected" || !display) return [];
+
+  const opening = display.opening || {};
+  const closing = display.closing || {};
+  const daycare = display.daycare || {};
+  const support = display.support || {};
+  const openingTotal = sumMetricValues([
+    numericValue(opening.large_boarding),
+    numericValue(opening.small_boarding),
+    numericValue(opening.private_play_boarding),
+    numericValue(opening.half_and_half_boarding),
+    numericValue(opening.evaluation_boarding),
+    numericValue(opening.unclassified_boarding),
+  ]);
+  const closingTotal = sumMetricValues([
+    numericValue(closing.large_boarding),
+    numericValue(closing.small_boarding),
+    numericValue(closing.private_play_boarding),
+    numericValue(closing.half_and_half_boarding),
+    numericValue(closing.evaluation_boarding),
+    numericValue(closing.unclassified_boarding),
+  ]);
+  const daycareTotal = sumMetricValues([
+    numericValue(daycare.evaluations),
+    numericValue(daycare.private_play_dayboarding),
+    numericValue(daycare.half_and_half_daytime),
+    numericValue(daycare.large_daycare),
+    numericValue(daycare.small_daycare),
+    numericValue(daycare.unclassified_daycare),
+  ]);
+  const expected: Record<string, number> = {
+    "projection.opening.total_boarding": openingTotal,
+    "projection.closing.total_boarding": closingTotal,
+    "projection.daycare.total_daycare": daycareTotal,
+    "projection.support.morning_feeding_dogs": openingTotal,
+    "projection.support.evening_feeding_dogs": closingTotal,
+    "projection.support.total_dog_volume": closingTotal + daycareTotal,
+  };
+  const actual: Record<string, number | null> = {
+    "projection.opening.total_boarding": numericValue(opening.total_boarding),
+    "projection.closing.total_boarding": numericValue(closing.total_boarding),
+    "projection.daycare.total_daycare": numericValue(daycare.total_daycare),
+    "projection.support.morning_feeding_dogs": numericValue(support.morning_feeding_dogs),
+    "projection.support.evening_feeding_dogs": numericValue(support.evening_feeding_dogs),
+    "projection.support.total_dog_volume": numericValue(support.total_dog_volume),
+  };
+
+  return Object.entries(expected)
+    .filter(([key, expectedValue]) => actual[key] != null && actual[key] !== expectedValue)
+    .map(([key, expectedValue]) => ({
+      date: row.matrix_date,
+      field: key,
+      actual: actual[key],
+      expected: expectedValue,
+    }));
+}
+
 async function execSql(sb: any, query: string, params: string[] = []) {
   const { data, error } = await sb.rpc("exec_sql", { query, params });
   if (error) throw error;
@@ -518,6 +588,47 @@ async function fetchCountReconciliationHealth(sb: any, locationId: string, date:
     opening_roll_call_computed_at: openingRow?.computed_at || openingRow?.updated_at || null,
     closing_roll_call_computed_at: closingRow?.computed_at || closingRow?.updated_at || null,
     checks,
+  };
+}
+
+async function fetchSchedulingMatrixHealth(sb: any, locationId: string, date: string) {
+  const endDate = addDaysStr(date, 13);
+  const { data, error } = await sb
+    .from("scheduling_matrix_daily")
+    .select("matrix_date, detail_json, computed_at")
+    .eq("location_id", locationId)
+    .gte("matrix_date", date)
+    .lte("matrix_date", endDate)
+    .order("matrix_date", { ascending: true });
+
+  if (error) throw error;
+
+  const rows = data || [];
+  const projectionIssues = rows.flatMap(projectionDisplayIssues);
+  const minimumExpectedDays = 7;
+  const status = projectionIssues.length
+    ? "critical"
+    : rows.length < minimumExpectedDays
+      ? "warning"
+      : "healthy";
+  const affectedDates = [...new Set(projectionIssues.map((issue: any) => issue.date))];
+  const summary = projectionIssues.length
+    ? `${projectionIssues.length} projected derived-total issue${projectionIssues.length === 1 ? "" : "s"} across ${affectedDates.join(", ")}`
+    : rows.length < minimumExpectedDays
+      ? `Only ${rows.length}/${minimumExpectedDays} upcoming scheduling matrix days found.`
+      : `${rows.length} upcoming scheduling matrix day${rows.length === 1 ? "" : "s"} have internally consistent projected totals.`;
+
+  return {
+    status,
+    summary,
+    date_range: [date, endDate],
+    row_count: rows.length,
+    issues: projectionIssues,
+    latest_computed_at: rows
+      .map((row: any) => row.computed_at)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null,
   };
 }
 
@@ -744,6 +855,7 @@ function buildHealthFactors({
   cronHealth,
   reportHealth,
   countReconciliation,
+  schedulingMatrix,
   freshness,
   syncState,
   bohCache,
@@ -753,6 +865,7 @@ function buildHealthFactors({
   cronHealth: any;
   reportHealth: any;
   countReconciliation: any;
+  schedulingMatrix: any;
   freshness: any;
   syncState: any[];
   bohCache: any;
@@ -793,6 +906,14 @@ function buildHealthFactors({
       summary: countReconciliation?.summary || "Roll-call and scheduling-matrix reconciliation unavailable.",
       description: "Compares Scheduling Matrix opening/closing boarding totals with the matching Opening and Closing Roll Call dog totals.",
       healthy_criteria: "Opening and closing boarding dog counts match across Scheduling Matrix and Roll Call for the same service date.",
+    },
+    {
+      key: "scheduling_matrix_integrity",
+      label: "Scheduling Matrix Integrity",
+      status: schedulingMatrix?.status || "unknown",
+      summary: schedulingMatrix?.summary || "Scheduling matrix integrity unavailable.",
+      description: "Checks upcoming scheduling matrix rows for internally consistent projected totals before they are shown in Scheduling.",
+      healthy_criteria: "Projected boarding totals, daycare totals, feeding counts, and total dog volume equal their component counts.",
     },
     {
       key: "source_sync_state",
@@ -929,6 +1050,7 @@ Deno.serve(async (req: Request) => {
       todayNotesMetric,
       reportHealth,
       countReconciliation,
+      schedulingMatrix,
       bohCache,
       presenceHealth,
       cronHealthResult,
@@ -942,6 +1064,7 @@ Deno.serve(async (req: Request) => {
       sb.from("lite_daily_ops").select("id, updated_at, computed_at, date").eq("location_id", locationId).eq("id", todayNotesId).maybeSingle(),
       fetchReportHealth(sb, locationId, date),
       fetchCountReconciliationHealth(sb, locationId, date),
+      fetchSchedulingMatrixHealth(sb, locationId, date),
       fetchBohCacheHealth(sb, locationId),
       fetchPresenceSyncHealth(sb, locationId),
       fetchCronHealth(sb).then((cronHealth) => ({ cronHealth })).catch((error: any) => ({ cronError: error?.message || "Failed to load cron health." })),
@@ -1126,6 +1249,19 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (schedulingMatrix?.status && schedulingMatrix.status !== "healthy") {
+      alerts.push({
+        severity: schedulingMatrix.status === "critical" ? "critical" : "warning",
+        kind: "scheduling_matrix_integrity",
+        label: "Scheduling Matrix Integrity",
+        key: "scheduling_matrix_integrity",
+        affects: ["Scheduling matrix", "Projected staffing demand"],
+        computed_at: schedulingMatrix.latest_computed_at,
+        message: schedulingMatrix.summary || "Scheduling matrix projected totals could not be validated.",
+        action: "Recompute the scheduling matrix before trusting projected staffing counts.",
+      });
+    }
+
     if (freshness.gingr_notes_today.freshness_status === "critical") {
       alerts.push({
         severity: "warning",
@@ -1171,6 +1307,7 @@ Deno.serve(async (req: Request) => {
         cronHealth,
         reportHealth,
         countReconciliation,
+        schedulingMatrix,
         freshness,
         syncState,
         bohCache,
@@ -1192,6 +1329,7 @@ Deno.serve(async (req: Request) => {
       freshness,
       reports: reportHealth,
       count_reconciliation: countReconciliation,
+      scheduling_matrix: schedulingMatrix,
       cron_health: cronHealth,
       boh_cache: bohCache,
       presence_sync: presenceHealth,
