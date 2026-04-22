@@ -3,6 +3,7 @@ import {
   addDaysStr,
   computeSchedulingMatrixRows,
   dateStrET,
+  normalizeGingrReservationWidgetPayload,
   upsertSchedulingMatrixRows,
 } from "../_shared/scheduling-matrix.ts";
 import {
@@ -127,6 +128,28 @@ async function fetchReservationsForDateWithRetry(
   throw lastError || new Error(`Failed to hydrate reservations for ${targetDate}`);
 }
 
+async function fetchReservationWidgetForDateWithRetry(
+  subdomain: string,
+  apiKey: string,
+  targetDate: string,
+) {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= RESERVATION_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await gingrFetch(subdomain, "reservation_widget_data", apiKey, "GET", {
+        timestamp: targetDate,
+      });
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error || "Unknown reservation widget hydrate error"));
+      if (attempt >= RESERVATION_RETRY_DELAYS_MS.length) break;
+      await sleep(RESERVATION_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError || new Error(`Failed to hydrate reservation widget data for ${targetDate}`);
+}
+
 function normalizeReservationCollection(result: any): any[] {
   if (Array.isArray(result?.data)) return result.data;
   if (result?.data && typeof result.data === "object") return Object.values(result.data);
@@ -215,6 +238,49 @@ async function hydrateSchedulingReservationsFromGingr(
   const { error } = await serviceClient
     .from("gingr_reservations")
     .upsert(rows, { onConflict: "location_id,gingr_id" });
+
+  if (error) throw error;
+  return { hydrated: rows.length, skipped: false };
+}
+
+async function hydrateSchedulingWidgetSourceFromGingr(
+  serviceClient: any,
+  locationId: string,
+  gingrConfig: { subdomain: string; apiKey: string } | null,
+  dateFrom: string,
+  dateTo: string,
+) {
+  const today = dateStrET();
+  const targetDates = enumerateDates(dateFrom, dateTo).filter((date) => date >= today);
+  if (!gingrConfig || !targetDates.length) {
+    return { hydrated: 0, skipped: true };
+  }
+
+  const rows = [];
+  for (const targetDate of targetDates) {
+    try {
+      const result = await fetchReservationWidgetForDateWithRetry(
+        gingrConfig.subdomain,
+        gingrConfig.apiKey,
+        targetDate,
+      );
+      rows.push(normalizeGingrReservationWidgetPayload({
+        locationId,
+        widgetDate: targetDate,
+        payload: result,
+      }));
+    } catch (error) {
+      console.error(`compute-scheduling-matrix reservation widget hydrate failed for ${targetDate}:`, error);
+    }
+  }
+
+  if (!rows.length) {
+    return { hydrated: 0, skipped: false };
+  }
+
+  const { error } = await serviceClient
+    .from("gingr_reservation_widget_daily")
+    .upsert(rows, { onConflict: "location_id,widget_date" });
 
   if (error) throw error;
   return { hydrated: rows.length, skipped: false };
@@ -373,6 +439,14 @@ Deno.serve(async (req: Request) => {
       )
       : { hydrated: 0, skipped: true, mode: "synced_reservations_only" };
 
+    const widgetHydration = await hydrateSchedulingWidgetSourceFromGingr(
+      serviceClient,
+      locationId,
+      gingrConfig,
+      dateFrom,
+      dateTo,
+    );
+
     const iconSync = shouldLiveHydrate
       ? await syncSchedulingIconsForRange(
         serviceClient,
@@ -403,6 +477,7 @@ Deno.serve(async (req: Request) => {
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
       reservation_hydration: reservationHydration,
+      widget_hydration: widgetHydration,
       icon_sync: iconSync,
       source: "canonical_supabase",
     });

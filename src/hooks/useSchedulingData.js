@@ -536,6 +536,17 @@ function buildEmptyMatrix(date) {
           tours: null,
           total_dog_volume: null,
         },
+        source: {
+          check_ins: null,
+          check_outs: null,
+          overnight: null,
+          total: null,
+          boarding_opening: null,
+          boarding_closing: null,
+          boarding_check_ins: null,
+          boarding_check_outs: null,
+          daytime_total: null,
+        },
       },
       solver_inputs: {
         peak_large_daycare: 0,

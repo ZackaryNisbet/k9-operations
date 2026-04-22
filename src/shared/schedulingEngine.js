@@ -122,6 +122,23 @@ function toNullableNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function todayLocalDateKey() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+}
+
+function requiresGingrSourceCounts(matrix) {
+  return Boolean(matrix?.matrix_date && String(matrix.matrix_date) >= todayLocalDateKey());
+}
+
+function hasGingrSourceCounts(matrix) {
+  const source = matrix?.detail_json?.display?.source;
+  return toNullableNumber(source?.total) !== null
+    && toNullableNumber(source?.check_ins) !== null
+    && toNullableNumber(source?.check_outs) !== null
+    && toNullableNumber(source?.overnight) !== null;
+}
+
 function sumDemandValues(values) {
   return values.reduce((sum, value) => sum + toNumber(value, 0), 0);
 }
@@ -318,11 +335,15 @@ export function getMatrixTrust(matrix) {
 
   if (matrix.detail_json?.trust) {
     const trust = matrix.detail_json.trust;
+    const sourceMissing = requiresGingrSourceCounts(matrix) && !hasGingrSourceCounts(matrix);
+    const sourceBlocker = "GINGR Calendar Details source totals are missing for this date.";
     return {
-      state: trust.state || "trusted",
+      state: sourceMissing ? "estimated" : trust.state || "trusted",
       source: trust.source || "scheduling_matrix_daily",
-      can_generate: trust.can_generate !== false,
-      blockers: Array.isArray(trust.blockers) ? trust.blockers : [],
+      can_generate: !sourceMissing && trust.can_generate !== false,
+      blockers: sourceMissing
+        ? [...new Set([sourceBlocker, ...(Array.isArray(trust.blockers) ? trust.blockers : [])])]
+        : Array.isArray(trust.blockers) ? trust.blockers : [],
       blocker_details: Array.isArray(trust.blocker_details) ? trust.blocker_details : [],
       notes: Array.isArray(trust.notes) ? trust.notes : [],
     };
@@ -468,8 +489,19 @@ export function getMatrixDisplay(matrix) {
     private_play_dogs: toNullableNumber(display.play_yard?.private_play_dogs) ?? Math.max(opening.private_play_boarding, closing.private_play_boarding) + daycare.private_play_dayboarding,
     split_play_dogs: toNullableNumber(display.play_yard?.split_play_dogs) ?? Math.max(opening.half_and_half_boarding, closing.half_and_half_boarding) + daycare.half_and_half_daytime,
   };
+  const source = {
+    check_ins: toNullableNumber(display.source?.check_ins),
+    check_outs: toNullableNumber(display.source?.check_outs),
+    overnight: toNullableNumber(display.source?.overnight),
+    total: toNullableNumber(display.source?.total),
+    boarding_opening: toNullableNumber(display.source?.boarding_opening),
+    boarding_closing: toNullableNumber(display.source?.boarding_closing),
+    boarding_check_ins: toNullableNumber(display.source?.boarding_check_ins),
+    boarding_check_outs: toNullableNumber(display.source?.boarding_check_outs),
+    daytime_total: toNullableNumber(display.source?.daytime_total),
+  };
 
-  return { opening, closing, daycare, support, play_yard };
+  return { opening, closing, daycare, support, play_yard, source };
 }
 
 export function getMatrixProjectedDisplay(matrix) {

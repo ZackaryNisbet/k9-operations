@@ -36,6 +36,44 @@ type ReservationRow = {
   services?: any[] | null;
 };
 
+type GingrWidgetPerTypeCount = {
+  type_name: string;
+  check_ins: number;
+  check_outs: number;
+  overnight: number;
+  total: number;
+  raw?: any;
+};
+
+type GingrWidgetSourceCounts = {
+  date: string;
+  check_ins: number;
+  check_outs: number;
+  overnight: number;
+  total: number;
+  boarding: {
+    check_ins: number;
+    check_outs: number;
+    overnight: number;
+    opening: number;
+    total: number;
+  };
+  daytime: {
+    check_ins: number;
+    check_outs: number;
+    overnight: number;
+    total: number;
+  };
+  other: {
+    check_ins: number;
+    check_outs: number;
+    overnight: number;
+    total: number;
+  };
+  per_type: Array<GingrWidgetPerTypeCount & { cls: ReturnType<typeof classifySchedulingReservationType> }>;
+  synced_at?: string | null;
+};
+
 const ANIMAL_HISTORY_BATCH_SIZE = 200;
 
 function getDateKey(value?: string | null): string {
@@ -85,6 +123,156 @@ function getWeekday(dateStr: string): number {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function toWidgetCount(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(String(value).replaceAll(",", ""));
+  return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : null;
+}
+
+function firstWidgetCount(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = toWidgetCount(value);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+}
+
+function unwrapWidgetPayload(payload: any) {
+  if (payload?.response?.data && typeof payload.response.data === "object") return payload.response.data;
+  if (payload?.data?.data && typeof payload.data.data === "object" && (payload.data.totals || payload.data.data.per_type)) return payload.data;
+  if (payload?.data && typeof payload.data === "object" && (payload.data.totals || payload.data.per_type)) return payload.data;
+  return payload || {};
+}
+
+function normalizeWidgetPerTypeEntries(payload: any): GingrWidgetPerTypeCount[] {
+  const root = unwrapWidgetPayload(payload);
+  const candidates = [
+    root?.per_type,
+    root?.data?.per_type,
+    root?.reservation_types,
+    root?.types,
+  ];
+
+  let perType: any = candidates.find((candidate) =>
+    candidate && (Array.isArray(candidate) || typeof candidate === "object")
+  );
+
+  if (!perType && root?.data && typeof root.data === "object" && !Array.isArray(root.data)) {
+    const values = Object.values(root.data);
+    const looksLikePerType = values.some((value: any) =>
+      value && typeof value === "object" && (
+        "check_ins" in value ||
+        "check_outs" in value ||
+        "active" in value ||
+        "overnight" in value
+      )
+    );
+    if (looksLikePerType) perType = root.data;
+  }
+
+  const entries = Array.isArray(perType)
+    ? perType.map((value, index) => [String(value?.type || value?.name || value?.label || index), value])
+    : Object.entries(perType || {});
+
+  return entries
+    .map(([key, value]: [string, any]) => {
+      const typeName = String(value?.type_name || value?.reservation_type || value?.type || value?.name || value?.label || key || "").trim();
+      if (!typeName) return null;
+      const checkIns = firstWidgetCount(
+        value?.check_ins,
+        value?.checkins,
+        value?.check_in,
+        value?.check_in_count,
+        value?.check_in_total,
+      ) ?? 0;
+      const checkOuts = firstWidgetCount(
+        value?.check_outs,
+        value?.checkouts,
+        value?.check_out,
+        value?.check_out_count,
+        value?.check_out_total,
+      ) ?? 0;
+      const overnight = firstWidgetCount(
+        value?.overnight,
+        value?.overnights,
+        value?.active,
+        value?.active_count,
+        value?.active_total,
+      ) ?? 0;
+      const total = firstWidgetCount(
+        value?.total,
+        value?.total_count,
+        value?.expected,
+        value?.expected_total,
+      ) ?? (checkOuts + overnight);
+
+      return {
+        type_name: typeName,
+        check_ins: checkIns,
+        check_outs: checkOuts,
+        overnight,
+        total,
+        raw: value,
+      };
+    })
+    .filter(Boolean) as GingrWidgetPerTypeCount[];
+}
+
+export function normalizeGingrReservationWidgetPayload({
+  locationId,
+  widgetDate,
+  payload,
+}: {
+  locationId: string;
+  widgetDate: string;
+  payload: any;
+}) {
+  const root = unwrapWidgetPayload(payload);
+  const totals = root?.totals || root?.data?.totals || {};
+  const perType = normalizeWidgetPerTypeEntries(payload);
+  const checkInTotal = firstWidgetCount(
+    totals?.check_in_total,
+    totals?.check_ins,
+    totals?.checkins,
+    root?.check_in_total,
+    root?.check_ins,
+  ) ?? perType.reduce((sum, row) => sum + row.check_ins, 0);
+  const checkOutTotal = firstWidgetCount(
+    totals?.check_out_total,
+    totals?.check_outs,
+    totals?.checkouts,
+    root?.check_out_total,
+    root?.check_outs,
+  ) ?? perType.reduce((sum, row) => sum + row.check_outs, 0);
+  const overnightTotal = firstWidgetCount(
+    totals?.active_total,
+    totals?.active,
+    totals?.overnight_total,
+    totals?.overnight,
+    root?.active_total,
+    root?.overnight_total,
+  ) ?? perType.reduce((sum, row) => sum + row.overnight, 0);
+  const totalReservationVolume = firstWidgetCount(
+    totals?.total,
+    totals?.total_count,
+    totals?.expected_total,
+    root?.total,
+    root?.total_count,
+  ) ?? (checkOutTotal + overnightTotal);
+
+  return {
+    location_id: locationId,
+    widget_date: widgetDate,
+    check_in_total: checkInTotal,
+    check_out_total: checkOutTotal,
+    overnight_total: overnightTotal,
+    total_reservation_volume: totalReservationVolume,
+    per_type: perType,
+    raw_data: payload || {},
+    synced_at: new Date().toISOString(),
+  };
 }
 
 function weightedAverage(
@@ -208,6 +396,82 @@ export function classifySchedulingReservationType(
   if (typeRow?.is_boarding || value.includes("boarding") || value.includes("lodge") || value.includes("kennel")) return "boarding";
   if (value.includes("groom") || value.includes("bath")) return "grooming";
   return "other";
+}
+
+function emptyWidgetBucket() {
+  return { check_ins: 0, check_outs: 0, overnight: 0, total: 0 };
+}
+
+function addWidgetCounts(
+  bucket: ReturnType<typeof emptyWidgetBucket>,
+  row: GingrWidgetPerTypeCount,
+) {
+  bucket.check_ins += row.check_ins;
+  bucket.check_outs += row.check_outs;
+  bucket.overnight += row.overnight;
+  bucket.total += row.total;
+}
+
+export function buildGingrWidgetSourceCountsByDate(
+  rows: any[],
+  resTypeMaps: { byName: Map<string, ReservationTypeRow>; byId: Map<string, ReservationTypeRow> },
+): Map<string, GingrWidgetSourceCounts> {
+  const byDate = new Map<string, GingrWidgetSourceCounts>();
+
+  for (const row of rows || []) {
+    const date = getDateKey(row?.widget_date);
+    if (!date) continue;
+    const rawPerType = Array.isArray(row?.per_type)
+      ? row.per_type
+      : normalizeWidgetPerTypeEntries(row?.raw_data || {});
+    const boarding = emptyWidgetBucket();
+    const daytime = emptyWidgetBucket();
+    const other = emptyWidgetBucket();
+    const perType = rawPerType.map((entry: any) => {
+      const typeName = String(entry?.type_name || entry?.type || entry?.name || "").trim();
+      const typeId = String(entry?.type_id || entry?.reservation_type_id || "").trim();
+      const normalized = {
+        type_name: typeName,
+        check_ins: Number(entry?.check_ins || 0),
+        check_outs: Number(entry?.check_outs || 0),
+        overnight: Number(entry?.overnight || 0),
+        total: Number(entry?.total ?? (Number(entry?.check_outs || 0) + Number(entry?.overnight || 0))),
+        raw: entry?.raw || entry,
+      };
+      const typeRow = (typeId && resTypeMaps.byId.get(typeId)) || resTypeMaps.byName.get(typeName) || null;
+      const cls = classifySchedulingReservationType(typeName, typeRow);
+      if (cls === "boarding") {
+        addWidgetCounts(boarding, normalized);
+      } else if (cls === "daycare" || cls === "dayboarding" || cls === "evaluation") {
+        addWidgetCounts(daytime, normalized);
+      } else {
+        addWidgetCounts(other, normalized);
+      }
+      return { ...normalized, cls };
+    });
+
+    if (boarding.overnight === 0 && Number(row?.overnight_total || 0) > 0) {
+      boarding.overnight = Number(row.overnight_total || 0);
+    }
+
+    byDate.set(date, {
+      date,
+      check_ins: Number(row?.check_in_total || 0),
+      check_outs: Number(row?.check_out_total || 0),
+      overnight: Number(row?.overnight_total || 0),
+      total: Number(row?.total_reservation_volume || 0),
+      boarding: {
+        ...boarding,
+        opening: Math.max(0, boarding.check_outs + boarding.overnight - boarding.check_ins),
+      },
+      daytime,
+      other,
+      per_type: perType,
+      synced_at: row?.synced_at || null,
+    });
+  }
+
+  return byDate;
 }
 
 function normalizePlaygroup(playgroup: string | null | undefined): "large" | "small" | "private_play" | "unknown" {
@@ -575,23 +839,52 @@ export function buildBlockerDetails(
 export function buildTrustPayload({
   blockerDetails,
   roomCountsEstimated,
+  sourceReconciliation,
+  sourceRequired = false,
 }: {
   blockerDetails: Array<{ kind: string; label: string; count: number; scope: string; dog_ids: string[] }>;
   roomCountsEstimated: boolean;
+  sourceReconciliation?: any;
+  sourceRequired?: boolean;
 }) {
   const notes: string[] = [];
+  const blockers = blockerDetails.map((detail) => detail.label);
 
   if (roomCountsEstimated) {
     notes.push("Room occupancy counts are estimated from the latest available room totals.");
   }
 
+  if (sourceReconciliation) {
+    notes.push("GINGR Calendar Details source totals imported from reservation_widget_data.");
+    const deltas = sourceReconciliation.deltas || {};
+    const mismatchLabels = [
+      ["opening_boarding", "opening boarding"],
+      ["closing_boarding", "closing boarding"],
+      ["daytime_total", "daytime volume"],
+      ["total_dog_volume", "total dog volume"],
+    ]
+      .map(([key, label]) => {
+        const delta = Number(deltas[key] || 0);
+        return delta === 0 ? null : `${label} source delta ${delta > 0 ? "+" : ""}${delta}`;
+      })
+      .filter(Boolean);
+    if (mismatchLabels.length) {
+      blockers.push(`Operational splits do not reconcile to GINGR source totals: ${mismatchLabels.join(", ")}.`);
+    }
+  } else if (sourceRequired) {
+    blockers.push("GINGR Calendar Details source totals are missing for this date.");
+  }
+
   return {
-    state: "trusted",
-    source: "gingr_reservations + v_dog_playgroup_assignments_current",
-    can_generate: blockerDetails.length === 0,
-    blockers: blockerDetails.map((detail) => detail.label),
+    state: sourceReconciliation ? "trusted" : sourceRequired ? "estimated" : "trusted",
+    source: sourceReconciliation
+      ? "reservation_widget_data + gingr_reservations + v_dog_playgroup_assignments_current"
+      : "gingr_reservations + v_dog_playgroup_assignments_current",
+    can_generate: blockers.length === 0,
+    blockers,
     blocker_details: blockerDetails,
     notes,
+    source_reconciliation: sourceReconciliation || null,
   };
 }
 
@@ -732,6 +1025,112 @@ function buildDisplayShape({
       total_dog_volume: closingTotal + daycareTotal,
     },
     play_yard: playYard,
+  };
+}
+
+function sumDisplaySection(section: Record<string, number>, keys: string[]) {
+  return keys.reduce((sum, key) => sum + Number(section?.[key] || 0), 0);
+}
+
+function cloneDisplay(display: any) {
+  return {
+    opening: { ...(display?.opening || {}) },
+    closing: { ...(display?.closing || {}) },
+    daycare: { ...(display?.daycare || {}) },
+    support: { ...(display?.support || {}) },
+    play_yard: { ...(display?.play_yard || {}) },
+    source: { ...(display?.source || {}) },
+  };
+}
+
+export function applyGingrWidgetSourceCountsToDisplay(
+  display: any,
+  sourceCounts?: GingrWidgetSourceCounts | null,
+) {
+  const nextDisplay = cloneDisplay(display);
+  if (!sourceCounts) {
+    return {
+      display: nextDisplay,
+      reconciliation: null,
+    };
+  }
+
+  const derived = {
+    opening_boarding: sumDisplaySection(nextDisplay.opening, [
+      "large_boarding",
+      "small_boarding",
+      "private_play_boarding",
+      "half_and_half_boarding",
+      "evaluation_boarding",
+      "unclassified_boarding",
+    ]),
+    closing_boarding: sumDisplaySection(nextDisplay.closing, [
+      "large_boarding",
+      "small_boarding",
+      "private_play_boarding",
+      "half_and_half_boarding",
+      "evaluation_boarding",
+      "unclassified_boarding",
+    ]),
+    daytime_total: sumDisplaySection(nextDisplay.daycare, [
+      "evaluations",
+      "private_play_dayboarding",
+      "half_and_half_daytime",
+      "large_daycare",
+      "small_daycare",
+      "unclassified_daycare",
+    ]),
+    total_dog_volume: Number(nextDisplay.support?.total_dog_volume || 0),
+  };
+
+  const source = {
+    check_ins: sourceCounts.check_ins,
+    check_outs: sourceCounts.check_outs,
+    overnight: sourceCounts.overnight,
+    total: sourceCounts.total,
+    boarding_opening: sourceCounts.boarding.opening,
+    boarding_closing: sourceCounts.boarding.overnight,
+    boarding_check_ins: sourceCounts.boarding.check_ins,
+    boarding_check_outs: sourceCounts.boarding.check_outs,
+    daytime_total: sourceCounts.daytime.total,
+  };
+
+  const deltas = {
+    opening_boarding: source.boarding_opening - derived.opening_boarding,
+    closing_boarding: source.boarding_closing - derived.closing_boarding,
+    daytime_total: source.daytime_total - derived.daytime_total,
+    total_dog_volume: source.total - derived.total_dog_volume,
+  };
+
+  if (deltas.opening_boarding > 0) {
+    nextDisplay.opening.unclassified_boarding = Number(nextDisplay.opening.unclassified_boarding || 0) + deltas.opening_boarding;
+  }
+  if (deltas.closing_boarding > 0) {
+    nextDisplay.closing.unclassified_boarding = Number(nextDisplay.closing.unclassified_boarding || 0) + deltas.closing_boarding;
+  }
+  if (deltas.daytime_total > 0) {
+    nextDisplay.daycare.unclassified_daycare = Number(nextDisplay.daycare.unclassified_daycare || 0) + deltas.daytime_total;
+  }
+
+  nextDisplay.opening.total_boarding = source.boarding_opening;
+  nextDisplay.closing.total_boarding = source.boarding_closing;
+  nextDisplay.daycare.total_daycare = source.daytime_total;
+  nextDisplay.support.morning_feeding_dogs = source.boarding_opening;
+  nextDisplay.support.evening_feeding_dogs = source.boarding_closing;
+  nextDisplay.support.total_dog_volume = source.total;
+  nextDisplay.source = source;
+
+  return {
+    display: nextDisplay,
+    reconciliation: {
+      source,
+      derived,
+      deltas,
+      per_type: sourceCounts.per_type,
+      synced_at: sourceCounts.synced_at || null,
+      is_reconciled: Object.values(deltas).every((delta) => Number(delta) === 0),
+      source_endpoint: "reservation_widget_data",
+    },
   };
 }
 
@@ -1169,7 +1568,7 @@ export async function computeSchedulingMatrixRows({
   const exactHistoricalDates = [...new Set(targetDates.map((dateKey) => shiftYearsStr(dateKey, -1)))];
   const exactHistoricalOverlapFilter = buildDateOverlapOrFilter(exactHistoricalDates);
 
-  const [resTypesRes, roomOccRes, runsRes, reservationsRes, exactHistoricalReservationsRes, playgroupAssignments] = await Promise.all([
+  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationsRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("gingr_id, name, is_boarding, is_daycare, single_day")
@@ -1184,6 +1583,12 @@ export async function computeSchedulingMatrixRows({
       .from("gingr_runs")
       .select("gingr_run_id, id")
       .eq("location_id", locationId),
+    supabase
+      .from("gingr_reservation_widget_daily")
+      .select("widget_date, check_in_total, check_out_total, overnight_total, total_reservation_volume, per_type, synced_at")
+      .eq("location_id", locationId)
+      .gte("widget_date", dateFrom)
+      .lte("widget_date", dateTo),
     supabase
       .from("gingr_reservations")
       .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
@@ -1210,8 +1615,10 @@ export async function computeSchedulingMatrixRows({
   if (resTypesRes.error) throw resTypesRes.error;
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
+  if (widgetSourceRes.error) throw widgetSourceRes.error;
 
   const resTypeMaps = buildReservationTypeMaps(resTypesRes.data || []);
+  const widgetSourceByDate = buildGingrWidgetSourceCountsByDate(widgetSourceRes.data || [], resTypeMaps);
 
   const playgroupMap = buildPlaygroupAssignmentMap(playgroupAssignments || []);
 
@@ -1310,6 +1717,11 @@ export async function computeSchedulingMatrixRows({
       roomByDate,
       totalRooms,
     });
+    const sourceAdjustment = applyGingrWidgetSourceCountsToDisplay(
+      snapshot.display,
+      widgetSourceByDate.get(targetDate),
+    );
+    const display = sourceAdjustment.display;
     const projection = buildProjectionForDate({
       targetDate,
       currentDate,
@@ -1328,36 +1740,43 @@ export async function computeSchedulingMatrixRows({
     const trust = buildTrustPayload({
       blockerDetails,
       roomCountsEstimated: snapshot.roomCountsEstimated,
+      sourceReconciliation: sourceAdjustment.reconciliation,
+      sourceRequired: targetDate >= currentDate,
     });
 
     rows.push({
       location_id: locationId,
       matrix_date: targetDate,
-      boarding_large: snapshot.openingCounts.large,
-      boarding_small: snapshot.openingCounts.small,
-      boarding_unknown_size: snapshot.openingCounts.unknown,
-      daycare_large: snapshot.daycareCounts.large,
-      daycare_small: snapshot.daycareCounts.small,
-      daycare_unknown_size: snapshot.daycareCounts.unknown + snapshot.dayboardingCounts.unknown,
-      pp_dayboarders: snapshot.display.daycare.private_play_dayboarding,
-      pp_overnight_boarders: snapshot.openingCounts.privatePlay,
+      boarding_large: display.opening.large_boarding,
+      boarding_small: display.opening.small_boarding,
+      boarding_unknown_size: display.opening.unclassified_boarding,
+      daycare_large: display.daycare.large_daycare,
+      daycare_small: display.daycare.small_daycare,
+      daycare_unknown_size: display.daycare.unclassified_daycare,
+      pp_dayboarders: display.daycare.private_play_dayboarding,
+      pp_overnight_boarders: display.opening.private_play_boarding,
       departure_baths: snapshot.departureBaths,
-      evaluations: snapshot.evaluations.length,
+      evaluations: display.daycare.evaluations,
       tours: snapshot.tours.length,
-      gross_dogs_in_building: snapshot.display.support.total_dog_volume,
-      feeding_dogs: snapshot.display.support.evening_feeding_dogs,
+      gross_dogs_in_building: display.support.total_dog_volume,
+      feeding_dogs: display.support.evening_feeding_dogs,
       medication_dogs: snapshot.medicationDogs,
-      dogs_arriving: snapshot.dogsArriving,
-      dogs_departing: snapshot.dogsDeparting,
+      dogs_arriving: display.source?.check_ins ?? snapshot.dogsArriving,
+      dogs_departing: display.source?.check_outs ?? snapshot.dogsDeparting,
       dogs_checked_out: 0,
       rooms_occupied: snapshot.roomsOccupied,
       rooms_available: snapshot.roomsAvailable,
       total_rooms: snapshot.resolvedTotalRooms,
       detail_json: {
         trust,
-        display: snapshot.display,
+        display,
         projection,
-        solver_inputs: snapshot.solverInputs,
+        source_reconciliation: sourceAdjustment.reconciliation,
+        solver_inputs: {
+          ...snapshot.solverInputs,
+          morning_feeding_dogs: display.support.morning_feeding_dogs,
+          evening_feeding_dogs: display.support.evening_feeding_dogs,
+        },
         provenance: {
           opening_boarding: snapshot.openingBoarding.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
           closing_boarding: snapshot.closingBoarding.map((row: any) => buildAssignmentSnapshot(row, targetDate)),
