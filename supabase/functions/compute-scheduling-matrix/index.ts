@@ -24,6 +24,11 @@ const corsHeaders = {
 const COMPUTE_CHUNK_DAYS = 1;
 const LIVE_HYDRATION_HORIZON_DAYS = 6;
 const RESERVATION_RETRY_DELAYS_MS = [250, 750, 1500];
+const CHERRY_HILL_LOCATION_ID = "11111111-1111-1111-1111-111111111111";
+const LOCATION_ID_ALIASES: Record<string, string> = {
+  "cherry-hill": CHERRY_HILL_LOCATION_ID,
+  your-gingr-subdomain: CHERRY_HILL_LOCATION_ID,
+};
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -36,6 +41,12 @@ function schedulingComputeDisabled() {
   return ["1", "true", "yes", "on"].includes(
     String(Deno.env.get("SCHEDULING_COMPUTE_DISABLED") || "").trim().toLowerCase(),
   );
+}
+
+function normalizeLocationId(value: string) {
+  const trimmed = String(value || "").trim();
+  const alias = LOCATION_ID_ALIASES[trimmed.toLowerCase()];
+  return alias || trimmed;
 }
 
 function enumerateDates(dateFrom: string, dateTo: string) {
@@ -407,10 +418,11 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const locationId = String(body.location_id || "");
-    if (!locationId) {
+    const requestedLocationId = String(body.location_id || "").trim();
+    if (!requestedLocationId) {
       return jsonResponse({ error: "location_id required" }, 400);
     }
+    const locationId = normalizeLocationId(requestedLocationId);
 
     const dateFrom = String(body.date_from || dateStrET());
     const dateTo = String(body.date_to || addDaysStr(dateFrom, 6));
@@ -423,6 +435,7 @@ Deno.serve(async (req: Request) => {
         ok: true,
         disabled: true,
         location_id: locationId,
+        requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
         date_range: [dateFrom, dateTo],
         source: "compute_disabled",
       }, 202);
@@ -473,6 +486,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       ok: true,
       location_id: locationId,
+      requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
       date_range: [dateFrom, dateTo],
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
