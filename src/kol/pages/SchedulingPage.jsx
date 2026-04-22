@@ -75,6 +75,7 @@ function TrustBadge({ state, blocked }) {
 const MATRIX_GROUP_TEMPLATES = [
   {
     section: "GINGR Source Counts",
+    hideRowsWhenCollapsed: true,
     rows: [
       { key: "source.check_ins", label: "GINGR Check-Ins", source: true },
       { key: "source.check_outs", label: "GINGR Check-Outs", source: true },
@@ -124,10 +125,7 @@ const MATRIX_GROUP_TEMPLATES = [
   {
     section: "Support Workload",
     rows: [
-      { key: "support.departure_baths", label: "Departure Baths" },
-      { key: "support.morning_feeding_dogs", label: "Morning Feeding Dogs" },
-      { key: "support.evening_feeding_dogs", label: "Evening Feeding Dogs" },
-      { key: "support.medication_dogs", label: "Medication Dogs" },
+      { key: "support.departure_baths", label: "Departure Baths", alwaysVisible: true },
       { key: "support.total_dog_volume", label: "Total Dog Volume", total: true },
       { key: "play_yard.large_play_dogs", label: "Large Play Demand", alwaysVisible: true },
       { key: "play_yard.small_play_dogs", label: "Small Play Demand", alwaysVisible: true },
@@ -296,7 +294,10 @@ function getProjectionTooltip({ explanation, currentValue, projectedValue }) {
   }
   if (explanation.completion_rate !== null && explanation.completion_rate !== undefined) {
     const rate = formatCompletionRate(explanation.completion_rate);
-    if (rate) lines.push(`Completion rate used: ${rate}`);
+    if (rate) {
+      const basis = explanation.completion_basis === "support_total_dog_volume" ? "total dog volume" : null;
+      lines.push(`Completion rate used: ${rate}${basis ? ` (${basis})` : ""}`);
+    }
   }
   const fallback = humanizeFallbackMode(explanation.fallback_mode);
   if (fallback && explanation.fallback_mode !== "exact_prior_year") {
@@ -895,7 +896,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           </div>
         </div>
         <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
-          GINGR source rows mirror Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
+          Expand GINGR Source Counts to audit Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
           {matrixMode === "projected" && " Projected mode shows currently booked values moving to a statistically projected final count based on historical pickup pace from Gingr reservation created dates."}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -965,7 +966,11 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             <tbody>
               {matrixRowGroups.flatMap((group) => {
                 const groupExpanded = expandedMatrixGroups.has(group.section);
-                const visibleRows = group.rows.filter((row) => groupExpanded || row.total || row.alwaysVisible);
+                const visibleRows = group.rows.filter((row) => {
+                  if (groupExpanded) return true;
+                  if (group.hideRowsWhenCollapsed) return false;
+                  return row.total || row.alwaysVisible;
+                });
                 return (
                   [
                     <tr key={`${group.section}-section`}>

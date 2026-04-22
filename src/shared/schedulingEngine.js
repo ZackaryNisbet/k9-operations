@@ -518,7 +518,7 @@ export function getMatrixProjectedDisplay(matrix) {
     evaluation_boarding: toNullableNumber(projected.opening?.evaluation_boarding) ?? 0,
     unclassified_boarding: toNullableNumber(projected.opening?.unclassified_boarding) ?? 0,
   };
-  opening.total_boarding = sumDemandValues([
+  opening.total_boarding = toNullableNumber(projected.opening?.total_boarding) ?? sumDemandValues([
     opening.large_boarding,
     opening.small_boarding,
     opening.private_play_boarding,
@@ -535,7 +535,7 @@ export function getMatrixProjectedDisplay(matrix) {
     evaluation_boarding: toNullableNumber(projected.closing?.evaluation_boarding) ?? 0,
     unclassified_boarding: toNullableNumber(projected.closing?.unclassified_boarding) ?? 0,
   };
-  closing.total_boarding = sumDemandValues([
+  closing.total_boarding = toNullableNumber(projected.closing?.total_boarding) ?? sumDemandValues([
     closing.large_boarding,
     closing.small_boarding,
     closing.private_play_boarding,
@@ -552,7 +552,7 @@ export function getMatrixProjectedDisplay(matrix) {
     small_daycare: toNullableNumber(projected.daycare?.small_daycare) ?? 0,
     unclassified_daycare: toNullableNumber(projected.daycare?.unclassified_daycare) ?? 0,
   };
-  daycare.total_daycare = sumDemandValues([
+  daycare.total_daycare = toNullableNumber(projected.daycare?.total_daycare) ?? sumDemandValues([
     daycare.evaluations,
     daycare.private_play_dayboarding,
     daycare.half_and_half_daytime,
@@ -570,7 +570,7 @@ export function getMatrixProjectedDisplay(matrix) {
       morning_feeding_dogs: opening.total_boarding,
       evening_feeding_dogs: closing.total_boarding,
       medication_dogs: toNullableNumber(projected.support?.medication_dogs) ?? 0,
-      total_dog_volume: closing.total_boarding + daycare.total_daycare,
+      total_dog_volume: toNullableNumber(projected.support?.total_dog_volume) ?? closing.total_boarding + daycare.total_daycare,
       tours: toNullableNumber(projected.support?.tours) ?? 0,
     },
     play_yard: {
