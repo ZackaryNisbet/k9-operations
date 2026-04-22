@@ -291,7 +291,160 @@ describe("scheduling matrix logic", () => {
     expect(projection.explanations.support_total_dog_volume.fallback_mode).toBe("exact_prior_year");
   });
 
-  it("keeps projected derived totals equal to their projected components", () => {
+  it("projects source-backed top-line counts as current divided by total dog completion rate", () => {
+    const baseSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-04-27",
+      reservations: [],
+      roomByDate: {},
+      totalRooms: 0,
+    });
+    const adjusted = applyGingrWidgetSourceCountsToDisplay(baseSnapshot.display, {
+      date: "2026-04-27",
+      check_ins: 22,
+      check_outs: 37,
+      overnight: 22,
+      total: 59,
+      boarding: { check_ins: 3, check_outs: 18, overnight: 22, opening: 37, total: 40 },
+      daytime: { check_ins: 19, check_outs: 19, overnight: 0, total: 19 },
+      other: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+      per_type: [],
+      synced_at: null,
+    });
+
+    const historicalReservations = [
+      ...Array.from({ length: 33 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-early-${index}`,
+          animalId: `hist-early-dog-${index}`,
+          animal_gingr_id: `hist-early-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-04-27",
+          endKey: "2025-04-27",
+          playgroup: "large",
+          bookedDateKey: "2025-04-20",
+        }),
+      ),
+      ...Array.from({ length: 11 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-late-${index}`,
+          animalId: `hist-late-dog-${index}`,
+          animal_gingr_id: `hist-late-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-04-27",
+          endKey: "2025-04-27",
+          playgroup: "large",
+          bookedDateKey: "2025-04-24",
+        }),
+      ),
+    ];
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-04-27",
+      currentDate: "2026-04-22",
+      currentSnapshot: { ...baseSnapshot, display: adjusted.display },
+      historicalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(projection.explanations.support_total_dog_volume.completion_rate).toBe(0.75);
+    expect(projection.display.opening.total_boarding).toBe(49);
+    expect(projection.display.closing.total_boarding).toBe(29);
+    expect(projection.display.daycare.total_daycare).toBe(25);
+    expect(projection.display.support.total_dog_volume).toBe(79);
+    expect(projection.explanations.opening_total_boarding.completion_basis).toBe("support_total_dog_volume");
+  });
+
+  it("uses total dog completion rate for baths so sparse bath history cannot triple the count", () => {
+    const currentReservations = Array.from({ length: 49 }, (_, index) =>
+      makeReservation({
+        gingr_id: `current-dog-${index}`,
+        animalId: `current-dog-${index}`,
+        animal_gingr_id: `current-dog-${index}`,
+        cls: "daycare",
+        startKey: "2026-05-03",
+        endKey: "2026-05-03",
+        playgroup: "large",
+        bookedDateKey: "2026-04-20",
+        services: index < 21 ? [{ name: "Bath", scheduled_at: "2026-05-03T09:00:00-04:00" }] : [],
+      }),
+    );
+    const currentSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-03",
+      reservations: currentReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+    currentSnapshot.display.support.departure_baths = 21;
+
+    const historicalReservations = [
+      ...Array.from({ length: 61 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-early-${index}`,
+          animalId: `hist-early-dog-${index}`,
+          animal_gingr_id: `hist-early-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-03",
+          endKey: "2025-05-03",
+          playgroup: "large",
+          bookedDateKey: "2025-04-20",
+        }),
+      ),
+      ...Array.from({ length: 33 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-late-${index}`,
+          animalId: `hist-late-dog-${index}`,
+          animal_gingr_id: `hist-late-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-03",
+          endKey: "2025-05-03",
+          playgroup: "large",
+          bookedDateKey: "2025-04-25",
+        }),
+      ),
+      ...Array.from({ length: 2 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-bath-early-${index}`,
+          animalId: `hist-bath-early-dog-${index}`,
+          animal_gingr_id: `hist-bath-early-dog-${index}`,
+          cls: "boarding",
+          startKey: "2025-05-02",
+          endKey: "2025-05-03",
+          playgroup: "large",
+          bookedDateKey: "2025-04-20",
+        }),
+      ),
+      ...Array.from({ length: 4 }, (_, index) =>
+        makeReservation({
+          gingr_id: `hist-bath-late-${index}`,
+          animalId: `hist-bath-late-dog-${index}`,
+          animal_gingr_id: `hist-bath-late-dog-${index}`,
+          cls: "boarding",
+          startKey: "2025-05-02",
+          endKey: "2025-05-03",
+          playgroup: "large",
+          bookedDateKey: "2025-04-25",
+        }),
+      ),
+    ];
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-05-03",
+      currentDate: "2026-04-22",
+      currentSnapshot,
+      historicalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(projection.display.support.departure_baths).toBe(32);
+    expect(projection.explanations.support_departure_baths.exact_prior_year_as_of).toBe(2);
+    expect(projection.explanations.support_departure_baths.exact_prior_year_final).toBe(6);
+    expect(projection.explanations.support_departure_baths.completion_rate).toBe(0.6489);
+    expect(projection.explanations.support_departure_baths.completion_basis).toBe("support_total_dog_volume");
+  });
+
+  it("keeps direct projected dog volume separate from projected playgroup components", () => {
     const currentReservations = Array.from({ length: 10 }, (_, index) =>
       makeReservation({
         gingr_id: `current-boarding-${index}`,
@@ -357,10 +510,12 @@ describe("scheduling matrix logic", () => {
       totalRooms: 0,
     });
 
-    const closingTotal = projection.display.closing.total_boarding;
-    const daycareTotal = projection.display.daycare.total_daycare;
-    expect(projection.display.support.total_dog_volume).toBe(closingTotal + daycareTotal);
     expect(projection.explanations.support_total_dog_volume.projected_value).toBe(projection.display.support.total_dog_volume);
+    expect(projection.display.support.total_dog_volume).toBeGreaterThanOrEqual(currentSnapshot.display.support.total_dog_volume);
+    expect(projection.display.play_yard.large_play_dogs).toBe(
+      Math.max(projection.display.opening.large_boarding, projection.display.closing.large_boarding)
+      + projection.display.daycare.large_daycare,
+    );
   });
 
   it("uses checked-in prior-night dogs for opening boarding and ignores stale checked-out rows", () => {
