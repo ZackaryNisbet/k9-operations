@@ -9,11 +9,11 @@
       "updatedAt": "2026-04-21T03:57:01.187Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "dd54ed5d4b63fd71b742f40b72dbc8ef7ff99c31",
+      "commit": "8f2d9331deb80cee04eadd7b71bfd2646b239218",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Use total dog booking pace for scheduling projections",
-      "updatedAt": "2026-04-22T15:06:05.834Z"
+      "note": "Use GINGR-adjusted current counts for scheduling projections",
+      "updatedAt": "2026-04-22T15:30:57.682Z"
     },
     "ops-compute": {
       "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
@@ -72,11 +72,11 @@
       "updatedAt": "2026-04-18T15:55:18.664Z"
     },
     "ops-platform-health": {
-      "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
+      "commit": "d243ff5867430fc05c315233e091f2e653775cad",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "scheduling projection integrity and health",
-      "updatedAt": "2026-04-22T12:32:05.741Z"
+      "note": "Fix presence event lookup and projection integrity checks",
+      "updatedAt": "2026-04-22T15:36:22.171Z"
     },
     "ops-bathing-manual": {
       "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
