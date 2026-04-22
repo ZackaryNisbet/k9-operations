@@ -194,19 +194,21 @@ function normalizeWidgetPerTypeEntries(payload: any): GingrWidgetPerTypeCount[] 
         value?.check_out_count,
         value?.check_out_total,
       ) ?? 0;
-      const overnight = firstWidgetCount(
-        value?.overnight,
-        value?.overnights,
-        value?.active,
-        value?.active_count,
-        value?.active_total,
-      ) ?? 0;
       const total = firstWidgetCount(
         value?.total,
         value?.total_count,
         value?.expected,
         value?.expected_total,
-      ) ?? (checkOuts + overnight);
+        value?.active,
+        value?.active_count,
+        value?.active_total,
+      ) ?? 0;
+      const overnight = firstWidgetCount(
+        value?.overnight,
+        value?.overnights,
+        value?.overnight_count,
+        value?.overnight_total,
+      ) ?? Math.max(0, total - checkOuts);
 
       return {
         type_name: typeName,
@@ -246,21 +248,23 @@ export function normalizeGingrReservationWidgetPayload({
     root?.check_out_total,
     root?.check_outs,
   ) ?? perType.reduce((sum, row) => sum + row.check_outs, 0);
-  const overnightTotal = firstWidgetCount(
-    totals?.active_total,
-    totals?.active,
-    totals?.overnight_total,
-    totals?.overnight,
-    root?.active_total,
-    root?.overnight_total,
-  ) ?? perType.reduce((sum, row) => sum + row.overnight, 0);
   const totalReservationVolume = firstWidgetCount(
     totals?.total,
     totals?.total_count,
     totals?.expected_total,
+    totals?.active_total,
+    totals?.active,
     root?.total,
     root?.total_count,
-  ) ?? (checkOutTotal + overnightTotal);
+    root?.active_total,
+    root?.active,
+  ) ?? perType.reduce((sum, row) => sum + row.total, 0);
+  const overnightTotal = firstWidgetCount(
+    totals?.overnight_total,
+    totals?.overnight,
+    root?.overnight_total,
+    root?.overnight,
+  ) ?? Math.max(0, totalReservationVolume - checkOutTotal);
 
   return {
     location_id: locationId,
