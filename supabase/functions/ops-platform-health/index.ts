@@ -372,59 +372,120 @@ function projectionDisplayIssues(row: any) {
   const display = projection?.display;
   if (projection?.state !== "projected" || !display) return [];
 
+  const currentDisplay = row?.detail_json?.display || {};
+  const explanations = projection?.explanations || {};
   const opening = display.opening || {};
   const closing = display.closing || {};
   const daycare = display.daycare || {};
   const support = display.support || {};
-  const openingTotal = sumMetricValues([
-    numericValue(opening.large_boarding),
-    numericValue(opening.small_boarding),
-    numericValue(opening.private_play_boarding),
-    numericValue(opening.half_and_half_boarding),
-    numericValue(opening.evaluation_boarding),
-    numericValue(opening.unclassified_boarding),
-  ]);
-  const closingTotal = sumMetricValues([
-    numericValue(closing.large_boarding),
-    numericValue(closing.small_boarding),
-    numericValue(closing.private_play_boarding),
-    numericValue(closing.half_and_half_boarding),
-    numericValue(closing.evaluation_boarding),
-    numericValue(closing.unclassified_boarding),
-  ]);
-  const daycareTotal = sumMetricValues([
-    numericValue(daycare.evaluations),
-    numericValue(daycare.private_play_dayboarding),
-    numericValue(daycare.half_and_half_daytime),
-    numericValue(daycare.large_daycare),
-    numericValue(daycare.small_daycare),
-    numericValue(daycare.unclassified_daycare),
-  ]);
-  const expected: Record<string, number> = {
-    "projection.opening.total_boarding": openingTotal,
-    "projection.closing.total_boarding": closingTotal,
-    "projection.daycare.total_daycare": daycareTotal,
-    "projection.support.morning_feeding_dogs": openingTotal,
-    "projection.support.evening_feeding_dogs": closingTotal,
-    "projection.support.total_dog_volume": closingTotal + daycareTotal,
-  };
-  const actual: Record<string, number | null> = {
-    "projection.opening.total_boarding": numericValue(opening.total_boarding),
-    "projection.closing.total_boarding": numericValue(closing.total_boarding),
-    "projection.daycare.total_daycare": numericValue(daycare.total_daycare),
-    "projection.support.morning_feeding_dogs": numericValue(support.morning_feeding_dogs),
-    "projection.support.evening_feeding_dogs": numericValue(support.evening_feeding_dogs),
-    "projection.support.total_dog_volume": numericValue(support.total_dog_volume),
+  const playYard = display.play_yard || {};
+  const issues: any[] = [];
+
+  const directMetrics = [
+    {
+      field: "projection.opening.total_boarding",
+      explanationKey: "opening_total_boarding",
+      current: currentDisplay.opening?.total_boarding,
+      projected: opening.total_boarding,
+    },
+    {
+      field: "projection.closing.total_boarding",
+      explanationKey: "closing_total_boarding",
+      current: currentDisplay.closing?.total_boarding,
+      projected: closing.total_boarding,
+    },
+    {
+      field: "projection.daycare.total_daycare",
+      explanationKey: "daycare_total_daycare",
+      current: currentDisplay.daycare?.total_daycare,
+      projected: daycare.total_daycare,
+    },
+    {
+      field: "projection.support.departure_baths",
+      explanationKey: "support_departure_baths",
+      current: currentDisplay.support?.departure_baths,
+      projected: support.departure_baths,
+    },
+    {
+      field: "projection.support.total_dog_volume",
+      explanationKey: "support_total_dog_volume",
+      current: currentDisplay.support?.total_dog_volume,
+      projected: support.total_dog_volume,
+    },
+  ];
+
+  for (const metric of directMetrics) {
+    const explanation = explanations[metric.explanationKey] || {};
+    const current = numericValue(metric.current);
+    const projected = numericValue(metric.projected);
+    const explanationCurrent = numericValue(explanation.current_value);
+    const explanationProjected = numericValue(explanation.projected_value);
+
+    if (current != null && explanationCurrent != null && explanationCurrent !== current) {
+      issues.push({
+        date: row.matrix_date,
+        field: `${metric.field}.current_value`,
+        actual: explanationCurrent,
+        expected: current,
+      });
+    }
+    if (projected != null && explanationProjected != null && explanationProjected !== projected) {
+      issues.push({
+        date: row.matrix_date,
+        field: `${metric.field}.projected_value`,
+        actual: projected,
+        expected: explanationProjected,
+      });
+    }
+    if (current != null && projected != null && projected < current) {
+      issues.push({
+        date: row.matrix_date,
+        field: metric.field,
+        actual: projected,
+        expected: `>= ${current}`,
+      });
+    }
+  }
+
+  const expectedPlayYard: Record<string, number> = {
+    "projection.play_yard.large_play_dogs": Math.max(
+      numericValue(opening.large_boarding) ?? 0,
+      numericValue(closing.large_boarding) ?? 0,
+    ) + (numericValue(daycare.large_daycare) ?? 0),
+    "projection.play_yard.small_play_dogs": Math.max(
+      numericValue(opening.small_boarding) ?? 0,
+      numericValue(closing.small_boarding) ?? 0,
+    ) + (numericValue(daycare.small_daycare) ?? 0),
+    "projection.play_yard.private_play_dogs": Math.max(
+      numericValue(opening.private_play_boarding) ?? 0,
+      numericValue(closing.private_play_boarding) ?? 0,
+    ) + (numericValue(daycare.private_play_dayboarding) ?? 0),
+    "projection.play_yard.split_play_dogs": Math.max(
+      numericValue(opening.half_and_half_boarding) ?? 0,
+      numericValue(closing.half_and_half_boarding) ?? 0,
+    ) + (numericValue(daycare.half_and_half_daytime) ?? 0),
   };
 
-  return Object.entries(expected)
-    .filter(([key, expectedValue]) => actual[key] != null && actual[key] !== expectedValue)
-    .map(([key, expectedValue]) => ({
-      date: row.matrix_date,
-      field: key,
-      actual: actual[key],
-      expected: expectedValue,
-    }));
+  const actualPlayYard: Record<string, number | null> = {
+    "projection.play_yard.large_play_dogs": numericValue(playYard.large_play_dogs),
+    "projection.play_yard.small_play_dogs": numericValue(playYard.small_play_dogs),
+    "projection.play_yard.private_play_dogs": numericValue(playYard.private_play_dogs),
+    "projection.play_yard.split_play_dogs": numericValue(playYard.split_play_dogs),
+  };
+
+  for (const [field, expected] of Object.entries(expectedPlayYard)) {
+    const actual = actualPlayYard[field];
+    if (actual != null && actual !== expected) {
+      issues.push({
+        date: row.matrix_date,
+        field,
+        actual,
+        expected,
+      });
+    }
+  }
+
+  return issues;
 }
 
 async function execSql(sb: any, query: string, params: string[] = []) {
@@ -465,7 +526,7 @@ async function fetchPresenceSyncHealth(sb: any, locationId: string) {
       .maybeSingle(),
     sb
       .from("facility_presence_events")
-      .select("id, event_type, computed_at, animal_name, animal_gingr_id")
+      .select("event_key, event_type, computed_at, animal_name, animal_gingr_id")
       .eq("location_id", locationId)
       .order("computed_at", { ascending: false })
       .limit(1)
