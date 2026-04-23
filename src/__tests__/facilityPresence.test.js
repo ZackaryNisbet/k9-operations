@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  PRESENCE_NOTICE_WINDOW_MS,
+  getPresenceEventTransitionMs,
   mapPresenceEventToNoticeGroup,
   mapPresenceRowToReservation,
 } from "../hooks/useFacilityPresence";
 
 describe("facility presence mapping", () => {
-  it("maps canonical current presence rows to checkout TV reservation shape", () => {
+  it("does not expose stale lodging rooms for daycare presence rows", () => {
     const row = {
       location_id: "cherry-hill",
       animal_gingr_id: "123",
@@ -28,26 +30,27 @@ describe("facility presence mapping", () => {
       clientId: "g456",
       type: "daycare",
       status: "checked-in",
-      room: "Luxury 106",
+      room: null,
       _animalName: "Betty White",
       _ownerName: "Betty White",
       _canonicalPresence: true,
     });
   });
 
-  it("keeps area labels separate from room labels", () => {
+  it("keeps lodging room and area labels for room-eligible presence rows", () => {
     const row = {
       location_id: "cherry-hill",
       animal_gingr_id: "123",
       reservation_gingr_id: "987",
       animal_name: "Betty White",
-      presence_type: "daycare",
-      area_name: "Small Daycare",
+      presence_type: "boarding",
+      room_name: "Luxury Suite 106",
+      area_name: "Luxury",
     };
 
     expect(mapPresenceRowToReservation(row)).toMatchObject({
-      room: null,
-      area: "Small Daycare",
+      room: "Luxury Suite 106",
+      area: "Luxury",
     });
   });
 
@@ -76,7 +79,7 @@ describe("facility presence mapping", () => {
         animalGingrId: "123",
         animalName: "Betty White",
         ownerLastName: "White",
-        room: "Small Daycare",
+        room: "",
         resType: "daycare",
       }],
     });
@@ -101,8 +104,64 @@ describe("facility presence mapping", () => {
       id: "987",
       animalName: "Betty White",
       ownerLastName: "White",
-      room: "Small Daycare",
+      room: "",
       resType: "daycare",
     });
+  });
+
+  it("ages check-in notices from the actual GINGR check-in timestamp", () => {
+    const nowMs = Date.UTC(2026, 3, 23, 10, 41, 0);
+    const checkInMs = nowMs - 28_000;
+    const event = {
+      event_key: "event-fresh",
+      event_type: "checked_in",
+      animal_gingr_id: "123",
+      reservation_gingr_id: "987",
+      computed_at: new Date(nowMs).toISOString(),
+      next_state: {
+        animal_name: "Miley",
+        owner_last_name: "DeAugustine",
+        presence_type: "daycare",
+        check_in_date: new Date(checkInMs).toISOString(),
+        room_name: "Luxury Suite 106",
+      },
+    };
+
+    const group = mapPresenceEventToNoticeGroup(event, {
+      firedAt: nowMs,
+      nowMs,
+      durationMs: PRESENCE_NOTICE_WINDOW_MS,
+      recentWindowMs: PRESENCE_NOTICE_WINDOW_MS,
+    });
+
+    expect(getPresenceEventTransitionMs(event)).toBe(checkInMs);
+    expect(group.firedAt).toBe(checkInMs);
+    expect(group.dogs[0]).toMatchObject({
+      animalName: "Miley",
+      room: "",
+      resType: "daycare",
+    });
+  });
+
+  it("suppresses check-in notices older than the 60-second freshness window", () => {
+    const nowMs = Date.UTC(2026, 3, 23, 10, 41, 0);
+    const event = {
+      event_key: "event-old",
+      event_type: "checked_in",
+      animal_gingr_id: "123",
+      computed_at: new Date(nowMs).toISOString(),
+      next_state: {
+        animal_name: "Miley",
+        presence_type: "daycare",
+        check_in_date: new Date(nowMs - PRESENCE_NOTICE_WINDOW_MS - 1).toISOString(),
+      },
+    };
+
+    expect(mapPresenceEventToNoticeGroup(event, {
+      firedAt: nowMs,
+      nowMs,
+      durationMs: PRESENCE_NOTICE_WINDOW_MS,
+      recentWindowMs: PRESENCE_NOTICE_WINDOW_MS,
+    })).toBeNull();
   });
 });
