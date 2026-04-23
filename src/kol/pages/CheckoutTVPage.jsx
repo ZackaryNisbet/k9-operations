@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";
+import { PRESENCE_NOTICE_WINDOW_MS, mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";
 import { getEffectivePresenceCadence, usePresenceSyncConfig } from "../../hooks/presenceSyncConfig";
 import { idbGet, idbSet, todayStr } from "../../shared/theme";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
@@ -2091,15 +2091,26 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     )];
   }, [reservations, dogs]);
   const checkedInAnimalIdsKey = checkedInAnimalIds.join("|");
+  const recentPresenceEventAnimalIds = useMemo(() => {
+    return [...new Set(
+      (facilityPresence.recentEvents || [])
+        .map(event => String(event.animalGingrId || event.animal_gingr_id || "").trim())
+        .filter(Boolean)
+    )];
+  }, [facilityPresence.recentEvents]);
   const playgroupLookupAnimalIds = useMemo(() => {
     const dogById = new Map(dogs.map(dog => [dog.id, dog]));
+    const reservationAnimalIds = reservations
+      .filter(res => isReservationInPlaygroupPrewarmWindow(res))
+      .map(res => String(dogById.get(res.dogId)?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "").trim())
+      .filter(Boolean);
     return [...new Set(
-      reservations
-        .filter(res => isReservationInPlaygroupPrewarmWindow(res))
-        .map(res => String(dogById.get(res.dogId)?.gingrId || res?.animalGingrId || res?.animal_gingr_id || "").trim())
-        .filter(Boolean)
+      [
+        ...reservationAnimalIds,
+        ...recentPresenceEventAnimalIds,
+      ]
     )].slice(0, 1000);
-  }, [reservations, dogs]);
+  }, [reservations, dogs, recentPresenceEventAnimalIds]);
   const playgroupLookupAnimalIdsKey = playgroupLookupAnimalIds.join("|");
   const playgroupCacheKey = locationId ? `checkout_tv_playgroups_${locationId}` : null;
 
@@ -2594,11 +2605,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     const seen = processedPresenceEventIdsRef.current;
 
     if (!presenceEventsInitializedRef.current) {
-      events.forEach(event => {
-        if (event.id) seen.add(event.id);
-      });
       presenceEventsInitializedRef.current = true;
-      return;
     }
 
     const newCheckIns = [];
@@ -2608,7 +2615,12 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     for (const event of [...events].reverse()) {
       if (!event.id || seen.has(event.id)) continue;
       seen.add(event.id);
-      const group = mapPresenceEventToNoticeGroup(event, { firedAt, durationMs: noticeDurationMs });
+      const group = mapPresenceEventToNoticeGroup(event, {
+        firedAt,
+        nowMs: firedAt,
+        durationMs: noticeDurationMs,
+        recentWindowMs: PRESENCE_NOTICE_WINDOW_MS,
+      });
       if (!group) continue;
       if (event.eventType === "checked_in") newCheckIns.push(group);
       if (event.eventType === "checked_out") newCheckOuts.push(group);
@@ -2632,6 +2644,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   }, [canonicalPresenceAvailable, facilityPresence.recentEvents, noticeDurationMs, recordNoticeAnimals]);
 
   useEffect(() => {
+    if (canonicalPresenceAvailable) {
+      previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
+      return;
+    }
+
     const previousMap = previousCheckedInNoticeMapRef.current;
     if (previousMap === null) {
       previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
@@ -2705,7 +2722,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     enqueueFallback(arrivals, "in");
     enqueueFallback(departures, "out");
     previousCheckedInNoticeMapRef.current = new Map(checkedInNoticeMap);
-  }, [checkedInNoticeMap, noticeDurationMs, recordNoticeAnimals]);
+  }, [canonicalPresenceAvailable, checkedInNoticeMap, noticeDurationMs, recordNoticeAnimals]);
 
   // Single tick drives all notice countdowns
   useEffect(() => {

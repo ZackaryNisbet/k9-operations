@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient";
 
 const DEFAULT_POLL_MS = 5_000;
 const RECENT_EVENT_WINDOW_MS = 15 * 60_000;
+export const PRESENCE_NOTICE_WINDOW_MS = 60_000;
 
 function parseSnapshot(raw) {
   if (!raw) return null;
@@ -47,12 +48,41 @@ function normalizeEvent(event) {
   };
 }
 
+function parseTimeMs(value) {
+  if (!value) return Number.NaN;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : Number.NaN;
+}
+
+function isRoomEligiblePresenceType(value) {
+  const type = String(value || "").toLowerCase();
+  return type === "boarding" || type === "dayboarding" || type === "day_boarding";
+}
+
+export function getPresenceEventTransitionMs(event) {
+  const normalized = normalizeEvent(event);
+  if (!normalized?.eventType) return Number.NaN;
+  const state = normalized.eventType === "checked_out"
+    ? (event.previous_state || event)
+    : (event.next_state || event);
+  const candidates = normalized.eventType === "checked_in"
+    ? [state?.check_in_date, event.check_in_date, event.source_observed_at, event.computed_at]
+    : [state?.check_out_date, event.check_out_date, event.source_observed_at, event.computed_at];
+
+  for (const candidate of candidates) {
+    const ms = parseTimeMs(candidate);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return Number.NaN;
+}
+
 export function mapPresenceRowToReservation(row) {
   if (!row?.animal_gingr_id) return null;
   const reservationId = row.reservation_gingr_id || row.reservation_gingr_ids?.[0] || row.animal_gingr_id;
   const ownerName = [row.owner_first_name, row.owner_last_name].filter(Boolean).join(" ");
   const startDate = row.start_date ? String(row.start_date).split("T")[0] : "";
   const endDate = row.scheduled_check_out_date || row.end_date;
+  const hasLodgingRoom = isRoomEligiblePresenceType(row.presence_type);
 
   return {
     id: `presence-${row.location_id}-${row.animal_gingr_id}`,
@@ -68,8 +98,8 @@ export function mapPresenceRowToReservation(row) {
     checkOutTime: endDate ? String(endDate).split("T")[1]?.slice(0, 5) : null,
     scheduledCheckOutTime: endDate ? String(endDate).split("T")[1]?.slice(0, 5) : null,
     status: "checked-in",
-    room: row.room_name || null,
-    area: row.area_name || null,
+    room: hasLodgingRoom ? row.room_name || null : null,
+    area: hasLodgingRoom ? row.area_name || null : null,
     _resTypeName: row.reservation_type_name,
     _animalName: row.animal_name,
     _ownerName: ownerName,
@@ -78,18 +108,29 @@ export function mapPresenceRowToReservation(row) {
   };
 }
 
-export function mapPresenceEventToNoticeGroup(event, { firedAt = Date.now(), durationMs } = {}) {
+export function mapPresenceEventToNoticeGroup(event, { firedAt = Date.now(), durationMs, nowMs = firedAt, recentWindowMs = null } = {}) {
   const normalized = normalizeEvent(event);
   if (!normalized?.id || !normalized.animalGingrId) return null;
   const state = normalized.eventType === "checked_out"
     ? (event.previous_state || event)
     : (event.next_state || event);
+  const transitionMs = getPresenceEventTransitionMs(event);
+  if (
+    Number.isFinite(recentWindowMs)
+    && Number.isFinite(transitionMs)
+    && nowMs - transitionMs > recentWindowMs
+  ) {
+    return null;
+  }
+  const noticeFiredAt = Number.isFinite(transitionMs) ? Math.min(transitionMs, nowMs) : firedAt;
+  const hasLodgingRoom = isRoomEligiblePresenceType(state?.presence_type || event.presence_type);
   const ownerLastName = state?.owner_last_name || event.owner_last_name || "";
 
   return {
     id: normalized.id,
     eventKey: normalized.id,
-    firedAt,
+    firedAt: noticeFiredAt,
+    transitionAt: Number.isFinite(transitionMs) ? new Date(transitionMs).toISOString() : null,
     durationMs,
     ownerLastName,
     dogs: [{
@@ -98,8 +139,8 @@ export function mapPresenceEventToNoticeGroup(event, { firedAt = Date.now(), dur
       animalName: state?.animal_name || event.animal_name || "Unknown",
       ownerLastName,
       breed: state?.animal_breed || event.animal_breed || "",
-      room: state?.room_name || event.room_name || "",
-      area: state?.area_name || event.area_name || "",
+      room: hasLodgingRoom ? state?.room_name || event.room_name || "" : "",
+      area: hasLodgingRoom ? state?.area_name || event.area_name || "" : "",
       resType: state?.presence_type || event.presence_type || "other",
     }],
   };
