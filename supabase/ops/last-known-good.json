@@ -2,11 +2,11 @@
   "projectRef": "YOUR_SUPABASE_PROJECT_REF",
   "functions": {
     "gingr-sync": {
-      "commit": "5892c174a62977e226fe7d9e593192271999d86d",
+      "commit": "1dd1d42c5962880175c528c6ca953c4d55e6eb30",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "presence room resolution",
-      "updatedAt": "2026-04-21T03:57:01.187Z"
+      "note": "Checkout TV presence room eligibility",
+      "updatedAt": "2026-04-23T14:02:25.725Z"
     },
     "compute-scheduling-matrix": {
       "commit": "17e68aaf6f395e6dca4b822fc9d0cd2a44b2630f",
