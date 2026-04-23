@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   buildPlaygroupAssignmentMap,
   derivePlaygroupAssignmentsFromIcons,
@@ -139,5 +140,15 @@ describe('playgroupAssignments', () => {
     expect(map['135'].unresolved_reason).toBeNull();
     expect(getDisplayPlaygroup(map['135'])).toBe('both_daycares');
     expect(getDisplayTags(map['135'])).toEqual(['both_daycares']);
+  });
+
+  it('keeps the canonical SQL view aligned with the Both Daycares rule', () => {
+    const sql = readFileSync(
+      new URL('../../supabase/migrations/20260423110139_checkout_tv_presence_fixes.sql', import.meta.url),
+      'utf8',
+    );
+
+    expect(sql).toContain("when has_large and has_small then 'both_daycares'");
+    expect(sql).not.toContain("when has_large and has_small then 'conflicting_size_icons'");
   });
 });
