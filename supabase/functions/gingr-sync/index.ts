@@ -453,6 +453,11 @@ async function loadPresenceRoomAssignments(supabase: any, locationId: string, ch
       .map((reservation: any) => normalizeText(reservation?.animal?.id))
       .filter(Boolean),
   )] as string[];
+  const reservationIds = [...new Set(
+    checkedInReservations
+      .map((reservation: any) => normalizeText(reservation?.reservation_id))
+      .filter(Boolean),
+  )] as string[];
 
   const lookup = {
     byReservation: new Map<string, any>(),
@@ -461,15 +466,27 @@ async function loadPresenceRoomAssignments(supabase: any, locationId: string, ch
     occupancyByDog: new Map<string, any>(),
   };
 
-  if (animalIds.length > 0) {
-    const { data: reservationRows, error } = await supabase
+  if (reservationIds.length > 0 || animalIds.length > 0) {
+    let query = supabase
       .from("gingr_reservations")
       .select("gingr_id, animal_gingr_id, animal_name, owner_last_name, room_assignment")
-      .eq("location_id", locationId)
-      .in("animal_gingr_id", animalIds);
+      .eq("location_id", locationId);
+
+    if (reservationIds.length > 0) {
+      query = query.in("gingr_id", reservationIds);
+    } else {
+      query = query
+        .not("check_in_date", "is", null)
+        .is("check_out_date", null)
+        .is("cancelled_date", null)
+        .in("animal_gingr_id", animalIds);
+    }
+
+    const { data: reservationRows, error } = await query;
 
     if (error) throw new Error(`presence room assignment query error: ${error.message}`);
 
+    const animalRoomCandidates = new Map<string, any[]>();
     for (const row of reservationRows || []) {
       const roomName = normalizeText(row.room_assignment);
       if (!roomName) continue;
@@ -481,7 +498,14 @@ async function loadPresenceRoomAssignments(supabase: any, locationId: string, ch
       const reservationId = normalizeText(row.gingr_id);
       const animalId = normalizeText(row.animal_gingr_id);
       if (reservationId) lookup.byReservation.set(reservationId, assignment);
-      if (animalId && !lookup.byAnimal.has(animalId)) lookup.byAnimal.set(animalId, assignment);
+      if (animalId) {
+        animalRoomCandidates.set(animalId, [...(animalRoomCandidates.get(animalId) || []), assignment]);
+      }
+    }
+
+    for (const [animalId, candidates] of animalRoomCandidates.entries()) {
+      const uniqueRooms = [...new Set(candidates.map((candidate) => candidate.room_name))];
+      if (uniqueRooms.length === 1) lookup.byAnimal.set(animalId, candidates[0]);
     }
   }
 
@@ -569,6 +593,10 @@ function pickPrimaryPresenceReservation(rows: any[]) {
   })[0];
 }
 
+function canPresenceTypeUseLodgingRoom(presenceType: string | null): boolean {
+  return presenceType === "boarding" || presenceType === "dayboarding" || presenceType === "day_boarding";
+}
+
 function buildFacilityPresenceRows(checkedInReservations: any[], bohData: any, source: string, roomLookup: any = null) {
   const byAnimal = new Map<string, any[]>();
   for (const reservation of checkedInReservations) {
@@ -589,27 +617,34 @@ function buildFacilityPresenceRows(checkedInReservations: any[], bohData: any, s
     const primaryReservationId = normalizeText(primary?.reservation_id) || reservationIds[0] || null;
     const typeName = normalizeText(primary?.reservation_type?.type);
     const presenceType = classifyPresenceType(typeName);
+    const canUseRoom = canPresenceTypeUseLodgingRoom(presenceType);
     const checkInDate = normalizeIso(primary?.check_in_date);
     const startDate = normalizeIso(primary?.start_date);
     const endDate = normalizeIso(primary?.end_date);
     const bohEntry = (primaryReservationId && bohLookup.byReservation.get(primaryReservationId)) || bohLookup.byAnimal.get(animalId) || null;
     const owner = primary?.owner || {};
     const animal = primary?.animal || {};
-    const storedRoom = resolvePresenceRoomAssignment(roomLookup, {
-      reservationId: primaryReservationId,
-      animalId,
-      animalName: normalizeText(animal.name),
-      ownerLastName: normalizeText(owner.last_name),
-    });
-    const roomName = normalizeText(
-      bohEntry?.run_name
-        || bohEntry?.room_name
-        || bohEntry?.room
-        || storedRoom?.room_name
-        || primary?.room_assignment
-        || primary?.room_name,
-    );
-    const areaName = normalizeText(bohEntry?.area_name || bohEntry?.area || storedRoom?.area_name || primary?.area_name);
+    const storedRoom = canUseRoom
+      ? resolvePresenceRoomAssignment(roomLookup, {
+          reservationId: primaryReservationId,
+          animalId,
+          animalName: normalizeText(animal.name),
+          ownerLastName: normalizeText(owner.last_name),
+        })
+      : null;
+    const roomName = canUseRoom
+      ? normalizeText(
+          bohEntry?.run_name
+            || bohEntry?.room_name
+            || bohEntry?.room
+            || storedRoom?.room_name
+            || primary?.room_assignment
+            || primary?.room_name,
+        )
+      : null;
+    const areaName = canUseRoom
+      ? normalizeText(bohEntry?.area_name || bohEntry?.area || storedRoom?.area_name || primary?.area_name)
+      : null;
     const presenceSessionKey = [
       animalId,
       primaryReservationId || "reservation-unknown",
