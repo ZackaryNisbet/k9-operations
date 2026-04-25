@@ -22,6 +22,7 @@ import {
   getDisplayTags,
   getOperationalPlaygroup,
 } from "../../shared/playgroupAssignments";
+import { shouldShowDepartingTodayLabel } from "./checkoutTvDogLabels";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -1611,7 +1612,7 @@ const DogCardImage = React.memo(({ src, name, accentRgb, accent, compact = false
  * Extracted outside component body + React.memo to prevent remounting.
  * All previously-closed-over variables are now explicit props.
  * ──────────────────────────────────────────────────────────────────────── */
-const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, compact = false }) => {
+const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, currentDateStr, compact = false }) => {
   const dog = dogs.find(d => d.id === res.dogId);
   const client = clients.find(c => c.id === res.clientId);
   const name = dog?.fields?.name || res._animalName || "Unknown";
@@ -1642,6 +1643,7 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
 
   // First-day detection
   const isFirstDay = firstDayDogIds?.has(animalId);
+  const isDepartingToday = shouldShowDepartingTodayLabel(res, currentDateStr);
 
   return (
     <div style={{
@@ -1666,6 +1668,22 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
           color: "#EAB308",
         }}>
           FIRST DAY
+        </div>
+      )}
+      {isDepartingToday && (
+        <div style={{
+          width: "calc(100% + 16px)",
+          margin: isFirstDay ? "-6px -8px 6px" : "-8px -8px 6px",
+          padding: "4px 0",
+          textAlign: "center",
+          background: "rgba(251,146,60,0.18)",
+          borderBottom: "1.5px solid rgba(251,146,60,0.45)",
+          fontSize: 10,
+          fontWeight: 900,
+          letterSpacing: "0.08em",
+          color: "#FDBA74",
+        }}>
+          DEPARTING TODAY
         </div>
       )}
 
@@ -2854,9 +2872,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
   /* DogCard is now extracted outside the component body — see above */
   // Shared props for all DogCard instances (avoids repeating in 6+ places)
+  const currentDateStr = todayStr();
   const dogCardProps = useMemo(() => ({
-    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, compact: isCompactTv,
-  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, isCompactTv]);
+    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, currentDateStr, compact: isCompactTv,
+  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds, currentDateStr, isCompactTv]);
 
   /* ── TV-003: Enhanced Section Label with dog count and colored accent ── */
   const SectionLabel = ({ label, count, color, subtitle }) => (
