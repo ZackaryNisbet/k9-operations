@@ -179,7 +179,7 @@ function RoomCleaningSettingsTab({ profile, addGlobalToast }) {
   );
 }
 
-const DEFAULT_ROLL_CALL_AREA_ORDER = [
+const DEFAULT_OPERATIONAL_AREA_ORDER = [
   "Executive Rooms",
   "Luxury Suites",
   "Single Compartments",
@@ -189,10 +189,11 @@ const DEFAULT_ROLL_CALL_AREA_ORDER = [
   "Other",
 ];
 
-function RollCallSettingsTab({ profile, addGlobalToast }) {
+function OperationalAreaOrderSettingsTab({ profile, addGlobalToast }) {
   const locationId = profile?.location_id;
-  const SETTING_KEY = "roll_call_area_order";
-  const [areas, setAreas] = useState(DEFAULT_ROLL_CALL_AREA_ORDER);
+  const PRIMARY_SETTING_KEY = "operational_area_order";
+  const LEGACY_SETTING_KEY = "roll_call_area_order";
+  const [areas, setAreas] = useState(DEFAULT_OPERATIONAL_AREA_ORDER);
   const [newArea, setNewArea] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -201,23 +202,27 @@ function RollCallSettingsTab({ profile, addGlobalToast }) {
     if (!locationId) return;
     let cancelled = false;
     setLoading(true);
-    supabase.from("lite_settings").select("setting_value")
+    supabase.from("lite_settings").select("setting_key, setting_value")
       .eq("location_id", locationId)
-      .eq("setting_key", SETTING_KEY)
-      .maybeSingle()
+      .in("setting_key", [PRIMARY_SETTING_KEY, LEGACY_SETTING_KEY])
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error) console.error("Failed to load roll call area order:", error);
-        const setting = data?.setting_value;
+        if (error) console.error("Failed to load operational area order:", error);
+        const rows = Array.isArray(data) ? data : [];
+        const primary = rows.find((row) => row.setting_key === PRIMARY_SETTING_KEY);
+        const legacy = rows.find((row) => row.setting_key === LEGACY_SETTING_KEY);
+        const setting = primary?.setting_value || legacy?.setting_value;
         const loaded = Array.isArray(setting)
           ? setting
           : Array.isArray(setting?.area_order)
             ? setting.area_order
             : Array.isArray(setting?.areas)
               ? setting.areas
-              : [];
+              : Array.isArray(setting?.operational_area_order)
+                ? setting.operational_area_order
+                : [];
         const cleaned = loaded.map((entry) => String(entry || "").trim()).filter(Boolean);
-        setAreas(cleaned.length ? cleaned : DEFAULT_ROLL_CALL_AREA_ORDER);
+        setAreas(cleaned.length ? cleaned : DEFAULT_OPERATIONAL_AREA_ORDER);
         setLoading(false);
       });
     return () => { cancelled = true; };
@@ -252,22 +257,29 @@ function RollCallSettingsTab({ profile, addGlobalToast }) {
     if (!locationId) return;
     const cleaned = areas.map((entry) => String(entry || "").trim()).filter(Boolean);
     setSaving(true);
-    const { error } = await supabase.from("lite_settings").upsert({
-      location_id: locationId,
-      setting_key: SETTING_KEY,
-      setting_value: { area_order: cleaned },
-    }, { onConflict: "location_id,setting_key" });
+    const { error } = await supabase.from("lite_settings").upsert([
+      {
+        location_id: locationId,
+        setting_key: PRIMARY_SETTING_KEY,
+        setting_value: { area_order: cleaned },
+      },
+      {
+        location_id: locationId,
+        setting_key: LEGACY_SETTING_KEY,
+        setting_value: { area_order: cleaned },
+      },
+    ], { onConflict: "location_id,setting_key" });
     setSaving(false);
     if (error) {
-      addGlobalToast?.("Failed to save roll call area order: " + error.message, "error");
+      addGlobalToast?.("Failed to save operational area order: " + error.message, "error");
     } else {
       setAreas(cleaned);
-      addGlobalToast?.("Roll call area order saved", "success");
+      addGlobalToast?.("Operational area order saved", "success");
     }
   };
 
   const reset = () => {
-    setAreas(DEFAULT_ROLL_CALL_AREA_ORDER);
+    setAreas(DEFAULT_OPERATIONAL_AREA_ORDER);
   };
 
   const inputStyle = {
@@ -283,12 +295,15 @@ function RollCallSettingsTab({ profile, addGlobalToast }) {
   };
 
   if (loading) {
-    return <K9LoadingAnimation size={48} message="Loading roll call settings..." />;
+    return <K9LoadingAnimation size={48} message="Loading operational area order..." />;
   }
 
   return (
     <div style={{ maxWidth: 760 }}>
-      <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 700, color: C.text }}>Roll Call</h3>
+      <h3 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: C.text }}>Operational Area Order</h3>
+      <p style={{ margin: "0 0 20px", color: C.textMut, fontSize: 13, lineHeight: 1.5 }}>
+        Canonical area order used by roll call, feeding, and medication workflows.
+      </p>
       <div style={{ background: C.surface, borderRadius: 12, padding: "20px 24px", border: `1.5px solid ${C.border}` }}>
         <div style={{ display: "grid", gap: 10 }}>
           {areas.map((area, index) => (
@@ -390,7 +405,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
-        { id: "roll-call", label: "Roll Call", desc: "Configure opening and closing roll call room area order" },
+        { id: "roll-call", label: "Operational Area Order", desc: "Canonical area order for roll call, feeding, and medication workflows" },
         { id: "emergency-contacts", label: "Emergency Contacts", desc: "Configure repeat-verification thresholds for emergency contact prompts" },
         { id: "role-layout", label: "Role Layout", desc: "Matrix view: configure tasks and workflows across PCT, CSR, and MOD for all time-of-day sections" },
       ],
@@ -488,7 +503,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
       case "room-cleaning":
         return <RoomCleaningSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "roll-call":
-        return <RollCallSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
+      case "operational-area-order":
+        return <OperationalAreaOrderSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "emergency-contacts":
         return <EmergencyContactsSettingsTab />;
       default:

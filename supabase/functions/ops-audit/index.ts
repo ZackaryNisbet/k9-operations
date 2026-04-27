@@ -23,6 +23,7 @@ import {
   fetchReservationViewJson,
   gingrWebLogin,
 } from "../_shared/gingr-browser-auth.ts";
+import { computeCareReportsForDate } from "../_shared/feeding-medication-reports.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -880,83 +881,28 @@ async function fetchWorkflowAuditData(
     throw new Error(`Unsupported report type: ${report}`);
   }
 
-  const [credentials, candidateReservations, appEntry] = await Promise.all([
-    fetchGingrConfig(sb, locationId),
-    fetchWorkflowCandidateReservations(sb, locationId, date, config.kind),
+  const [sourceReports, appEntry] = await Promise.all([
+    computeCareReportsForDate(sb, locationId, date),
     sb
       .from("lite_daily_ops")
       .select("computed_items")
       .eq("id", `ops_${config.typeSub}_${date}`)
       .maybeSingle(),
   ]);
-  const cookies = await gingrWebLogin(credentials.subdomain, credentials.apiKey);
-  const auditErrors: string[] = [];
-  const liveRows = (await mapInBatches(candidateReservations, 8, async (reservation: any) => {
-    try {
-      const reservationId = String(reservation?.gingr_id || "").trim();
-      const animalId = String(reservation?.animal_gingr_id || "").trim();
-      const reservationDetail = reservationId
-        ? await fetchReservationViewJson(credentials.subdomain, cookies, reservationId)
-        : null;
-
-      let feedingItems = buildBrowserFeedingItems(
-        reservationDetail?.feeding_report || reservationDetail?.feedingReport || reservationDetail?.feeding_info || reservationDetail?.feedingInfo,
-      );
-      let medicationItems = buildBrowserMedicationItems(
-        reservationDetail?.medication_report || reservationDetail?.medicationReport || reservationDetail?.medication_info || reservationDetail?.medicationInfo,
-      );
-
-      if ((feedingItems.length === 0 || medicationItems.length === 0) && animalId) {
-        const animalDetail = await fetchAnimalViewJson(credentials.subdomain, cookies, animalId);
-        if (feedingItems.length === 0) {
-          feedingItems = buildBrowserFeedingItems(animalDetail?.feeding_info || animalDetail?.feedingInfo);
-        }
-        if (medicationItems.length === 0) {
-          medicationItems = buildBrowserMedicationItems(animalDetail?.medication_info || animalDetail?.medicationInfo);
-        }
-      }
-
-      if (config.session) {
-        feedingItems = feedingItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "feeding"));
-        medicationItems = medicationItems.filter((row: any) => matchesWorkflowSession(row, config.session!, "medication"));
-      }
-
-      const ownerLastName = normalizeText(
-        reservation?.owner_last_name ||
-        reservationDetail?.owner_last_name ||
-        reservationDetail?.owner?.last_name,
-      );
-
-      return {
-        reservationId,
-        animalGingrId: animalId || String(reservationDetail?.a_id || reservationDetail?.animal?.id || "").trim(),
-        dogName: normalizeText(reservation?.animal_name || reservationDetail?.animal_name || reservationDetail?.animal?.name) || "Dog",
-        ownerInitial: `${ownerLastName.charAt(0).toUpperCase() || ""}.`,
-        feedingItems,
-        medicationItems,
-      };
-    } catch (error: any) {
-      auditErrors.push(
-        `${reservation?.animal_name || "Dog"} (${reservation?.gingr_id || "unknown reservation"}): ${error?.message || "Browser audit fetch failed."}`,
-      );
-      return null;
-    }
-  }))
-    .filter(Boolean)
-    .filter((row: any) => {
-      if (config.kind === "feeding-report") return row.feedingItems.length > 0;
-      if (config.kind === "medication-report") return row.medicationItems.length > 0;
-      return row.feedingItems.length > 0 || row.medicationItems.length > 0;
-    });
-
-  const appRows = Array.isArray(appEntry.data?.computed_items?.rows) ? appEntry.data.computed_items.rows : [];
+  const sourceRows = Array.isArray(sourceReports.byKey?.[config.typeSub]?.rows)
+    ? sourceReports.byKey[config.typeSub].rows
+    : [];
+  const appRowsRaw = Array.isArray(appEntry.data?.computed_items?.rows) ? appEntry.data.computed_items.rows : [];
+  const onlyCheckedIn = (row: any) => row?.statusBucket === "checked_in";
+  const appRows = appRowsRaw.filter(onlyCheckedIn);
+  const liveRows = sourceRows.filter(onlyCheckedIn);
   return {
     config,
     appRows,
     liveRows,
-    auditSource: "gingr_browser_reservation_view_json",
-    auditErrors,
-    browserCandidateCount: candidateReservations.length,
+    auditSource: "gingr_synced_operational_detail_tables_checked_in",
+    auditErrors: [],
+    browserCandidateCount: liveRows.length,
   };
 }
 
