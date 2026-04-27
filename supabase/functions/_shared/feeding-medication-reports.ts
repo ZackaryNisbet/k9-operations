@@ -86,6 +86,32 @@ function ownerInitial(name: string): string {
   return last ? `${last.charAt(0).toUpperCase()}.` : "";
 }
 
+function lookupName(value: unknown): string {
+  return normalizeText(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function occupancyKey(animalName: unknown, owner: unknown): string {
+  return `${lookupName(animalName)}|${lookupName(owner)}`;
+}
+
+function buildCurrentRoomMap(rows: any[] | null | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows || []) {
+    const room = normalizeText(row?.run_name);
+    if (!room) continue;
+    const names = normalizeText(row?.animal_names);
+    for (const chunk of names.split(/\s*,\s*/).filter(Boolean)) {
+      const parsed = chunk.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+      if (!parsed) continue;
+      const animalName = parsed[1];
+      const owner = parsed[2];
+      const key = occupancyKey(animalName, owner);
+      if (key !== "|") map.set(key, room);
+    }
+  }
+  return map;
+}
+
 function classifyReservationCategory(typeName: string): string {
   const value = String(typeName || "").toLowerCase();
   if (value.includes("evaluation") || value.includes("eval")) return "evaluation";
@@ -113,16 +139,21 @@ function roomSortKey(roomLabel: string): string {
   return index >= 0 ? `${String(index).padStart(3, "0")}_${token}` : `999_${token}`;
 }
 
-function resolveRoomLabel(roomLookup: RoomOccupancyLookup | null | undefined, reservation: any): string {
+function resolveRoomLabel(roomLookup: RoomOccupancyLookup | null | undefined, currentRoomMap: Map<string, string>, reservation: any): string {
   const raw = reservation?.raw_data || {};
   const animalId = String(reservation?.animal_gingr_id || raw?.animal?.id || "").trim();
+  const owner = ownerName(reservation);
+  const currentRoom = currentRoomMap.get(occupancyKey(
+    normalizeText(reservation?.animal_name || raw?.animal?.name),
+    owner,
+  ));
+  if (currentRoom) return currentRoom;
   const fallback = normalizeText(reservation?.room_assignment || raw?.run?.name || raw?.room?.name || raw?.reservation_type?.type?.split("|")?.at(-1));
   const entry = roomLookup ? resolveRoomOccupancyLookupEntry(roomLookup, {
     reservationId: String(reservation?.gingr_id || reservation?.id || ""),
     animalId,
     animalName: normalizeText(reservation?.animal_name || raw?.animal?.name),
-    ownerFirstName: normalizeText(reservation?.owner_first_name || raw?.owner?.first_name),
-    ownerLastName: normalizeText(reservation?.owner_last_name || raw?.owner?.last_name),
+    ownerName: owner,
   }) : null;
   return entry?.room_label || fallback || "—";
 }
@@ -436,6 +467,13 @@ async function fetchCareContext(
     medicationMap.get(key)!.push(row);
   }
 
+  const { data: occupancyRows } = await supabase
+    .from("gingr_room_occupancy")
+    .select("animal_names, run_name")
+    .eq("location_id", locationId)
+    .eq("occupancy_date", date)
+    .eq("occupied", true);
+
   return {
     reservations: reservations || [],
     animalMap,
@@ -443,6 +481,7 @@ async function fetchCareContext(
     feedingMap,
     medicationMap,
     roomLookup,
+    currentRoomMap: buildCurrentRoomMap(occupancyRows),
     nextDay,
   };
 }
@@ -454,7 +493,7 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
     const animal = context.animalMap.get(animalId) || {};
     const owner = ownerName(reservation);
     const typeName = normalizeText(reservation?.reservation_type_name || raw?.reservation_type?.type);
-    const roomLabel = resolveRoomLabel(context.roomLookup, reservation);
+    const roomLabel = resolveRoomLabel(context.roomLookup, context.currentRoomMap, reservation);
     const playgroup = context.playgroupMap.get(animalId) || "";
     const bucket = statusBucket(reservation);
     const animalMedicationNotes = normalizeText(animal?.raw_data?.medicines);
