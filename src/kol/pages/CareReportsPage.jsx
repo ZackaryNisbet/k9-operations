@@ -142,7 +142,8 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
   const actorName = profile?.name || profile?.full_name || profile?.email || "Staff";
   const [session, setSession] = useState(initialSession);
   const [viewDate, setViewDate] = useState(todayStr());
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("checked_in");
+  const [medsOnly, setMedsOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savingId, setSavingId] = useState(null);
@@ -202,7 +203,9 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
 
   const items = entry?.items || {};
   const computedItems = summarizeComputed(entry?.computed_items || {}, items);
-  const rows = (computedItems.rows || []).filter((row) => statusFilter === "all" || row.statusBucket === statusFilter);
+  const rows = (computedItems.rows || [])
+    .filter((row) => statusFilter === "all" || row.statusBucket === statusFilter)
+    .filter((row) => !medsOnly || (row.medicationItems || []).length > 0);
   const summary = buildSummary(rows);
   const completed = rows.filter((row) => isCompleted(items[row.id])).length;
   const pct = rows.length ? Math.round((completed / rows.length) * 100) : 0;
@@ -313,6 +316,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
           {STATUS_FILTERS.map((item) => <PillButton key={item.id} active={statusFilter === item.id} onClick={() => setStatusFilter(item.id)}>{item.label}</PillButton>)}
+          <PillButton active={medsOnly} onClick={() => setMedsOnly((value) => !value)}>Meds Only</PillButton>
         </div>
 
         <div style={{ marginTop: 16, height: 8, borderRadius: 999, background: C.borderLight, overflow: "hidden" }}>
@@ -328,7 +332,16 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
           ["House Salmon", summary.salmon],
           ["Medications", summary.meds],
         ].map(([label, value]) => (
-          <Card key={label} style={{ padding: 14 }}>
+          <Card
+            key={label}
+            onClick={label === "Medications" ? () => setMedsOnly((current) => !current) : undefined}
+            style={{
+              padding: 14,
+              cursor: label === "Medications" ? "pointer" : "default",
+              borderColor: label === "Medications" && medsOnly ? "#8B5CF6" : undefined,
+              boxShadow: label === "Medications" && medsOnly ? "0 0 0 3px rgba(139,92,246,0.12)" : undefined,
+            }}
+          >
             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.06em", color: C.textMut, textTransform: "uppercase" }}>{label}</div>
             <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginTop: 4 }}>{value}</div>
           </Card>

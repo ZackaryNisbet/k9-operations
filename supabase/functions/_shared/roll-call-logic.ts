@@ -5,6 +5,11 @@ import {
   humanizePlaygroupTag,
 } from "./playgroup-assignments.ts";
 import { fetchRoomOccupancySnapshotForDate } from "./room-occupancy.ts";
+import {
+  DEFAULT_OPERATIONAL_AREA_ORDER,
+  fetchOperationalAreaOrder,
+  operationalAreaSortIndex,
+} from "./operational-area-order.ts";
 
 export type RollCallSession = "opening" | "closing";
 
@@ -48,15 +53,7 @@ export interface RollCallComputedItems {
   rooms: RollCallRoom[];
 }
 
-export const DEFAULT_ROLL_CALL_AREA_ORDER = [
-  "Executive Rooms",
-  "Luxury Suites",
-  "Single Compartments",
-  "Double Compartments",
-  "Temporary Lodging",
-  "Unassigned",
-  "Other",
-];
+export const DEFAULT_ROLL_CALL_AREA_ORDER = DEFAULT_OPERATIONAL_AREA_ORDER;
 
 const UNASSIGNED_ROLL_CALL_AREA = "Unassigned";
 const UNASSIGNED_ROLL_CALL_ROOM = "No Room Assigned";
@@ -106,50 +103,15 @@ function wasCheckedInBeforeDate(value: string | null | undefined, targetDate: st
   return !!date && date < targetDate;
 }
 
-function normalizeOrderLabel(value: string): string {
-  return normalizeWhitespace(value).toLowerCase().replace(/[^a-z0-9]+/g, " ");
-}
-
 function areaSortIndex(areaName: string, order: string[]): number {
-  const normalizedArea = normalizeOrderLabel(areaName);
-  const exact = order.findIndex((entry) => normalizeOrderLabel(entry) === normalizedArea);
-  if (exact !== -1) return exact;
-
-  const fuzzy = order.findIndex((entry) => {
-    const normalizedEntry = normalizeOrderLabel(entry);
-    return normalizedArea.includes(normalizedEntry) || normalizedEntry.includes(normalizedArea);
-  });
-  return fuzzy === -1 ? Number.MAX_SAFE_INTEGER : fuzzy;
+  return operationalAreaSortIndex(areaName, order);
 }
 
 async function fetchRollCallAreaOrder(
   supabase: any,
   locationId: string,
 ): Promise<string[]> {
-  try {
-    const { data } = await supabase
-      .from("lite_settings")
-      .select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", "roll_call_area_order")
-      .maybeSingle();
-    const setting = data?.setting_value;
-    const rawOrder = Array.isArray(setting)
-      ? setting
-      : Array.isArray(setting?.areas)
-        ? setting.areas
-        : Array.isArray(setting?.area_order)
-          ? setting.area_order
-          : [];
-    const cleaned = rawOrder
-      .map((entry: unknown) => normalizeWhitespace(String(entry || "")))
-      .filter(Boolean);
-    if (cleaned.length) return cleaned;
-  } catch (error) {
-    console.error("Failed to load roll call area order:", error);
-  }
-
-  return DEFAULT_ROLL_CALL_AREA_ORDER;
+  return fetchOperationalAreaOrder(supabase, locationId);
 }
 
 function isBoardingReservationType(typeName: string): boolean {

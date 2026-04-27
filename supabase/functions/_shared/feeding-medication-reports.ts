@@ -2,6 +2,10 @@ import {
   resolveRoomOccupancyLookupEntry,
   type RoomOccupancyLookup,
 } from "./room-occupancy.ts";
+import {
+  fetchOperationalAreaOrder,
+  operationalAreaSortIndex,
+} from "./operational-area-order.ts";
 
 export type CareSession = "am" | "midday" | "pm";
 export type CareReportKind = "feeding-meds" | "feeding-report" | "medication-report";
@@ -94,11 +98,12 @@ function occupancyKey(animalName: unknown, owner: unknown): string {
   return `${lookupName(animalName)}|${lookupName(owner)}`;
 }
 
-function buildCurrentRoomMap(rows: any[] | null | undefined): Map<string, string> {
-  const map = new Map<string, string>();
+function buildCurrentRoomMap(rows: any[] | null | undefined): Map<string, { roomLabel: string; areaName: string }> {
+  const map = new Map<string, { roomLabel: string; areaName: string }>();
   for (const row of rows || []) {
     const room = normalizeText(row?.run_name);
     if (!room) continue;
+    const areaName = normalizeText(row?.area_name) || "Other";
     const names = normalizeText(row?.animal_names);
     for (const chunk of names.split(/\s*,\s*/).filter(Boolean)) {
       const parsed = chunk.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
@@ -106,7 +111,7 @@ function buildCurrentRoomMap(rows: any[] | null | undefined): Map<string, string
       const animalName = parsed[1];
       const owner = parsed[2];
       const key = occupancyKey(animalName, owner);
-      if (key !== "|") map.set(key, room);
+      if (key !== "|") map.set(key, { roomLabel: room, areaName });
     }
   }
   return map;
@@ -133,13 +138,19 @@ function normalizeRoomToken(value: string): string {
   return match?.[0] || cleaned.replace(/\s+/g, "");
 }
 
-function roomSortKey(roomLabel: string): string {
+function roomSortKey(areaName: string, roomLabel: string, configuredAreaOrder: string[]): string {
+  const areaIndex = operationalAreaSortIndex(areaName || "Other", configuredAreaOrder);
   const token = normalizeRoomToken(roomLabel);
   const index = ROOM_ORDER.indexOf(token);
-  return index >= 0 ? `${String(index).padStart(3, "0")}_${token}` : `999_${token}`;
+  const roomKey = index >= 0 ? `${String(index).padStart(3, "0")}_${token}` : `999_${token}`;
+  return `${String(areaIndex).padStart(4, "0")}_${areaName || "Other"}_${roomKey}`;
 }
 
-function resolveRoomLabel(roomLookup: RoomOccupancyLookup | null | undefined, currentRoomMap: Map<string, string>, reservation: any): string {
+function resolveRoomInfo(
+  roomLookup: RoomOccupancyLookup | null | undefined,
+  currentRoomMap: Map<string, { roomLabel: string; areaName: string }>,
+  reservation: any,
+): { roomLabel: string; areaName: string } {
   const raw = reservation?.raw_data || {};
   const animalId = String(reservation?.animal_gingr_id || raw?.animal?.id || "").trim();
   const owner = ownerName(reservation);
@@ -155,7 +166,10 @@ function resolveRoomLabel(roomLookup: RoomOccupancyLookup | null | undefined, cu
     animalName: normalizeText(reservation?.animal_name || raw?.animal?.name),
     ownerName: owner,
   }) : null;
-  return entry?.room_label || fallback || "—";
+  return {
+    roomLabel: entry?.room_label || fallback || "—",
+    areaName: entry?.area_name || normalizeText(raw?.area_name || raw?.run?.area_name) || "Other",
+  };
 }
 
 function scheduleText(row: any): string {
@@ -479,7 +493,7 @@ async function fetchCareContext(
 
   const { data: occupancyRows } = await supabase
     .from("gingr_room_occupancy")
-    .select("animal_names, run_name")
+    .select("animal_names, run_name, area_name")
     .eq("location_id", locationId)
     .eq("occupancy_date", date)
     .eq("occupied", true);
@@ -496,14 +510,14 @@ async function fetchCareContext(
   };
 }
 
-function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, date: string) {
+function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, date: string, configuredAreaOrder: string[]) {
   return context.reservations.map((reservation: any) => {
     const raw = reservation?.raw_data || {};
     const animalId = String(reservation?.animal_gingr_id || raw?.animal?.id || "").trim();
     const animal = context.animalMap.get(animalId) || {};
     const owner = ownerName(reservation);
     const typeName = normalizeText(reservation?.reservation_type_name || raw?.reservation_type?.type);
-    const roomLabel = resolveRoomLabel(context.roomLookup, context.currentRoomMap, reservation);
+    const { roomLabel, areaName } = resolveRoomInfo(context.roomLookup, context.currentRoomMap, reservation);
     const playgroup = context.playgroupMap.get(animalId) || "";
     const bucket = statusBucket(reservation);
     const animalMedicationNotes = normalizeText(animal?.raw_data?.medicines);
@@ -519,6 +533,7 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
       ownerInitial: ownerInitial(owner),
       breed: normalizeText(animal?.breed_name || raw?.animal?.breed),
       roomLabel,
+      areaName,
       reservationType: typeName,
       reservationCategory: classifyReservationCategory(typeName),
       reservationDates: reservationDates(reservation),
@@ -541,7 +556,7 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
       ownerNotes: normalizeText(raw?.notes?.owner_notes || reservation?.notes_owner),
       animalNotes: normalizeText(raw?.notes?.animal_notes || reservation?.notes_animal),
       animalMedicationNotes,
-      roomSortKey: roomSortKey(roomLabel),
+      roomSortKey: roomSortKey(areaName, roomLabel, configuredAreaOrder),
     };
   });
 }
@@ -589,7 +604,8 @@ export async function computeCareReportsForDate(
   roomLookup?: RoomOccupancyLookup | null,
 ) {
   const context = await fetchCareContext(supabase, locationId, date, roomLookup);
-  const baseRows = buildBaseRows(context, date);
+  const configuredAreaOrder = await fetchOperationalAreaOrder(supabase, locationId);
+  const baseRows = buildBaseRows(context, date, configuredAreaOrder);
   const entries: Array<{ id: string; type: string; typeSub: string; date: string; computedItems: any }> = [];
   const byKey: Record<string, any> = {};
 

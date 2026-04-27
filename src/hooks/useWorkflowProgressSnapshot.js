@@ -81,7 +81,11 @@ function isRelevantOpsRowId(rowId, viewDate, tomorrow) {
     rowId === `ops_feeding_meds_midday_${viewDate}` ||
     rowId === `ops_feeding_meds_pm_${viewDate}` ||
     rowId === `ops_feeding_report_${viewDate}` ||
+    rowId === `ops_feeding_report_midday_${viewDate}` ||
+    rowId === `ops_feeding_report_pm_${viewDate}` ||
     rowId === `ops_medication_report_${viewDate}` ||
+    rowId === `ops_medication_report_midday_${viewDate}` ||
+    rowId === `ops_medication_report_pm_${viewDate}` ||
     rowId === `ops_belongings_${tomorrow}` ||
     rowId === `ops_collars_${tomorrow}`
   );
