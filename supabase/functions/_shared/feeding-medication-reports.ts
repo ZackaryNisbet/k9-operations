@@ -353,6 +353,16 @@ function dedupeInstructionItems(items: any[]) {
   return result;
 }
 
+function medicationAdminNote(item: any, animalMedicationNotes: string): string {
+  if (item?.notes) return item.notes;
+  const animalNotes = animalMedicationNotes.toLowerCase();
+  if (animalNotes.includes("pill pocket")) return "IN PILL POCKETS";
+  if (animalMedicationNotes) return animalMedicationNotes;
+  const text = [item?.summary, item?.detail, item?.dosage].filter(Boolean).join(" ");
+  if (/\bpill\b/i.test(text)) return "PUT IN FOOD";
+  return "";
+}
+
 function reservationDates(row: any): string {
   const start = formatShortDate(row?.start_date);
   const end = formatShortDate(row?.end_date);
@@ -498,7 +508,7 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
     const bucket = statusBucket(reservation);
     const animalMedicationNotes = normalizeText(animal?.raw_data?.medicines);
     const medicationItems = dedupeInstructionItems((context.medicationMap.get(animalId) || []).flatMap(buildMedicationItems))
-      .map((item) => item.notes || !animalMedicationNotes ? item : { ...item, notes: animalMedicationNotes });
+      .map((item) => ({ ...item, notes: medicationAdminNote(item, animalMedicationNotes) }));
     return {
       id: String(reservation?.gingr_id || reservation?.id || animalId),
       reservationId: String(reservation?.gingr_id || reservation?.id || ""),

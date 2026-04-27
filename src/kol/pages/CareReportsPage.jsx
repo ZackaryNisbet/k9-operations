@@ -394,6 +394,11 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
                     </div>
                     <InstructionBlock title="Feeding" items={row.feedingItems || []} tone="feeding" />
                     <InstructionBlock title="Medications" items={row.medicationItems || []} tone="meds" />
+                    {row.animalMedicationNotes ? (
+                      <div style={{ border: `1px solid ${C.border}`, background: "#FAF5FF", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#6D28D9", fontWeight: 700 }}>
+                        Animal Medication Notes: <span style={{ fontWeight: 600 }}>{row.animalMedicationNotes}</span>
+                      </div>
+                    ) : null}
                     <textarea
                       value={notes[row.id] || ""}
                       onChange={(event) => setNotes((prev) => ({ ...prev, [row.id]: event.target.value }))}
