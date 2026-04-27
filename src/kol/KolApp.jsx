@@ -23,6 +23,7 @@ import FunnelPage from "./pages/FunnelPage";
 import OperationsHub from "./pages/OperationsHub";
 import LiteEODPage from "./pages/EODPage";
 import DailyOpsPage from "./pages/DailyOpsPage";
+import CareReportsPage from "./pages/CareReportsPage";
 import DogDetailPage from "./pages/DogDetailPage";
 import ClientDetailPage from "./pages/ClientDetailPage";
 import AttendanceTrackerPage from "./pages/AttendancePage";
@@ -93,6 +94,11 @@ const LITE_PAGE_SLUGS = {
   "ops-weekly-maintenance": "ops/weekly-maintenance",
   "ops-roll-call-opening": "ops/roll-call/opening",
   "ops-roll-call-closing": "ops/roll-call/closing",
+  "ops-feeding-meds-am": "ops/feeding-meds/am",
+  "ops-feeding-meds-midday": "ops/feeding-meds/midday",
+  "ops-feeding-meds-pm": "ops/feeding-meds/pm",
+  "ops-feeding-report": "ops/feeding-report",
+  "ops-medication-report": "ops/medication-report",
   "role-page": "role-page",
   "role-layout": "role-layout",
   "eod": "eod",
@@ -948,6 +954,11 @@ function LeanAppInner() {
       case "ops-lodging-transfers": return "Lodging Transfers";
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
+      case "ops-feeding-meds-am": return "AM Feeding and Meds";
+      case "ops-feeding-meds-midday": return "Midday Feeding and Meds";
+      case "ops-feeding-meds-pm": return "PM Feeding and Meds";
+      case "ops-feeding-report": return "Feeding Report";
+      case "ops-medication-report": return "Medication Report";
       case "ops-weekly-maintenance": return "Weekly Maintenance";
       case "ops-roll-call-opening": return "Opening Roll Call";
       case "ops-roll-call-closing": return "Closing Roll Call";
@@ -1157,6 +1168,16 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="pamper" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-svc":
         return <DailyOpsPage data={data} save={save} sub="svc" nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
+      case "ops-feeding-meds-am":
+        return <CareReportsPage kind="feeding-meds" initialSession="am" nav={nav} profile={profile} currentLocation={currentLocation} />;
+      case "ops-feeding-meds-midday":
+        return <CareReportsPage kind="feeding-meds" initialSession="midday" nav={nav} profile={profile} currentLocation={currentLocation} />;
+      case "ops-feeding-meds-pm":
+        return <CareReportsPage kind="feeding-meds" initialSession="pm" nav={nav} profile={profile} currentLocation={currentLocation} />;
+      case "ops-feeding-report":
+        return <CareReportsPage kind="feeding-report" initialSession="am" nav={nav} profile={profile} currentLocation={currentLocation} />;
+      case "ops-medication-report":
+        return <CareReportsPage kind="medication-report" initialSession="am" nav={nav} profile={profile} currentLocation={currentLocation} />;
       case "ops-weekly-maintenance":
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "ops-roll-call-opening":

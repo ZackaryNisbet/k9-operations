@@ -47,7 +47,7 @@ const WORKFLOW_DEFS = [
   { id: "feeding_report", label: "Feeding Report" },
   { id: "vendor_log", label: "Vendor Log" },
   { id: "re_eval", label: "Re-eval" },
-  { id: "meds", label: "Medications" },
+  { id: "meds", label: "Medication Report" },
   { id: "evaluations", label: "Evaluations" },
 ];
 

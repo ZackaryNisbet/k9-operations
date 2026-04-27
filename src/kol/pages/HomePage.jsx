@@ -28,6 +28,11 @@ const WORKFLOW_ROUTE_MAP = {
   "lodging-transfer": { page: "ops-lodging-transfers" },
   "roll-call-opening": { page: "ops-roll-call-opening" },
   "roll-call-closing": { page: "ops-roll-call-closing" },
+  "feeding-meds-am": { page: "ops-feeding-meds-am" },
+  "feeding-meds-midday": { page: "ops-feeding-meds-midday" },
+  "feeding-meds-pm": { page: "ops-feeding-meds-pm" },
+  "feeding-report": { page: "ops-feeding-report" },
+  meds: { page: "ops-medication-report" },
 };
 
 function classifyRole(roleCode, profileRole) {

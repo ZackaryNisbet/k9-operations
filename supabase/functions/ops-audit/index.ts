@@ -660,12 +660,18 @@ const WORKFLOW_AUDIT_CONFIG: Record<string, {
   label: string;
   typeSub: string;
   session?: "am" | "midday" | "pm";
-  kind: "feeding-meds" | "feeding-report";
+  kind: "feeding-meds" | "feeding-report" | "medication-report";
 }> = {
   feeding_meds_am: { label: "AM Feeding and Meds", typeSub: "feeding_meds_am", session: "am", kind: "feeding-meds" },
   feeding_meds_midday: { label: "Midday Feeding and Meds", typeSub: "feeding_meds_midday", session: "midday", kind: "feeding-meds" },
   feeding_meds_pm: { label: "PM Feeding and Meds", typeSub: "feeding_meds_pm", session: "pm", kind: "feeding-meds" },
   feeding_report: { label: "Feeding Report", typeSub: "feeding_report", kind: "feeding-report" },
+  feeding_report_midday: { label: "Midday Feeding Report", typeSub: "feeding_report_midday", session: "midday", kind: "feeding-report" },
+  feeding_report_pm: { label: "PM Feeding Report", typeSub: "feeding_report_pm", session: "pm", kind: "feeding-report" },
+  meds: { label: "Medication Report", typeSub: "medication_report", session: "am", kind: "medication-report" },
+  medication_report: { label: "Medication Report", typeSub: "medication_report", session: "am", kind: "medication-report" },
+  medication_report_midday: { label: "Midday Medication Report", typeSub: "medication_report_midday", session: "midday", kind: "medication-report" },
+  medication_report_pm: { label: "PM Medication Report", typeSub: "medication_report_pm", session: "pm", kind: "medication-report" },
 };
 
 function normalizeReservationCollection(result: any): any[] {
@@ -838,7 +844,7 @@ async function fetchWorkflowCandidateReservations(
   sb: any,
   locationId: string,
   date: string,
-  kind: "feeding-meds" | "feeding-report",
+  kind: "feeding-meds" | "feeding-report" | "medication-report",
 ) {
   const { data, error } = await sb
     .from("gingr_reservations")
@@ -855,6 +861,9 @@ async function fetchWorkflowCandidateReservations(
     const category = classifyReservationCategory(reservation?.reservation_type_name || "");
     if (kind === "feeding-report") {
       return category === "boarding" && String(reservation?.start_date || "").slice(0, 10) < date;
+    }
+    if (kind === "medication-report") {
+      return category === "boarding";
     }
     return ["boarding", "daycare", "day boarding", "evaluation"].includes(category);
   });
@@ -936,6 +945,7 @@ async function fetchWorkflowAuditData(
     .filter(Boolean)
     .filter((row: any) => {
       if (config.kind === "feeding-report") return row.feedingItems.length > 0;
+      if (config.kind === "medication-report") return row.medicationItems.length > 0;
       return row.feedingItems.length > 0 || row.medicationItems.length > 0;
     });
 

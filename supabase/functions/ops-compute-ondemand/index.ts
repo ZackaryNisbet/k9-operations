@@ -35,6 +35,7 @@ import {
   type RoomOccupancyLookup,
 } from "../_shared/room-occupancy.ts";
 import { buildRoomCleaningPayload } from "../_shared/room-cleaning.ts";
+import { computeCareReportsForDate } from "../_shared/feeding-medication-reports.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1860,12 +1861,13 @@ Deno.serve(async (req: Request) => {
         .map((assignment: any) => assignment.animalGingrId),
     );
 
-    const [roomCleaning, bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
+    const [roomCleaning, bathing, pamper, enrichment, lodgingTransfers, careReports] = await Promise.all([
       computeRoomCleaning(sb, locationId, date),
       computeBathingReport(sb, locationId, date, roomOccupancyLookup),
       Promise.resolve(computeServiceReport(reservations, "pamper", roomOccupancyLookup)),
       computeEnrichmentReport(sb, locationId, date, reservations, roomOccupancyLookup),
       computeLodgingTransfers(sb, locationId, date),
+      computeCareReportsForDate(sb, locationId, date, roomOccupancyLookup),
     ]);
     const privatePlay = await computePrivatePlay(
       sb,
@@ -1885,6 +1887,9 @@ Deno.serve(async (req: Request) => {
       upsertComputedItems(sb, `ops_pamper_${date}`, locationId, "pamper", "pamper", date, pamper),
       upsertComputedItems(sb, `ops_svc_${date}`, locationId, "svc", "svc", date, enrichment),
       upsertComputedItems(sb, `ops_lodging_transfer_${date}`, locationId, "lodging_transfer", "lodging_transfer", date, lodgingTransfers),
+      ...careReports.entries.map((entry) =>
+        upsertComputedItems(sb, entry.id, locationId, entry.type, entry.typeSub, entry.date, entry.computedItems)
+      ),
     ]);
 
     const duration = Date.now() - startTime;
@@ -1902,6 +1907,7 @@ Deno.serve(async (req: Request) => {
         enrichment,
         private_play: privatePlay,
         lodging_transfers: lodgingTransfers,
+        care_reports: careReports.byKey,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

@@ -14,6 +14,11 @@ export const SNAPSHOT_TO_TYPE_SUB = {
   "lodging-transfer": "lodging_transfer",
   "roll-call-opening": "roll_call_opening",
   "roll-call-closing": "roll_call_closing",
+  "feeding-meds-am": "feeding_meds_am",
+  "feeding-meds-midday": "feeding_meds_midday",
+  "feeding-meds-pm": "feeding_meds_pm",
+  "feeding-report": "feeding_report",
+  meds: "medication_report",
 };
 
 export const ROLE_WORKFLOW_TO_SNAPSHOT = {
@@ -30,6 +35,11 @@ export const ROLE_WORKFLOW_TO_SNAPSHOT = {
   roll_call: "roll-call-closing",
   roll_call_opening: "roll-call-opening",
   roll_call_closing: "roll-call-closing",
+  feeding_meds_am: "feeding-meds-am",
+  feeding_meds_midday: "feeding-meds-midday",
+  feeding_meds_pm: "feeding-meds-pm",
+  feeding_report: "feeding-report",
+  meds: "meds",
 };
 
 export function formatWorkflowCountLabel(row) {
@@ -67,6 +77,11 @@ function isRelevantOpsRowId(rowId, viewDate, tomorrow) {
     rowId === `ops_lodging_transfer_${viewDate}` ||
     rowId === `ops_roll_call_opening_${viewDate}` ||
     rowId === `ops_roll_call_closing_${viewDate}` ||
+    rowId === `ops_feeding_meds_am_${viewDate}` ||
+    rowId === `ops_feeding_meds_midday_${viewDate}` ||
+    rowId === `ops_feeding_meds_pm_${viewDate}` ||
+    rowId === `ops_feeding_report_${viewDate}` ||
+    rowId === `ops_medication_report_${viewDate}` ||
     rowId === `ops_belongings_${tomorrow}` ||
     rowId === `ops_collars_${tomorrow}`
   );
