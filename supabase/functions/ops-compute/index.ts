@@ -35,6 +35,7 @@ import {
   resolveRoomOccupancyLookupEntry,
   type RoomOccupancyLookup,
 } from "../_shared/room-occupancy.ts";
+import { computeCareReportsForDate } from "../_shared/feeding-medication-reports.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2920,6 +2921,14 @@ Deno.serve(async (req: Request) => {
     // 12. Lodging Transfers (from Gingr transfer report — day-of only, not in future loop)
     const lodgingTransfers = await computeLodgingTransfers(supabase, locationId, today, gingrSubdomain, gingrApiKey);
 
+    // 13. Feeding, medication, and meal-verification reports
+    const careReports = await computeCareReportsForDate(
+      supabase,
+      locationId,
+      today,
+      roomOccupancyLookup,
+    );
+
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
     const futureReports: Array<{
@@ -2931,6 +2940,7 @@ Deno.serve(async (req: Request) => {
       enrichment: any;
       belongings: any;
       collars: any;
+      careReports: any;
     }> = [];
 
     for (let offset = 1; offset <= 14; offset++) {
@@ -3033,6 +3043,13 @@ Deno.serve(async (req: Request) => {
         futureRoomOccupancyLookup,
       );
 
+      const careReportsFuture = await computeCareReportsForDate(
+        supabase,
+        locationId,
+        futureDate,
+        futureRoomOccupancyLookup,
+      );
+
       futureReports.push({
         date: futureDate,
         roomOccupancy: buildRoomOccupancyComputedItems(futureRoomOccupancySnapshot),
@@ -3042,6 +3059,7 @@ Deno.serve(async (req: Request) => {
         enrichment: enrichmentFuture,
         belongings: belongingsFuture,
         collars: collarsFuture,
+        careReports: careReportsFuture,
       });
     }
 
@@ -3174,6 +3192,17 @@ Deno.serve(async (req: Request) => {
         today,
         lodgingTransfers,
       ),
+      ...careReports.entries.map((entry: any) =>
+        upsertComputedItems(
+          supabase,
+          entry.id,
+          locationId,
+          entry.type,
+          entry.typeSub,
+          entry.date,
+          entry.computedItems,
+        )
+      ),
       loadRollCallSessionRow(
         supabase,
         locationId,
@@ -3197,6 +3226,9 @@ Deno.serve(async (req: Request) => {
         upsertComputedItems(supabase, `ops_svc_${fr.date}`, locationId, "svc", "svc", fr.date, fr.enrichment),
         upsertComputedItems(supabase, `ops_belongings_${fr.date}`, locationId, "belongings", "belongings", fr.date, fr.belongings),
         upsertComputedItems(supabase, `ops_collars_${fr.date}`, locationId, "collars", "collars", fr.date, fr.collars),
+        ...fr.careReports.entries.map((entry: any) =>
+          upsertComputedItems(supabase, entry.id, locationId, entry.type, entry.typeSub, entry.date, entry.computedItems)
+        ),
       ]),
     ];
 
@@ -3229,6 +3261,9 @@ Deno.serve(async (req: Request) => {
           belongings: { dogs: belongingsReport.dogs.length },
           collars: { dogs: collarsReport.dogs.length, summary: collarsReport.summary },
           lodging_transfers: { transfers: lodgingTransfers.transfers.length, summary: lodgingTransfers.summary },
+          care_reports: Object.fromEntries(
+            Object.entries(careReports.byKey).map(([key, value]: [string, any]) => [key, value?.summary || {}]),
+          ),
         },
         computed_future: futureReports.map(fr => ({
           date: fr.date,
@@ -3239,6 +3274,9 @@ Deno.serve(async (req: Request) => {
           enrichment: { dogs: fr.enrichment.dogs.length },
           belongings: { dogs: fr.belongings.dogs.length },
           collars: { dogs: fr.collars.dogs.length, summary: fr.collars.summary },
+          care_reports: Object.fromEntries(
+            Object.entries(fr.careReports.byKey).map(([key, value]: [string, any]) => [key, value?.summary || {}]),
+          ),
         })),
         errors: errors.length > 0 ? errors : undefined,
       }),

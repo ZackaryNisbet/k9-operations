@@ -19,6 +19,9 @@
     "ops-compute-ondemand": {
       "verifyJwt": false
     },
+    "ops-audit": {
+      "verifyJwt": false
+    },
     "ops-bathing-manual": {
       "verifyJwt": false
     },
