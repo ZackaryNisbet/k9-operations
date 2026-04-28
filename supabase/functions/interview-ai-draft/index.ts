@@ -277,6 +277,19 @@ function cleanEvidence(value: unknown) {
     .slice(0, 3);
 }
 
+function cleanTranscriptSummaryBullets(payload: unknown) {
+  const body = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const source = Array.isArray(body.transcript_summary_bullets)
+    ? body.transcript_summary_bullets
+    : Array.isArray(body.summary_bullets)
+      ? body.summary_bullets
+      : [];
+  return source
+    .map((entry) => String(entry || "").replace(/\s+/g, " ").trim().slice(0, 260))
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 function asBoolean(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.trim().toLowerCase() === "true";
@@ -401,8 +414,12 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           required: ["target_type", "question_key", "pdf_field_name", "draft_text", "confidence", "evidence"],
         },
       },
+      transcript_summary_bullets: {
+        type: "array",
+        items: { type: "string" },
+      },
     },
-    required: ["responses"],
+    required: ["responses", "transcript_summary_bullets"],
   };
 
   return {
@@ -439,6 +456,10 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           "Manager population instructions are allowed source context for what to put in a PDF field, but keep the final wording factual and manager-ready.",
           "If neither the transcript, candidate metadata, nor manager population instruction supports a field, return an empty draft_text for that field.",
           "When a manager population instruction explicitly asks to infer or populate every PDF field, do not leave PDF fields blank just because support is implicit; write the best supported manager-ready draft and keep the language honest about inference.",
+          "Also produce transcript_summary_bullets: 6-10 concise bullets summarizing the interview conversation as a whole.",
+          "The transcript summary should cover topics discussed, candidate motivations/context, traits demonstrated, interviewer reactions or concerns, and notable follow-up context.",
+          "Do not make the transcript summary a field-by-field checklist; write it as HR-ready context for understanding the conversation.",
+          "Use only transcript-supported facts in the transcript summary and keep bullets objective and concise.",
           "Return exactly one response object for every target supplied.",
           "Keep wording concise, factual, and suitable for a manager-edited form.",
           "Do not infer, embellish, or fill gaps from general knowledge.",
@@ -598,6 +619,7 @@ async function saveDraftPayload(
   options: { requestId: string; model: string; usage: unknown; reviewMode: "literal" | "inferred" | "speculative" },
 ) {
   const { valid, skipped } = validateDrafts(aiPayload, targets);
+  const transcriptSummaryBullets = cleanTranscriptSummaryBullets(aiPayload);
 
   let responseQuery = supabase
     .from("labor_interview_responses")
@@ -695,6 +717,19 @@ async function saveDraftPayload(
           request_id: options.requestId,
           usage: options.usage,
         },
+        ...(transcriptSummaryBullets.length
+          ? {
+            interview_summary: {
+              source: "ai_transcript_summary",
+              bullets: transcriptSummaryBullets,
+              generated_at: completedAt,
+              provider: "xai",
+              model: options.model,
+              review_mode: options.reviewMode,
+              request_id: options.requestId,
+            },
+          }
+          : {}),
       },
       updated_by_user_id: userId,
       updated_at: completedAt,
@@ -725,7 +760,7 @@ async function saveDraftPayload(
       .eq("id", interviewGuideId);
   }
 
-  return { savedCount, populatedCount, skipped };
+  return { savedCount, populatedCount, skipped, transcriptSummaryBullets };
 }
 
 serve(async (req) => {
@@ -929,7 +964,7 @@ serve(async (req) => {
       });
     }
 
-    const { savedCount, populatedCount, skipped } = await saveDraftPayload(
+    const { savedCount, populatedCount, skipped, transcriptSummaryBullets } = await saveDraftPayload(
       supabase,
       targetRecord as Record<string, unknown>,
       interview_id,
@@ -951,6 +986,7 @@ serve(async (req) => {
       saved_count: savedCount,
       populated_count: populatedCount,
       skipped_targets: skipped,
+      transcript_summary_count: transcriptSummaryBullets.length,
       provider: "xai",
       model: String(pollResult.model || draftJob.model || XAI_DRAFT_MODEL),
       request_id: requestId,
