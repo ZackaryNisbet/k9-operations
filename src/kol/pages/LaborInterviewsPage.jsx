@@ -899,6 +899,33 @@ function splitTextAcrossPdfFields(value = "", fields = []) {
   return chunks;
 }
 
+function getPdfFieldFitLimit(field = {}) {
+  const rect = getInterviewPdfFieldDisplayRect(field) || {};
+  const width = Number(rect.width || 0);
+  const height = Number(rect.height || 0);
+  if (!Number.isFinite(width) || width <= 0) return 80;
+  const lines = height > 22 ? Math.max(1, Math.floor(height / 9.5)) : 1;
+  const charsPerLine = Math.max(18, Math.floor(width / 5.1));
+  return Math.max(18, Math.min(360, charsPerLine * lines));
+}
+
+function fitPdfFieldValueForSlot(value = "", field = {}) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (field.type && field.type !== "text") return text;
+  const limit = getPdfFieldFitLimit(field);
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function buildReadablePdfFieldMap(map = {}, fields = []) {
+  const fieldByName = new Map((fields || []).map((field) => [field.name, field]));
+  return Object.entries(map || {}).reduce((next, [name, value]) => {
+    next[name] = fitPdfFieldValueForSlot(value, fieldByName.get(name) || { name });
+    return next;
+  }, {});
+}
+
 function buildPdfReviewItems(fields = []) {
   const groups = new Map();
   const items = [];
@@ -1047,7 +1074,18 @@ function conciseBullet(value = "", maxLength = 190) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
 }
 
+function getTranscriptSummaryBullets(record) {
+  const metadata = record?.metadata || {};
+  const source = metadata.interview_summary || metadata.transcript_summary || {};
+  const rawBullets = Array.isArray(source) ? source : source.bullets;
+  return (Array.isArray(rawBullets) ? rawBullets : [])
+    .map((bullet) => conciseBullet(bullet, 240))
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap }) {
+  const transcriptBullets = getTranscriptSummaryBullets(record);
   const guideBullets = buildPdfReviewItems(fields)
     .filter((item) => item.type === "question_part")
     .map((item) => {
@@ -1074,9 +1112,10 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
   if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${conciseBullet(finalMap.biggest_concern, 140)}`);
 
   const sections = [
+    transcriptBullets.length ? { heading: "Conversation Summary", bullets: transcriptBullets } : null,
     scoreBullets.length ? { heading: "Scorecard", bullets: scoreBullets } : null,
-    guideBullets.length ? { heading: "Guide Responses", bullets: guideBullets } : null,
-    customBullets.length ? { heading: "Custom Questions", bullets: customBullets } : null,
+    guideBullets.length ? { heading: "Reviewed Guide Responses", bullets: guideBullets } : null,
+    customBullets.length ? { heading: "Reviewed Custom Questions", bullets: customBullets } : null,
   ].filter(Boolean);
 
   if (!sections.length) return [];
@@ -2033,7 +2072,8 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
   return (
     <div className="interview-pdf-value-layer" style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
       {pageFields.map((field) => {
-        const value = String(fieldValues?.[field.name] || "").trim();
+        const rawValue = String(fieldValues?.[field.name] || "").trim();
+        const value = fitPdfFieldValueForSlot(rawValue, field);
         if (!value) return null;
         const style = getPdfFieldValueOverlayStyle(field, pageBox, pageSize);
         if (!style) return null;
@@ -2043,7 +2083,7 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
         return (
           <div
             key={field.name}
-            title={value}
+            title={rawValue}
             style={{
               position: "absolute",
               left: style.left,
@@ -2055,14 +2095,14 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
               display: smallField ? "grid" : "block",
               placeItems: smallField ? "center" : undefined,
               overflow: "hidden",
-              whiteSpace: smallField ? "nowrap" : "pre-wrap",
-              wordBreak: smallField ? undefined : "break-word",
-              textOverflow: "clip",
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
               fontFamily: smallField ? "Arial, sans-serif" : "\"Times New Roman\", Times, serif",
               fontSize,
-              lineHeight: smallField ? 1 : 1.18,
+              lineHeight: smallField ? 1 : `${Math.max(9, style.height - 2)}px`,
               fontWeight: smallField ? 800 : 500,
               padding: smallField ? 0 : "1px 2px",
+              background: smallField ? "transparent" : "rgba(255,255,255,0.92)",
             }}
           >
             {smallField ? "X" : value}
@@ -3968,7 +4008,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         responsesByTarget,
         finalMap,
       });
-      const filledBytes = await fillInterviewPdfBytes(bytes, finalMap, { flatten: true, summaryPages });
+      const readableFinalMap = buildReadablePdfFieldMap(finalMap, selectedPdfFields);
+      const filledBytes = await fillInterviewPdfBytes(bytes, readableFinalMap, { flatten: true, summaryPages });
       const sourcePageCount = Number(selectedSnapshot?.version?.pdf_page_count || 0) || (await countInterviewPdfPages(bytes).catch(() => 0));
       const finalPageCount = await countInterviewPdfPages(filledBytes).catch(() => sourcePageCount);
       const summaryPageCount = Math.max(0, finalPageCount - sourcePageCount);
