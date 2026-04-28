@@ -23,6 +23,7 @@ import {
   getInterviewRecommendationOption,
   getInterviewAudioContentType,
   getInterviewRoleLabel,
+  sanitizeInterviewFileName,
   INTERVIEW_AI_REVIEW_MODES,
   INTERVIEW_AI_REVIEW_MODE_LABELS,
   INTERVIEW_AUDIO_ACCEPT,
@@ -756,6 +757,80 @@ async function normalizeInterviewAudioForSttOnServer(payload) {
   return response.json();
 }
 
+function inferOriginalAudioPathFromChunk(sourceAudio = {}) {
+  const chunks = Array.isArray(sourceAudio.chunks) ? sourceAudio.chunks : [];
+  const chunkPath = String(chunks[0]?.path || chunks[0]?.audio_file_path || "").trim();
+  const originalFileName = String(sourceAudio.original_file_name || sourceAudio.original_audio_file_name || "").trim();
+  if (!chunkPath || !originalFileName) return "";
+  const folder = chunkPath.includes("/") ? chunkPath.slice(0, chunkPath.lastIndexOf("/") + 1) : "";
+  return `${folder}${sanitizeInterviewFileName(originalFileName)}`;
+}
+
+function getInterviewAudioSourceCandidates(sourceAudio = {}) {
+  const chunks = Array.isArray(sourceAudio.chunks) ? sourceAudio.chunks : [];
+  const candidates = [
+    {
+      bucket: sourceAudio.original_bucket || sourceAudio.original_audio_file_bucket || sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+      path: sourceAudio.original_path || sourceAudio.original_audio_file_path || "",
+    },
+    {
+      bucket: sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+      path: inferOriginalAudioPathFromChunk(sourceAudio),
+    },
+    {
+      bucket: sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+      path: sourceAudio.path || sourceAudio.audio_file_path || "",
+    },
+    ...chunks.map((chunk) => ({
+      bucket: chunk.bucket || chunk.audio_file_bucket || sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+      path: chunk.path || chunk.audio_file_path || "",
+    })),
+  ];
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const bucket = String(candidate.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET).trim();
+    const path = String(candidate.path || "").trim();
+    if (!path) return false;
+    const key = `${bucket}:${path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    candidate.bucket = bucket;
+    candidate.path = path;
+    return true;
+  });
+}
+
+function getInterviewAudioPlaybackCandidates(sourceAudio = {}) {
+  const chunks = Array.isArray(sourceAudio.chunks) ? sourceAudio.chunks : [];
+  const chunkCandidates = chunks
+    .map((chunk) => ({
+      bucket: chunk.bucket || chunk.audio_file_bucket || sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+      path: chunk.path || chunk.audio_file_path || "",
+      startSeconds: Number(chunk.start_seconds ?? chunk.startSeconds ?? 0) || 0,
+      fileName: chunk.file_name || chunk.audio_file_name || "",
+      chunk: true,
+    }))
+    .filter((candidate) => candidate.path)
+    .sort((a, b) => a.startSeconds - b.startSeconds);
+  if (chunkCandidates.length > 1) return chunkCandidates;
+  return getInterviewAudioSourceCandidates(sourceAudio).map((candidate) => ({
+    ...candidate,
+    startSeconds: 0,
+    fileName: "",
+    chunk: false,
+  }));
+}
+
+async function isSignedAudioUrlReadable(signedUrl) {
+  if (!signedUrl) return false;
+  try {
+    const response = await fetch(signedUrl, { method: "HEAD", cache: "no-store" });
+    return response.ok || response.status === 405;
+  } catch {
+    return true;
+  }
+}
+
 function IconButton({ label, onClick, disabled, children, variant = "default", style = {} }) {
   const colors = {
     default: { bg: "#fff", color: C.textSec, border: C.border },
@@ -918,12 +993,101 @@ function fitPdfFieldValueForSlot(value = "", field = {}) {
   return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
+function cleanPdfExportSnippet(value = "") {
+  let text = String(value || "").replace(/\s+/g, " ").trim();
+  for (let index = 0; index < 3; index += 1) {
+    text = text
+      .replace(/[,\s;:–-]+$/g, "")
+      .replace(/\b(?:and|or|with|without|for|to|from|of|in|on|at|by|while|because|but|that|the|a|an)$/i, "")
+      .trim();
+  }
+  return text;
+}
+
+function fitPdfFieldValueForExport(value = "", field = {}) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (field.type && field.type !== "text") return text;
+  const limit = getPdfFieldFitLimit(field);
+  if (text.length <= limit) return text;
+  if (limit <= 36) return "See summary appendix";
+  const suffix = " (see summary)";
+  const workingLimit = Math.max(8, limit - suffix.length);
+  const breakpoint = Math.max(
+    text.lastIndexOf(" ", workingLimit),
+    text.lastIndexOf(".", workingLimit),
+    text.lastIndexOf(";", workingLimit),
+    text.lastIndexOf(",", workingLimit),
+  );
+  const cutAt = breakpoint >= Math.floor(workingLimit * 0.35) ? breakpoint : workingLimit;
+  const snippet = cleanPdfExportSnippet(text.slice(0, Math.max(1, cutAt)));
+  if (snippet.length >= 10 && snippet.length + suffix.length <= limit) return `${snippet}${suffix}`;
+  return limit >= 20 ? "See summary appendix" : cleanPdfExportSnippet(text.slice(0, limit));
+}
+
+function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
+  const targets = fields || [];
+  const text = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!targets.length) return [];
+  if (targets.length === 1) return [fitPdfFieldValueForExport(text, targets[0])];
+  const chunks = [];
+  let remaining = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+  targets.forEach((field, index) => {
+    if (!remaining) {
+      chunks.push("");
+      return;
+    }
+    if (index === targets.length - 1) {
+      chunks.push(fitPdfFieldValueForExport(remaining, field));
+      remaining = "";
+      return;
+    }
+    const limit = Math.max(18, Math.floor(getPdfFieldFitLimit(field) * 0.96));
+    if (remaining.length <= limit) {
+      chunks.push(remaining);
+      remaining = "";
+      return;
+    }
+    const breakpoint = Math.max(
+      remaining.lastIndexOf(" ", limit),
+      remaining.lastIndexOf(".", limit),
+      remaining.lastIndexOf(";", limit),
+      remaining.lastIndexOf(",", limit),
+    );
+    const cutAt = breakpoint >= Math.floor(limit * 0.58) ? breakpoint : limit;
+    chunks.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  });
+  return chunks;
+}
+
 function buildReadablePdfFieldMap(map = {}, fields = []) {
   const fieldByName = new Map((fields || []).map((field) => [field.name, field]));
   return Object.entries(map || {}).reduce((next, [name, value]) => {
     next[name] = fitPdfFieldValueForSlot(value, fieldByName.get(name) || { name });
     return next;
   }, {});
+}
+
+function buildExportPdfFieldMap(map = {}, fields = []) {
+  const fieldByName = new Map((fields || []).map((field) => [field.name, field]));
+  const next = {};
+  const handled = new Set();
+  buildPdfReviewItems(fields)
+    .filter((item) => item.type === "question_part")
+    .forEach((item) => {
+      const fullValue = composePdfReviewItemValue(item, (field) => map[field.name] || "");
+      const chunks = splitTextAcrossPdfFieldsForExport(fullValue, item.fields || []);
+      (item.fields || []).forEach((field, index) => {
+        next[field.name] = chunks[index] || "";
+        handled.add(field.name);
+      });
+    });
+  Object.entries(map || {}).forEach(([name, value]) => {
+    if (handled.has(name)) return;
+    next[name] = fitPdfFieldValueForExport(value, fieldByName.get(name) || { name });
+  });
+  return next;
 }
 
 function buildPdfReviewItems(fields = []) {
@@ -1074,6 +1238,7 @@ function conciseBullet(value = "", maxLength = 190) {
 
 function normalizeSummaryBulletText(value = "") {
   return String(value || "")
+    .replace(/^(\s*[-*•]\s*)+/, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1083,7 +1248,7 @@ function summaryTextToBullets(value = "") {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
-    .map((line) => normalizeSummaryBulletText(line.replace(/^[-*•]\s*/, "")))
+    .map((line) => normalizeSummaryBulletText(line))
     .filter(Boolean);
 }
 
@@ -1103,11 +1268,23 @@ function summarySectionKey(value = "") {
   return key || "summary";
 }
 
+const SUMMARY_SECTION_KEYS = new Set([
+  "call_summary",
+  "scorecard",
+  "reviewed_guide_responses",
+  "reviewed_custom_questions",
+]);
+
+function isSummarySectionKey(value = "") {
+  return SUMMARY_SECTION_KEYS.has(String(value || ""));
+}
+
 function getStoredSummaryEdits(recordOrEdits) {
   const source = recordOrEdits?.metadata?.interview_summary_edits || recordOrEdits || {};
   const sections = source.sections || source;
   if (!sections || typeof sections !== "object" || Array.isArray(sections)) return {};
   return Object.entries(sections).reduce((next, [key, value]) => {
+    if (!isSummarySectionKey(key)) return next;
     const bullets = Array.isArray(value) ? value : summaryTextToBullets(value);
     next[key] = bullets.map((bullet) => normalizeSummaryBulletText(bullet)).filter(Boolean);
     return next;
@@ -1214,6 +1391,15 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
   if (overallScore) scoreBullets.push(`Overall score: ${overallScore}`);
   if (finalMap.strongest_area) scoreBullets.push(`Strongest area: ${normalizeSummaryBulletText(finalMap.strongest_area)}`);
   if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${normalizeSummaryBulletText(finalMap.biggest_concern)}`);
+  (fields || [])
+    .filter((field) => /^score_notes_/i.test(String(field?.name || "")))
+    .map((field) => {
+      const value = String(finalMap[field.name] || "").trim();
+      if (!value) return "";
+      return `${humanizePdfFieldName(field.name).replace(/^Score Notes\s*/i, "")}: ${normalizeSummaryBulletText(value)}`;
+    })
+    .filter(Boolean)
+    .forEach((bullet) => scoreBullets.push(bullet));
 
   const sections = applySummarySectionEdits([
     transcriptBullets.length ? { key: "call_summary", heading: "Call Summary", bullets: transcriptBullets } : null,
@@ -1719,9 +1905,11 @@ function AudioUploadPanel({
   audioDuration,
   transcriptTurns = [],
   onPlayToggle,
+  onAudioSeek,
   onAudioTimeUpdate,
   onAudioLoadedMetadata,
   onAudioEnded,
+  onAudioError,
 }) {
   const sourceAudio = record?.metadata?.audio_transcription?.source_audio || {};
   const transcription = record?.metadata?.audio_transcription || {};
@@ -1779,6 +1967,10 @@ function AudioUploadPanel({
 
   const seekTranscript = (time) => {
     const nextTime = Number(time || 0);
+    if (onAudioSeek) {
+      onAudioSeek(nextTime);
+      return;
+    }
     if (audioRef.current) audioRef.current.currentTime = nextTime;
     onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
   };
@@ -1845,11 +2037,13 @@ function AudioUploadPanel({
           onTimeUpdate={onAudioTimeUpdate}
           onLoadedMetadata={onAudioLoadedMetadata}
           onEnded={onAudioEnded}
+          onError={onAudioError}
           style={{ display: "none" }}
         />
       )}
       <div
         className={`interview-audio-stage${audioPlaying ? " is-playing" : ""}`}
+        onClick={audioUrl ? onPlayToggle : undefined}
         style={{
           marginTop: 18,
           height: 176,
@@ -1862,6 +2056,7 @@ function AudioUploadPanel({
           alignItems: "center",
           justifyContent: "center",
           padding: "0 20px",
+          cursor: audioUrl ? "pointer" : "default",
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 18px 42px rgba(15,23,42,0.08)",
         }}
       >
@@ -1945,7 +2140,10 @@ function AudioUploadPanel({
         >
           <button
             type="button"
-            onClick={onPlayToggle}
+            onClick={(event) => {
+              event.stopPropagation();
+              onPlayToggle?.();
+            }}
             disabled={!audioUrl}
             aria-label={audioPlaying ? "Pause interview audio" : "Play interview audio"}
             style={{
@@ -2001,6 +2199,10 @@ function AudioUploadPanel({
             disabled={!audioUrl}
             onChange={(event) => {
               const nextTime = Number(event.target.value || 0);
+              if (onAudioSeek) {
+                onAudioSeek(nextTime);
+                return;
+              }
               if (audioRef.current) audioRef.current.currentTime = nextTime;
               onAudioTimeUpdate({ currentTarget: { currentTime: nextTime } });
             }}
@@ -2269,6 +2471,7 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
   const pageFrameRefs = useRef(new Map());
   const pdfDocRef = useRef(null);
   const renderRunRef = useRef(0);
+  const lastAutoScrollTargetRef = useRef("");
   const [containerWidth, setContainerWidth] = useState(0);
   const [pageState, setPageState] = useState({ loading: false, error: "", pages: [] });
   const summaryPreviewPages = useMemo(() => paginateInterviewSummaryPreview(summaryPages), [summaryPages]);
@@ -2295,6 +2498,7 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
     pageCanvasRefs.current = new Map();
     pageFrameRefs.current = new Map();
     renderRunRef.current += 1;
+    lastAutoScrollTargetRef.current = "";
     if (pdfDocRef.current) {
       try { pdfDocRef.current.destroy?.(); } catch (_) {}
       pdfDocRef.current = null;
@@ -2392,14 +2596,17 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
 
   useEffect(() => {
     const pageNumber = Math.max(1, Number(activePageNumber || 1));
+    const targetKey = activeSummary ? "summary" : `page:${pageNumber}`;
+    if (lastAutoScrollTargetRef.current === targetKey) return;
     const node = activeSummary ? pageFrameRefs.current.get("summary-0") : pageFrameRefs.current.get(pageNumber);
     const scroller = containerRef.current;
     if (!node || !scroller) return;
+    lastAutoScrollTargetRef.current = targetKey;
     scroller.scrollTo({
       top: Math.max(0, node.offsetTop - 14),
       behavior: "smooth",
     });
-  }, [activePageNumber, activeSummary, pageState.pages.length, summaryPreviewPages.length]);
+  }, [activePageNumber, activeSummary, pageState.pages.length]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", height: "100%", minHeight: 560, overflow: "auto", borderRadius: 6, background: "#f8fafc", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }}>
@@ -3257,6 +3464,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
   const [audioFileName, setAudioFileName] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
+  const [audioSources, setAudioSources] = useState([]);
+  const [activeAudioSourceIndex, setActiveAudioSourceIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
@@ -3270,6 +3479,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const audioInputRef = useRef(null);
   const transcriptInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
+  const pendingAudioPlaybackRef = useRef(null);
   const pdfSaveTimersRef = useRef({});
   const questionSaveTimersRef = useRef({});
   const summarySaveTimerRef = useRef(null);
@@ -3328,6 +3538,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const selectedSnapshot = useMemo(() => snapshotForGuide(selectedRecord, selectedGuide), [selectedGuide, selectedRecord]);
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
+  const selectedPdfSourcePath = selectedSnapshot?.version?.source_pdf_path || "";
+  const selectedPdfSourceBucket = selectedSnapshot?.version?.source_pdf_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
   const responsesByTarget = useMemo(() => mapResponsesByTarget(responses, selectedGuide?.id || ""), [responses, selectedGuide?.id]);
   const autoScoreStorageKey = useMemo(() => getAutoScoreStorageKey(actorUserId), [actorUserId]);
   const selectedTranscriptTurns = useMemo(() => {
@@ -3510,6 +3722,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setAudioPlaying(false);
     setAudioCurrentTime(0);
     setAudioDuration(0);
+    setAudioSources([]);
+    setActiveAudioSourceIndex(0);
+    pendingAudioPlaybackRef.current = null;
     if (audioPlayerRef.current) audioPlayerRef.current.pause();
   }, [selectedRecord?.id]);
 
@@ -3568,33 +3783,52 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [responsesByTarget]);
 
   useEffect(() => {
-    const path = selectedSnapshot?.version?.source_pdf_path;
-    const bucket = selectedSnapshot?.version?.source_pdf_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
-    if (!path) {
+    if (!selectedPdfSourcePath) {
       setPdfPreviewUrl("");
       return;
     }
     let active = true;
-    supabase.storage.from(bucket).createSignedUrl(path, 60 * 30).then(({ data: signed, error }) => {
+    supabase.storage.from(selectedPdfSourceBucket).createSignedUrl(selectedPdfSourcePath, 60 * 30).then(({ data: signed, error }) => {
       if (!active) return;
       setPdfPreviewUrl(error ? "" : signed?.signedUrl || "");
     });
     return () => { active = false; };
-  }, [selectedSnapshot]);
+  }, [selectedPdfSourceBucket, selectedPdfSourcePath]);
 
   useEffect(() => {
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
-    const path = sourceAudio.path;
-    const bucket = sourceAudio.bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
-    if (!path) {
+    const candidates = getInterviewAudioPlaybackCandidates(sourceAudio);
+    if (!candidates.length) {
+      setAudioSources([]);
+      setActiveAudioSourceIndex(0);
       setAudioUrl("");
       return;
     }
     let active = true;
-    supabase.storage.from(bucket).createSignedUrl(path, 60 * 30).then(({ data: signed, error }) => {
+    setAudioUrl("");
+    setAudioSources([]);
+    setActiveAudioSourceIndex(0);
+    const signFirstReadableSource = async () => {
+      const signedSources = [];
+      for (const candidate of candidates) {
+        const { data: signed, error } = await supabase.storage.from(candidate.bucket).createSignedUrl(candidate.path, 60 * 30);
+        if (!active) return;
+        const signedUrl = error ? "" : signed?.signedUrl || "";
+        if (signedUrl && await isSignedAudioUrlReadable(signedUrl)) {
+          signedSources.push({ ...candidate, url: signedUrl });
+          if (signedSources.length === 1) {
+            setAudioSources([...signedSources]);
+            setActiveAudioSourceIndex(0);
+            setAudioUrl(signedSources[0]?.url || "");
+          }
+        }
+      }
       if (!active) return;
-      setAudioUrl(error ? "" : signed?.signedUrl || "");
-    });
+      setAudioSources(signedSources);
+      setActiveAudioSourceIndex((index) => Math.min(index, Math.max(0, signedSources.length - 1)));
+      setAudioUrl((currentUrl) => currentUrl || signedSources[0]?.url || "");
+    };
+    signFirstReadableSource();
     return () => { active = false; };
   }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
 
@@ -3645,6 +3879,56 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
+  const findAudioSourceIndexForTime = (seconds) => {
+    if (!audioSources.length) return 0;
+    const target = Math.max(0, Number(seconds || 0));
+    let index = 0;
+    audioSources.forEach((source, sourceIndex) => {
+      if (Number(source.startSeconds || 0) <= target) index = sourceIndex;
+    });
+    return index;
+  };
+
+  const seekAudioPlayback = (seconds, options = {}) => {
+    const target = Math.max(0, Number(seconds || 0));
+    setAudioCurrentTime(target);
+    if (!audioSources.length) {
+      if (audioPlayerRef.current) audioPlayerRef.current.currentTime = target;
+      return;
+    }
+    const nextIndex = findAudioSourceIndexForTime(target);
+    const nextSource = audioSources[nextIndex] || audioSources[0];
+    const nextRelativeTime = Math.max(0, target - Number(nextSource?.startSeconds || 0));
+    const shouldResume = options.play ?? audioPlaying;
+    if (nextIndex !== activeAudioSourceIndex) {
+      pendingAudioPlaybackRef.current = { currentTime: nextRelativeTime, play: shouldResume };
+      setActiveAudioSourceIndex(nextIndex);
+      setAudioUrl(nextSource?.url || "");
+      return;
+    }
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.currentTime = nextRelativeTime;
+      if (shouldResume) {
+        audioPlayerRef.current.play()
+          .then(() => setAudioPlaying(true))
+          .catch((error) => showToast(safeUiError(error, "Audio playback failed"), "error"));
+      }
+    }
+  };
+
+  useEffect(() => {
+    const pending = pendingAudioPlaybackRef.current;
+    const player = audioPlayerRef.current;
+    if (!pending || !player || !audioUrl) return;
+    pendingAudioPlaybackRef.current = null;
+    player.currentTime = Math.max(0, Number(pending.currentTime || 0));
+    if (pending.play) {
+      player.play()
+        .then(() => setAudioPlaying(true))
+        .catch((error) => showToast(safeUiError(error, "Audio playback failed"), "error"));
+    }
+  }, [audioUrl, showToast]);
+
   const toggleAudioPlayback = async () => {
     const player = audioPlayerRef.current;
     if (!player || !audioUrl) return;
@@ -3659,6 +3943,33 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     } catch (error) {
       showToast(safeUiError(error, "Audio playback failed"), "error");
     }
+  };
+
+  const handleAudioPlaybackError = () => {
+    setAudioPlaying(false);
+    showToast("Audio file could not be loaded. Replace the audio if playback still fails.", "error");
+  };
+
+  const handleAudioTimeUpdate = (event) => {
+    const offset = Number(audioSources[activeAudioSourceIndex]?.startSeconds || 0);
+    setAudioCurrentTime(offset + (event.currentTarget.currentTime || 0));
+  };
+
+  const handleAudioLoadedMetadata = (event) => {
+    if (audioSources.length <= 1) setAudioDuration(event.currentTarget.duration || 0);
+  };
+
+  const handleAudioEnded = () => {
+    const nextIndex = activeAudioSourceIndex + 1;
+    if (audioSources.length > 1 && nextIndex < audioSources.length) {
+      const nextSource = audioSources[nextIndex];
+      pendingAudioPlaybackRef.current = { currentTime: 0, play: true };
+      setActiveAudioSourceIndex(nextIndex);
+      setAudioUrl(nextSource?.url || "");
+      setAudioCurrentTime(Number(nextSource?.startSeconds || 0));
+      return;
+    }
+    setAudioPlaying(false);
   };
 
   const createNewInterview = async () => {
@@ -3777,6 +4088,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const saveSummaryDraftsToMetadata = async (draftTextByKey, activeKey = "") => {
     if (!selectedRecord?.id) return null;
     const sections = Object.entries(draftTextByKey || {}).reduce((next, [key, text]) => {
+      if (!isSummarySectionKey(key)) return next;
       next[key] = summaryTextToBullets(text);
       return next;
     }, {});
@@ -4181,16 +4493,19 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           transcript_turns: transcriptTurns,
           chunk_count: safeChunks.length,
           source_audio: {
-            bucket: originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
-            path: originalAudio?.audio_file_path || safeChunks[0]?.audio_file_path,
-            file_name: originalAudio?.audio_file_name || safeChunks[0]?.audio_file_name,
-            mime_type: originalAudio?.audio_mime_type || safeChunks[0]?.audio_mime_type || "audio/mpeg",
+            bucket: originalAudio?.original_audio_file_bucket || originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+            path: originalAudio?.original_audio_file_path || originalAudio?.audio_file_path || safeChunks[0]?.audio_file_path,
+            file_name: originalAudio?.original_audio_file_name || originalAudio?.audio_file_name || safeChunks[0]?.audio_file_name,
+            mime_type: originalAudio?.original_audio_mime_type || originalAudio?.audio_mime_type || safeChunks[0]?.audio_mime_type || "audio/mpeg",
             size_bytes: safeChunks.reduce((sum, chunk) => sum + (Number(chunk.audio_size_bytes) || 0), 0) || null,
+            original_bucket: originalAudio?.original_audio_file_bucket || originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+            original_path: originalAudio?.original_audio_file_path || null,
             original_file_name: originalAudio?.original_audio_file_name || originalAudio?.audio_file_name,
             original_mime_type: originalAudio?.original_audio_mime_type || null,
             original_size_bytes: originalAudio?.original_audio_size_bytes || null,
-            normalized_for_stt: true,
+            normalized_for_stt: !originalAudio?.original_audio_file_path,
             chunks: safeChunks.map((chunk) => ({
+              bucket: chunk.audio_file_bucket || originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
               path: chunk.audio_file_path,
               file_name: chunk.audio_file_name,
               size_bytes: chunk.audio_size_bytes || null,
@@ -4256,6 +4571,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             chunks: normalizedAudio.audio_chunks,
             originalAudio: {
               ...normalizedAudio,
+              original_audio_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+              original_audio_file_path: path,
               original_audio_file_name: normalizedAudio.original_audio_file_name || file.name,
               original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
               original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
@@ -4397,8 +4714,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             }
           : selectedRecord,
       });
-      const readableFinalMap = buildReadablePdfFieldMap(finalMap, selectedPdfFields);
-      const filledBytes = await fillInterviewPdfBytes(bytes, readableFinalMap, { flatten: true, summaryPages });
+      const exportFinalMap = buildExportPdfFieldMap(finalMap, selectedPdfFields);
+      const filledBytes = await fillInterviewPdfBytes(bytes, exportFinalMap, { flatten: true, summaryPages });
       const sourcePageCount = Number(selectedSnapshot?.version?.pdf_page_count || 0) || (await countInterviewPdfPages(bytes).catch(() => 0));
       const finalPageCount = await countInterviewPdfPages(filledBytes).catch(() => sourcePageCount);
       const summaryPageCount = Math.max(0, finalPageCount - sourcePageCount);
@@ -5097,9 +5414,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             audioDuration={audioDuration}
             transcriptTurns={selectedTranscriptTurns}
             onPlayToggle={toggleAudioPlayback}
-            onAudioTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime || 0)}
-            onAudioLoadedMetadata={(event) => setAudioDuration(event.currentTarget.duration || 0)}
-            onAudioEnded={() => setAudioPlaying(false)}
+            onAudioSeek={seekAudioPlayback}
+            onAudioTimeUpdate={handleAudioTimeUpdate}
+            onAudioLoadedMetadata={handleAudioLoadedMetadata}
+            onAudioEnded={handleAudioEnded}
+            onAudioError={handleAudioPlaybackError}
           />
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
