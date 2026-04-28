@@ -950,25 +950,35 @@ async function appendInterviewSummaryPages(pdfDoc, summaryPages = []) {
         context.y -= 16;
       }
       bullets.forEach((bullet) => {
-        const lines = wrapPdfLine(bullet.replace(/^[-*]\s*/, ""), maxChars);
-        ensureSpace(lines.length * lineHeight + 4);
-        context.page.drawText("-", {
-          x: marginX + 4,
-          y: context.y,
-          size: 10,
-          font,
-          color: bodyColor,
-        });
-        lines.forEach((line, index) => {
-          context.page.drawText(line, {
-            x: marginX + 18,
-            y: context.y - (index * lineHeight),
-            size: 10,
-            font,
-            color: bodyColor,
+        let remainingLines = wrapPdfLine(bullet.replace(/^[-*]\s*/, ""), maxChars);
+        let firstChunk = true;
+        while (remainingLines.length) {
+          ensureSpace(lineHeight + 4);
+          const availableLines = Math.max(1, Math.floor((context.y - marginBottom - 4) / lineHeight));
+          const lines = remainingLines.slice(0, availableLines);
+          remainingLines = remainingLines.slice(lines.length);
+          if (firstChunk) {
+            context.page.drawText("-", {
+              x: marginX + 4,
+              y: context.y,
+              size: 10,
+              font,
+              color: bodyColor,
+            });
+          }
+          lines.forEach((line, index) => {
+            context.page.drawText(line, {
+              x: marginX + 18,
+              y: context.y - (index * lineHeight),
+              size: 10,
+              font,
+              color: bodyColor,
+            });
           });
-        });
-        context.y -= (lines.length * lineHeight) + 4;
+          context.y -= (lines.length * lineHeight) + (remainingLines.length ? 0 : 4);
+          if (remainingLines.length) context = addPage();
+          firstChunk = false;
+        }
       });
       context.y -= 6;
     });
