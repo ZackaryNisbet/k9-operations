@@ -304,9 +304,11 @@ function draftJobMatchesRequest(
     pdfPopulationInstructions: Map<string, string>;
     pdfOnly: boolean;
     customOnly: boolean;
+    summaryOnly?: boolean;
     reviewMode: "literal" | "inferred" | "speculative";
   },
 ) {
+  if (asBoolean(draftJob.summary_only) !== !!options.summaryOnly) return false;
   const existingGuideId = String(draftJob.interview_guide_id || "").trim();
   if (existingGuideId !== options.interviewGuideId) return false;
   const existingMode = normalizeReviewMode(draftJob.review_mode);
@@ -460,6 +462,7 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           "The transcript summary should cover topics discussed, candidate motivations/context, traits demonstrated, interviewer reactions or concerns, and notable follow-up context.",
           "Do not make the transcript summary a field-by-field checklist; write it as HR-ready context for understanding the conversation.",
           "Use only transcript-supported facts in the transcript summary and keep bullets objective and concise.",
+          "If no targets are supplied, return responses as an empty array and still produce transcript_summary_bullets.",
           "Return exactly one response object for every target supplied.",
           "Keep wording concise, factual, and suitable for a manager-edited form.",
           "Do not infer, embellish, or fill gaps from general knowledge.",
@@ -616,7 +619,7 @@ async function saveDraftPayload(
   userId: string,
   targets: DraftTarget[],
   aiPayload: unknown,
-  options: { requestId: string; model: string; usage: unknown; reviewMode: "literal" | "inferred" | "speculative" },
+  options: { requestId: string; model: string; usage: unknown; reviewMode: "literal" | "inferred" | "speculative"; summaryOnly?: boolean },
 ) {
   const { valid, skipped } = validateDrafts(aiPayload, targets);
   const transcriptSummaryBullets = cleanTranscriptSummaryBullets(aiPayload);
@@ -693,7 +696,7 @@ async function saveDraftPayload(
   await supabase
     .from("labor_interview_records")
     .update({
-      status: "ai_drafted",
+      ...(options.summaryOnly ? {} : { status: "ai_drafted" }),
       metadata: {
         ...metadata,
         ai_draft_job: {
@@ -705,18 +708,31 @@ async function saveDraftPayload(
           completed_at: completedAt,
           target_count: targets.length,
         },
-        last_ai_draft: {
-          provider: "xai",
-          model: options.model,
-          generated_at: completedAt,
-          saved_count: savedCount,
-          populated_count: populatedCount,
-          skipped_count: skipped.length,
-          target_count: targets.length,
-          review_mode: options.reviewMode,
-          request_id: options.requestId,
-          usage: options.usage,
-        },
+        ...(options.summaryOnly
+          ? {
+            last_ai_summary: {
+              provider: "xai",
+              model: options.model,
+              generated_at: completedAt,
+              bullet_count: transcriptSummaryBullets.length,
+              request_id: options.requestId,
+              usage: options.usage,
+            },
+          }
+          : {
+            last_ai_draft: {
+              provider: "xai",
+              model: options.model,
+              generated_at: completedAt,
+              saved_count: savedCount,
+              populated_count: populatedCount,
+              skipped_count: skipped.length,
+              target_count: targets.length,
+              review_mode: options.reviewMode,
+              request_id: options.requestId,
+              usage: options.usage,
+            },
+          }),
         ...(transcriptSummaryBullets.length
           ? {
             interview_summary: {
@@ -736,7 +752,7 @@ async function saveDraftPayload(
     })
     .eq("id", interviewId);
 
-  if (interviewGuideId) {
+  if (interviewGuideId && !options.summaryOnly) {
     const guideMetadata = ((record.guide_metadata || {}) as Record<string, unknown>);
     await supabase
       .from("labor_interview_record_guides")
@@ -830,6 +846,9 @@ serve(async (req) => {
     const requestedCustomOnly = asBoolean(requestBody.custom_only);
     const storedCustomOnly = asBoolean(draftJob.custom_only);
     const customOnly = action === "poll" ? storedCustomOnly : requestedCustomOnly;
+    const requestedSummaryOnly = asBoolean(requestBody.summary_only);
+    const storedSummaryOnly = asBoolean(draftJob.summary_only);
+    const summaryOnly = action === "poll" ? storedSummaryOnly : requestedSummaryOnly;
     const requestedInstructions = normalizeInstructionMap(requestBody.pdf_population_instructions);
     const storedInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
     const pdfPopulationInstructions = action === "poll"
@@ -839,7 +858,7 @@ serve(async (req) => {
       return jsonResponse({ error: "PDF population instructions are required for targeted AI fill." }, 400);
     }
 
-    const targets = buildTargets(targetRecord as Record<string, unknown>, {
+    const targets = summaryOnly ? [] : buildTargets(targetRecord as Record<string, unknown>, {
       autoScoreCandidate,
       targetPdfFieldName,
       pdfPopulationInstructions,
@@ -847,7 +866,7 @@ serve(async (req) => {
       customOnly,
       reviewMode,
     });
-    if (targets.length === 0) {
+    if (!summaryOnly && targets.length === 0) {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
     }
 
@@ -860,6 +879,7 @@ serve(async (req) => {
         pdfPopulationInstructions,
         pdfOnly,
         customOnly,
+        summaryOnly,
         reviewMode,
       });
       if (draftJob.status === "pending" && existingRequestId && canReusePending) {
@@ -873,6 +893,7 @@ serve(async (req) => {
           target_count: Number(draftJob.target_count || targets.length),
           interview_guide_id: activeGuideId || null,
           review_mode: reviewMode,
+          summary_only: summaryOnly,
         });
       }
 
@@ -896,6 +917,7 @@ serve(async (req) => {
               target_pdf_field_name: targetPdfFieldName || null,
               pdf_only: pdfOnly,
               custom_only: customOnly,
+              summary_only: summaryOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
             auto_score_candidate: autoScoreCandidate,
@@ -914,6 +936,7 @@ serve(async (req) => {
         target_count: targets.length,
         interview_guide_id: activeGuideId || null,
         review_mode: reviewMode,
+        summary_only: summaryOnly,
       });
     }
 
@@ -944,6 +967,7 @@ serve(async (req) => {
               target_pdf_field_name: targetPdfFieldName || null,
               pdf_only: pdfOnly,
               custom_only: customOnly,
+              summary_only: summaryOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
           },
@@ -961,6 +985,7 @@ serve(async (req) => {
         target_count: Number(draftJob.target_count || targets.length),
         interview_guide_id: activeGuideId || null,
         review_mode: reviewMode,
+        summary_only: summaryOnly,
       });
     }
 
@@ -977,6 +1002,7 @@ serve(async (req) => {
         model: String(pollResult.model || draftJob.model || XAI_DRAFT_MODEL),
         usage: pollResult.usage,
         reviewMode,
+        summaryOnly,
       },
     );
 
@@ -992,6 +1018,7 @@ serve(async (req) => {
       request_id: requestId,
       interview_guide_id: activeGuideId || null,
       review_mode: reviewMode,
+      summary_only: summaryOnly,
     });
   } catch (error) {
     return jsonResponse({ error: error?.message || "Interview Grok draft failed." }, error?.status || 500);
