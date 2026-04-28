@@ -58,11 +58,11 @@
       "updatedAt": "2026-04-28T02:50:42.255Z"
     },
     "interview-transcribe-audio": {
-      "commit": "81aa100c67ab38b2e451a9ab224eeccef6a38b55",
+      "commit": "7586916c42ea4c5f71933f0411912285fb1c6d00",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Interview module multi-guide review workflow",
-      "updatedAt": "2026-04-28T02:50:42.255Z"
+      "note": "Background resilient interview audio transcription",
+      "updatedAt": "2026-04-28T03:08:10.021Z"
     },
     "performance-review-signing": {
       "commit": "2b1702064d6c5f7582e0d28f3256f785dd075063",
