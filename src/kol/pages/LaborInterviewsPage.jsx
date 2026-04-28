@@ -1848,6 +1848,22 @@ function getPdfFieldOverlayStyle(field, pageBox, pageSize) {
   };
 }
 
+function getPdfFieldValueOverlayStyle(field, pageBox, pageSize) {
+  const rect = getInterviewPdfFieldDisplayRect(field) || {};
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (!pageBox || !pageSize?.height || !Number.isFinite(x) || !Number.isFinite(y) || !width || !height) return null;
+  const isSmallField = width <= 14 && height <= 14;
+  return {
+    left: pageBox.left + (x * pageBox.scale) + (isSmallField ? 0 : 1),
+    top: pageBox.top + ((pageSize.height - y - height) * pageBox.scale) + (isSmallField ? 0 : -1),
+    width: Math.max(isSmallField ? 10 : 20, width * pageBox.scale),
+    height: Math.max(isSmallField ? 10 : 9, height * pageBox.scale),
+  };
+}
+
 function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, onSelectField }) {
   const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
   if (!pageFields.length) return null;
@@ -1892,7 +1908,56 @@ function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize
   );
 }
 
-function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeKey, onSelectField }) {
+function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize: explicitPageSize = null, fieldValues = {} }) {
+  const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
+  if (!pageFields.length) return null;
+  const pageSize = explicitPageSize || getPdfFieldPageSize(pageFields[0], pageFields);
+  const pageBox = getPdfPageOverlayBox(containerSize, pageSize);
+  if (!pageBox) return null;
+  return (
+    <div className="interview-pdf-value-layer" style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
+      {pageFields.map((field) => {
+        const value = String(fieldValues?.[field.name] || "").trim();
+        if (!value) return null;
+        const style = getPdfFieldValueOverlayStyle(field, pageBox, pageSize);
+        if (!style) return null;
+        const rect = getInterviewPdfFieldDisplayRect(field) || {};
+        const smallField = Number(rect.width || 0) <= 14 && Number(rect.height || 0) <= 14;
+        const fontSize = smallField ? Math.max(8, style.height * 0.74) : Math.max(6.5, Math.min(10.5, style.height * 0.62));
+        return (
+          <div
+            key={field.name}
+            title={value}
+            style={{
+              position: "absolute",
+              left: style.left,
+              top: style.top,
+              width: style.width,
+              height: style.height,
+              boxSizing: "border-box",
+              color: "#0f172a",
+              display: smallField ? "grid" : "block",
+              placeItems: smallField ? "center" : undefined,
+              overflow: "hidden",
+              whiteSpace: smallField ? "nowrap" : "pre-wrap",
+              wordBreak: smallField ? undefined : "break-word",
+              textOverflow: "clip",
+              fontFamily: smallField ? "Arial, sans-serif" : "\"Times New Roman\", Times, serif",
+              fontSize,
+              lineHeight: smallField ? 1 : 1.18,
+              fontWeight: smallField ? 800 : 500,
+              padding: smallField ? 0 : "1px 2px",
+            }}
+          >
+            {smallField ? "X" : value}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, activePageNumber, activeKey, onSelectField }) {
   const containerRef = useRef(null);
   const pageCanvasRefs = useRef(new Map());
   const pageFrameRefs = useRef(new Map());
@@ -2060,14 +2125,23 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, activePageNumber, activeK
                 style={{ display: "block", background: "#fff" }}
               />
               {pageInfo.pageSize && pageInfo.renderSize && (
-                <PdfFieldClickLayer
-                  fields={fields}
-                  activePageNumber={pageInfo.pageNumber}
-                  activeKey={activeKey}
-                  containerSize={pageInfo.renderSize}
-                  pageSize={pageInfo.pageSize}
-                  onSelectField={onSelectField}
-                />
+                <>
+                  <PdfFieldValueLayer
+                    fields={fields}
+                    activePageNumber={pageInfo.pageNumber}
+                    containerSize={pageInfo.renderSize}
+                    pageSize={pageInfo.pageSize}
+                    fieldValues={fieldValues}
+                  />
+                  <PdfFieldClickLayer
+                    fields={fields}
+                    activePageNumber={pageInfo.pageNumber}
+                    activeKey={activeKey}
+                    containerSize={pageInfo.renderSize}
+                    pageSize={pageInfo.pageSize}
+                    onSelectField={onSelectField}
+                  />
+                </>
               )}
             </div>
           )) : (
@@ -2267,6 +2341,7 @@ function ReviewGuideModal({
   loadingPdf,
   responsesByTarget,
   responseDrafts,
+  pdfFieldValues,
   savingKey,
   exporting,
   activeIndex,
@@ -2474,6 +2549,7 @@ function ReviewGuideModal({
                 pdfUrl={pdfUrl}
                 loadingPdf={loadingPdf}
                 fields={reviewFields}
+                fieldValues={pdfFieldValues}
                 activePageNumber={activeField?.page_number || 1}
                 activeKey={activeKey}
                 onSelectField={selectField}
@@ -2749,8 +2825,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [showTranscriptInput, setShowTranscriptInput] = useState(false);
   const [transcriptDraft, setTranscriptDraft] = useState("");
   const [savingTranscript, setSavingTranscript] = useState(false);
-  const [guidePdfUrl, setGuidePdfUrl] = useState("");
-  const [guidePdfLoading, setGuidePdfLoading] = useState(false);
   const [pdfReviewIndex, setPdfReviewIndex] = useState(0);
   const [configQuestionsOpen, setConfigQuestionsOpen] = useState(false);
   const [showNewPosition, setShowNewPosition] = useState(false);
@@ -2760,7 +2834,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [savingNewInterview, setSavingNewInterview] = useState(false);
   const [recordSaving, setRecordSaving] = useState(false);
   const [responseDrafts, setResponseDrafts] = useState({});
-  const [guidePreviewDrafts, setGuidePreviewDrafts] = useState({});
   const [savingResponseKey, setSavingResponseKey] = useState("");
   const [questionDrafts, setQuestionDrafts] = useState({});
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
@@ -2782,10 +2855,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const audioPlayerRef = useRef(null);
   const pdfSaveTimersRef = useRef({});
   const questionSaveTimersRef = useRef({});
-  const guidePreviewTimerRef = useRef(null);
-  const guidePdfObjectUrlRef = useRef("");
-  const guideSourcePdfRef = useRef({ key: "", bytes: null });
-  const guideRenderSeqRef = useRef(0);
 
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
@@ -3026,7 +3095,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       }
     });
     setResponseDrafts((prev) => (draftMapsEqual(prev, nextDrafts) ? prev : nextDrafts));
-    setGuidePreviewDrafts((prev) => (draftMapsEqual(prev, nextDrafts) ? prev : nextDrafts));
   }, [responsesByTarget]);
 
   useEffect(() => {
@@ -3043,17 +3111,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     });
     return () => { active = false; };
   }, [selectedSnapshot]);
-
-  useEffect(() => {
-    if (!showGuideModal) return undefined;
-    if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
-    guidePreviewTimerRef.current = setTimeout(() => {
-      setGuidePreviewDrafts((prev) => (draftMapsEqual(prev, responseDrafts) ? prev : responseDrafts));
-    }, 180);
-    return () => {
-      if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
-    };
-  }, [responseDrafts, showGuideModal]);
 
   useEffect(() => {
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
@@ -3084,61 +3141,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return map;
   }, [responseDrafts, selectedPdfFields, selectedRecord]);
 
-  useEffect(() => {
-    if (!showGuideModal) {
-      if (guidePdfObjectUrlRef.current) {
-        URL.revokeObjectURL(guidePdfObjectUrlRef.current);
-        guidePdfObjectUrlRef.current = "";
-      }
-      setGuidePdfUrl("");
-      return undefined;
-    }
-    const path = selectedSnapshot?.version?.source_pdf_path;
-    const bucket = selectedSnapshot?.version?.source_pdf_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
-    if (!path || !selectedRecord?.id) {
-      setGuidePdfUrl("");
-      return undefined;
-    }
-    let active = true;
-    const renderSeq = guideRenderSeqRef.current + 1;
-    guideRenderSeqRef.current = renderSeq;
-    setGuidePdfLoading(!guidePdfObjectUrlRef.current);
-    const sourceKey = `${bucket}:${path}`;
-    Promise.resolve()
-      .then(async () => {
-        if (guideSourcePdfRef.current.key !== sourceKey || !guideSourcePdfRef.current.bytes) {
-          const { data: sourceBlob, error } = await supabase.storage.from(bucket).download(path);
-          if (error) throw error;
-          guideSourcePdfRef.current = {
-            key: sourceKey,
-            bytes: await sourceBlob.arrayBuffer(),
-          };
-        }
-        const filledBytes = await fillInterviewPdfBytes(
-          guideSourcePdfRef.current.bytes,
-          buildCurrentPdfResponseMap(guidePreviewDrafts),
-          { flatten: false },
-        );
-        const objectUrl = URL.createObjectURL(new Blob([filledBytes], { type: "application/pdf" }));
-        if (active && renderSeq === guideRenderSeqRef.current) {
-          const previousUrl = guidePdfObjectUrlRef.current;
-          guidePdfObjectUrlRef.current = objectUrl;
-          setGuidePdfUrl(objectUrl);
-          if (previousUrl) setTimeout(() => URL.revokeObjectURL(previousUrl), 1200);
-        } else {
-          URL.revokeObjectURL(objectUrl);
-        }
-      })
-      .catch((error) => {
-        if (active) showToast(safeUiError(error, "Failed to render interview guide"), "error");
-      })
-      .finally(() => {
-        if (active) setGuidePdfLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [buildCurrentPdfResponseMap, guidePreviewDrafts, selectedRecord?.id, selectedSnapshot, showGuideModal, showToast]);
+  const guidePreviewFieldValues = useMemo(() => buildCurrentPdfResponseMap(responseDrafts), [buildCurrentPdfResponseMap, responseDrafts]);
 
   const setAutoScorePreference = (enabled) => {
     setAutoScoreCandidates(enabled);
@@ -3855,9 +3858,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const setPdfFieldDraft = (field, value) => {
     const key = responseKeyForPdfField(field);
     setResponseDrafts((prev) => ({ ...prev, [key]: value }));
-    if (showGuideModal) {
-      setGuidePreviewDrafts((prev) => ({ ...prev, [key]: value }));
-    }
     if (pdfSaveTimersRef.current[key]) clearTimeout(pdfSaveTimersRef.current[key]);
     pdfSaveTimersRef.current[key] = setTimeout(() => {
       savePdfFieldResponse(field, value);
@@ -4795,10 +4795,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           record={selectedRecord}
           fields={selectedPdfFields}
           artifacts={artifacts.filter((artifact) => !selectedGuide?.id || !artifact.interview_guide_id || artifact.interview_guide_id === selectedGuide.id)}
-          pdfUrl={guidePdfUrl}
-          loadingPdf={guidePdfLoading}
+          pdfUrl={pdfPreviewUrl}
+          loadingPdf={!!selectedSnapshot?.version?.source_pdf_path && !pdfPreviewUrl}
           responsesByTarget={responsesByTarget}
           responseDrafts={responseDrafts}
+          pdfFieldValues={guidePreviewFieldValues}
           savingKey={savingResponseKey}
           exporting={exportingPdf}
           activeIndex={pdfReviewIndex}
