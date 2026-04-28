@@ -822,21 +822,50 @@ function getPdfTextAppearanceValue(fieldName, value) {
   return textValue;
 }
 
+function getInterviewTextFieldRect(field, fieldName) {
+  try {
+    const widget = field.acroField?.getWidgets?.()?.[0];
+    const current = widget?.getRectangle?.() || null;
+    const override = getInterviewPdfFieldGeometryOverride(fieldName, current);
+    return override?.rect || current;
+  } catch {
+    return null;
+  }
+}
+
+function getInterviewTextFieldFontSize(field, fieldName, textValue) {
+  const normalized = normalizeFieldName(fieldName);
+  if (/^score_/.test(normalized) && !/^score_notes_/.test(normalized)) return 8.5;
+  const text = String(textValue || "").replace(/\s+/g, " ").trim();
+  if (!text) return 8.2;
+  const rect = getInterviewTextFieldRect(field, fieldName) || {};
+  const width = Math.max(0, Number(rect.width || 0) - 4);
+  const height = Math.max(0, Number(rect.height || 0));
+  const defaultSize = text.length > 120 || textValue.includes("\n") ? 7.4 : 8.2;
+  if (!width || !height) return defaultSize;
+
+  const maxByWidth = width / Math.max(1, text.length * 0.48);
+  const maxByHeight = Math.max(4.2, Math.min(8.6, (height - 1.5) * 0.74));
+  const minimum = text.length > 210 ? 3.9 : text.length > 160 ? 4.4 : text.length > 120 ? 5.1 : 6.2;
+  return Math.max(minimum, Math.min(defaultSize, maxByWidth, maxByHeight));
+}
+
 function prepareInterviewTextField(field, fieldName, value) {
   const textValue = String(value || "");
   const normalized = normalizeFieldName(fieldName);
   if (/candidate.*name|applicant.*name|interviewer|manager|date|time|location|scorecard.*interviewer|scorecard.*date/.test(normalized)) {
     return;
   }
+  const rect = getInterviewTextFieldRect(field, fieldName) || {};
+  const isSingleLineHeight = Number(rect.height || 0) > 0 && Number(rect.height || 0) < 22;
   try {
-    if (textValue.includes("\n") || textValue.length > 70) field.enableMultiline();
+    if (textValue.includes("\n") || (textValue.length > 70 && !isSingleLineHeight)) field.enableMultiline();
+    else if (isSingleLineHeight) field.disableMultiline?.();
   } catch {
     // Some imported fields may not allow changing multiline flags.
   }
   try {
-    if (/^score_/.test(normalized) && !/^score_notes_/.test(normalized)) field.setFontSize(8.5);
-    else if (textValue.length > 120 || textValue.includes("\n")) field.setFontSize(7.4);
-    else field.setFontSize(8.2);
+    field.setFontSize(getInterviewTextFieldFontSize(field, fieldName, textValue));
   } catch {
     // Keep filling even if one field rejects appearance changes.
   }
