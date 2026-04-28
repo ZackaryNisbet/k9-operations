@@ -51,11 +51,11 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "8592d4d2ceb70af6a5920b4a450a5490eb517de6",
+      "commit": "f3e615160148c22fdf0ffbd9d3a27fa93e883f4a",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Generate transcript summary bullets for interview appendix",
-      "updatedAt": "2026-04-28T09:17:30.606Z"
+      "note": "Support summary-only interview call summaries",
+      "updatedAt": "2026-04-28T12:22:53.782Z"
     },
     "interview-transcribe-audio": {
       "commit": "7586916c42ea4c5f71933f0411912285fb1c6d00",
