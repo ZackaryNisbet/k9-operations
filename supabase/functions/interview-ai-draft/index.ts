@@ -27,6 +27,7 @@ type DraftTarget = {
   prompt: string;
   field_type?: string | null;
   max_length?: number;
+  review_mode?: "literal" | "inferred" | "speculative";
 };
 
 type AiDraftResponse = {
@@ -58,6 +59,34 @@ function sanitizeManagerInstruction(value: unknown) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 1400);
+}
+
+function normalizeReviewMode(value: unknown): "literal" | "inferred" | "speculative" {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "inferred") return "inferred";
+  if (text === "speculative") return "speculative";
+  return "literal";
+}
+
+function reviewModeInstruction(mode: string) {
+  if (mode === "speculative") {
+    return [
+      "Speculative mode: you may use looser trait matching across the transcript.",
+      "The answer still must be logical and relevant to the target, and every non-empty response needs evidence.",
+      "Do not invent facts, credentials, events, or outcomes that are not supported by the transcript.",
+    ].join(" ");
+  }
+  if (mode === "inferred") {
+    return [
+      "Inferred mode: the exact question does not need to be asked.",
+      "You may fill a target when the transcript demonstrates a relevant behavior, trait, or response quality.",
+      "Keep the wording clear that the answer is based on demonstrated interview evidence.",
+    ].join(" ");
+  }
+  return [
+    "Literal mode: fill only when the interviewer asked this exact question, a clear rephrase, or the candidate directly answered the same point.",
+    "If the transcript only loosely relates to the target, return an empty draft_text.",
+  ].join(" ");
 }
 
 function normalizeInstructionMap(value: unknown) {
@@ -119,6 +148,8 @@ function buildTargets(
     targetPdfFieldName?: string;
     pdfPopulationInstructions?: Map<string, string>;
     pdfOnly?: boolean;
+    customOnly?: boolean;
+    reviewMode?: "literal" | "inferred" | "speculative";
   } = {},
 ): DraftTarget[] {
   const snapshot = (record.template_snapshot || {}) as Record<string, unknown>;
@@ -141,6 +172,7 @@ function buildTargets(
       key: String(question.question_key),
       prompt: String(question.prompt),
       max_length: 1200,
+      review_mode: options.reviewMode || "literal",
     }));
 
   const fieldTargets = fields
@@ -162,9 +194,11 @@ function buildTargets(
         prompt: fieldPrompt,
         field_type: field.type ? String(field.type) : null,
         max_length: field.type === "text" ? 900 : 120,
+        review_mode: options.reviewMode || "literal",
       };
     });
 
+  if (options.customOnly) return questionTargets;
   return targetPdfFieldName || options.pdfOnly ? fieldTargets : [...questionTargets, ...fieldTargets];
 }
 
@@ -218,11 +252,23 @@ function asBoolean(value: unknown) {
 
 function draftJobMatchesRequest(
   draftJob: Record<string, unknown>,
-  options: { targetPdfFieldName: string; pdfPopulationInstructions: Map<string, string>; pdfOnly: boolean },
+  options: {
+    interviewGuideId: string;
+    targetPdfFieldName: string;
+    pdfPopulationInstructions: Map<string, string>;
+    pdfOnly: boolean;
+    customOnly: boolean;
+    reviewMode: "literal" | "inferred" | "speculative";
+  },
 ) {
+  const existingGuideId = String(draftJob.interview_guide_id || "").trim();
+  if (existingGuideId !== options.interviewGuideId) return false;
+  const existingMode = normalizeReviewMode(draftJob.review_mode);
+  if (existingMode !== options.reviewMode) return false;
   const existingTarget = String(draftJob.target_pdf_field_name || "").trim();
   if (existingTarget !== options.targetPdfFieldName) return false;
   if (asBoolean(draftJob.pdf_only) !== options.pdfOnly) return false;
+  if (asBoolean(draftJob.custom_only) !== options.customOnly) return false;
   const existingInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
   if (existingInstructions.size !== options.pdfPopulationInstructions.size) return false;
   for (const [key, instruction] of options.pdfPopulationInstructions.entries()) {
@@ -298,6 +344,7 @@ function buildCandidateContext(record: Record<string, unknown>) {
 }
 
 function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate: Record<string, unknown>) {
+  const reviewModes = Array.from(new Set(targets.map((target) => target.review_mode || "literal")));
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -343,7 +390,12 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
         role: "system",
         content: [
           "You draft K9 Resorts interview notes for a manager.",
-          "Use only facts explicitly supported by the supplied transcript.",
+          "Use the supplied review_mode on each target to decide how strict the transcript match must be.",
+          "Literal, inferred, and speculative are evidence strictness settings, not permission to fabricate.",
+          "Literal mode rule: only fill direct answers or clear rephrases of the target question.",
+          "Inferred mode rule: fill when the transcript demonstrates the relevant behavior or trait even if the exact question was not asked.",
+          "Speculative mode rule: use looser trait matching, but still keep the answer logical, relevant, and evidence-backed.",
+          "Use only facts supported by the supplied transcript or allowed candidate metadata.",
           "You may use supplied candidate metadata only for identity/date/role fields, never for interview substance.",
           "Manager population instructions are first-party manager context and may be used as factual context for PDF drafting.",
           "For numbered PDF STAR fields such as q01_situation, q01_task, q01_action, and q01_result, first find the matching numbered interview question and use the candidate's answer that follows it.",
@@ -358,6 +410,7 @@ function buildGrokPayload(transcript: string, targets: DraftTarget[], candidate:
           "Keep wording concise, factual, and suitable for a manager-edited form.",
           "Do not infer, embellish, or fill gaps from general knowledge.",
           "Include short evidence snippets for non-empty answers.",
+          `Active review mode guidance: ${reviewModes.map(reviewModeInstruction).join(" ")}`,
         ].join(" "),
       },
       {
@@ -428,21 +481,60 @@ function getDraftJob(record: Record<string, unknown>) {
   return (getRecordMetadata(record).ai_draft_job || {}) as Record<string, unknown>;
 }
 
+function recordWithGuideSnapshot(record: Record<string, unknown>, guide: Record<string, unknown> | null) {
+  if (!guide) return record;
+  return {
+    ...record,
+    guide_metadata: guide.metadata || {},
+    template_id: guide.template_id,
+    template_version_id: guide.template_version_id,
+    template_snapshot: guide.template_snapshot || {},
+    pdf_field_manifest_snapshot: guide.pdf_field_manifest_snapshot || [],
+    question_snapshot: guide.question_snapshot || [],
+  };
+}
+
+async function loadInterviewGuide(
+  supabase: ReturnType<typeof createClient>,
+  record: Record<string, unknown>,
+  interviewId: string,
+  requestedGuideId: string,
+) {
+  let query = supabase
+    .from("labor_interview_record_guides")
+    .select("*")
+    .eq("interview_id", interviewId);
+  if (requestedGuideId) query = query.eq("id", requestedGuideId);
+  query = query.order("sequence_order", { ascending: true }).order("created_at", { ascending: true }).limit(1);
+
+  const { data, error } = await query;
+  if (error) throw new InterviewFunctionError(error.message || "Unable to load attached interview guide.", 500);
+  const guide = Array.isArray(data) && data.length ? data[0] : null;
+  if (requestedGuideId && !guide) throw new InterviewFunctionError("Attached interview guide was not found.", 404);
+  if (guide) return guide as Record<string, unknown>;
+  return null;
+}
+
 async function saveDraftPayload(
   supabase: ReturnType<typeof createClient>,
   record: Record<string, unknown>,
   interviewId: string,
+  interviewGuideId: string | null,
   userId: string,
   targets: DraftTarget[],
   aiPayload: unknown,
-  options: { requestId: string; model: string; usage: unknown },
+  options: { requestId: string; model: string; usage: unknown; reviewMode: "literal" | "inferred" | "speculative" },
 ) {
   const { valid, skipped } = validateDrafts(aiPayload, targets);
 
-  const { data: existingRows, error: responseError } = await supabase
+  let responseQuery = supabase
     .from("labor_interview_responses")
     .select("*")
     .eq("interview_id", interviewId);
+  responseQuery = interviewGuideId
+    ? responseQuery.eq("interview_guide_id", interviewGuideId)
+    : responseQuery.is("interview_guide_id", null);
+  const { data: existingRows, error: responseError } = await responseQuery;
   if (responseError) throw responseError;
 
   const existingByTarget = new Map<string, Record<string, unknown>>();
@@ -462,10 +554,18 @@ async function saveDraftPayload(
     const existing = existingByTarget.get(key);
     const draftText = String(row.draft_text || "").trim();
     if (draftText) populatedCount += 1;
+    const existingManualText = String(existing?.response_text || "").trim();
+    const mergedText = existingManualText && draftText
+      ? [existingManualText, draftText].filter((entry, index, list) => list.findIndex((item) => item === entry) === index).join("\n")
+      : null;
     const payload = {
       ai_draft_text: draftText || null,
       ai_confidence: row.confidence,
       ai_evidence: row.evidence || [],
+      ai_review_mode: options.reviewMode,
+      manual_notes_text: existingManualText || existing?.manual_notes_text || null,
+      ai_merged_text: mergedText,
+      response_state: mergedText ? "merged_draft" : (draftText ? "ai_draft" : "blank"),
       prompt_snapshot: row.prompt_snapshot,
       updated_by_user_id: userId,
       updated_at: new Date().toISOString(),
@@ -481,6 +581,7 @@ async function saveDraftPayload(
         .from("labor_interview_responses")
         .insert({
           interview_id: interviewId,
+          interview_guide_id: interviewGuideId,
           response_type: row.target_type,
           question_key: row.question_key,
           pdf_field_name: row.pdf_field_name,
@@ -518,6 +619,7 @@ async function saveDraftPayload(
           populated_count: populatedCount,
           skipped_count: skipped.length,
           target_count: targets.length,
+          review_mode: options.reviewMode,
           request_id: options.requestId,
           usage: options.usage,
         },
@@ -526,6 +628,30 @@ async function saveDraftPayload(
       updated_at: completedAt,
     })
     .eq("id", interviewId);
+
+  if (interviewGuideId) {
+    const guideMetadata = ((record.guide_metadata || {}) as Record<string, unknown>);
+    await supabase
+      .from("labor_interview_record_guides")
+      .update({
+        guide_status: "ai_drafted",
+        metadata: {
+          ...guideMetadata,
+          last_ai_draft: {
+            provider: "xai",
+            model: options.model,
+            generated_at: completedAt,
+            saved_count: savedCount,
+            populated_count: populatedCount,
+            review_mode: options.reviewMode,
+            request_id: options.requestId,
+          },
+        },
+        updated_by_user_id: userId,
+        updated_at: completedAt,
+      })
+      .eq("id", interviewGuideId);
+  }
 
   return { savedCount, populatedCount, skipped };
 }
@@ -579,12 +705,24 @@ serve(async (req) => {
     const autoScoreCandidate = asBoolean(
       requestBody.auto_score_candidate ?? draftJob.auto_score_candidate ?? metadata.auto_score_candidate ?? false,
     );
+    const requestedInterviewGuideId = String(requestBody.interview_guide_id || "").trim();
+    const storedInterviewGuideId = String(draftJob.interview_guide_id || "").trim();
+    const interviewGuideId = action === "poll" ? storedInterviewGuideId : requestedInterviewGuideId;
+    const requestedReviewMode = normalizeReviewMode(requestBody.review_mode || metadata.ai_review_mode || "literal");
+    const storedReviewMode = normalizeReviewMode(draftJob.review_mode || requestedReviewMode);
+    const reviewMode = action === "poll" ? storedReviewMode : requestedReviewMode;
+    const guide = await loadInterviewGuide(supabase, record as Record<string, unknown>, String(interview_id), interviewGuideId);
+    const targetRecord = recordWithGuideSnapshot(record as Record<string, unknown>, guide);
+    const activeGuideId = guide?.id ? String(guide.id) : "";
     const requestedTargetPdfFieldName = String(requestBody.target_pdf_field_name || "").trim();
     const storedTargetPdfFieldName = String(draftJob.target_pdf_field_name || "").trim();
     const targetPdfFieldName = action === "poll" ? storedTargetPdfFieldName : requestedTargetPdfFieldName;
     const requestedPdfOnly = asBoolean(requestBody.pdf_only);
     const storedPdfOnly = asBoolean(draftJob.pdf_only);
     const pdfOnly = action === "poll" ? storedPdfOnly : requestedPdfOnly;
+    const requestedCustomOnly = asBoolean(requestBody.custom_only);
+    const storedCustomOnly = asBoolean(draftJob.custom_only);
+    const customOnly = action === "poll" ? storedCustomOnly : requestedCustomOnly;
     const requestedInstructions = normalizeInstructionMap(requestBody.pdf_population_instructions);
     const storedInstructions = normalizeInstructionMap(draftJob.pdf_population_instructions);
     const pdfPopulationInstructions = action === "poll"
@@ -594,11 +732,13 @@ serve(async (req) => {
       return jsonResponse({ error: "PDF population instructions are required for targeted AI fill." }, 400);
     }
 
-    const targets = buildTargets(record as Record<string, unknown>, {
+    const targets = buildTargets(targetRecord as Record<string, unknown>, {
       autoScoreCandidate,
       targetPdfFieldName,
       pdfPopulationInstructions,
       pdfOnly,
+      customOnly,
+      reviewMode,
     });
     if (targets.length === 0) {
       return jsonResponse({ error: "No interview targets are available for this template snapshot." }, 400);
@@ -607,7 +747,14 @@ serve(async (req) => {
     const existingRequestId = String(draftJob.request_id || "").trim();
 
     if (action === "start") {
-      const canReusePending = draftJobMatchesRequest(draftJob, { targetPdfFieldName, pdfPopulationInstructions, pdfOnly });
+      const canReusePending = draftJobMatchesRequest(draftJob, {
+        interviewGuideId: activeGuideId,
+        targetPdfFieldName,
+        pdfPopulationInstructions,
+        pdfOnly,
+        customOnly,
+        reviewMode,
+      });
       if (draftJob.status === "pending" && existingRequestId && canReusePending) {
         return jsonResponse({
           ok: true,
@@ -617,6 +764,8 @@ serve(async (req) => {
           provider: "xai",
           model: String(draftJob.model || XAI_DRAFT_MODEL),
           target_count: Number(draftJob.target_count || targets.length),
+          interview_guide_id: activeGuideId || null,
+          review_mode: reviewMode,
         });
       }
 
@@ -635,8 +784,11 @@ serve(async (req) => {
               started_at: startedAt,
               target_count: targets.length,
               auto_score_candidate: autoScoreCandidate,
+              interview_guide_id: activeGuideId || null,
+              review_mode: reviewMode,
               target_pdf_field_name: targetPdfFieldName || null,
               pdf_only: pdfOnly,
+              custom_only: customOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
             auto_score_candidate: autoScoreCandidate,
@@ -653,6 +805,8 @@ serve(async (req) => {
         provider: "xai",
         model: XAI_DRAFT_MODEL,
         target_count: targets.length,
+        interview_guide_id: activeGuideId || null,
+        review_mode: reviewMode,
       });
     }
 
@@ -678,8 +832,11 @@ serve(async (req) => {
               last_polled_at: polledAt,
               target_count: Number(draftJob.target_count || targets.length),
               auto_score_candidate: autoScoreCandidate,
+              interview_guide_id: activeGuideId || null,
+              review_mode: reviewMode,
               target_pdf_field_name: targetPdfFieldName || null,
               pdf_only: pdfOnly,
+              custom_only: customOnly,
               pdf_population_instructions: Object.fromEntries(pdfPopulationInstructions.entries()),
             },
           },
@@ -695,13 +852,16 @@ serve(async (req) => {
         provider: "xai",
         model: String(draftJob.model || XAI_DRAFT_MODEL),
         target_count: Number(draftJob.target_count || targets.length),
+        interview_guide_id: activeGuideId || null,
+        review_mode: reviewMode,
       });
     }
 
     const { savedCount, populatedCount, skipped } = await saveDraftPayload(
       supabase,
-      record as Record<string, unknown>,
+      targetRecord as Record<string, unknown>,
       interview_id,
+      activeGuideId || null,
       userId,
       targets,
       pollResult.payload,
@@ -709,6 +869,7 @@ serve(async (req) => {
         requestId,
         model: String(pollResult.model || draftJob.model || XAI_DRAFT_MODEL),
         usage: pollResult.usage,
+        reviewMode,
       },
     );
 
@@ -721,6 +882,8 @@ serve(async (req) => {
       provider: "xai",
       model: String(pollResult.model || draftJob.model || XAI_DRAFT_MODEL),
       request_id: requestId,
+      interview_guide_id: activeGuideId || null,
+      review_mode: reviewMode,
     });
   } catch (error) {
     return jsonResponse({ error: error?.message || "Interview Grok draft failed." }, error?.status || 500);

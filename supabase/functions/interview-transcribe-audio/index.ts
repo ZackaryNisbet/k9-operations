@@ -486,6 +486,9 @@ serve(async (req) => {
       .from("labor_interview_records")
       .update({
         transcript_text: transcript,
+        transcript_status: "ready",
+        transcript_source: "audio",
+        transcript_uploaded_at: generatedAt,
         status: record.status === "draft" ? "in_progress" : record.status,
         metadata: {
           ...existingMetadata,
