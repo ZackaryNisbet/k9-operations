@@ -905,8 +905,8 @@ function getPdfFieldFitLimit(field = {}) {
   const height = Number(rect.height || 0);
   if (!Number.isFinite(width) || width <= 0) return 80;
   const lines = height > 22 ? Math.max(1, Math.floor(height / 9.5)) : 1;
-  const charsPerLine = Math.max(18, Math.floor(width / 5.1));
-  return Math.max(18, Math.min(360, charsPerLine * lines));
+  const charsPerLine = Math.max(16, Math.floor(width / 7.4));
+  return Math.max(16, Math.min(220, charsPerLine * lines));
 }
 
 function fitPdfFieldValueForSlot(value = "", field = {}) {
@@ -1074,7 +1074,7 @@ function conciseBullet(value = "", maxLength = 190) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
 }
 
-function getTranscriptSummaryBullets(record) {
+function getStoredTranscriptSummaryBullets(record) {
   const metadata = record?.metadata || {};
   const source = metadata.interview_summary || metadata.transcript_summary || {};
   const rawBullets = Array.isArray(source) ? source : source.bullets;
@@ -1082,6 +1082,59 @@ function getTranscriptSummaryBullets(record) {
     .map((bullet) => conciseBullet(bullet, 240))
     .filter(Boolean)
     .slice(0, 10);
+}
+
+function splitTranscriptIntoSummarySentences(record) {
+  const text = String(record?.transcript_text || "")
+    .replace(/\[[^\]]{0,80}\]/g, " ")
+    .replace(/\b(?:Speaker|Person)\s+\d+\s*:/gi, " ")
+    .replace(/\b(?:Zack|Interviewer|Candidate|Alexis)\s*:/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return [];
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.replace(/^[-*\s]+/, "").trim())
+    .filter((sentence) => sentence.length >= 32 && sentence.length <= 260)
+    .filter((sentence) => !/^(yeah|yes|no|okay|right|mhm|um|uh)[\s,.]/i.test(sentence))
+    .slice(0, 220);
+}
+
+function buildFallbackTranscriptSummaryBullets(record) {
+  const sentences = splitTranscriptIntoSummarySentences(record);
+  if (!sentences.length) return [];
+  const categories = [
+    { label: "Role fit / background", terms: ["role", "supervisor", "experience", "manager", "background", "team", "resort", "position"] },
+    { label: "Safety / accountability", terms: ["safety", "accountable", "correct", "warning", "policy", "phone", "radio", "leash", "reactive"] },
+    { label: "Team motivation / recognition", terms: ["motivat", "burn", "disengaged", "recogn", "praise", "reward", "encourag", "team"] },
+    { label: "Customer / conflict handling", terms: ["customer", "client", "owner", "upset", "complaint", "conflict", "escalat"] },
+    { label: "Operations / standards", terms: ["clean", "daycare", "groom", "standard", "procedure", "training", "task"] },
+    { label: "Follow-up context", terms: ["availability", "schedule", "start", "next", "question", "concern"] },
+  ];
+  const used = new Set();
+  const bullets = categories.map((category) => {
+    const sentenceIndex = sentences.findIndex((sentence, index) => {
+      if (used.has(index)) return false;
+      const lower = sentence.toLowerCase();
+      return category.terms.some((term) => lower.includes(term));
+    });
+    if (sentenceIndex === -1) return "";
+    used.add(sentenceIndex);
+    return `${category.label}: ${conciseBullet(sentences[sentenceIndex], 185)}`;
+  }).filter(Boolean);
+
+  if (bullets.length >= 4) return bullets.slice(0, 8);
+  sentences.forEach((sentence, index) => {
+    if (bullets.length >= 6 || used.has(index)) return;
+    used.add(index);
+    bullets.push(conciseBullet(sentence, 210));
+  });
+  return bullets.slice(0, 8);
+}
+
+function getTranscriptSummaryBullets(record) {
+  const stored = getStoredTranscriptSummaryBullets(record);
+  return stored.length ? stored : buildFallbackTranscriptSummaryBullets(record);
 }
 
 function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap }) {
@@ -1112,7 +1165,7 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
   if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${conciseBullet(finalMap.biggest_concern, 140)}`);
 
   const sections = [
-    transcriptBullets.length ? { heading: "Conversation Summary", bullets: transcriptBullets } : null,
+    transcriptBullets.length ? { heading: "Call Summary", bullets: transcriptBullets } : null,
     scoreBullets.length ? { heading: "Scorecard", bullets: scoreBullets } : null,
     guideBullets.length ? { heading: "Reviewed Guide Responses", bullets: guideBullets } : null,
     customBullets.length ? { heading: "Reviewed Custom Questions", bullets: customBullets } : null,
@@ -2063,7 +2116,7 @@ function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize
   );
 }
 
-function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize: explicitPageSize = null, fieldValues = {} }) {
+function PdfFieldValueLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, fieldValues = {} }) {
   const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
   if (!pageFields.length) return null;
   const pageSize = explicitPageSize || getPdfFieldPageSize(pageFields[0], pageFields);
@@ -2079,7 +2132,29 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
         if (!style) return null;
         const rect = getInterviewPdfFieldDisplayRect(field) || {};
         const smallField = Number(rect.width || 0) <= 14 && Number(rect.height || 0) <= 14;
-        const fontSize = smallField ? Math.max(8, style.height * 0.74) : Math.max(6.5, Math.min(10.5, style.height * 0.62));
+        const isActive = responseKeyForPdfField(field) === activeKey;
+        const doesFit = rawValue.replace(/\s+/g, " ").trim() === value;
+        if (!smallField && !isActive && !doesFit) {
+          return (
+            <div
+              key={field.name}
+              title={rawValue}
+              aria-label={`${humanizePdfFieldName(field.name)} filled`}
+              style={{
+                position: "absolute",
+                left: style.left,
+                top: style.top + Math.max(1, style.height / 2 - 3),
+                width: Math.min(26, Math.max(12, style.width * 0.08)),
+                height: 5,
+                borderRadius: 999,
+                background: "rgba(22, 163, 74, 0.78)",
+                boxShadow: "0 0 0 1px rgba(255,255,255,0.9)",
+              }}
+            />
+          );
+        }
+        const fontSize = smallField ? Math.max(8, style.height * 0.74) : Math.max(isActive ? 8.5 : 7.25, Math.min(isActive ? 10.5 : 8.75, style.height * 0.72));
+        const height = smallField ? style.height : Math.max(style.height, isActive ? 17 : 12);
         return (
           <div
             key={field.name}
@@ -2089,7 +2164,7 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
               left: style.left,
               top: style.top,
               width: style.width,
-              height: style.height,
+              height,
               boxSizing: "border-box",
               color: "#0f172a",
               display: smallField ? "grid" : "block",
@@ -2099,10 +2174,12 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
               textOverflow: "ellipsis",
               fontFamily: smallField ? "Arial, sans-serif" : "\"Times New Roman\", Times, serif",
               fontSize,
-              lineHeight: smallField ? 1 : `${Math.max(9, style.height - 2)}px`,
+              lineHeight: smallField ? 1 : `${Math.max(10, height - 3)}px`,
               fontWeight: smallField ? 800 : 500,
-              padding: smallField ? 0 : "1px 2px",
-              background: smallField ? "transparent" : "rgba(255,255,255,0.92)",
+              padding: smallField ? 0 : "0 3px",
+              background: smallField ? "transparent" : "rgba(255,255,255,0.98)",
+              borderRadius: smallField ? 0 : 2,
+              boxShadow: smallField ? undefined : "0 0 0 1px rgba(255,255,255,0.8)",
             }}
           >
             {smallField ? "X" : value}
@@ -2288,6 +2365,7 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
                       <PdfFieldValueLayer
                         fields={fields}
                         activePageNumber={pageInfo.pageNumber}
+                        activeKey={activeKey}
                         containerSize={pageInfo.renderSize}
                         pageSize={pageInfo.pageSize}
                         fieldValues={fieldValues}
@@ -3025,6 +3103,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [showConfigSettings, setShowConfigSettings] = useState(false);
   const [autoScoreCandidates, setAutoScoreCandidates] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
+  const [summaryDrafting, setSummaryDrafting] = useState(false);
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
@@ -3033,6 +3112,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const audioPlayerRef = useRef(null);
   const pdfSaveTimersRef = useRef({});
   const questionSaveTimersRef = useRef({});
+  const summaryRequestRef = useRef(new Set());
 
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
@@ -3085,6 +3165,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     const durationSeconds = Number(selectedRecord?.metadata?.audio_transcription?.duration_seconds || audioDuration || 0);
     return getInterviewTranscriptTurns(selectedRecord || {}, { durationSeconds });
   }, [audioDuration, selectedRecord]);
+  const hasStoredTranscriptSummary = useMemo(() => getStoredTranscriptSummaryBullets(selectedRecord).length > 0, [selectedRecord]);
 
   const selectedTemplateVersion = useMemo(() => {
     return versions.find((version) => version.id === newInterviewDraft.template_version_id) || null;
@@ -3674,6 +3755,70 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       setAiDrafting(false);
     }
   };
+
+  const draftTranscriptSummary = async (interviewId = selectedRecord?.id, options = {}) => {
+    const { quiet = true } = options;
+    if (!interviewId || !String(selectedRecord?.transcript_text || "").trim()) return null;
+    setSummaryDrafting(true);
+    try {
+      const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
+        body: {
+          interview_id: interviewId,
+          interview_guide_id: selectedGuide?.id || undefined,
+          action: "start",
+          summary_only: true,
+          review_mode: normalizeAiReviewMode(aiReviewMode),
+        },
+      });
+      if (startError) throw new Error(await readEdgeFunctionError(startError, "AI summary failed"));
+
+      let result = startResult;
+      if (startResult?.pending) {
+        const requestId = startResult.request_id;
+        let completed = false;
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          await sleep(attempt === 0 ? 3000 : 6000);
+          const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
+            body: {
+              interview_id: interviewId,
+              interview_guide_id: selectedGuide?.id || undefined,
+              action: "poll",
+              request_id: requestId,
+              summary_only: true,
+              review_mode: normalizeAiReviewMode(aiReviewMode),
+            },
+          });
+          if (pollError) throw new Error(await readEdgeFunctionError(pollError, "AI summary failed"));
+          result = pollResult;
+          if (!pollResult?.pending) {
+            completed = true;
+            break;
+          }
+        }
+        if (!completed) throw new Error("AI summary is still drafting. Reopen this guide in a minute to resume.");
+      }
+
+      await loadAll(locationId);
+      await loadInterviewDetail(interviewId);
+      setSelectedRecordId(interviewId);
+      if (!quiet && Number(result?.transcript_summary_count || 0) > 0) showToast("Call summary updated");
+      return result;
+    } catch (error) {
+      summaryRequestRef.current.delete(interviewId);
+      if (!quiet) showToast(safeUiError(error, "AI summary failed"), "error");
+      return null;
+    } finally {
+      setSummaryDrafting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showGuideModal || !selectedRecord?.id || !String(selectedRecord?.transcript_text || "").trim()) return;
+    if (hasStoredTranscriptSummary || summaryDrafting) return;
+    if (summaryRequestRef.current.has(selectedRecord.id)) return;
+    summaryRequestRef.current.add(selectedRecord.id);
+    draftTranscriptSummary(selectedRecord.id, { quiet: true });
+  }, [showGuideModal, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting]);
 
   const fillPdfDocumentWithAiInstruction = async (instruction) => {
     if (!selectedRecord?.id || !String(instruction || "").trim()) return null;
