@@ -51,11 +51,11 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "81aa100c67ab38b2e451a9ab224eeccef6a38b55",
+      "commit": "7c50e58e8ddeb8c7ec202dc405825d5eab6ef8cd",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Interview module multi-guide review workflow",
-      "updatedAt": "2026-04-28T02:50:42.255Z"
+      "note": "Use extracted PDF question prompts when drafting interview guide fields",
+      "updatedAt": "2026-04-28T04:01:59.571Z"
     },
     "interview-transcribe-audio": {
       "commit": "7586916c42ea4c5f71933f0411912285fb1c6d00",
