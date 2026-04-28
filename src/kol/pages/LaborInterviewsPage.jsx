@@ -11,6 +11,7 @@ import {
   buildInterviewTemplateSnapshot,
   buildPdfResponseMap,
   cleanInterviewTranscriptText,
+  countInterviewPdfPages,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
   getInterviewDraftResponseText,
@@ -856,6 +857,77 @@ function buildPdfReviewItems(fields = []) {
       };
     })
     .sort((a, b) => a.index - b.index);
+}
+
+function cleanPdfQuestionPrompt(value = "") {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\bPage\s+\d+\s*\|.*$/i, "")
+    .replace(/\b(Situation|Task|Action|Result|Follow-Up Probes)\s*:.*$/i, "")
+    .trim()
+    .slice(0, 900);
+}
+
+function extractNumberedPdfQuestionPrompts(fullText = "") {
+  const text = String(fullText || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n");
+  const prompts = {};
+  const regex = /(?:^|\n)\s*Q\s*(\d{1,2})\.\s*([\s\S]*?)(?=\n\s*(?:Situation\s*:|Task\s*:|Action\s*:|Result\s*:|Follow-Up Probes\s*:|Q\s*\d{1,2}\.|[A-Z][A-Za-z ]+\s+—\s+Scorecard|Rate each competency)|$)/gi;
+  let match = regex.exec(text);
+  while (match) {
+    const key = String(match[1] || "").padStart(2, "0");
+    const prompt = cleanPdfQuestionPrompt(match[2]);
+    if (key && prompt) prompts[key] = prompt;
+    match = regex.exec(text);
+  }
+  return prompts;
+}
+
+function linesFromPdfTextItems(items = []) {
+  const positioned = items
+    .map((item) => ({
+      text: String(item?.str || "").trim(),
+      x: Number(item?.transform?.[4] || 0),
+      y: Number(item?.transform?.[5] || 0),
+    }))
+    .filter((item) => item.text);
+  positioned.sort((a, b) => Math.abs(b.y - a.y) > 3 ? b.y - a.y : a.x - b.x);
+  const lines = [];
+  positioned.forEach((item) => {
+    const line = lines.find((entry) => Math.abs(entry.y - item.y) <= 3);
+    if (line) {
+      line.items.push(item);
+      line.y = (line.y + item.y) / 2;
+    } else {
+      lines.push({ y: item.y, items: [item] });
+    }
+  });
+  return lines
+    .sort((a, b) => b.y - a.y)
+    .map((line) => line.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(" "))
+    .filter(Boolean);
+}
+
+async function extractPdfQuestionPromptMap(pdfBytes) {
+  const pdfjsLib = await import("pdfjs-dist");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const data = pdfBytes instanceof ArrayBuffer ? new Uint8Array(pdfBytes.slice(0)) : pdfBytes;
+  const loadingTask = pdfjsLib.getDocument({ data });
+  const pageTexts = [];
+  try {
+    const pdf = await loadingTask.promise;
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pageTexts.push(linesFromPdfTextItems(content.items).join("\n"));
+    }
+    await pdf.destroy?.();
+  } finally {
+    try { loadingTask.destroy?.(); } catch (_) {}
+  }
+  return extractNumberedPdfQuestionPrompts(pageTexts.join("\n"));
 }
 
 function composePdfReviewItemValue(item, getFieldValue) {
@@ -3393,6 +3465,96 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       : "Timed out waiting for interview transcription.");
   };
 
+  const transcribeInterviewAudioChunks = async ({ interviewId, chunks, originalAudio }) => {
+    const safeChunks = Array.isArray(chunks) ? chunks.filter((chunk) => chunk?.audio_file_path) : [];
+    if (!safeChunks.length) return null;
+    const startedAt = new Date().toISOString();
+    const chunkResults = [];
+    for (let index = 0; index < safeChunks.length; index += 1) {
+      const chunk = safeChunks[index];
+      showToast(`Transcribing audio ${index + 1}/${safeChunks.length}`);
+      const { data, error } = await supabase.functions.invoke("interview-transcribe-audio", {
+        body: {
+          interview_id: interviewId,
+          audio_file_bucket: chunk.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+          audio_file_path: chunk.audio_file_path,
+          audio_file_name: chunk.audio_file_name,
+          audio_mime_type: chunk.audio_mime_type || "audio/mpeg",
+          audio_normalized_for_stt: true,
+          original_audio_file_name: originalAudio?.original_audio_file_name,
+          original_audio_mime_type: originalAudio?.original_audio_mime_type,
+          original_audio_size_bytes: originalAudio?.original_audio_size_bytes,
+          save_transcript: false,
+        },
+      });
+      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
+      if (!data?.transcript_text) throw new Error(`AI returned no transcript text for audio ${index + 1}.`);
+      chunkResults.push({ ...data, chunk });
+    }
+
+    const transcriptText = chunkResults
+      .map((result) => String(result.transcript_text || "").trim())
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    if (!transcriptText) throw new Error("AI returned no transcript text.");
+
+    const generatedAt = new Date().toISOString();
+    const transcriptTurns = chunkResults.flatMap((result, resultIndex) => {
+      const offset = Number(result.chunk?.start_seconds || 0) || 0;
+      return (Array.isArray(result.transcript_turns) ? result.transcript_turns : []).map((turn, turnIndex) => ({
+        ...turn,
+        id: `chunk-${resultIndex + 1}-${turn.id || turnIndex + 1}`,
+        start: Number.isFinite(Number(turn.start)) ? Number(turn.start) + offset : null,
+        end: Number.isFinite(Number(turn.end)) ? Number(turn.end) + offset : null,
+        chunk_index: resultIndex,
+      }));
+    });
+    const wordCount = chunkResults.reduce((sum, result) => sum + (Number(result.word_count) || 0), 0) || null;
+    const durationSeconds = chunkResults.reduce((sum, result) => sum + (Number(result.duration_seconds) || 0), 0) || null;
+    const updated = await saveRecordPatch({
+      transcript_text: transcriptText,
+      transcript_status: "ready",
+      transcript_source: "audio",
+      transcript_uploaded_at: generatedAt,
+      status: selectedRecord?.status === "draft" ? "in_progress" : selectedRecord?.status,
+      metadata: {
+        ...(selectedRecord?.metadata || {}),
+        audio_transcription: {
+          provider: "xai",
+          model: chunkResults[0]?.model || "grok-stt",
+          generated_at: generatedAt,
+          started_at: startedAt,
+          language: chunkResults.find((result) => result.language)?.language || null,
+          duration_seconds: durationSeconds,
+          word_count: wordCount,
+          diarization_enabled: true,
+          segmentation_source: chunkResults[0]?.segmentation_source || "provider",
+          transcript_turns: transcriptTurns,
+          chunk_count: safeChunks.length,
+          source_audio: {
+            bucket: originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+            path: originalAudio?.audio_file_path || safeChunks[0]?.audio_file_path,
+            file_name: originalAudio?.audio_file_name || safeChunks[0]?.audio_file_name,
+            mime_type: originalAudio?.audio_mime_type || safeChunks[0]?.audio_mime_type || "audio/mpeg",
+            size_bytes: safeChunks.reduce((sum, chunk) => sum + (Number(chunk.audio_size_bytes) || 0), 0) || null,
+            original_file_name: originalAudio?.original_audio_file_name || originalAudio?.audio_file_name,
+            original_mime_type: originalAudio?.original_audio_mime_type || null,
+            original_size_bytes: originalAudio?.original_audio_size_bytes || null,
+            normalized_for_stt: true,
+            chunks: safeChunks.map((chunk) => ({
+              path: chunk.audio_file_path,
+              file_name: chunk.audio_file_name,
+              size_bytes: chunk.audio_size_bytes || null,
+              start_seconds: chunk.start_seconds || null,
+            })),
+          },
+        },
+      },
+    });
+    return updated;
+  };
+
   const handleAudioUpload = async (file) => {
     if (!selectedRecord?.id || !file) return;
     const validation = validateInterviewAudioFile(file);
@@ -3440,6 +3602,25 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
           original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
         };
+        if (Array.isArray(normalizedAudio.audio_chunks) && normalizedAudio.audio_chunks.length > 1) {
+          const transcriptRecord = await transcribeInterviewAudioChunks({
+            interviewId: selectedRecord.id,
+            chunks: normalizedAudio.audio_chunks,
+            originalAudio: {
+              ...normalizedAudio,
+              original_audio_file_name: normalizedAudio.original_audio_file_name || file.name,
+              original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
+              original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
+            },
+          });
+          if (!transcriptRecord?.transcript_text) throw new Error("AI returned no transcript text.");
+          const durationSeconds = Number(transcriptRecord?.metadata?.audio_transcription?.duration_seconds || 0);
+          const minutes = durationSeconds > 0 ? Math.max(1, Math.round(durationSeconds / 60)) : null;
+          showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
+          await loadAll(locationId);
+          setSelectedRecordId(selectedRecord.id);
+          return;
+        }
         showToast("Audio converted. Sending for transcription.");
       }
 
@@ -3561,6 +3742,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         finalMap,
       });
       const filledBytes = await fillInterviewPdfBytes(bytes, finalMap, { flatten: true, summaryPages });
+      const sourcePageCount = Number(selectedSnapshot?.version?.pdf_page_count || 0) || (await countInterviewPdfPages(bytes).catch(() => 0));
+      const finalPageCount = await countInterviewPdfPages(filledBytes).catch(() => sourcePageCount);
+      const summaryPageCount = Math.max(0, finalPageCount - sourcePageCount);
       const guideSlug = (selectedGuide?.guide_label || selectedGuide?.role_label || selectedRecord.candidate_position || "interview").replace(/[^a-z0-9]+/gi, "-");
       const outputName = `${selectedRecord.candidate_full_name.replace(/[^a-z0-9]+/gi, "-") || "candidate"}-${guideSlug}-interview.pdf`;
       const artifactPath = buildInterviewArtifactPath({ locationId, interviewId: selectedRecord.id, fileName: outputName });
@@ -3582,7 +3766,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             guide_label: selectedGuide?.guide_label || selectedGuide?.role_label || null,
             reviewed_only: true,
             excluded_unreviewed_drafts: unreviewedDraftCount,
-            summary_page_count: summaryPages.length,
+            summary_page_count: summaryPageCount,
           },
           created_by_user_id: actorUserId,
           created_by_name: actorName,
@@ -3731,6 +3915,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     try {
       const bytes = await file.arrayBuffer();
       const verification = await extractPdfFieldManifest(bytes);
+      let questionPrompts = {};
+      try {
+        questionPrompts = await extractPdfQuestionPromptMap(bytes);
+      } catch (_) {
+        questionPrompts = {};
+      }
       if (verification.status === "failed_invalid_pdf") {
         await supabase.from("labor_interview_template_versions").update({
           pdf_verification_status: verification.status,
@@ -3762,6 +3952,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           pdf_verification_status: verification.status,
           metadata: {
             ...(version.metadata || {}),
+            ...(Object.keys(questionPrompts).length ? { pdf_question_prompts: questionPrompts } : {}),
+            pdf_question_count: Object.keys(questionPrompts).length,
             verified_at: new Date().toISOString(),
             verified_by: actorUserId,
           },

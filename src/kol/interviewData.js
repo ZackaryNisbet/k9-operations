@@ -1005,6 +1005,11 @@ export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatte
   return pdfDoc.save();
 }
 
+export async function countInterviewPdfPages(pdfBytes) {
+  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  return pdfDoc.getPageCount();
+}
+
 export function validateAiDraftPayload(payload, targetMap, maxLength = 1400) {
   if (!payload || !Array.isArray(payload.responses)) {
     return { ok: false, responses: [], errors: ["AI response was not a responses array."] };
