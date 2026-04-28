@@ -7,21 +7,32 @@ import {
   buildInterviewAudioPath,
   buildInterviewArtifactPath,
   buildInterviewTemplatePdfPath,
+  buildInterviewTranscriptPath,
   buildInterviewTemplateSnapshot,
   buildPdfResponseMap,
+  cleanInterviewTranscriptText,
+  countInterviewPdfPages,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  getInterviewDraftResponseText,
   getInterviewPdfFieldDisplayRect,
+  getInterviewOfficialResponseText,
+  getInterviewResponseState,
   getInterviewTranscriptTurns,
   getInterviewRecommendation,
   getInterviewRecommendationOption,
   getInterviewAudioContentType,
   getInterviewRoleLabel,
+  INTERVIEW_AI_REVIEW_MODES,
+  INTERVIEW_AI_REVIEW_MODE_LABELS,
   INTERVIEW_AUDIO_ACCEPT,
   INTERVIEW_PDF_ACCEPT,
   INTERVIEW_RECOMMENDATION_OPTIONS,
+  INTERVIEW_RESPONSE_STATES,
+  INTERVIEW_TRANSCRIPT_ACCEPT,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
+  isInterviewResponseReviewed,
   normalizeInterviewCandidateDraft,
   normalizeQuestionKey,
   pdfFieldsFromSnapshot,
@@ -115,8 +126,60 @@ function snapshotForRecord(record) {
   };
 }
 
-function mapResponsesByTarget(responses = []) {
+function snapshotForGuide(record, guide) {
+  if (guide) {
+    return {
+      template: {
+        id: guide.template_id,
+        role_key: guide.role_key,
+        role_label: guide.role_label || guide.guide_label,
+        location_id: guide.location_id,
+      },
+      version: {
+        id: guide.template_version_id,
+        pdf_field_manifest: guide.pdf_field_manifest_snapshot || [],
+        source_pdf_bucket: guide.template_snapshot?.version?.source_pdf_bucket,
+        source_pdf_path: guide.template_snapshot?.version?.source_pdf_path,
+        source_pdf_file_name: guide.template_snapshot?.version?.source_pdf_file_name,
+        pdf_page_count: guide.template_snapshot?.version?.pdf_page_count,
+      },
+      ...(guide.template_snapshot || {}),
+      questions: guide.question_snapshot || guide.template_snapshot?.questions || [],
+    };
+  }
+  return snapshotForRecord(record);
+}
+
+function buildLegacyGuideFromRecord(record) {
+  if (!record?.id) return null;
+  const snapshot = snapshotForRecord(record);
+  return {
+    id: "",
+    interview_id: record.id,
+    location_id: record.location_id,
+    template_id: record.template_id,
+    template_version_id: record.template_version_id,
+    guide_label: snapshot.template?.role_label || record.candidate_position || "Interview Guide",
+    role_key: snapshot.template?.role_key || record.candidate_position || "",
+    role_label: snapshot.template?.role_label || record.candidate_position || "Interview Guide",
+    guide_status: record.status || "draft",
+    sequence_order: 10,
+    template_snapshot: snapshot,
+    pdf_field_manifest_snapshot: snapshot.version?.pdf_field_manifest || record.pdf_field_manifest_snapshot || [],
+    question_snapshot: snapshot.questions || record.question_snapshot || [],
+    metadata: { legacy_primary: true },
+  };
+}
+
+function mapResponsesByTarget(responses = [], guideId = "") {
   return (responses || []).reduce((map, response) => {
+    const rowGuideId = response.interview_guide_id || "";
+    if (guideId && rowGuideId && rowGuideId !== guideId) return map;
+    if (guideId && !rowGuideId) {
+      // Legacy responses without a guide id belong to the primary guide only.
+      const hasExplicitGuideRows = responses.some((row) => row.interview_guide_id === guideId);
+      if (hasExplicitGuideRows) return map;
+    }
     if (response.response_type === "custom_question" && response.question_key) {
       map[fieldKey("custom_question", response.question_key)] = response;
     }
@@ -128,7 +191,7 @@ function mapResponsesByTarget(responses = []) {
 }
 
 function getResponseDraft(response) {
-  return response?.response_text ?? response?.ai_draft_text ?? "";
+  return getInterviewDraftResponseText(response);
 }
 
 function SectionHeading({ title, detail, action }) {
@@ -746,6 +809,240 @@ function fieldValueRows(value = "") {
   return 9;
 }
 
+function getPdfQuestionGroup(fieldName = "") {
+  const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes(?:_\d+)?)$/i);
+  if (!match) return null;
+  return {
+    key: `q${match[1]}`,
+    number: Number(match[1]),
+    part: match[2].toLowerCase(),
+  };
+}
+
+function buildPdfReviewItems(fields = []) {
+  const groups = new Map();
+  const items = [];
+  fields.forEach((field, index) => {
+    const group = getPdfQuestionGroup(field.name);
+    if (!group) {
+      items.push({ type: "field", key: responseKeyForPdfField(field), field, fields: [field], index });
+      return;
+    }
+    if (!groups.has(group.key)) {
+      groups.set(group.key, {
+        type: "question_group",
+        key: `pdf_group:${group.key}`,
+        groupKey: group.key,
+        number: group.number,
+        fields: [],
+        index,
+      });
+    }
+    groups.get(group.key).fields.push({ ...field, groupPart: group.part });
+  });
+  return [...items, ...groups.values()]
+    .map((item) => {
+      if (item.type !== "question_group") return item;
+      const partOrder = { situation: 1, task: 2, action: 3, result: 4 };
+      return {
+        ...item,
+        fields: item.fields.sort((a, b) => {
+          const aPart = a.groupPart.replace(/_\d+$/, "");
+          const bPart = b.groupPart.replace(/_\d+$/, "");
+          const aOrder = partOrder[aPart] || 9;
+          const bOrder = partOrder[bPart] || 9;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+          return String(a.groupPart).localeCompare(String(b.groupPart));
+        }),
+      };
+    })
+    .sort((a, b) => a.index - b.index);
+}
+
+function cleanPdfQuestionPrompt(value = "") {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\bPage\s+\d+\s*\|.*$/i, "")
+    .replace(/\b(Situation|Task|Action|Result|Follow-Up Probes)\s*:.*$/i, "")
+    .trim()
+    .slice(0, 900);
+}
+
+function extractNumberedPdfQuestionPrompts(fullText = "") {
+  const text = String(fullText || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n");
+  const prompts = {};
+  const regex = /(?:^|\n)\s*Q\s*(\d{1,2})\.\s*([\s\S]*?)(?=\n\s*(?:Situation\s*:|Task\s*:|Action\s*:|Result\s*:|Follow-Up Probes\s*:|Q\s*\d{1,2}\.|[A-Z][A-Za-z ]+\s+—\s+Scorecard|Rate each competency)|$)/gi;
+  let match = regex.exec(text);
+  while (match) {
+    const key = String(match[1] || "").padStart(2, "0");
+    const prompt = cleanPdfQuestionPrompt(match[2]);
+    if (key && prompt) prompts[key] = prompt;
+    match = regex.exec(text);
+  }
+  return prompts;
+}
+
+function linesFromPdfTextItems(items = []) {
+  const positioned = items
+    .map((item) => ({
+      text: String(item?.str || "").trim(),
+      x: Number(item?.transform?.[4] || 0),
+      y: Number(item?.transform?.[5] || 0),
+    }))
+    .filter((item) => item.text);
+  positioned.sort((a, b) => Math.abs(b.y - a.y) > 3 ? b.y - a.y : a.x - b.x);
+  const lines = [];
+  positioned.forEach((item) => {
+    const line = lines.find((entry) => Math.abs(entry.y - item.y) <= 3);
+    if (line) {
+      line.items.push(item);
+      line.y = (line.y + item.y) / 2;
+    } else {
+      lines.push({ y: item.y, items: [item] });
+    }
+  });
+  return lines
+    .sort((a, b) => b.y - a.y)
+    .map((line) => line.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(" "))
+    .filter(Boolean);
+}
+
+async function extractPdfQuestionPromptMap(pdfBytes) {
+  const pdfjsLib = await import("pdfjs-dist");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const data = pdfBytes instanceof ArrayBuffer ? new Uint8Array(pdfBytes.slice(0)) : pdfBytes;
+  const loadingTask = pdfjsLib.getDocument({ data });
+  const pageTexts = [];
+  try {
+    const pdf = await loadingTask.promise;
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pageTexts.push(linesFromPdfTextItems(content.items).join("\n"));
+    }
+    await pdf.destroy?.();
+  } finally {
+    try { loadingTask.destroy?.(); } catch (_) {}
+  }
+  return extractNumberedPdfQuestionPrompts(pageTexts.join("\n"));
+}
+
+function composePdfReviewItemValue(item, getFieldValue) {
+  if (!item) return "";
+  if (item.type !== "question_group") return getFieldValue(item.field);
+  const values = {};
+  const notes = [];
+  item.fields.forEach((field) => {
+    const value = String(getFieldValue(field) || "").trim();
+    if (!value) return;
+    const part = field.groupPart.replace(/_\d+$/, "");
+    if (part === "notes") notes.push(value);
+    else values[part] = value;
+  });
+  const lines = [];
+  if (values.situation) lines.push(`Situation: ${values.situation}`);
+  if (values.task) lines.push(`Task: ${values.task}`);
+  if (values.action) lines.push(`Action: ${values.action}`);
+  if (values.result) lines.push(`Result: ${values.result}`);
+  if (notes.length) lines.push(`Notes: ${notes.join("\n")}`);
+  return lines.join("\n");
+}
+
+function splitPdfReviewItemValue(item, value) {
+  if (!item || item.type !== "question_group") return item?.field ? [{ field: item.field, value }] : [];
+  const text = String(value || "").trim();
+  const sections = { situation: "", task: "", action: "", result: "", notes: "" };
+  const sectionPattern = /(?:^|\n)(Situation|Task|Action|Result|Notes):\s*/gi;
+  const matches = [...text.matchAll(sectionPattern)];
+  if (matches.length) {
+    matches.forEach((match, index) => {
+      const key = match[1].toLowerCase();
+      const start = (match.index || 0) + match[0].length;
+      const end = index + 1 < matches.length ? matches[index + 1].index : text.length;
+      sections[key] = text.slice(start, end).trim();
+    });
+  } else {
+    sections.notes = text;
+  }
+  const noteFields = item.fields.filter((field) => field.groupPart.startsWith("notes"));
+  const notesText = sections.notes;
+  const noteChunks = noteFields.length > 1 && notesText.length > 180
+    ? notesText.match(/.{1,180}(?:\s|$)/g)?.map((chunk) => chunk.trim()).filter(Boolean) || [notesText]
+    : [notesText];
+  return item.fields.map((field) => {
+    const part = field.groupPart.replace(/_\d+$/, "");
+    if (part === "notes") {
+      const noteIndex = noteFields.findIndex((row) => row.name === field.name);
+      return { field, value: noteChunks[noteIndex] || "" };
+    }
+    return { field, value: sections[part] || "" };
+  });
+}
+
+function computeOverallScoreFromPdfMap(map = {}, fields = []) {
+  const scoreFieldNames = (fields || [])
+    .map((field) => field.name)
+    .filter((name) => /^score_/i.test(String(name || ""))
+      && !/^score_notes_/i.test(String(name || ""))
+      && !/overall/i.test(String(name || "")));
+  const scores = scoreFieldNames
+    .map((name) => Number(String(map[name] || "").match(/[1-4](?:\.\d+)?/)?.[0]))
+    .filter((value) => Number.isFinite(value) && value >= 1 && value <= 4);
+  if (!scores.length) return "";
+  const average = scores.reduce((sum, value) => sum + value, 0) / scores.length;
+  return Number.isInteger(average) ? String(average) : average.toFixed(1);
+}
+
+function conciseBullet(value = "", maxLength = 190) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
+}
+
+function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap }) {
+  const guideBullets = buildPdfReviewItems(fields)
+    .map((item) => {
+      const value = composePdfReviewItemValue(item, (field) => finalMap[field.name] || "");
+      if (!String(value || "").trim()) return "";
+      const label = item.type === "question_group" ? `Q${item.number}` : humanizePdfFieldName(item.field.name);
+      return `${label}: ${conciseBullet(value)}`;
+    })
+    .filter(Boolean)
+    .slice(0, 18);
+
+  const customBullets = (questions || [])
+    .map((question) => {
+      const response = responsesByTarget[responseKeyForQuestion(question)] || {};
+      const value = getInterviewOfficialResponseText(response);
+      if (!value) return "";
+      return `${question.prompt}: ${conciseBullet(value)}`;
+    })
+    .filter(Boolean)
+    .slice(0, 18);
+
+  const scoreBullets = [];
+  const overallScore = finalMap.overall_score || computeOverallScoreFromPdfMap(finalMap, fields);
+  if (overallScore) scoreBullets.push(`Overall score: ${overallScore}`);
+  if (finalMap.strongest_area) scoreBullets.push(`Strongest area: ${conciseBullet(finalMap.strongest_area, 140)}`);
+  if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${conciseBullet(finalMap.biggest_concern, 140)}`);
+
+  const sections = [
+    scoreBullets.length ? { heading: "Scorecard", bullets: scoreBullets } : null,
+    guideBullets.length ? { heading: "Guide Responses", bullets: guideBullets } : null,
+    customBullets.length ? { heading: "Custom Questions", bullets: customBullets } : null,
+  ].filter(Boolean);
+
+  if (!sections.length) return [];
+  return [{
+    title: "Interview Summary",
+    subtitle: `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`,
+    sections,
+  }];
+}
+
 function StaticField({ label, value }) {
   const isLink = /^https?:\/\//i.test(String(value || ""));
   return (
@@ -754,6 +1051,28 @@ function StaticField({ label, value }) {
       <div style={{ marginTop: 4, fontSize: 14, color: C.text, fontWeight: 700, minHeight: 20, overflowWrap: "anywhere" }}>
         {isLink ? <a href={value} target="_blank" rel="noreferrer" style={{ color: C.pri, textDecoration: "none" }}>{value}</a> : (value || "-")}
       </div>
+    </div>
+  );
+}
+
+function MergeTrace({ responses = [] }) {
+  const rows = (Array.isArray(responses) ? responses : [responses]).filter((response) => (
+    response?.manual_notes_text || response?.ai_merged_text || getInterviewResponseState(response) === "merged_draft"
+  ));
+  if (!rows.length) return null;
+  return (
+    <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fbfdff", padding: 10, display: "grid", gap: 8 }}>
+      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Merged Notes</div>
+      {rows.slice(0, 3).map((response, index) => (
+        <div key={response.id || index} style={{ display: "grid", gap: 5, fontSize: 12, lineHeight: 1.45 }}>
+          {response.manual_notes_text && (
+            <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{response.manual_notes_text}</div>
+          )}
+          {response.ai_merged_text && (
+            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>{response.ai_merged_text}</div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1077,8 +1396,11 @@ function AudioUploadPanel({
   transcribing,
   drafting,
   onUpload,
+  onTranscriptUpload,
+  onTranscriptPasteOpen,
   onTranscriptClick,
   inputRef,
+  transcriptInputRef,
   audioRef,
   audioUrl,
   audioPlaying,
@@ -1173,6 +1495,16 @@ function AudioUploadPanel({
           event.target.value = "";
         }}
       />
+      <input
+        ref={transcriptInputRef}
+        type="file"
+        accept={INTERVIEW_TRANSCRIPT_ACCEPT}
+        style={{ display: "none" }}
+        onChange={(event) => {
+          onTranscriptUpload?.(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 16, alignItems: "center" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>Upload Interview Audio</div>
@@ -1186,9 +1518,13 @@ function AudioUploadPanel({
             {record?.transcript_text && <span>{hasProviderTurns ? (wordSegmentMode ? "Timestamped transcript" : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}`) : "turn data required"}</span>}
           </div>
         </div>
-        <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
-          {transcribing || drafting ? "Processing..." : complete ? "Replace Audio" : "Choose File"}
-        </Btn>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
+            {transcribing || drafting ? "Processing..." : complete ? "Replace Audio" : "Choose File"}
+          </Btn>
+          <Btn variant="secondary" onClick={() => transcriptInputRef.current?.click()} disabled={transcribing || drafting}>Upload Transcript</Btn>
+          <Btn variant="secondary" onClick={onTranscriptPasteOpen} disabled={transcribing || drafting}>Paste Transcript</Btn>
+        </div>
       </div>
       {audioUrl && (
         <audio
@@ -1908,6 +2244,7 @@ function ReviewGuideModal({
   getFieldValue,
   setFieldDraft,
   approveField,
+  rejectField,
   aiDrafting,
   onAiFillDocument,
   exportFinalPdf,
@@ -1915,13 +2252,17 @@ function ReviewGuideModal({
   onClose,
 }) {
   const reviewFields = fields;
-  const boundedIndex = Math.min(activeIndex, Math.max(0, reviewFields.length - 1));
-  const activeField = reviewFields[boundedIndex] || reviewFields[0] || null;
+  const reviewItems = useMemo(() => buildPdfReviewItems(reviewFields), [reviewFields]);
+  const boundedIndex = Math.min(activeIndex, Math.max(0, reviewItems.length - 1));
+  const activeItem = reviewItems[boundedIndex] || reviewItems[0] || null;
+  const activeField = activeItem?.field || activeItem?.fields?.[0] || null;
   const activeKey = activeField ? responseKeyForPdfField(activeField) : "";
-  const activeResponse = responsesByTarget[activeKey] || {};
-  const approved = !!activeResponse.metadata?.approved;
-  const approvedCount = reviewFields.filter((field) => responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved).length;
-  const activeValue = activeField ? getFieldValue(activeField) : "";
+  const itemApproved = (item) => !!item?.fields?.length && item.fields.every((field) => isInterviewResponseReviewed(responsesByTarget[responseKeyForPdfField(field)] || {}));
+  const approved = itemApproved(activeItem);
+  const approvedCount = reviewItems.filter(itemApproved).length;
+  const activeValue = activeItem ? composePdfReviewItemValue(activeItem, getFieldValue) : "";
+  const activeResponses = activeItem?.fields?.map((field) => responsesByTarget[responseKeyForPdfField(field)] || {}).filter(Boolean) || [];
+  const activeEvidence = activeResponses.flatMap((response) => Array.isArray(response.ai_evidence) ? response.ai_evidence : []).filter(Boolean);
   const [guideAiOpen, setGuideAiOpen] = useState(false);
   const [guideAiWorking, setGuideAiWorking] = useState(false);
   const [guideAiStepIndex, setGuideAiStepIndex] = useState(0);
@@ -1934,22 +2275,51 @@ function ReviewGuideModal({
   ]);
 
   const selectField = (field) => {
-    const index = reviewFields.findIndex((row) => row.name === field?.name);
+    const index = reviewItems.findIndex((item) => item.fields?.some((row) => row.name === field?.name));
     if (index >= 0) setActiveIndex(index);
   };
 
   const goNext = () => {
-    if (!reviewFields.length) return;
-    const nextUnapproved = reviewFields.findIndex((field, index) => index > boundedIndex && !responsesByTarget[responseKeyForPdfField(field)]?.metadata?.approved);
+    if (!reviewItems.length) return;
+    const nextUnapproved = reviewItems.findIndex((item, index) => index > boundedIndex && !itemApproved(item));
     if (nextUnapproved >= 0) setActiveIndex(nextUnapproved);
-    else setActiveIndex(Math.min(reviewFields.length - 1, boundedIndex + 1));
+    else setActiveIndex(Math.min(reviewItems.length - 1, boundedIndex + 1));
+  };
+
+  const setItemDraft = (item, value) => {
+    splitPdfReviewItemValue(item, value).forEach(({ field, value: fieldValue }) => {
+      setFieldDraft(field, fieldValue);
+    });
   };
 
   const approveAndNext = async () => {
-    if (!activeField) return;
-    await approveField(activeField, activeValue);
+    if (!activeItem) return;
+    const parts = splitPdfReviewItemValue(activeItem, activeValue);
+    for (const part of parts) {
+      await approveField(part.field, part.value);
+    }
     goNext();
   };
+
+  const approveReviewItems = async (items) => {
+    for (const item of items) {
+      const itemValue = composePdfReviewItemValue(item, getFieldValue);
+      const parts = splitPdfReviewItemValue(item, itemValue);
+      for (const part of parts) {
+        await approveField(part.field, part.value);
+      }
+    }
+  };
+
+  const rejectReviewItems = async (items) => {
+    for (const item of items) {
+      for (const field of item.fields || []) {
+        await rejectField?.(field);
+      }
+    }
+  };
+
+  const activePageItems = reviewItems.filter((item) => item.fields?.some((field) => field.page_number === activeField?.page_number));
 
   const submitGuideAiInstruction = async (instruction) => {
     const trimmed = String(instruction || "").trim();
@@ -2012,6 +2382,17 @@ function ReviewGuideModal({
             >
               AI
             </IconButton>
+            <Btn
+              variant="primary"
+              size="sm"
+              onClick={() => submitGuideAiInstruction("Fill this guide from the transcript using the selected strictness mode.")}
+              disabled={guideAiWorking || aiDrafting}
+            >
+              Draft Guide
+            </Btn>
+            <Btn variant="secondary" size="sm" onClick={() => approveReviewItems(activePageItems)} disabled={!activePageItems.length}>Approve Page</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => approveReviewItems(reviewItems)} disabled={!reviewItems.length}>Approve All Drafts</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => rejectReviewItems(reviewItems)} disabled={!reviewItems.length}>Reject All</Btn>
             <Btn variant="success" size="sm" onClick={exportFinalPdf} disabled={exporting || !pdfUrl}>{exporting ? "Exporting..." : "Export Final PDF"}</Btn>
             <IconButton label="Close guide" onClick={onClose}>{"x"}</IconButton>
           </div>
@@ -2021,25 +2402,24 @@ function ReviewGuideModal({
           messages={guideAiMessages}
           working={guideAiWorking || aiDrafting}
           workStepIndex={guideAiStepIndex}
-          fieldCount={reviewFields.length}
+          fieldCount={reviewItems.length}
           reviewedCount={approvedCount}
           onClose={() => setGuideAiOpen(false)}
           onSubmit={submitGuideAiInstruction}
         />
-        <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "74px minmax(0, 1fr) 370px", minHeight: 0 }}>
+        <div className="interview-guide-grid" style={{ display: "grid", gridTemplateColumns: "74px minmax(0, 1fr) 390px", minHeight: 0 }}>
           <div style={{ borderRight: `1px solid ${C.border}`, overflowY: "auto", background: "#fbfdff", padding: "12px 10px", display: "grid", alignContent: "start", gap: 7 }}>
-            {reviewFields.length === 0 ? (
+            {reviewItems.length === 0 ? (
               <div style={{ color: C.textMut, fontSize: 12 }}>No fields</div>
-            ) : reviewFields.map((field, index) => {
-              const key = responseKeyForPdfField(field);
+            ) : reviewItems.map((item, index) => {
               const isActive = index === boundedIndex;
-              const isApproved = !!responsesByTarget[key]?.metadata?.approved;
+              const isApproved = itemApproved(item);
               return (
                 <button
                   type="button"
-                  key={field.name}
+                  key={item.key}
                   onClick={() => setActiveIndex(index)}
-                  title={humanizePdfFieldName(field.name)}
+                  title={item.type === "question_group" ? `Question ${item.number}` : humanizePdfFieldName(item.field.name)}
                   style={{
                     width: "100%",
                     height: 24,
@@ -2053,7 +2433,7 @@ function ReviewGuideModal({
                     fontWeight: 900,
                   }}
                 >
-                  {index + 1}
+                  {item.type === "question_group" ? item.number : index + 1}
                 </button>
               );
             })}
@@ -2081,7 +2461,7 @@ function ReviewGuideModal({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Field</div>
-                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{humanizePdfFieldName(activeField.name)}</div>
+                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{activeItem?.type === "question_group" ? `Question ${activeItem.number} Response` : humanizePdfFieldName(activeField.name)}</div>
                       <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"}</div>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
@@ -2091,14 +2471,16 @@ function ReviewGuideModal({
                 </div>
                 <textarea
                   value={activeValue}
-                  onChange={(event) => setFieldDraft(activeField, event.target.value)}
+                  onChange={(event) => setItemDraft(activeItem, event.target.value)}
                   rows={fieldValueRows(activeValue)}
-                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 92 }}
+                  placeholder={activeItem?.type === "question_group" ? "Situation:\nTask:\nAction:\nResult:\nNotes:" : ""}
+                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 132, whiteSpace: "pre-wrap" }}
                 />
-                {Array.isArray(activeResponse.ai_evidence) && activeResponse.ai_evidence.length > 0 && (
+                <MergeTrace responses={activeResponses} />
+                {activeEvidence.length > 0 && (
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Evidence</div>
-                    {activeResponse.ai_evidence.map((entry, index) => (
+                    {activeEvidence.slice(0, 4).map((entry, index) => (
                       <div key={index} style={{ borderLeft: `3px solid ${C.acc}`, paddingLeft: 10, color: C.textSec, fontSize: 12, lineHeight: 1.45 }}>{entry}</div>
                     ))}
                   </div>
@@ -2106,6 +2488,7 @@ function ReviewGuideModal({
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === activeKey ? "Saving..." : "Autosaves as you type"}</span>
                   <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="secondary" size="sm" onClick={() => rejectReviewItems(activeItem ? [activeItem] : [])}>Reject</Btn>
                     <Btn variant="primary" size="sm" onClick={approveAndNext}>Approve & Next</Btn>
                   </div>
                 </div>
@@ -2146,6 +2529,8 @@ function QuestionReviewModal({
   savingKey,
   setQuestionDraft,
   approveQuestion,
+  rejectQuestion,
+  onAiDraftQuestions,
   onClose,
 }) {
   const approvedCount = questions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length;
@@ -2159,6 +2544,16 @@ function QuestionReviewModal({
   const scrollToQuestion = (questionKey) => {
     questionRefs.current[questionKey]?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
+  const approveAllQuestions = async () => {
+    for (const question of questions) {
+      await approveQuestion(question, responseDrafts[responseKeyForQuestion(question)] || "");
+    }
+  };
+  const rejectAllQuestions = async () => {
+    for (const question of questions) {
+      await rejectQuestion?.(question);
+    }
+  };
 
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
@@ -2168,7 +2563,12 @@ function QuestionReviewModal({
             <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
             <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{questions.length} approved</div>
           </div>
-          <IconButton label="Close questions" onClick={onClose}>{"x"}</IconButton>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Btn variant="primary" size="sm" onClick={onAiDraftQuestions} disabled={!questions.length}>Draft Questions</Btn>
+            <Btn variant="secondary" size="sm" onClick={approveAllQuestions} disabled={!questions.length}>Approve All Drafts</Btn>
+            <Btn variant="secondary" size="sm" onClick={rejectAllQuestions} disabled={!questions.length}>Reject All</Btn>
+            <IconButton label="Close questions" onClick={onClose}>{"x"}</IconButton>
+          </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "190px minmax(0, 1fr)", minHeight: 0 }}>
           <div style={{ borderRight: `1px solid ${C.border}`, background: "#fff", overflowY: "auto", padding: "18px 16px" }}>
@@ -2260,6 +2660,7 @@ function QuestionReviewModal({
                             rows={fieldValueRows(value)}
                             style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 13, fontFamily: "inherit", fontSize: 14, lineHeight: 1.55, color: C.text, resize: "vertical", background: "#fff", outline: "none", minHeight: 96 }}
                           />
+                          <MergeTrace responses={[response]} />
                           {Array.isArray(response.ai_evidence) && response.ai_evidence.length > 0 && (
                             <div style={{ display: "grid", gap: 6 }}>
                               {response.ai_evidence.slice(0, 2).map((entry, evidenceIndex) => (
@@ -2269,9 +2670,12 @@ function QuestionReviewModal({
                           )}
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                             <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === key ? "Saving..." : "Autosaves as you type"}</span>
-                            <Btn variant={approved ? "secondary" : "primary"} size="sm" onClick={() => approveQuestion(question, value)}>
-                              {approved ? "Reviewed" : "Approve"}
-                            </Btn>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <Btn variant="secondary" size="sm" onClick={() => rejectQuestion?.(question)}>Reject</Btn>
+                              <Btn variant={approved ? "secondary" : "primary"} size="sm" onClick={() => approveQuestion(question, value)}>
+                                {approved ? "Reviewed" : "Approve"}
+                              </Btn>
+                            </div>
                           </div>
                         </div>
                       );
@@ -2299,6 +2703,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [versions, setVersions] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [records, setRecords] = useState([]);
+  const [guides, setGuides] = useState([]);
   const [responses, setResponses] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
   const [selectedRecordId, setSelectedRecordId] = useState("");
@@ -2308,6 +2713,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [showQuestionsModal, setShowQuestionsModal] = useState(false);
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [activeGuideId, setActiveGuideId] = useState("");
+  const [guideAttachVersionId, setGuideAttachVersionId] = useState("");
+  const [aiReviewMode, setAiReviewMode] = useState("literal");
+  const [showTranscriptInput, setShowTranscriptInput] = useState(false);
+  const [transcriptDraft, setTranscriptDraft] = useState("");
+  const [savingTranscript, setSavingTranscript] = useState(false);
   const [guidePdfUrl, setGuidePdfUrl] = useState("");
   const [guidePdfLoading, setGuidePdfLoading] = useState(false);
   const [pdfReviewIndex, setPdfReviewIndex] = useState(0);
@@ -2337,6 +2748,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [exportingPdf, setExportingPdf] = useState(false);
   const pdfInputRefs = useRef({});
   const audioInputRef = useRef(null);
+  const transcriptInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
   const pdfSaveTimersRef = useRef({});
   const questionSaveTimersRef = useRef({});
@@ -2369,15 +2781,28 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return records.find((record) => record.id === selectedRecordId) || null;
   }, [records, selectedRecordId]);
 
+  const selectedGuides = useMemo(() => {
+    if (!selectedRecord) return [];
+    const rows = guides
+      .filter((guide) => guide.interview_id === selectedRecord.id)
+      .sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
+    return rows.length ? rows : [buildLegacyGuideFromRecord(selectedRecord)].filter(Boolean);
+  }, [guides, selectedRecord]);
+
+  const selectedGuide = useMemo(() => {
+    if (!selectedGuides.length) return null;
+    return selectedGuides.find((guide) => guide.id === activeGuideId) || selectedGuides[0];
+  }, [activeGuideId, selectedGuides]);
+
   useEffect(() => {
     onDetailChange?.(!!selectedRecordId);
     return () => onDetailChange?.(false);
   }, [onDetailChange, selectedRecordId]);
 
-  const selectedSnapshot = useMemo(() => snapshotForRecord(selectedRecord), [selectedRecord]);
+  const selectedSnapshot = useMemo(() => snapshotForGuide(selectedRecord, selectedGuide), [selectedGuide, selectedRecord]);
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
   const selectedPdfFields = useMemo(() => pdfFieldsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
-  const responsesByTarget = useMemo(() => mapResponsesByTarget(responses), [responses]);
+  const responsesByTarget = useMemo(() => mapResponsesByTarget(responses, selectedGuide?.id || ""), [responses, selectedGuide?.id]);
   const autoScoreStorageKey = useMemo(() => getAutoScoreStorageKey(actorUserId), [actorUserId]);
   const selectedTranscriptTurns = useMemo(() => {
     const durationSeconds = Number(selectedRecord?.metadata?.audio_transcription?.duration_seconds || audioDuration || 0);
@@ -2459,11 +2884,23 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         .order("interview_date", { ascending: false, nullsFirst: false })
         .order("created_at", { ascending: false });
       if (recordRes.error) throw recordRes.error;
+      const recordIds = (recordRes.data || []).map((record) => record.id);
+      const guideRes = recordIds.length
+        ? await supabase
+            .from("labor_interview_record_guides")
+            .select("*")
+            .in("interview_id", recordIds)
+            .order("sequence_order", { ascending: true })
+            .order("created_at", { ascending: true })
+        : { data: [], error: null };
+      const guideMissing = guideRes.error?.code === "PGRST205" || /labor_interview_record_guides/i.test(guideRes.error?.message || "");
+      if (guideRes.error && !guideMissing) throw guideRes.error;
 
       setTemplates(templateRows);
       setVersions(versionRows);
       setQuestions(questionRes.data || []);
       setRecords(recordRes.data || []);
+      setGuides(guideMissing ? [] : (guideRes.data || []));
     } catch (error) {
       const missing = error?.code === "PGRST205" || /labor_interview_/i.test(error?.message || "");
       setSchemaError(missing ? "Interview database tables are not available in this environment yet." : (error?.message || "Unable to load interviews."));
@@ -2515,6 +2952,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setShowGuideModal(false);
     setShowQuestionsModal(false);
     setShowTranscriptModal(false);
+    setShowTranscriptInput(false);
+    setTranscriptDraft("");
+    setActiveGuideId("");
+    setGuideAttachVersionId("");
     setAudioPlaying(false);
     setAudioCurrentTime(0);
     setAudioDuration(0);
@@ -2538,8 +2979,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [actorName, selectedRecord]);
 
   useEffect(() => {
+    if (!selectedGuides.length) return;
+    if (!selectedGuides.some((guide) => guide.id === activeGuideId)) {
+      setActiveGuideId(selectedGuides[0]?.id || "");
+    }
+  }, [activeGuideId, selectedGuides]);
+
+  useEffect(() => {
     const nextDrafts = {};
-    (responses || []).forEach((response) => {
+    Object.values(responsesByTarget || {}).forEach((response) => {
       if (response.response_type === "custom_question" && response.question_key) {
         nextDrafts[fieldKey("custom_question", response.question_key)] = getResponseDraft(response);
       }
@@ -2549,7 +2997,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     });
     setResponseDrafts(nextDrafts);
     setGuidePreviewDrafts(nextDrafts);
-  }, [responses]);
+  }, [responsesByTarget]);
 
   useEffect(() => {
     const path = selectedSnapshot?.version?.source_pdf_path;
@@ -2594,14 +3042,17 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
 
   const buildCurrentPdfResponseMap = useCallback((drafts = responseDrafts) => {
-    const map = buildPdfResponseMap(responses, selectedRecord, selectedPdfFields);
+    const map = buildPdfResponseMap(Object.values(responsesByTarget), selectedRecord, selectedPdfFields, { includeDrafts: true });
     Object.entries(drafts || {}).forEach(([key, value]) => {
       if (!key.startsWith("pdf_field:")) return;
       const fieldName = key.replace(/^pdf_field:/, "");
       map[fieldName] = value || "";
     });
+    const overallScoreField = selectedPdfFields.find((field) => /^overall_score$/i.test(field.name || ""));
+    const overallScore = computeOverallScoreFromPdfMap(map, selectedPdfFields);
+    if (overallScoreField && overallScore) map[overallScoreField.name] = overallScore;
     return map;
-  }, [responses, selectedPdfFields, selectedRecord]);
+  }, [responseDrafts, responsesByTarget, selectedPdfFields, selectedRecord]);
 
   useEffect(() => {
     if (!showGuideModal) {
@@ -2716,8 +3167,32 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         updated_by_user_id: actorUserId,
       }).select("*").single();
       if (error) throw error;
+      const { data: guide, error: guideError } = await supabase
+        .from("labor_interview_record_guides")
+        .insert({
+          interview_id: created.id,
+          location_id: locationId,
+          template_id: selectedTemplate.id,
+          template_version_id: selectedTemplateVersion.id,
+          guide_label: selectedTemplate.role_label,
+          role_key: selectedTemplate.role_key,
+          role_label: selectedTemplate.role_label,
+          guide_status: "draft",
+          sequence_order: 10,
+          template_snapshot: snapshot,
+          pdf_field_manifest_snapshot: selectedTemplateVersion.pdf_field_manifest || [],
+          question_snapshot: snapshot.questions || [],
+          metadata: { primary: true },
+          created_by_user_id: actorUserId,
+          updated_by_user_id: actorUserId,
+        })
+        .select("*")
+        .single();
+      if (guideError) throw guideError;
       setRecords((prev) => [created, ...prev]);
+      setGuides((prev) => [guide, ...prev]);
       setSelectedRecordId(created.id);
+      setActiveGuideId(guide.id);
       setShowNewInterview(false);
       setNewInterviewDraft(buildNewInterviewDraft());
       showToast("Interview created");
@@ -2804,10 +3279,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
-  const saveResponse = async ({ responseType, key, prompt, value, metadataPatch = null }) => {
+  const saveResponse = async ({ responseType, key, prompt, value, metadataPatch = null, responseState = null }) => {
     if (!selectedRecord?.id || !key) return;
     const targetKey = fieldKey(responseType, key);
     const existing = responsesByTarget[targetKey];
+    const nextState = responseState || (String(value || "").trim() ? "manual" : "blank");
     setSavingResponseKey(targetKey);
     try {
       if (existing?.id) {
@@ -2816,7 +3292,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           .update({
             response_text: value || null,
             prompt_snapshot: prompt,
+            interview_guide_id: selectedGuide?.id || null,
+            response_state: nextState,
             metadata: metadataPatch ? { ...(existing.metadata || {}), ...metadataPatch } : existing.metadata,
+            reviewed_at: nextState === "ai_approved" || nextState === "manual" ? new Date().toISOString() : existing.reviewed_at,
+            reviewed_by_user_id: nextState === "ai_approved" || nextState === "manual" ? actorUserId : existing.reviewed_by_user_id,
+            reviewed_by_name: nextState === "ai_approved" || nextState === "manual" ? actorName : existing.reviewed_by_name,
+            rejected_at: nextState === "rejected" ? new Date().toISOString() : existing.rejected_at,
             updated_by_user_id: actorUserId,
             updated_at: new Date().toISOString(),
           })
@@ -2828,12 +3310,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       } else {
         const insertRow = {
           interview_id: selectedRecord.id,
+          interview_guide_id: selectedGuide?.id || null,
           response_type: responseType,
           question_key: responseType === "custom_question" ? key : null,
           pdf_field_name: responseType === "pdf_field" ? key : null,
           prompt_snapshot: prompt,
           response_text: value || null,
+          response_state: nextState,
           metadata: metadataPatch || {},
+          reviewed_at: nextState === "ai_approved" || nextState === "manual" ? new Date().toISOString() : null,
+          reviewed_by_user_id: nextState === "ai_approved" || nextState === "manual" ? actorUserId : null,
+          reviewed_by_name: nextState === "ai_approved" || nextState === "manual" ? actorName : null,
+          rejected_at: nextState === "rejected" ? new Date().toISOString() : null,
           created_by_user_id: actorUserId,
           updated_by_user_id: actorUserId,
         };
@@ -2865,6 +3353,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       pdfPopulationInstruction = "",
       documentPdfInstruction = "",
       pdfOnly = false,
+      customOnly = false,
     } = options;
     if (!interviewId) return null;
     if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
@@ -2881,11 +3370,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
         body: {
           interview_id: interviewId,
+          interview_guide_id: selectedGuide?.id || undefined,
           action: "start",
           auto_score_candidate: autoScoreCandidates,
+          review_mode: aiReviewMode,
           target_pdf_field_name: targetPdfFieldName || undefined,
           pdf_population_instructions: pdfPopulationInstructions,
           pdf_only: pdfOnly || !!documentPdfInstruction || undefined,
+          custom_only: customOnly || undefined,
         },
       });
       if (startError) throw new Error(await readEdgeFunctionError(startError, "AI draft failed"));
@@ -2898,7 +3390,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         for (let attempt = 0; attempt < 60; attempt += 1) {
           await sleep(attempt === 0 ? 5000 : 10000);
           const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
-            body: { interview_id: interviewId, action: "poll", request_id: requestId },
+            body: {
+              interview_id: interviewId,
+              interview_guide_id: selectedGuide?.id || undefined,
+              action: "poll",
+              request_id: requestId,
+              review_mode: aiReviewMode,
+              custom_only: customOnly || undefined,
+            },
           });
           if (pollError) throw new Error(await readEdgeFunctionError(pollError, "AI draft failed"));
           result = pollResult;
@@ -2938,6 +3437,122 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       pdfOnly: true,
     });
     return result;
+  };
+
+  const waitForInterviewTranscript = async (interviewId) => {
+    let latest = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await sleep(attempt === 0 ? 3000 : 5000);
+      const { data, error } = await supabase
+        .from("labor_interview_records")
+        .select("*")
+        .eq("id", interviewId)
+        .single();
+      if (error) throw error;
+      latest = data;
+      setRecords((prev) => prev.map((record) => record.id === data.id ? data : record));
+
+      if (data?.transcript_status === "failed") {
+        const message = data?.metadata?.audio_transcription_error?.message || "AI could not transcribe this audio.";
+        throw new Error(message);
+      }
+      if (data?.transcript_status === "ready" && String(data?.transcript_text || "").trim()) {
+        return data;
+      }
+    }
+    throw new Error(latest?.transcript_status === "transcribing"
+      ? "Audio is still transcribing. Refresh this interview in a few minutes."
+      : "Timed out waiting for interview transcription.");
+  };
+
+  const transcribeInterviewAudioChunks = async ({ interviewId, chunks, originalAudio }) => {
+    const safeChunks = Array.isArray(chunks) ? chunks.filter((chunk) => chunk?.audio_file_path) : [];
+    if (!safeChunks.length) return null;
+    const startedAt = new Date().toISOString();
+    const chunkResults = [];
+    for (let index = 0; index < safeChunks.length; index += 1) {
+      const chunk = safeChunks[index];
+      showToast(`Transcribing audio ${index + 1}/${safeChunks.length}`);
+      const { data, error } = await supabase.functions.invoke("interview-transcribe-audio", {
+        body: {
+          interview_id: interviewId,
+          audio_file_bucket: chunk.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+          audio_file_path: chunk.audio_file_path,
+          audio_file_name: chunk.audio_file_name,
+          audio_mime_type: chunk.audio_mime_type || "audio/mpeg",
+          audio_normalized_for_stt: true,
+          original_audio_file_name: originalAudio?.original_audio_file_name,
+          original_audio_mime_type: originalAudio?.original_audio_mime_type,
+          original_audio_size_bytes: originalAudio?.original_audio_size_bytes,
+          save_transcript: false,
+        },
+      });
+      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
+      if (!data?.transcript_text) throw new Error(`AI returned no transcript text for audio ${index + 1}.`);
+      chunkResults.push({ ...data, chunk });
+    }
+
+    const transcriptText = chunkResults
+      .map((result) => String(result.transcript_text || "").trim())
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    if (!transcriptText) throw new Error("AI returned no transcript text.");
+
+    const generatedAt = new Date().toISOString();
+    const transcriptTurns = chunkResults.flatMap((result, resultIndex) => {
+      const offset = Number(result.chunk?.start_seconds || 0) || 0;
+      return (Array.isArray(result.transcript_turns) ? result.transcript_turns : []).map((turn, turnIndex) => ({
+        ...turn,
+        id: `chunk-${resultIndex + 1}-${turn.id || turnIndex + 1}`,
+        start: Number.isFinite(Number(turn.start)) ? Number(turn.start) + offset : null,
+        end: Number.isFinite(Number(turn.end)) ? Number(turn.end) + offset : null,
+        chunk_index: resultIndex,
+      }));
+    });
+    const wordCount = chunkResults.reduce((sum, result) => sum + (Number(result.word_count) || 0), 0) || null;
+    const durationSeconds = chunkResults.reduce((sum, result) => sum + (Number(result.duration_seconds) || 0), 0) || null;
+    const updated = await saveRecordPatch({
+      transcript_text: transcriptText,
+      transcript_status: "ready",
+      transcript_source: "audio",
+      transcript_uploaded_at: generatedAt,
+      status: selectedRecord?.status === "draft" ? "in_progress" : selectedRecord?.status,
+      metadata: {
+        ...(selectedRecord?.metadata || {}),
+        audio_transcription: {
+          provider: "xai",
+          model: chunkResults[0]?.model || "grok-stt",
+          generated_at: generatedAt,
+          started_at: startedAt,
+          language: chunkResults.find((result) => result.language)?.language || null,
+          duration_seconds: durationSeconds,
+          word_count: wordCount,
+          diarization_enabled: true,
+          segmentation_source: chunkResults[0]?.segmentation_source || "provider",
+          transcript_turns: transcriptTurns,
+          chunk_count: safeChunks.length,
+          source_audio: {
+            bucket: originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+            path: originalAudio?.audio_file_path || safeChunks[0]?.audio_file_path,
+            file_name: originalAudio?.audio_file_name || safeChunks[0]?.audio_file_name,
+            mime_type: originalAudio?.audio_mime_type || safeChunks[0]?.audio_mime_type || "audio/mpeg",
+            size_bytes: safeChunks.reduce((sum, chunk) => sum + (Number(chunk.audio_size_bytes) || 0), 0) || null,
+            original_file_name: originalAudio?.original_audio_file_name || originalAudio?.audio_file_name,
+            original_mime_type: originalAudio?.original_audio_mime_type || null,
+            original_size_bytes: originalAudio?.original_audio_size_bytes || null,
+            normalized_for_stt: true,
+            chunks: safeChunks.map((chunk) => ({
+              path: chunk.audio_file_path,
+              file_name: chunk.audio_file_name,
+              size_bytes: chunk.audio_size_bytes || null,
+              start_seconds: chunk.start_seconds || null,
+            })),
+          },
+        },
+      },
+    });
+    return updated;
   };
 
   const handleAudioUpload = async (file) => {
@@ -2987,20 +3602,47 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
           original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
         };
+        if (Array.isArray(normalizedAudio.audio_chunks) && normalizedAudio.audio_chunks.length > 1) {
+          const transcriptRecord = await transcribeInterviewAudioChunks({
+            interviewId: selectedRecord.id,
+            chunks: normalizedAudio.audio_chunks,
+            originalAudio: {
+              ...normalizedAudio,
+              original_audio_file_name: normalizedAudio.original_audio_file_name || file.name,
+              original_audio_mime_type: normalizedAudio.original_audio_mime_type || contentType,
+              original_audio_size_bytes: normalizedAudio.original_audio_size_bytes || Number(file.size || 0) || null,
+            },
+          });
+          if (!transcriptRecord?.transcript_text) throw new Error("AI returned no transcript text.");
+          const durationSeconds = Number(transcriptRecord?.metadata?.audio_transcription?.duration_seconds || 0);
+          const minutes = durationSeconds > 0 ? Math.max(1, Math.round(durationSeconds / 60)) : null;
+          showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
+          await loadAll(locationId);
+          setSelectedRecordId(selectedRecord.id);
+          return;
+        }
         showToast("Audio converted. Sending for transcription.");
       }
 
       const { data: result, error } = await supabase.functions.invoke("interview-transcribe-audio", {
-        body: transcriptionPayload,
+        body: {
+          ...transcriptionPayload,
+          async: true,
+        },
       });
       if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
-      if (!result?.transcript_text) throw new Error("AI returned no transcript text.");
+      const transcriptRecord = result?.transcript_text
+        ? null
+        : await waitForInterviewTranscript(selectedRecord.id);
+      if (!result?.transcript_text && !transcriptRecord?.transcript_text) {
+        throw new Error("AI returned no transcript text.");
+      }
 
-      const minutes = Number(result.duration_seconds) > 0 ? Math.max(1, Math.round(Number(result.duration_seconds) / 60)) : null;
-      showToast(minutes ? `Audio processed: ${minutes} min. Drafting responses now.` : "Audio processed. Drafting responses now.");
+      const durationSeconds = Number(result?.duration_seconds || transcriptRecord?.metadata?.audio_transcription?.duration_seconds || 0);
+      const minutes = durationSeconds > 0 ? Math.max(1, Math.round(durationSeconds / 60)) : null;
+      showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
-      await draftInterview(selectedRecord.id, { requireLocalTranscript: false, quietStart: true });
     } catch (error) {
       showToast(safeUiError(error, "Failed to process audio"), "error");
     } finally {
@@ -3008,17 +3650,103 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
+  const saveTranscriptText = async ({ text, fileName = "interview-transcript.txt", source = "upload" }) => {
+    if (!selectedRecord?.id) return null;
+    const cleaned = cleanInterviewTranscriptText(text);
+    if (!cleaned) {
+      showToast("Transcript text is empty.", "error");
+      return null;
+    }
+    setSavingTranscript(true);
+    try {
+      const uploadedAt = new Date().toISOString();
+      const transcriptPath = buildInterviewTranscriptPath({ locationId, interviewId: selectedRecord.id, fileName });
+      const { error: uploadError } = await supabase.storage
+        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .upload(transcriptPath, new Blob([cleaned], { type: "text/plain" }), { upsert: true, contentType: "text/plain" });
+      if (uploadError) throw uploadError;
+      const updated = await saveRecordPatch({
+        transcript_text: cleaned,
+        transcript_status: "ready",
+        transcript_source: source,
+        transcript_uploaded_at: uploadedAt,
+        transcript_file_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+        transcript_file_path: transcriptPath,
+        status: selectedRecord.status === "draft" ? "in_progress" : selectedRecord.status,
+        metadata: {
+          ...(selectedRecord.metadata || {}),
+          transcript_upload: {
+            source,
+            uploaded_at: uploadedAt,
+            file_name: fileName,
+            storage_path: transcriptPath,
+            character_count: cleaned.length,
+          },
+        },
+      });
+      if (updated) {
+        setShowTranscriptInput(false);
+        setTranscriptDraft("");
+        showToast("Transcript ready for AI drafting");
+      }
+      return updated;
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to save transcript"), "error");
+      return null;
+    } finally {
+      setSavingTranscript(false);
+    }
+  };
+
+  const handleTranscriptUpload = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await saveTranscriptText({ text, fileName: file.name || "interview-transcript.txt", source: "upload" });
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to read transcript file"), "error");
+    }
+  };
+
+  const savePastedTranscript = async () => {
+    await saveTranscriptText({ text: transcriptDraft, fileName: "pasted-interview-transcript.txt", source: "paste" });
+  };
+
   const exportFinalPdf = async () => {
     const path = selectedSnapshot?.version?.source_pdf_path;
     const bucket = selectedSnapshot?.version?.source_pdf_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET;
     if (!selectedRecord?.id || !path) return;
+    const guideResponses = Object.values(responsesByTarget || {});
+    const unreviewedDraftCount = guideResponses.filter((response) => {
+      const state = getInterviewResponseState(response);
+      return (state === "ai_draft" || state === "merged_draft") && !isInterviewResponseReviewed(response);
+    }).length;
+    if (unreviewedDraftCount > 0 && !window.confirm(`This guide has ${unreviewedDraftCount} unreviewed AI draft${unreviewedDraftCount === 1 ? "" : "s"}. Final PDF will include reviewed/manual content only. Continue?`)) {
+      return;
+    }
     setExportingPdf(true);
     try {
       const { data: sourceBlob, error: downloadError } = await supabase.storage.from(bucket).download(path);
       if (downloadError) throw downloadError;
       const bytes = await sourceBlob.arrayBuffer();
-      const filledBytes = await fillInterviewPdfBytes(bytes, buildCurrentPdfResponseMap(responseDrafts), { flatten: true });
-      const outputName = `${selectedRecord.candidate_full_name.replace(/[^a-z0-9]+/gi, "-") || "candidate"}-interview.pdf`;
+      const finalMap = buildPdfResponseMap(guideResponses, selectedRecord, selectedPdfFields, { includeDrafts: false });
+      const overallScoreField = selectedPdfFields.find((field) => /^overall_score$/i.test(field.name || ""));
+      const overallScore = computeOverallScoreFromPdfMap(finalMap, selectedPdfFields);
+      if (overallScoreField && overallScore) finalMap[overallScoreField.name] = overallScore;
+      const summaryPages = buildInterviewSummaryPages({
+        record: selectedRecord,
+        guide: selectedGuide,
+        fields: selectedPdfFields,
+        questions: selectedQuestions,
+        responsesByTarget,
+        finalMap,
+      });
+      const filledBytes = await fillInterviewPdfBytes(bytes, finalMap, { flatten: true, summaryPages });
+      const sourcePageCount = Number(selectedSnapshot?.version?.pdf_page_count || 0) || (await countInterviewPdfPages(bytes).catch(() => 0));
+      const finalPageCount = await countInterviewPdfPages(filledBytes).catch(() => sourcePageCount);
+      const summaryPageCount = Math.max(0, finalPageCount - sourcePageCount);
+      const guideSlug = (selectedGuide?.guide_label || selectedGuide?.role_label || selectedRecord.candidate_position || "interview").replace(/[^a-z0-9]+/gi, "-");
+      const outputName = `${selectedRecord.candidate_full_name.replace(/[^a-z0-9]+/gi, "-") || "candidate"}-${guideSlug}-interview.pdf`;
       const artifactPath = buildInterviewArtifactPath({ locationId, interviewId: selectedRecord.id, fileName: outputName });
       const { error: uploadError } = await supabase.storage
         .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
@@ -3028,11 +3756,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         .from("labor_interview_artifacts")
         .insert({
           interview_id: selectedRecord.id,
+          interview_guide_id: selectedGuide?.id || null,
           artifact_type: "final_pdf",
           file_name: outputName,
           storage_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
           storage_path: artifactPath,
           mime_type: "application/pdf",
+          metadata: {
+            guide_label: selectedGuide?.guide_label || selectedGuide?.role_label || null,
+            reviewed_only: true,
+            excluded_unreviewed_drafts: unreviewedDraftCount,
+            summary_page_count: summaryPageCount,
+          },
           created_by_user_id: actorUserId,
           created_by_name: actorName,
         })
@@ -3120,10 +3855,24 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     key: field.name,
     prompt: field.name,
     value,
+    responseState: "ai_approved",
     metadataPatch: {
       approved: true,
       approved_at: new Date().toISOString(),
       approved_by: actorName,
+    },
+  });
+
+  const rejectPdfField = (field) => saveResponse({
+    responseType: "pdf_field",
+    key: field.name,
+    prompt: field.name,
+    value: "",
+    responseState: "rejected",
+    metadataPatch: {
+      approved: false,
+      rejected_at: new Date().toISOString(),
+      rejected_by: actorName,
     },
   });
 
@@ -3139,10 +3888,24 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     key: question.question_key,
     prompt: question.prompt,
     value,
+    responseState: "ai_approved",
     metadataPatch: {
       approved: true,
       approved_at: new Date().toISOString(),
       approved_by: actorName,
+    },
+  });
+
+  const rejectCustomQuestion = (question) => saveResponse({
+    responseType: "custom_question",
+    key: question.question_key,
+    prompt: question.prompt,
+    value: "",
+    responseState: "rejected",
+    metadataPatch: {
+      approved: false,
+      rejected_at: new Date().toISOString(),
+      rejected_by: actorName,
     },
   });
 
@@ -3152,6 +3915,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     try {
       const bytes = await file.arrayBuffer();
       const verification = await extractPdfFieldManifest(bytes);
+      let questionPrompts = {};
+      try {
+        questionPrompts = await extractPdfQuestionPromptMap(bytes);
+      } catch (_) {
+        questionPrompts = {};
+      }
       if (verification.status === "failed_invalid_pdf") {
         await supabase.from("labor_interview_template_versions").update({
           pdf_verification_status: verification.status,
@@ -3183,6 +3952,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           pdf_verification_status: verification.status,
           metadata: {
             ...(version.metadata || {}),
+            ...(Object.keys(questionPrompts).length ? { pdf_question_prompts: questionPrompts } : {}),
+            pdf_question_count: Object.keys(questionPrompts).length,
             verified_at: new Date().toISOString(),
             verified_by: actorUserId,
           },
@@ -3460,6 +4231,56 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
+  const attachGuideToInterview = async () => {
+    if (!selectedRecord?.id || !guideAttachVersionId) return;
+    const version = publishedVersions.find((row) => row.id === guideAttachVersionId);
+    const template = templates.find((row) => row.id === version?.template_id);
+    if (!version || !template) {
+      showToast("Choose a published guide to attach.", "error");
+      return;
+    }
+    if (selectedGuides.some((guide) => guide.template_version_id === version.id)) {
+      showToast("That guide is already attached to this interview.", "error");
+      return;
+    }
+    const versionQuestions = questionsByVersion[version.id] || [];
+    const snapshot = buildInterviewTemplateSnapshot({ template, version, questions: versionQuestions });
+    const nextSequence = Math.max(0, ...selectedGuides.map((guide) => Number(guide.sequence_order || 0))) + 10;
+    setRecordSaving(true);
+    try {
+      const { data: guide, error } = await supabase
+        .from("labor_interview_record_guides")
+        .insert({
+          interview_id: selectedRecord.id,
+          location_id: locationId,
+          template_id: template.id,
+          template_version_id: version.id,
+          guide_label: template.role_label,
+          role_key: template.role_key,
+          role_label: template.role_label,
+          guide_status: "draft",
+          sequence_order: nextSequence,
+          template_snapshot: snapshot,
+          pdf_field_manifest_snapshot: version.pdf_field_manifest || [],
+          question_snapshot: snapshot.questions || [],
+          metadata: { attached_from_interview: true },
+          created_by_user_id: actorUserId,
+          updated_by_user_id: actorUserId,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      setGuides((prev) => [...prev, guide]);
+      setActiveGuideId(guide.id);
+      setGuideAttachVersionId("");
+      showToast(`${template.role_label} guide attached`);
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to attach guide"), "error");
+    } finally {
+      setRecordSaving(false);
+    }
+  };
+
   const templateOptions = useMemo(() => {
     return publishedVersions.map((version) => {
       const template = templates.find((row) => row.id === version.template_id);
@@ -3469,6 +4290,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       };
     });
   }, [publishedVersions, templates]);
+
+  const attachGuideOptions = useMemo(() => {
+    const attached = new Set(selectedGuides.map((guide) => guide.template_version_id));
+    return templateOptions.filter((option) => !attached.has(option.value));
+  }, [selectedGuides, templateOptions]);
 
   if (loading) {
     return <div style={{ textAlign: "center", padding: 50, color: C.textMut }}>Loading interviews...</div>;
@@ -3533,14 +4359,78 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             saving={recordSaving}
           />
 
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 950, color: C.text }}>Attached Guides</div>
+                <div style={{ marginTop: 4, color: C.textMut, fontSize: 12 }}>One transcript can fill multiple role guides for this candidate.</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 320px) auto", gap: 8, alignItems: "center" }}>
+                <CustomSelect
+                  value={guideAttachVersionId}
+                  onChange={setGuideAttachVersionId}
+                  options={attachGuideOptions}
+                  placeholder={attachGuideOptions.length ? "Attach another guide" : "All guides attached"}
+                />
+                <Btn variant="secondary" size="sm" onClick={attachGuideToInterview} disabled={!guideAttachVersionId || recordSaving}>Attach</Btn>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {selectedGuides.map((guide) => {
+                const active = guide === selectedGuide || guide.id === selectedGuide?.id;
+                const guideResponses = responses.filter((response) => (guide.id ? response.interview_guide_id === guide.id : !response.interview_guide_id));
+                const approved = guideResponses.filter(isInterviewResponseReviewed).length;
+                const drafts = guideResponses.filter((response) => getInterviewResponseState(response) === "ai_draft" || getInterviewResponseState(response) === "merged_draft").length;
+                return (
+                  <button
+                    type="button"
+                    key={guide.id || "legacy-guide"}
+                    onClick={() => setActiveGuideId(guide.id || "")}
+                    style={{
+                      border: `1px solid ${active ? C.pri : C.border}`,
+                      background: active ? "#ecfdf5" : "#fff",
+                      color: active ? C.pri : C.textSec,
+                      borderRadius: 8,
+                      padding: "9px 11px",
+                      fontFamily: "inherit",
+                      cursor: "pointer",
+                      minWidth: 170,
+                      textAlign: "left",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 950, color: active ? C.pri : C.text }}>{guide.guide_label || guide.role_label}</div>
+                    <div style={{ marginTop: 3, fontSize: 11, color: C.textMut }}>{approved} approved / {drafts} draft</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 320px) minmax(0, 1fr)", gap: 12, alignItems: "center" }}>
+              <CustomSelect
+                value={aiReviewMode}
+                onChange={setAiReviewMode}
+                options={INTERVIEW_AI_REVIEW_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
+                placeholder="AI strictness"
+              />
+              <div style={{ color: C.textMut, fontSize: 12, lineHeight: 1.45 }}>
+                {INTERVIEW_AI_REVIEW_MODES.find((mode) => mode.value === aiReviewMode)?.description}
+              </div>
+            </div>
+          </div>
+
           <AudioUploadPanel
             record={selectedRecord}
             audioFileName={audioFileName}
             transcribing={audioTranscribing}
             drafting={aiDrafting}
             onUpload={handleAudioUpload}
+            onTranscriptUpload={handleTranscriptUpload}
+            onTranscriptPasteOpen={() => {
+              setTranscriptDraft(selectedRecord.transcript_text || "");
+              setShowTranscriptInput(true);
+            }}
             onTranscriptClick={() => setShowTranscriptModal(true)}
             inputRef={audioInputRef}
+            transcriptInputRef={transcriptInputRef}
             audioRef={audioPlayerRef}
             audioUrl={audioUrl}
             audioPlaying={audioPlaying}
@@ -3826,6 +4716,28 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </Modal>
       )}
 
+      {showTranscriptInput && selectedRecord && (
+        <Modal title="Paste Interview Transcript" onClose={() => setShowTranscriptInput(false)} wide>
+          <div style={{ display: "grid", gap: 12 }}>
+            <textarea
+              value={transcriptDraft}
+              onChange={(event) => setTranscriptDraft(event.target.value)}
+              placeholder="Paste the full interview transcript here"
+              rows={16}
+              style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 13, fontFamily: "inherit", fontSize: 14, lineHeight: 1.55, color: C.text, resize: "vertical", outline: "none" }}
+              autoFocus
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ color: C.textMut, fontSize: 12 }}>{cleanInterviewTranscriptText(transcriptDraft).length.toLocaleString()} characters</span>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <Btn variant="secondary" onClick={() => setShowTranscriptInput(false)}>Cancel</Btn>
+                <Btn variant="primary" onClick={savePastedTranscript} disabled={savingTranscript || !cleanInterviewTranscriptText(transcriptDraft)}>{savingTranscript ? "Saving..." : "Save Transcript"}</Btn>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {showNewPosition && (
         <Modal title="Create Position Type" onClose={() => setShowNewPosition(false)}>
           <div style={{ display: "grid", gap: 14 }}>
@@ -3852,7 +4764,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         <ReviewGuideModal
           record={selectedRecord}
           fields={selectedPdfFields}
-          artifacts={artifacts}
+          artifacts={artifacts.filter((artifact) => !selectedGuide?.id || !artifact.interview_guide_id || artifact.interview_guide_id === selectedGuide.id)}
           pdfUrl={guidePdfUrl}
           loadingPdf={guidePdfLoading}
           responsesByTarget={responsesByTarget}
@@ -3864,6 +4776,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
           approveField={approvePdfField}
+          rejectField={rejectPdfField}
           aiDrafting={aiDrafting}
           onAiFillDocument={fillPdfDocumentWithAiInstruction}
           exportFinalPdf={exportFinalPdf}
@@ -3881,6 +4794,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           savingKey={savingResponseKey}
           setQuestionDraft={setQuestionResponseDraft}
           approveQuestion={approveCustomQuestion}
+          rejectQuestion={rejectCustomQuestion}
+          onAiDraftQuestions={() => draftInterview(selectedRecord.id, { customOnly: true })}
           onClose={() => setShowQuestionsModal(false)}
         />
       )}
