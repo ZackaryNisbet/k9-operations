@@ -1040,11 +1040,9 @@ function composePdfReviewItemValue(item, getFieldValue) {
   if (!item) return "";
   if (item.type !== "question_part") return getFieldValue(item.field);
   return (item.fields || [])
-    .map((field) => String(getFieldValue(field) || "").trim())
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .map((field) => String(getFieldValue(field) || ""))
+    .filter((value) => value.length > 0)
+    .join(" ");
 }
 
 function splitPdfReviewItemValue(item, value) {
@@ -1074,14 +1072,67 @@ function conciseBullet(value = "", maxLength = 190) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
 }
 
+function normalizeSummaryBulletText(value = "") {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summaryTextToBullets(value = "") {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => normalizeSummaryBulletText(line.replace(/^[-*•]\s*/, "")))
+    .filter(Boolean);
+}
+
+function summaryBulletsToText(bullets = []) {
+  return (Array.isArray(bullets) ? bullets : [])
+    .map((bullet) => normalizeSummaryBulletText(bullet))
+    .filter(Boolean)
+    .map((bullet) => `- ${bullet}`)
+    .join("\n");
+}
+
+function summarySectionKey(value = "") {
+  const key = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return key || "summary";
+}
+
+function getStoredSummaryEdits(recordOrEdits) {
+  const source = recordOrEdits?.metadata?.interview_summary_edits || recordOrEdits || {};
+  const sections = source.sections || source;
+  if (!sections || typeof sections !== "object" || Array.isArray(sections)) return {};
+  return Object.entries(sections).reduce((next, [key, value]) => {
+    const bullets = Array.isArray(value) ? value : summaryTextToBullets(value);
+    next[key] = bullets.map((bullet) => normalizeSummaryBulletText(bullet)).filter(Boolean);
+    return next;
+  }, {});
+}
+
+function applySummarySectionEdits(sections = [], summaryEdits = {}) {
+  const edits = getStoredSummaryEdits(summaryEdits);
+  return (sections || [])
+    .map((section) => {
+      const key = section.key || summarySectionKey(section.heading);
+      if (!Object.prototype.hasOwnProperty.call(edits, key)) return { ...section, key };
+      return { ...section, key, bullets: edits[key] || [] };
+    })
+    .filter((section) => Array.isArray(section.bullets) && section.bullets.length > 0);
+}
+
 function getStoredTranscriptSummaryBullets(record) {
   const metadata = record?.metadata || {};
   const source = metadata.interview_summary || metadata.transcript_summary || {};
   const rawBullets = Array.isArray(source) ? source : source.bullets;
   return (Array.isArray(rawBullets) ? rawBullets : [])
-    .map((bullet) => conciseBullet(bullet, 240))
+    .map((bullet) => normalizeSummaryBulletText(bullet))
     .filter(Boolean)
-    .slice(0, 10);
+    .slice(0, 12);
 }
 
 function splitTranscriptIntoSummarySentences(record) {
@@ -1120,14 +1171,14 @@ function buildFallbackTranscriptSummaryBullets(record) {
     });
     if (sentenceIndex === -1) return "";
     used.add(sentenceIndex);
-    return `${category.label}: ${conciseBullet(sentences[sentenceIndex], 185)}`;
+    return `${category.label}: ${normalizeSummaryBulletText(sentences[sentenceIndex])}`;
   }).filter(Boolean);
 
   if (bullets.length >= 4) return bullets.slice(0, 8);
   sentences.forEach((sentence, index) => {
     if (bullets.length >= 6 || used.has(index)) return;
     used.add(index);
-    bullets.push(conciseBullet(sentence, 210));
+    bullets.push(normalizeSummaryBulletText(sentence));
   });
   return bullets.slice(0, 8);
 }
@@ -1137,7 +1188,7 @@ function getTranscriptSummaryBullets(record) {
   return stored.length ? stored : buildFallbackTranscriptSummaryBullets(record);
 }
 
-function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap }) {
+function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap, summaryEdits = null }) {
   const transcriptBullets = getTranscriptSummaryBullets(record);
   const guideBullets = buildPdfReviewItems(fields)
     .filter((item) => item.type === "question_part")
@@ -1145,7 +1196,7 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
       const value = composePdfReviewItemValue(item, (field) => finalMap[field.name] || "");
       if (!String(value || "").trim()) return "";
       const label = item.type === "question_part" ? questionPartLabel(item) : humanizePdfFieldName(item.field.name);
-      return `${label}: ${conciseBullet(value)}`;
+      return `${label}: ${normalizeSummaryBulletText(value)}`;
     })
     .filter(Boolean);
 
@@ -1154,22 +1205,22 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
       const response = responsesByTarget[responseKeyForQuestion(question)] || {};
       const value = getInterviewOfficialResponseText(response);
       if (!value) return "";
-      return `${question.prompt}: ${conciseBullet(value)}`;
+      return `${question.prompt}: ${normalizeSummaryBulletText(value)}`;
     })
     .filter(Boolean);
 
   const scoreBullets = [];
   const overallScore = finalMap.overall_score || computeOverallScoreFromPdfMap(finalMap, fields);
   if (overallScore) scoreBullets.push(`Overall score: ${overallScore}`);
-  if (finalMap.strongest_area) scoreBullets.push(`Strongest area: ${conciseBullet(finalMap.strongest_area, 140)}`);
-  if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${conciseBullet(finalMap.biggest_concern, 140)}`);
+  if (finalMap.strongest_area) scoreBullets.push(`Strongest area: ${normalizeSummaryBulletText(finalMap.strongest_area)}`);
+  if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${normalizeSummaryBulletText(finalMap.biggest_concern)}`);
 
-  const sections = [
-    transcriptBullets.length ? { heading: "Call Summary", bullets: transcriptBullets } : null,
-    scoreBullets.length ? { heading: "Scorecard", bullets: scoreBullets } : null,
-    guideBullets.length ? { heading: "Reviewed Guide Responses", bullets: guideBullets } : null,
-    customBullets.length ? { heading: "Reviewed Custom Questions", bullets: customBullets } : null,
-  ].filter(Boolean);
+  const sections = applySummarySectionEdits([
+    transcriptBullets.length ? { key: "call_summary", heading: "Call Summary", bullets: transcriptBullets } : null,
+    scoreBullets.length ? { key: "scorecard", heading: "Scorecard", bullets: scoreBullets } : null,
+    guideBullets.length ? { key: "reviewed_guide_responses", heading: "Reviewed Guide Responses", bullets: guideBullets } : null,
+    customBullets.length ? { key: "reviewed_custom_questions", heading: "Reviewed Custom Questions", bullets: customBullets } : null,
+  ].filter(Boolean), summaryEdits || record);
 
   if (!sections.length) return [];
   return [{
@@ -1182,6 +1233,28 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
 function estimateSummaryBulletLines(text = "") {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   return Math.max(1, Math.ceil(clean.length / 92));
+}
+
+function chunkSummaryBulletForPreview(text = "", maxLines = 8) {
+  const clean = normalizeSummaryBulletText(text);
+  if (!clean) return [];
+  const maxChars = Math.max(120, 92 * maxLines);
+  if (clean.length <= maxChars) return [clean];
+  const chunks = [];
+  let remaining = clean;
+  while (remaining.length > maxChars) {
+    const breakpoint = Math.max(
+      remaining.lastIndexOf(" ", maxChars),
+      remaining.lastIndexOf(".", maxChars),
+      remaining.lastIndexOf(";", maxChars),
+      remaining.lastIndexOf(",", maxChars),
+    );
+    const cutAt = breakpoint >= Math.floor(maxChars * 0.6) ? breakpoint : maxChars;
+    chunks.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
 }
 
 function paginateInterviewSummaryPreview(summaryPages = []) {
@@ -1217,7 +1290,7 @@ function paginateInterviewSummaryPreview(summaryPages = []) {
         }
       };
 
-      bullets.forEach((bullet) => {
+      bullets.flatMap((bullet) => chunkSummaryBulletForPreview(bullet)).forEach((bullet) => {
         const needed = estimateSummaryBulletLines(bullet) + 1;
         if (lineCount + needed > maxLines && page.sections.some((row) => row.bullets?.length)) {
           pushPage();
@@ -2190,7 +2263,7 @@ function PdfFieldValueLayer({ fields, activePageNumber, activeKey, containerSize
   );
 }
 
-function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages, activePageNumber, activeKey, onSelectField }) {
+function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages, activePageNumber, activeKey, activeSummary = false, onSelectField, onSelectSummary }) {
   const containerRef = useRef(null);
   const pageCanvasRefs = useRef(new Map());
   const pageFrameRefs = useRef(new Map());
@@ -2319,14 +2392,14 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
 
   useEffect(() => {
     const pageNumber = Math.max(1, Number(activePageNumber || 1));
-    const node = pageFrameRefs.current.get(pageNumber);
+    const node = activeSummary ? pageFrameRefs.current.get("summary-0") : pageFrameRefs.current.get(pageNumber);
     const scroller = containerRef.current;
     if (!node || !scroller) return;
     scroller.scrollTo({
       top: Math.max(0, node.offsetTop - 14),
       behavior: "smooth",
     });
-  }, [activePageNumber, pageState.pages.length]);
+  }, [activePageNumber, activeSummary, pageState.pages.length, summaryPreviewPages.length]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", height: "100%", minHeight: 560, overflow: "auto", borderRadius: 6, background: "#f8fafc", boxShadow: "0 10px 30px rgba(15,23,42,0.18)" }}>
@@ -2383,11 +2456,29 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
                 </div>
               ))}
               {summaryPreviewPages.map((summaryPage, index) => (
-                <InterviewSummaryPreviewPage
+                <button
+                  type="button"
                   key={`summary-${index}`}
-                  page={summaryPage}
-                  width={pageState.pages[0]?.renderSize?.width || Math.max(260, containerWidth - 28)}
-                />
+                  ref={(node) => {
+                    if (node) pageFrameRefs.current.set(`summary-${index}`, node);
+                    else pageFrameRefs.current.delete(`summary-${index}`);
+                  }}
+                  onClick={onSelectSummary}
+                  style={{
+                    border: `2px solid ${activeSummary && index === 0 ? C.pri : "transparent"}`,
+                    borderRadius: 6,
+                    padding: 0,
+                    background: "transparent",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <InterviewSummaryPreviewPage
+                    page={summaryPage}
+                    width={pageState.pages[0]?.renderSize?.width || Math.max(260, containerWidth - 28)}
+                  />
+                </button>
               ))}
             </>
           ) : (
@@ -2589,12 +2680,15 @@ function ReviewGuideModal({
   responseDrafts,
   pdfFieldValues,
   summaryPages,
+  summaryDraftTextByKey,
+  summarySavingKey,
   savingKey,
   exporting,
   activeIndex,
   setActiveIndex,
   getFieldValue,
   setFieldDraft,
+  onSummarySectionChange,
   approveField,
   rejectField,
   aiDrafting,
@@ -2605,14 +2699,24 @@ function ReviewGuideModal({
 }) {
   const reviewFields = fields;
   const reviewItems = useMemo(() => buildPdfReviewItems(reviewFields), [reviewFields]);
-  const boundedIndex = Math.min(activeIndex, Math.max(0, reviewItems.length - 1));
-  const activeItem = reviewItems[boundedIndex] || reviewItems[0] || null;
+  const summarySections = summaryPages?.[0]?.sections || [];
+  const summaryAvailable = summarySections.length > 0;
+  const summaryActive = summaryAvailable && activeIndex >= reviewItems.length;
+  const boundedIndex = summaryActive ? -1 : Math.min(activeIndex, Math.max(0, reviewItems.length - 1));
+  const activeItem = summaryActive ? null : (reviewItems[boundedIndex] || reviewItems[0] || null);
   const activeField = activeItem?.field || activeItem?.fields?.[0] || null;
   const activeKey = activeField ? responseKeyForPdfField(activeField) : "";
   const itemApproved = (item) => !!item?.fields?.length && item.fields.every((field) => isInterviewResponseReviewed(responsesByTarget[responseKeyForPdfField(field)] || {}));
-  const approved = itemApproved(activeItem);
+  const approved = !summaryActive && itemApproved(activeItem);
   const approvedCount = reviewItems.filter(itemApproved).length;
-  const activeValue = activeItem ? composePdfReviewItemValue(activeItem, getFieldValue) : "";
+  const getItemDraftValue = (item) => {
+    if (!item) return "";
+    if (item.type === "question_part" && Object.prototype.hasOwnProperty.call(responseDrafts || {}, item.key)) {
+      return responseDrafts[item.key] || "";
+    }
+    return composePdfReviewItemValue(item, getFieldValue);
+  };
+  const activeValue = activeItem ? getItemDraftValue(activeItem) : "";
   const activeResponses = activeItem?.fields?.map((field) => responsesByTarget[responseKeyForPdfField(field)] || {}).filter(Boolean) || [];
   const activeEvidence = activeResponses.flatMap((response) => Array.isArray(response.ai_evidence) ? response.ai_evidence : []).filter(Boolean);
   const [guideAiOpen, setGuideAiOpen] = useState(false);
@@ -2640,7 +2744,7 @@ function ReviewGuideModal({
 
   const setItemDraft = (item, value) => {
     splitPdfReviewItemValue(item, value).forEach(({ field, value: fieldValue }) => {
-      setFieldDraft(field, fieldValue);
+      setFieldDraft(field, fieldValue, item?.type === "question_part" ? { aggregateKey: item.key, aggregateValue: value } : null);
     });
   };
 
@@ -2789,6 +2893,30 @@ function ReviewGuideModal({
                 </button>
               );
             })}
+            {summaryAvailable && (
+              <>
+                <div style={{ height: 1, background: C.borderLight, margin: "4px 0" }} />
+                <button
+                  type="button"
+                  onClick={() => setActiveIndex(reviewItems.length)}
+                  title="Interview Summary"
+                  style={{
+                    width: "100%",
+                    height: 28,
+                    borderRadius: 999,
+                    border: `1px solid ${summaryActive ? C.pri : "#86efac"}`,
+                    background: summaryActive ? C.pri : "#ecfdf5",
+                    color: summaryActive ? "#fff" : C.suc,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontSize: 10,
+                    fontWeight: 950,
+                  }}
+                >
+                  SUM
+                </button>
+              </>
+            )}
           </div>
           <div className="interview-guide-pdf" style={{ background: "#e5e7eb", padding: 14, minHeight: 0 }}>
             {pdfUrl ? (
@@ -2800,7 +2928,9 @@ function ReviewGuideModal({
                 summaryPages={summaryPages}
                 activePageNumber={activeField?.page_number || 1}
                 activeKey={activeKey}
+                activeSummary={summaryActive}
                 onSelectField={selectField}
+                onSelectSummary={() => setActiveIndex(reviewItems.length)}
               />
             ) : loadingPdf ? (
               <div style={{ height: "100%", minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontWeight: 800 }}>Rendering guide...</div>
@@ -2809,7 +2939,35 @@ function ReviewGuideModal({
             )}
           </div>
           <div style={{ borderLeft: `1px solid ${C.border}`, background: "#fff", padding: 16, overflowY: "auto" }}>
-            {activeField ? (
+            {summaryActive ? (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Summary Appendix</div>
+                  <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950 }}>Interview Summary</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Edits save into this interview and export with the final PDF.</div>
+                </div>
+                {summarySections.map((section) => {
+                  const sectionKey = section.key || summarySectionKey(section.heading);
+                  const textValue = Object.prototype.hasOwnProperty.call(summaryDraftTextByKey || {}, sectionKey)
+                    ? summaryDraftTextByKey[sectionKey] || ""
+                    : summaryBulletsToText(section.bullets);
+                  return (
+                    <div key={sectionKey} style={{ display: "grid", gap: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>{section.heading || "Summary"}</div>
+                        <span style={{ color: C.textMut, fontSize: 11 }}>{summarySavingKey === sectionKey ? "Saving..." : "Autosaves"}</span>
+                      </div>
+                      <textarea
+                        value={textValue}
+                        onChange={(event) => onSummarySectionChange?.(sectionKey, event.target.value)}
+                        rows={Math.max(5, Math.min(14, textValue.split("\n").length + 2))}
+                        style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 13, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 138, whiteSpace: "pre-wrap" }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : activeField ? (
               <div style={{ display: "grid", gap: 14 }}>
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
@@ -3091,6 +3249,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [recordSaving, setRecordSaving] = useState(false);
   const [responseDrafts, setResponseDrafts] = useState({});
   const [savingResponseKey, setSavingResponseKey] = useState("");
+  const [summaryDraftTextByKey, setSummaryDraftTextByKey] = useState({});
+  const [savingSummaryKey, setSavingSummaryKey] = useState("");
   const [questionDrafts, setQuestionDrafts] = useState({});
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
   const [templateActionId, setTemplateActionId] = useState("");
@@ -3112,6 +3272,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const audioPlayerRef = useRef(null);
   const pdfSaveTimersRef = useRef({});
   const questionSaveTimersRef = useRef({});
+  const summarySaveTimerRef = useRef(null);
   const summaryRequestRef = useRef(new Set());
 
   const versionsByTemplate = useMemo(() => {
@@ -3155,6 +3316,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     onDetailChange?.(!!selectedRecordId);
     return () => onDetailChange?.(false);
   }, [onDetailChange, selectedRecordId]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(pdfSaveTimersRef.current || {}).forEach((timer) => clearTimeout(timer));
+      Object.values(questionSaveTimersRef.current || {}).forEach((timer) => clearTimeout(timer));
+      if (summarySaveTimerRef.current) clearTimeout(summarySaveTimerRef.current);
+    };
+  }, []);
 
   const selectedSnapshot = useMemo(() => snapshotForGuide(selectedRecord, selectedGuide), [selectedGuide, selectedRecord]);
   const selectedQuestions = useMemo(() => questionRowsFromSnapshot(selectedSnapshot), [selectedSnapshot]);
@@ -3331,10 +3500,28 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setTranscriptDraft("");
     setActiveGuideId("");
     setGuideAttachVersionId("");
+    setResponseDrafts({});
+    setSummaryDraftTextByKey({});
+    setSavingSummaryKey("");
+    if (summarySaveTimerRef.current) {
+      window.clearTimeout(summarySaveTimerRef.current);
+      summarySaveTimerRef.current = null;
+    }
     setAudioPlaying(false);
     setAudioCurrentTime(0);
     setAudioDuration(0);
     if (audioPlayerRef.current) audioPlayerRef.current.pause();
+  }, [selectedRecord?.id]);
+
+  useEffect(() => {
+    if (!selectedRecord?.id) {
+      setSummaryDraftTextByKey({});
+      return;
+    }
+    const edits = getStoredSummaryEdits(selectedRecord);
+    setSummaryDraftTextByKey(Object.fromEntries(
+      Object.entries(edits).map(([key, bullets]) => [key, summaryBulletsToText(bullets)]),
+    ));
   }, [selectedRecord?.id]);
 
   useEffect(() => {
@@ -3370,7 +3557,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         nextDrafts[fieldKey("pdf_field", response.pdf_field_name)] = getResponseDraft(response);
       }
     });
-    setResponseDrafts((prev) => (draftMapsEqual(prev, nextDrafts) ? prev : nextDrafts));
+    setResponseDrafts((prev) => {
+      const preservedGroupedDrafts = Object.entries(prev || {}).reduce((next, [key, value]) => {
+        if (key.startsWith("pdf_group:")) next[key] = value;
+        return next;
+      }, {});
+      const mergedDrafts = { ...nextDrafts, ...preservedGroupedDrafts };
+      return draftMapsEqual(prev, mergedDrafts) ? prev : mergedDrafts;
+    });
   }, [responsesByTarget]);
 
   useEffect(() => {
@@ -3425,6 +3619,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     const overallScoreField = selectedPdfFields.find((field) => /^overall_score$/i.test(field.name || ""));
     const overallScore = computeOverallScoreFromPdfMap(finalMap, selectedPdfFields);
     if (overallScoreField && overallScore) finalMap[overallScoreField.name] = overallScore;
+    const liveSummaryEdits = Object.keys(summaryDraftTextByKey || {}).length
+      ? {
+          sections: Object.entries(summaryDraftTextByKey).reduce((next, [key, text]) => {
+            next[key] = summaryTextToBullets(text);
+            return next;
+          }, {}),
+        }
+      : selectedRecord;
     return buildInterviewSummaryPages({
       record: selectedRecord,
       guide: selectedGuide,
@@ -3432,8 +3634,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       questions: selectedQuestions,
       responsesByTarget,
       finalMap,
+      summaryEdits: liveSummaryEdits,
     });
-  }, [responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord]);
+  }, [responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord, summaryDraftTextByKey]);
 
   const setAutoScorePreference = (enabled) => {
     setAutoScoreCandidates(enabled);
@@ -3568,6 +3771,39 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         )));
       }
       return updated;
+    });
+  };
+
+  const saveSummaryDraftsToMetadata = async (draftTextByKey, activeKey = "") => {
+    if (!selectedRecord?.id) return null;
+    const sections = Object.entries(draftTextByKey || {}).reduce((next, [key, text]) => {
+      next[key] = summaryTextToBullets(text);
+      return next;
+    }, {});
+    setSavingSummaryKey(activeKey);
+    try {
+      return await saveRecordMetadataPatch({
+        interview_summary_edits: {
+          sections,
+          updated_at: new Date().toISOString(),
+          updated_by: actorName,
+        },
+      });
+    } finally {
+      setSavingSummaryKey("");
+    }
+  };
+
+  const setSummarySectionDraft = (sectionKey, value) => {
+    if (!sectionKey) return;
+    setSummaryDraftTextByKey((prev) => {
+      const next = { ...(prev || {}), [sectionKey]: value };
+      if (summarySaveTimerRef.current) window.clearTimeout(summarySaveTimerRef.current);
+      summarySaveTimerRef.current = window.setTimeout(() => {
+        summarySaveTimerRef.current = null;
+        saveSummaryDraftsToMetadata(next, sectionKey);
+      }, 650);
+      return next;
     });
   };
 
@@ -4152,6 +4388,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         questions: selectedQuestions,
         responsesByTarget,
         finalMap,
+        summaryEdits: Object.keys(summaryDraftTextByKey || {}).length
+          ? {
+              sections: Object.entries(summaryDraftTextByKey).reduce((next, [key, text]) => {
+                next[key] = summaryTextToBullets(text);
+                return next;
+              }, {}),
+            }
+          : selectedRecord,
       });
       const readableFinalMap = buildReadablePdfFieldMap(finalMap, selectedPdfFields);
       const filledBytes = await fillInterviewPdfBytes(bytes, readableFinalMap, { flatten: true, summaryPages });
@@ -4231,13 +4475,17 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const getPdfFieldValue = (field) => {
     const key = responseKeyForPdfField(field);
     const metadataValue = buildPdfResponseMap([], selectedRecord, [field])[field.name] || "";
-    if (Object.prototype.hasOwnProperty.call(responseDrafts, key)) return responseDrafts[key] || metadataValue || "";
+    if (Object.prototype.hasOwnProperty.call(responseDrafts, key)) return responseDrafts[key] ?? "";
     return metadataValue;
   };
 
-  const setPdfFieldDraft = (field, value) => {
+  const setPdfFieldDraft = (field, value, options = null) => {
     const key = responseKeyForPdfField(field);
-    setResponseDrafts((prev) => ({ ...prev, [key]: value }));
+    setResponseDrafts((prev) => ({
+      ...prev,
+      ...(options?.aggregateKey ? { [options.aggregateKey]: options.aggregateValue || "" } : {}),
+      [key]: value,
+    }));
     if (pdfSaveTimersRef.current[key]) clearTimeout(pdfSaveTimersRef.current[key]);
     pdfSaveTimersRef.current[key] = setTimeout(() => {
       savePdfFieldResponse(field, value);
@@ -5182,12 +5430,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           responseDrafts={responseDrafts}
           pdfFieldValues={guidePreviewFieldValues}
           summaryPages={reviewedSummaryPages}
+          summaryDraftTextByKey={summaryDraftTextByKey}
+          summarySavingKey={savingSummaryKey}
           savingKey={savingResponseKey}
           exporting={exportingPdf}
           activeIndex={pdfReviewIndex}
           setActiveIndex={setPdfReviewIndex}
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
+          onSummarySectionChange={setSummarySectionDraft}
           approveField={approvePdfField}
           rejectField={rejectPdfField}
           aiDrafting={aiDrafting}
