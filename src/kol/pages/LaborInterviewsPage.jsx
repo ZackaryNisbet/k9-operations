@@ -3367,6 +3367,32 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return result;
   };
 
+  const waitForInterviewTranscript = async (interviewId) => {
+    let latest = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await sleep(attempt === 0 ? 3000 : 5000);
+      const { data, error } = await supabase
+        .from("labor_interview_records")
+        .select("*")
+        .eq("id", interviewId)
+        .single();
+      if (error) throw error;
+      latest = data;
+      setRecords((prev) => prev.map((record) => record.id === data.id ? data : record));
+
+      if (data?.transcript_status === "failed") {
+        const message = data?.metadata?.audio_transcription_error?.message || "AI could not transcribe this audio.";
+        throw new Error(message);
+      }
+      if (data?.transcript_status === "ready" && String(data?.transcript_text || "").trim()) {
+        return data;
+      }
+    }
+    throw new Error(latest?.transcript_status === "transcribing"
+      ? "Audio is still transcribing. Refresh this interview in a few minutes."
+      : "Timed out waiting for interview transcription.");
+  };
+
   const handleAudioUpload = async (file) => {
     if (!selectedRecord?.id || !file) return;
     const validation = validateInterviewAudioFile(file);
@@ -3418,12 +3444,21 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       }
 
       const { data: result, error } = await supabase.functions.invoke("interview-transcribe-audio", {
-        body: transcriptionPayload,
+        body: {
+          ...transcriptionPayload,
+          async: true,
+        },
       });
       if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
-      if (!result?.transcript_text) throw new Error("AI returned no transcript text.");
+      const transcriptRecord = result?.transcript_text
+        ? null
+        : await waitForInterviewTranscript(selectedRecord.id);
+      if (!result?.transcript_text && !transcriptRecord?.transcript_text) {
+        throw new Error("AI returned no transcript text.");
+      }
 
-      const minutes = Number(result.duration_seconds) > 0 ? Math.max(1, Math.round(Number(result.duration_seconds) / 60)) : null;
+      const durationSeconds = Number(result?.duration_seconds || transcriptRecord?.metadata?.audio_transcription?.duration_seconds || 0);
+      const minutes = durationSeconds > 0 ? Math.max(1, Math.round(durationSeconds / 60)) : null;
       showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
