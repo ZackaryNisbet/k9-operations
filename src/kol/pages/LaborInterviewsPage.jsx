@@ -998,10 +998,35 @@ function cleanPdfExportSnippet(value = "") {
   for (let index = 0; index < 3; index += 1) {
     text = text
       .replace(/[,\s;:–-]+$/g, "")
+      .replace(/\b(?:about|regarding|around) (?:her|him|his|their|its|the)$/i, "")
+      .replace(/\b(?:making|doing|being|having|getting|using)$/i, "")
       .replace(/\b(?:and|or|with|without|for|to|from|of|in|on|at|by|while|because|but|that|the|a|an)$/i, "")
       .trim();
   }
   return text;
+}
+
+function choosePdfExportCutPoint(text = "", limit = 80) {
+  const normalized = String(text || "");
+  const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
+  if (normalized.length <= safeLimit) return normalized.length;
+
+  const windowText = normalized.slice(0, safeLimit + 1);
+  const punctuationCut = Math.max(
+    windowText.lastIndexOf(". "),
+    windowText.lastIndexOf("; "),
+    windowText.lastIndexOf(", "),
+    windowText.lastIndexOf(": "),
+  );
+  if (punctuationCut >= Math.floor(safeLimit * 0.45)) return punctuationCut + 1;
+
+  const dashCut = Math.max(windowText.lastIndexOf(" - "), windowText.lastIndexOf(" – "));
+  if (dashCut >= Math.floor(safeLimit * 0.45)) return dashCut;
+
+  const spaceCut = windowText.lastIndexOf(" ");
+  if (spaceCut >= Math.floor(safeLimit * 0.35)) return spaceCut;
+
+  return safeLimit;
 }
 
 function fitPdfFieldValueForExport(value = "", field = {}) {
@@ -1010,19 +1035,12 @@ function fitPdfFieldValueForExport(value = "", field = {}) {
   if (field.type && field.type !== "text") return text;
   const limit = getPdfFieldFitLimit(field);
   if (text.length <= limit) return text;
-  if (limit <= 36) return "See summary appendix";
-  const suffix = " (see summary)";
-  const workingLimit = Math.max(8, limit - suffix.length);
-  const breakpoint = Math.max(
-    text.lastIndexOf(" ", workingLimit),
-    text.lastIndexOf(".", workingLimit),
-    text.lastIndexOf(";", workingLimit),
-    text.lastIndexOf(",", workingLimit),
-  );
-  const cutAt = breakpoint >= Math.floor(workingLimit * 0.35) ? breakpoint : workingLimit;
-  const snippet = cleanPdfExportSnippet(text.slice(0, Math.max(1, cutAt)));
-  if (snippet.length >= 10 && snippet.length + suffix.length <= limit) return `${snippet}${suffix}`;
-  return limit >= 20 ? "See summary appendix" : cleanPdfExportSnippet(text.slice(0, limit));
+  const cutAt = choosePdfExportCutPoint(text, limit);
+  let snippet = cleanPdfExportSnippet(text.slice(0, Math.max(1, cutAt)));
+  if (snippet.length < Math.min(8, limit)) {
+    snippet = cleanPdfExportSnippet(text.slice(0, limit));
+  }
+  return snippet;
 }
 
 function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
