@@ -16,7 +16,7 @@ export const config = {
 
 const LABOR_INTERVIEW_DOCUMENT_BUCKET = "labor-interview-documents";
 const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
-const NORMALIZED_AUDIO_MIME_TYPE = "audio/wav";
+const NORMALIZED_AUDIO_MIME_TYPE = "audio/mpeg";
 const NORMALIZED_AUDIO_SAMPLE_RATE = 16000;
 const FFMPEG_TIMEOUT_MS = 240000;
 
@@ -38,7 +38,7 @@ function sanitizeInterviewFileName(value = "document.pdf") {
 function buildInterviewSttAudioFileName(fileName = "interview-audio") {
   const sanitized = sanitizeInterviewFileName(fileName || "interview-audio");
   const withoutExtension = sanitized.replace(/\.[^.]+$/, "");
-  return `${withoutExtension || "interview-audio"}-stt.wav`;
+  return `${withoutExtension || "interview-audio"}-stt.mp3`;
 }
 
 function buildNormalizedAudioPath(audioPath, audioFileName) {
@@ -101,10 +101,10 @@ function runFfmpeg(args) {
   });
 }
 
-async function convertToSttWav(inputBuffer, originalName) {
+async function convertToSttAudio(inputBuffer, originalName) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "k9-interview-audio-"));
   const inputPath = path.join(tempDir, sanitizeInterviewFileName(originalName || "interview-audio.m4a"));
-  const outputPath = path.join(tempDir, "interview-stt.wav");
+  const outputPath = path.join(tempDir, "interview-stt.mp3");
 
   try {
     await writeFile(inputPath, inputBuffer);
@@ -122,13 +122,15 @@ async function convertToSttWav(inputBuffer, originalName) {
       "1",
       "-ar",
       String(NORMALIZED_AUDIO_SAMPLE_RATE),
-      "-sample_fmt",
-      "s16",
+      "-codec:a",
+      "libmp3lame",
+      "-b:a",
+      "32k",
       outputPath,
     ]);
     const outputStats = await stat(outputPath);
-    if (outputStats.size <= 44) {
-      throw new Error("Audio conversion produced an empty WAV file.");
+    if (outputStats.size <= 1024) {
+      throw new Error("Audio conversion produced an empty STT file.");
     }
     if (outputStats.size > INTERVIEW_AUDIO_MAX_BYTES) {
       throw new Error("Converted interview audio is larger than the 500 MB transcription limit.");
@@ -219,13 +221,13 @@ export default async function handler(req, res) {
     }
 
     const inputBuffer = Buffer.from(await audioBlob.arrayBuffer());
-    const wavBuffer = await convertToSttWav(inputBuffer, audioFileName);
+    const normalizedBuffer = await convertToSttAudio(inputBuffer, audioFileName);
     const normalizedPath = buildNormalizedAudioPath(audioPath, audioFileName);
     const normalizedFileName = normalizedPath.split("/").pop() || buildInterviewSttAudioFileName(audioFileName);
 
     const { error: uploadError } = await supabase.storage
       .from(audioBucket)
-      .upload(normalizedPath, wavBuffer, {
+      .upload(normalizedPath, normalizedBuffer, {
         upsert: true,
         contentType: NORMALIZED_AUDIO_MIME_TYPE,
       });
@@ -240,7 +242,7 @@ export default async function handler(req, res) {
       audio_file_path: normalizedPath,
       audio_file_name: normalizedFileName,
       audio_mime_type: NORMALIZED_AUDIO_MIME_TYPE,
-      audio_size_bytes: wavBuffer.byteLength,
+      audio_size_bytes: normalizedBuffer.byteLength,
       audio_normalized_for_stt: true,
       original_audio_file_name: audioFileName,
       original_audio_mime_type: audioMimeType || audioBlob.type || null,
