@@ -51,18 +51,18 @@
       "updatedAt": "2026-04-16T20:31:06.004Z"
     },
     "interview-ai-draft": {
-      "commit": "fdc8759ed557d9cb55b3f95c686111ff2986a59c",
+      "commit": "7c50e58e8ddeb8c7ec202dc405825d5eab6ef8cd",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Add targeted PDF AI instructions and numbered STAR context",
-      "updatedAt": "2026-04-18T20:55:10.295Z"
+      "note": "Use extracted PDF question prompts when drafting interview guide fields",
+      "updatedAt": "2026-04-28T04:01:59.571Z"
     },
     "interview-transcribe-audio": {
-      "commit": "8a8e6691786172a42be37710973bfd222331b8f8",
+      "commit": "7586916c42ea4c5f71933f0411912285fb1c6d00",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Normalize interview M4A uploads for STT",
-      "updatedAt": "2026-04-18T19:24:40.102Z"
+      "note": "Background resilient interview audio transcription",
+      "updatedAt": "2026-04-28T03:08:10.021Z"
     },
     "performance-review-signing": {
       "commit": "2b1702064d6c5f7582e0d28f3256f785dd075063",
