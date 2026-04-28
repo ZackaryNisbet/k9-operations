@@ -4220,7 +4220,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const draftInterview = async (interviewId = selectedRecord?.id, options = {}) => {
     const {
       requireLocalTranscript = true,
+      localTranscriptText = "",
       quietStart = false,
+      quietComplete = false,
+      interviewGuideId = "",
       targetPdfFieldName = "",
       pdfPopulationInstruction = "",
       documentPdfInstruction = "",
@@ -4230,10 +4233,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     } = options;
     const draftReviewMode = normalizeAiReviewMode(reviewModeOverride || aiReviewMode);
     if (!interviewId) return null;
-    if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
+    const transcriptForLocalCheck = String(localTranscriptText || selectedRecord?.transcript_text || "").trim();
+    if (requireLocalTranscript && !transcriptForLocalCheck) {
       showToast("Upload interview audio or a transcript first.", "error");
       return null;
     }
+    const activeDraftGuideId = String(interviewGuideId || selectedGuide?.id || "").trim();
     setAiDrafting(true);
     try {
       const pdfPopulationInstructions = targetPdfFieldName
@@ -4244,7 +4249,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       const { data: startResult, error: startError } = await supabase.functions.invoke("interview-ai-draft", {
         body: {
           interview_id: interviewId,
-          interview_guide_id: selectedGuide?.id || undefined,
+          interview_guide_id: activeDraftGuideId || undefined,
           action: "start",
           auto_score_candidate: autoScoreCandidates,
           review_mode: draftReviewMode,
@@ -4266,7 +4271,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           const { data: pollResult, error: pollError } = await supabase.functions.invoke("interview-ai-draft", {
             body: {
               interview_id: interviewId,
-              interview_guide_id: selectedGuide?.id || undefined,
+              interview_guide_id: activeDraftGuideId || undefined,
               action: "poll",
               request_id: requestId,
               review_mode: draftReviewMode,
@@ -4286,11 +4291,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       }
 
       const populatedCount = Number(result?.populated_count ?? result?.saved_count ?? 0);
-      showToast(targetPdfFieldName
-        ? "AI updated field"
-        : documentPdfInstruction
-          ? `AI wrote guide text into ${populatedCount} field${populatedCount === 1 ? "" : "s"}`
-          : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      if (!quietComplete) {
+        showToast(targetPdfFieldName
+          ? "AI updated field"
+          : documentPdfInstruction
+            ? `AI wrote guide text into ${populatedCount} field${populatedCount === 1 ? "" : "s"}`
+            : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
+      }
       await loadAll(locationId);
       await loadInterviewDetail(interviewId);
       setSelectedRecordId(interviewId);
@@ -4301,6 +4308,68 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     } finally {
       setAiDrafting(false);
     }
+  };
+
+  const draftAttachedGuides = async (options = {}) => {
+    const {
+      guidesToDraft = selectedGuides,
+      onlyEmpty = false,
+      localTranscriptText = "",
+      reviewModeOverride = "",
+      reason = "manual",
+    } = options;
+    if (!selectedRecord?.id) return null;
+    const transcriptForDraft = String(localTranscriptText || selectedRecord?.transcript_text || "").trim();
+    if (!transcriptForDraft) {
+      showToast("Upload interview audio or a transcript first.", "error");
+      return null;
+    }
+    const draftableGuides = (Array.isArray(guidesToDraft) ? guidesToDraft : [])
+      .filter((guide) => guide?.id);
+    if (!draftableGuides.length) {
+      showToast("Attach a guide before drafting responses.", "error");
+      return null;
+    }
+    const guidesNeedingDraft = onlyEmpty
+      ? draftableGuides.filter((guide) => !responses.some((response) => {
+          if (response.interview_guide_id !== guide.id) return false;
+          return String(response.ai_draft_text || response.ai_merged_text || response.response_text || "").trim();
+        }))
+      : draftableGuides;
+    if (!guidesNeedingDraft.length) return [];
+
+    const mode = normalizeAiReviewMode(reviewModeOverride || aiReviewMode);
+    const label = INTERVIEW_AI_REVIEW_MODE_LABELS[mode] || "AI";
+    const instruction = reviewModeDraftInstruction(mode, label);
+    const guideLabel = guidesNeedingDraft.length === 1
+      ? (guidesNeedingDraft[0].guide_label || guidesNeedingDraft[0].role_label || "guide")
+      : `${guidesNeedingDraft.length} attached guides`;
+
+    if (!options.quietStart) {
+      const prefix = reason === "mode" ? `${label} mode selected.` : "Transcript ready.";
+      showToast(`${prefix} Drafting ${guideLabel} from the transcript.`);
+    }
+
+    const results = [];
+    for (const guide of guidesNeedingDraft) {
+      const result = await draftInterview(selectedRecord.id, {
+        requireLocalTranscript: true,
+        localTranscriptText: transcriptForDraft,
+        quietStart: true,
+        quietComplete: true,
+        interviewGuideId: guide.id,
+        reviewModeOverride: mode,
+        documentPdfInstruction: instruction,
+        pdfOnly: true,
+      });
+      if (result) results.push({ guide, result });
+    }
+
+    const populatedCount = results.reduce((sum, entry) => sum + Number(entry.result?.populated_count ?? entry.result?.saved_count ?? 0), 0);
+    if (results.length) {
+      showToast(`AI drafted ${populatedCount} field${populatedCount === 1 ? "" : "s"} across ${results.length} guide${results.length === 1 ? "" : "s"}`);
+    }
+    return results;
   };
 
   const draftTranscriptSummary = async (interviewId = selectedRecord?.id, options = {}) => {
@@ -4361,11 +4430,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   useEffect(() => {
     if (!showGuideModal || !selectedRecord?.id || !String(selectedRecord?.transcript_text || "").trim()) return;
-    if (hasStoredTranscriptSummary || summaryDrafting) return;
+    if (hasStoredTranscriptSummary || summaryDrafting || aiDrafting) return;
     if (summaryRequestRef.current.has(selectedRecord.id)) return;
     summaryRequestRef.current.add(selectedRecord.id);
     draftTranscriptSummary(selectedRecord.id, { quiet: true });
-  }, [showGuideModal, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting]);
+  }, [showGuideModal, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting, aiDrafting]);
 
   const fillPdfDocumentWithAiInstruction = async (instruction) => {
     if (!selectedRecord?.id || !String(instruction || "").trim()) return null;
@@ -4389,12 +4458,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       showToast(`${label} mode selected. Upload interview audio or a transcript before drafting.`, "error");
       return;
     }
-    showToast(`${label} mode selected. Redrafting this guide from the transcript.`);
-    await draftInterview(selectedRecord.id, {
+    await draftAttachedGuides({
       reviewModeOverride: nextMode,
-      documentPdfInstruction: reviewModeDraftInstruction(nextMode, label),
-      pdfOnly: true,
-      quietStart: false,
+      onlyEmpty: false,
+      localTranscriptText: selectedRecord.transcript_text,
+      reason: "mode",
     });
   };
 
@@ -4583,6 +4651,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
           await loadAll(locationId);
           setSelectedRecordId(selectedRecord.id);
+          await draftAttachedGuides({
+            onlyEmpty: true,
+            localTranscriptText: transcriptRecord.transcript_text,
+            reason: "transcript",
+          });
           return;
         }
         showToast("Audio converted. Sending for transcription.");
@@ -4607,6 +4680,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       showToast(minutes ? `Audio processed: ${minutes} min. Transcript ready.` : "Audio processed. Transcript ready.");
       await loadAll(locationId);
       setSelectedRecordId(selectedRecord.id);
+      await draftAttachedGuides({
+        onlyEmpty: true,
+        localTranscriptText: result?.transcript_text || transcriptRecord?.transcript_text || selectedRecord?.transcript_text || "",
+        reason: "transcript",
+      });
     } catch (error) {
       showToast(safeUiError(error, "Failed to process audio"), "error");
     } finally {
@@ -4652,6 +4730,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         setShowTranscriptInput(false);
         setTranscriptDraft("");
         showToast("Transcript ready for AI drafting");
+        await draftAttachedGuides({
+          onlyEmpty: true,
+          localTranscriptText: cleaned,
+          reason: "transcript",
+        });
       }
       return updated;
     } catch (error) {
@@ -5248,6 +5331,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       setActiveGuideId(guide.id);
       setGuideAttachVersionId("");
       showToast(`${template.role_label} guide attached`);
+      if (String(selectedRecord?.transcript_text || "").trim()) {
+        await draftAttachedGuides({
+          guidesToDraft: [guide],
+          onlyEmpty: false,
+          localTranscriptText: selectedRecord.transcript_text,
+          reason: "attach",
+        });
+      }
     } catch (error) {
       showToast(safeUiError(error, "Failed to attach guide"), "error");
     } finally {
@@ -5386,8 +5477,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                 placeholder="AI strictness"
                 disabled={aiDrafting || recordSaving}
               />
-              <div style={{ color: C.textMut, fontSize: 12, lineHeight: 1.45 }}>
-                {aiDrafting ? "AI is drafting responses with the selected strictness." : INTERVIEW_AI_REVIEW_MODES.find((mode) => mode.value === aiReviewMode)?.description}
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ color: C.textMut, fontSize: 12, lineHeight: 1.45, flex: "1 1 260px" }}>
+                  {aiDrafting ? "AI is drafting responses with the selected strictness." : INTERVIEW_AI_REVIEW_MODES.find((mode) => mode.value === aiReviewMode)?.description}
+                </div>
+                <Btn
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => draftAttachedGuides({ onlyEmpty: false, reason: "manual" })}
+                  disabled={aiDrafting || recordSaving || !selectedGuides.length || !String(selectedRecord?.transcript_text || "").trim()}
+                >
+                  Draft Attached Guides
+                </Btn>
               </div>
             </div>
           </div>
