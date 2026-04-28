@@ -1385,11 +1385,25 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
   ].filter(Boolean), summaryEdits || record);
 
   if (!sections.length) return [];
-  return [{
-    title: "Interview Summary",
-    subtitle: `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`,
-    sections,
-  }];
+  const subtitle = `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`;
+  const callSummarySections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) === "call_summary");
+  const detailSections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) !== "call_summary");
+  const pages = [];
+  if (callSummarySections.length) {
+    pages.push({
+      title: "Interview Summary",
+      subtitle,
+      sections: callSummarySections,
+    });
+  }
+  if (detailSections.length) {
+    pages.push({
+      title: callSummarySections.length ? "Interview Summary (continued)" : "Interview Summary",
+      subtitle,
+      sections: detailSections,
+    });
+  }
+  return pages;
 }
 
 function estimateSummaryBulletLines(text = "") {
@@ -1432,7 +1446,8 @@ function paginateInterviewSummaryPreview(summaryPages = []) {
 
     const pushPage = () => {
       if (page.sections.some((section) => section.bullets?.length)) previewPages.push(page);
-      page = { title: `${title} (continued)`, subtitle, sections: [] };
+      const continuedTitle = /\(continued\)/i.test(title) ? title : `${title} (continued)`;
+      page = { title: continuedTitle, subtitle, sections: [] };
       lineCount = 5;
     };
 
@@ -2890,7 +2905,7 @@ function ReviewGuideModal({
 }) {
   const reviewFields = fields;
   const reviewItems = useMemo(() => buildPdfReviewItems(reviewFields), [reviewFields]);
-  const summarySections = summaryPages?.[0]?.sections || [];
+  const summarySections = (summaryPages || []).flatMap((page) => page?.sections || []);
   const summaryAvailable = summarySections.length > 0;
   const summaryActive = summaryAvailable && activeIndex >= reviewItems.length;
   const boundedIndex = summaryActive ? -1 : Math.min(activeIndex, Math.max(0, reviewItems.length - 1));
