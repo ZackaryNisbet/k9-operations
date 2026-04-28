@@ -817,13 +817,71 @@ function fieldValueRows(value = "") {
 }
 
 function getPdfQuestionGroup(fieldName = "") {
-  const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes(?:_\d+)?)$/i);
+  const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes)(?:_(\d+))?$/i);
   if (!match) return null;
+  const rawPart = match[2].toLowerCase();
+  const part = rawPart === "notes" ? "result" : rawPart;
   return {
-    key: `q${match[1]}`,
+    key: `q${match[1]}_${part}`,
+    questionKey: `q${match[1]}`,
     number: Number(match[1]),
-    part: match[2].toLowerCase(),
+    part,
+    line: rawPart === "notes" ? Number(match[3] || 0) + 1 : Number(match[3] || 0),
+    sourcePart: rawPart,
   };
+}
+
+function questionPartLabel(item) {
+  if (!item || item.type !== "question_part") return "";
+  return `Question ${String(item.number).padStart(2, "0")} ${item.partLabel}`;
+}
+
+function questionPartShortLabel(item) {
+  if (!item || item.type !== "question_part") return "";
+  const letter = item.part === "situation" ? "S" : item.part === "task" ? "T" : item.part === "action" ? "A" : "R";
+  return `${item.number}${letter}`;
+}
+
+function approximatePdfFieldCharLimit(field = {}) {
+  const width = Number(field?.rect?.width || 0);
+  if (!Number.isFinite(width) || width <= 0) return 95;
+  return Math.max(40, Math.min(120, Math.floor(width / 4.75)));
+}
+
+function splitTextAcrossPdfFields(value = "", fields = []) {
+  const targets = fields || [];
+  const text = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!targets.length) return [];
+  if (targets.length === 1) return [text];
+  const chunks = [];
+  let remaining = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+  targets.forEach((field, index) => {
+    if (!remaining) {
+      chunks.push("");
+      return;
+    }
+    if (index === targets.length - 1) {
+      chunks.push(remaining);
+      remaining = "";
+      return;
+    }
+    const limit = approximatePdfFieldCharLimit(field);
+    if (remaining.length <= limit) {
+      chunks.push(remaining);
+      remaining = "";
+      return;
+    }
+    const breakpoint = Math.max(
+      remaining.lastIndexOf(" ", limit),
+      remaining.lastIndexOf(".", limit),
+      remaining.lastIndexOf(";", limit),
+      remaining.lastIndexOf(",", limit),
+    );
+    const cutAt = breakpoint >= Math.floor(limit * 0.55) ? breakpoint : limit;
+    chunks.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  });
+  return chunks;
 }
 
 function buildPdfReviewItems(fields = []) {
@@ -837,29 +895,28 @@ function buildPdfReviewItems(fields = []) {
     }
     if (!groups.has(group.key)) {
       groups.set(group.key, {
-        type: "question_group",
+        type: "question_part",
         key: `pdf_group:${group.key}`,
-        groupKey: group.key,
+        groupKey: group.questionKey,
         number: group.number,
+        part: group.part,
+        partLabel: group.part.replace(/\b\w/g, (char) => char.toUpperCase()),
         fields: [],
         index,
       });
     }
-    groups.get(group.key).fields.push({ ...field, groupPart: group.part });
+    groups.get(group.key).fields.push({ ...field, groupPart: group.part, sourcePart: group.sourcePart, line: group.line });
   });
   return [...items, ...groups.values()]
     .map((item) => {
-      if (item.type !== "question_group") return item;
-      const partOrder = { situation: 1, task: 2, action: 3, result: 4 };
+      if (item.type !== "question_part") return item;
       return {
         ...item,
         fields: item.fields.sort((a, b) => {
-          const aPart = a.groupPart.replace(/_\d+$/, "");
-          const bPart = b.groupPart.replace(/_\d+$/, "");
-          const aOrder = partOrder[aPart] || 9;
-          const bOrder = partOrder[bPart] || 9;
-          if (aOrder !== bOrder) return aOrder - bOrder;
-          return String(a.groupPart).localeCompare(String(b.groupPart));
+          const aLine = Number(a.line || 0);
+          const bLine = Number(b.line || 0);
+          if (aLine !== bLine) return aLine - bLine;
+          return String(a.name).localeCompare(String(b.name));
         }),
       };
     })
@@ -939,54 +996,20 @@ async function extractPdfQuestionPromptMap(pdfBytes) {
 
 function composePdfReviewItemValue(item, getFieldValue) {
   if (!item) return "";
-  if (item.type !== "question_group") return getFieldValue(item.field);
-  const values = {};
-  const notes = [];
-  item.fields.forEach((field) => {
-    const value = String(getFieldValue(field) || "").trim();
-    if (!value) return;
-    const part = field.groupPart.replace(/_\d+$/, "");
-    if (part === "notes") notes.push(value);
-    else values[part] = value;
-  });
-  const lines = [];
-  if (values.situation) lines.push(`Situation: ${values.situation}`);
-  if (values.task) lines.push(`Task: ${values.task}`);
-  if (values.action) lines.push(`Action: ${values.action}`);
-  if (values.result) lines.push(`Result: ${values.result}`);
-  if (notes.length) lines.push(`Notes: ${notes.join("\n")}`);
-  return lines.join("\n");
+  if (item.type !== "question_part") return getFieldValue(item.field);
+  return (item.fields || [])
+    .map((field) => String(getFieldValue(field) || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function splitPdfReviewItemValue(item, value) {
-  if (!item || item.type !== "question_group") return item?.field ? [{ field: item.field, value }] : [];
-  const text = String(value || "").trim();
-  const sections = { situation: "", task: "", action: "", result: "", notes: "" };
-  const sectionPattern = /(?:^|\n)(Situation|Task|Action|Result|Notes):\s*/gi;
-  const matches = [...text.matchAll(sectionPattern)];
-  if (matches.length) {
-    matches.forEach((match, index) => {
-      const key = match[1].toLowerCase();
-      const start = (match.index || 0) + match[0].length;
-      const end = index + 1 < matches.length ? matches[index + 1].index : text.length;
-      sections[key] = text.slice(start, end).trim();
-    });
-  } else {
-    sections.notes = text;
-  }
-  const noteFields = item.fields.filter((field) => field.groupPart.startsWith("notes"));
-  const notesText = sections.notes;
-  const noteChunks = noteFields.length > 1 && notesText.length > 180
-    ? notesText.match(/.{1,180}(?:\s|$)/g)?.map((chunk) => chunk.trim()).filter(Boolean) || [notesText]
-    : [notesText];
-  return item.fields.map((field) => {
-    const part = field.groupPart.replace(/_\d+$/, "");
-    if (part === "notes") {
-      const noteIndex = noteFields.findIndex((row) => row.name === field.name);
-      return { field, value: noteChunks[noteIndex] || "" };
-    }
-    return { field, value: sections[part] || "" };
-  });
+  if (!item) return [];
+  if (item.type !== "question_part") return item?.field ? [{ field: item.field, value }] : [];
+  const chunks = splitTextAcrossPdfFields(value, item.fields || []);
+  return (item.fields || []).map((field, index) => ({ field, value: chunks[index] || "" }));
 }
 
 function computeOverallScoreFromPdfMap(map = {}, fields = []) {
@@ -1014,7 +1037,7 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
     .map((item) => {
       const value = composePdfReviewItemValue(item, (field) => finalMap[field.name] || "");
       if (!String(value || "").trim()) return "";
-      const label = item.type === "question_group" ? `Q${item.number}` : humanizePdfFieldName(item.field.name);
+      const label = item.type === "question_part" ? questionPartLabel(item) : humanizePdfFieldName(item.field.name);
       return `${label}: ${conciseBullet(value)}`;
     })
     .filter(Boolean)
@@ -2145,7 +2168,7 @@ function GuideAiAssistantPanel({
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ color: C.text, fontWeight: 950, fontSize: 14 }}>Guide Assistant</div>
-            <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 850 }}>{reviewedCount}/{fieldCount} fields reviewed</div>
+            <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 850 }}>{reviewedCount}/{fieldCount} responses reviewed</div>
           </div>
         </div>
         <IconButton label="Close guide assistant" onClick={onClose}>{"x"}</IconButton>
@@ -2379,7 +2402,7 @@ function ReviewGuideModal({
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interview Guide</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewFields.length} fields reviewed</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewItems.length} responses reviewed</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <IconButton
@@ -2426,7 +2449,7 @@ function ReviewGuideModal({
                   type="button"
                   key={item.key}
                   onClick={() => setActiveIndex(index)}
-                  title={item.type === "question_group" ? `Question ${item.number}` : humanizePdfFieldName(item.field.name)}
+                  title={item.type === "question_part" ? questionPartLabel(item) : humanizePdfFieldName(item.field.name)}
                   style={{
                     width: "100%",
                     height: 24,
@@ -2440,7 +2463,7 @@ function ReviewGuideModal({
                     fontWeight: 900,
                   }}
                 >
-                  {item.type === "question_group" ? item.number : index + 1}
+                  {item.type === "question_part" ? questionPartShortLabel(item) : index + 1}
                 </button>
               );
             })}
@@ -2468,7 +2491,7 @@ function ReviewGuideModal({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Field</div>
-                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{activeItem?.type === "question_group" ? `Question ${activeItem.number} Response` : humanizePdfFieldName(activeField.name)}</div>
+                      <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950, overflowWrap: "anywhere" }}>{activeItem?.type === "question_part" ? questionPartLabel(activeItem) : humanizePdfFieldName(activeField.name)}</div>
                       <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Page {activeField.page_number || "-"}</div>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
@@ -2480,7 +2503,7 @@ function ReviewGuideModal({
                   value={activeValue}
                   onChange={(event) => setItemDraft(activeItem, event.target.value)}
                   rows={fieldValueRows(activeValue)}
-                  placeholder={activeItem?.type === "question_group" ? "Situation:\nTask:\nAction:\nResult:\nNotes:" : ""}
+                  placeholder={activeItem?.type === "question_part" ? `${activeItem.partLabel} response` : ""}
                   style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 132, whiteSpace: "pre-wrap" }}
                 />
                 <MergeTrace responses={activeResponses} />
