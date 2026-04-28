@@ -425,6 +425,8 @@ serve(async (req) => {
     );
     const originalAudioSizeBytes = Number(body?.original_audio_size_bytes || 0) || null;
     const audioNormalizedForStt = Boolean(body?.audio_normalized_for_stt);
+    const saveTranscript = body?.save_transcript !== false;
+    const runInBackground = body?.async === true || body?.async_transcription === true;
 
     if (!interviewId) return jsonResponse({ error: "Missing interview_id." }, 400);
     if (!audioPath) return jsonResponse({ error: "Missing audio_file_path." }, 400);
@@ -446,92 +448,187 @@ serve(async (req) => {
       return jsonResponse({ error: "Audio file path does not match this interview record." }, 400);
     }
 
-    const { data: audioBlob, error: downloadError } = await supabase.storage
-      .from(audioBucket)
-      .download(audioPath);
-    if (downloadError || !audioBlob) {
-      throw new InterviewFunctionError(downloadError?.message || "Unable to download interview audio.", 500);
-    }
-    if (audioBlob.size > INTERVIEW_AUDIO_MAX_BYTES) {
-      return jsonResponse({ error: "Interview audio must be 500 MB or smaller." }, 400);
-    }
     if (!INTERVIEW_AUDIO_ALLOWED_MIME_TYPES.has(audioMimeType)) {
       return jsonResponse({ error: `Unsupported interview audio type: ${audioMimeType}.` }, 400);
     }
 
-    const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
-    const providerTurns = buildProviderTranscriptTurns(stt);
-    if (!providerTurns.turns.length) {
-      console.error("xAI Grok STT returned no structured transcript turns", {
-        responseKeys: Object.keys(stt || {}),
-        hasText: !!String(stt.text || "").trim(),
-        wordCount: normalizeProviderWords(stt).length,
-      });
-      throw new InterviewFunctionError(
-        "xAI Grok STT did not return provider transcript segments. The interview module will not infer turns locally.",
-        502,
-      );
-    }
-
-    const transcript = buildSpeakerTranscript(stt, providerTurns.turns, providerTurns.source);
-    if (!transcript) {
-      throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
-    }
-
     const existingMetadata = (record.metadata || {}) as Record<string, unknown>;
-    const generatedAt = new Date().toISOString();
-    const wordCount = normalizeProviderWords(stt).length || null;
-
-    const { error: updateError } = await supabase
-      .from("labor_interview_records")
-      .update({
-        transcript_text: transcript,
-        transcript_status: "ready",
-        transcript_source: "audio",
-        transcript_uploaded_at: generatedAt,
-        status: record.status === "draft" ? "in_progress" : record.status,
-        metadata: {
-          ...existingMetadata,
-          audio_transcription: {
-            provider: "xai",
-            model: XAI_STT_MODEL,
-            generated_at: generatedAt,
-            language: stt.language || null,
-            duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
-            word_count: wordCount,
-            diarization_enabled: true,
-            segmentation_source: providerTurns.source,
-            transcript_turns: providerTurns.turns,
-            source_audio: {
-              bucket: audioBucket,
-              path: audioPath,
-              file_name: audioFileName,
-              mime_type: audioMimeType,
-              size_bytes: audioBlob.size,
-              original_file_name: originalAudioFileName || audioFileName,
-              original_mime_type: originalAudioMimeType || audioMimeType,
-              original_size_bytes: originalAudioSizeBytes || audioBlob.size,
-              normalized_for_stt: audioNormalizedForStt,
+    const markFailed = async (error: unknown) => {
+      const failedAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : "Interview audio transcription failed.";
+      await supabase
+        .from("labor_interview_records")
+        .update({
+          transcript_status: "failed",
+          metadata: {
+            ...existingMetadata,
+            audio_transcription_error: {
+              message,
+              failed_at: failedAt,
+              source_audio: {
+                bucket: audioBucket,
+                path: audioPath,
+                file_name: audioFileName,
+                mime_type: audioMimeType,
+                original_file_name: originalAudioFileName || audioFileName,
+                original_mime_type: originalAudioMimeType || audioMimeType,
+                original_size_bytes: originalAudioSizeBytes || null,
+                normalized_for_stt: audioNormalizedForStt,
+              },
             },
           },
-        },
-        updated_by_user_id: userId,
-        updated_at: generatedAt,
-      })
-      .eq("id", interviewId);
-    if (updateError) throw new InterviewFunctionError(updateError.message, 500);
+          updated_by_user_id: userId,
+          updated_at: failedAt,
+        })
+        .eq("id", interviewId);
+    };
 
-    return jsonResponse({
-      ok: true,
-      provider: "xai",
-      model: XAI_STT_MODEL,
-      transcript_text: transcript,
-      language: stt.language || null,
-      duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
-      word_count: wordCount,
-      turn_count: providerTurns.turns.length,
-      segmentation_source: providerTurns.source,
-    });
+    const runTranscription = async () => {
+      const { data: audioBlob, error: downloadError } = await supabase.storage
+        .from(audioBucket)
+        .download(audioPath);
+      if (downloadError || !audioBlob) {
+        throw new InterviewFunctionError(downloadError?.message || "Unable to download interview audio.", 500);
+      }
+      if (audioBlob.size > INTERVIEW_AUDIO_MAX_BYTES) {
+        throw new InterviewFunctionError("Interview audio must be 500 MB or smaller.", 400);
+      }
+
+      const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
+      const providerTurns = buildProviderTranscriptTurns(stt);
+      if (!providerTurns.turns.length) {
+        console.error("xAI Grok STT returned no structured transcript turns", {
+          responseKeys: Object.keys(stt || {}),
+          hasText: !!String(stt.text || "").trim(),
+          wordCount: normalizeProviderWords(stt).length,
+        });
+        throw new InterviewFunctionError(
+          "xAI Grok STT did not return provider transcript segments. The interview module will not infer turns locally.",
+          502,
+        );
+      }
+
+      const transcript = buildSpeakerTranscript(stt, providerTurns.turns, providerTurns.source);
+      if (!transcript) {
+        throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
+      }
+
+      const generatedAt = new Date().toISOString();
+      const wordCount = normalizeProviderWords(stt).length || null;
+      const result = {
+        ok: true,
+        provider: "xai",
+        model: XAI_STT_MODEL,
+        transcript_text: transcript,
+        language: stt.language || null,
+        duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
+        word_count: wordCount,
+        turn_count: providerTurns.turns.length,
+        segmentation_source: providerTurns.source,
+        transcript_turns: providerTurns.turns,
+        saved: saveTranscript,
+      };
+
+      if (!saveTranscript) return result;
+
+      const { error: updateError } = await supabase
+        .from("labor_interview_records")
+        .update({
+          transcript_text: transcript,
+          transcript_status: "ready",
+          transcript_source: "audio",
+          transcript_uploaded_at: generatedAt,
+          status: record.status === "draft" ? "in_progress" : record.status,
+          metadata: {
+            ...existingMetadata,
+            audio_transcription: {
+              provider: "xai",
+              model: XAI_STT_MODEL,
+              generated_at: generatedAt,
+              language: stt.language || null,
+              duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
+              word_count: wordCount,
+              diarization_enabled: true,
+              segmentation_source: providerTurns.source,
+              transcript_turns: providerTurns.turns,
+              source_audio: {
+                bucket: audioBucket,
+                path: audioPath,
+                file_name: audioFileName,
+                mime_type: audioMimeType,
+                size_bytes: audioBlob.size,
+                original_file_name: originalAudioFileName || audioFileName,
+                original_mime_type: originalAudioMimeType || audioMimeType,
+                original_size_bytes: originalAudioSizeBytes || audioBlob.size,
+                normalized_for_stt: audioNormalizedForStt,
+              },
+            },
+          },
+          updated_by_user_id: userId,
+          updated_at: generatedAt,
+        })
+        .eq("id", interviewId);
+      if (updateError) throw new InterviewFunctionError(updateError.message, 500);
+      return result;
+    };
+
+    if (runInBackground && saveTranscript) {
+      const startedAt = new Date().toISOString();
+      const { error: updateError } = await supabase
+        .from("labor_interview_records")
+        .update({
+          transcript_status: "transcribing",
+          transcript_source: "audio",
+          status: record.status === "draft" ? "in_progress" : record.status,
+          metadata: {
+            ...existingMetadata,
+            audio_transcription_job: {
+              provider: "xai",
+              model: XAI_STT_MODEL,
+              started_at: startedAt,
+              mode: "background",
+              source_audio: {
+                bucket: audioBucket,
+                path: audioPath,
+                file_name: audioFileName,
+                mime_type: audioMimeType,
+                original_file_name: originalAudioFileName || audioFileName,
+                original_mime_type: originalAudioMimeType || audioMimeType,
+                original_size_bytes: originalAudioSizeBytes || null,
+                normalized_for_stt: audioNormalizedForStt,
+              },
+            },
+          },
+          updated_by_user_id: userId,
+          updated_at: startedAt,
+        })
+        .eq("id", interviewId);
+      if (updateError) throw new InterviewFunctionError(updateError.message, 500);
+
+      const backgroundTask = runTranscription().catch(async (error) => {
+        console.error("Interview background transcription failed", error);
+        await markFailed(error);
+      });
+      const edgeRuntime = (globalThis as any).EdgeRuntime;
+      if (typeof edgeRuntime?.waitUntil === "function") {
+        edgeRuntime.waitUntil(backgroundTask);
+        return jsonResponse({
+          ok: true,
+          status: "transcribing",
+          background: true,
+          provider: "xai",
+          model: XAI_STT_MODEL,
+        }, 202);
+      }
+      const result = await backgroundTask;
+      return jsonResponse(result || {
+        ok: false,
+        status: "failed",
+      }, result ? 200 : 500);
+    }
+
+    const result = await runTranscription();
+    return jsonResponse(result);
   } catch (error) {
     const status = typeof error?.status === "number" ? error.status : 500;
     return jsonResponse({ error: error?.message || "Interview audio transcription failed." }, status);

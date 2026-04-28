@@ -95,7 +95,7 @@ export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mkv,.mp3,.mp4,.ogg,.opus
 export const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
 export const INTERVIEW_AUDIO_MAX_LABEL = "500 MB";
 export const INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE = 16000;
-export const INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE = "audio/wav";
+export const INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE = "audio/mpeg";
 
 const INTERVIEW_AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mkv", "mp3", "mp4", "ogg", "opus", "wav"]);
 const INTERVIEW_AUDIO_CONTENT_TYPES = {
@@ -257,7 +257,7 @@ export function shouldNormalizeInterviewAudioForStt(file = {}) {
 export function buildInterviewSttAudioFileName(fileName = "interview-audio") {
   const sanitized = sanitizeInterviewFileName(fileName || "interview-audio");
   const withoutExtension = sanitized.replace(/\.[^.]+$/, "");
-  return `${withoutExtension || "interview-audio"}-stt.wav`;
+  return `${withoutExtension || "interview-audio"}-stt.mp3`;
 }
 
 export function encodePcm16Wav(samples, sampleRate = INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE) {

@@ -260,7 +260,7 @@ describe("interview audio helpers", () => {
     });
     expect(getInterviewAudioContentType(file)).toBe("audio/mp4");
     expect(shouldNormalizeInterviewAudioForStt(file)).toBe(true);
-    expect(buildInterviewSttAudioFileName(file.name)).toBe("candidate-interview-stt.wav");
+    expect(buildInterviewSttAudioFileName(file.name)).toBe("candidate-interview-stt.mp3");
   });
 
   it("encodes mono PCM samples as a 16-bit WAV file for STT normalization", () => {
