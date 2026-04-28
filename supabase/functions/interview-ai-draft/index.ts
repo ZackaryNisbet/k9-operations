@@ -50,10 +50,6 @@ function asArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [];
 }
 
-const NUMBERED_PDF_QUESTION_PROMPTS: Record<string, string> = {
-  "01": "Tell me about a time a customer was upset or frustrated. How did you handle it?",
-};
-
 function sanitizeManagerInstruction(value: unknown) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -97,23 +93,58 @@ function normalizeInstructionMap(value: unknown) {
   return new Map(entries);
 }
 
-function buildNumberedPdfQuestionPrompt(fieldName: string) {
+function normalizePdfQuestionPrompts(value: unknown) {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const map = new Map<string, string>();
+  for (const [key, prompt] of Object.entries(source)) {
+    const number = String(key || "").match(/\d+/)?.[0] || "";
+    const normalizedKey = number ? number.padStart(2, "0") : String(key || "").trim();
+    const text = String(prompt || "")
+      .replace(/\s+/g, " ")
+      .replace(/\bPage\s+\d+\s*\|.*$/i, "")
+      .trim();
+    if (normalizedKey && text) map.set(normalizedKey, text.slice(0, 900));
+  }
+  return map;
+}
+
+function getSnapshotQuestionPrompts(record: Record<string, unknown>) {
+  const snapshot = (record.template_snapshot || {}) as Record<string, unknown>;
+  const version = (snapshot.version || {}) as Record<string, unknown>;
+  const snapshotMetadata = (snapshot.metadata || {}) as Record<string, unknown>;
+  const versionMetadata = (version.metadata || {}) as Record<string, unknown>;
+  const guideMetadata = (record.guide_metadata || {}) as Record<string, unknown>;
+  return [
+    versionMetadata.pdf_question_prompts,
+    versionMetadata.pdfQuestionPrompts,
+    snapshotMetadata.pdf_question_prompts,
+    guideMetadata.pdf_question_prompts,
+  ].reduce((merged, value) => {
+    for (const [key, prompt] of normalizePdfQuestionPrompts(value).entries()) {
+      if (!merged.has(key)) merged.set(key, prompt);
+    }
+    return merged;
+  }, new Map<string, string>());
+}
+
+function getPdfQuestionNumber(fieldName: string) {
+  const match = String(fieldName || "").match(/^q(\d{1,2})_(situation|task|action|result|notes(?:_\d+)?)$/i);
+  return match?.[1] ? match[1].padStart(2, "0") : "";
+}
+
+function buildNumberedPdfQuestionPrompt(fieldName: string, questionPrompt = "") {
   const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes(?:_\d+)?)$/i);
   if (!match) return "";
   const questionNo = match[1];
   const section = match[2].replace(/_\d+$/, "").toLowerCase();
   const sectionLabel = section === "notes" ? "supporting notes" : section;
-  const knownPrompt = NUMBERED_PDF_QUESTION_PROMPTS[questionNo];
-  const questionContext = knownPrompt
-    ? `Q${Number(questionNo)}. ${knownPrompt}`
+  const questionContext = questionPrompt
+    ? `Q${Number(questionNo)}. ${questionPrompt}`
     : `Q${Number(questionNo)} from the PDF interview guide`;
   return [
     `PDF field "${fieldName}" is the ${sectionLabel} line for ${questionContext}.`,
-    "Search the entire transcript, including the final interviewer turns, for this numbered question, a near-verbatim prompt, or the same core phrases.",
+    "Search the entire transcript for this numbered question, a near-verbatim prompt, or the same core phrases.",
     "Use the candidate answer immediately following the direct question before considering any earlier loosely similar exchange.",
-    questionNo === "01"
-      ? "For Q1, prioritize a direct answer to 'customer was upset or frustrated' or 'how did you handle it' over earlier customer-service hypotheticals or roleplay examples."
-      : "",
     "If the candidate's answer is conversational rather than neatly labeled as STAR, split the supported facts into Situation, Task, Action, and Result lines without adding outside facts.",
     `Return only the ${sectionLabel} content for this STAR field, not the full answer.`,
   ].join(" ");
@@ -157,6 +188,7 @@ function buildTargets(
   const version = (snapshot.version || {}) as Record<string, unknown>;
   const fields = asArray(version.pdf_field_manifest || record.pdf_field_manifest_snapshot);
   const questionByMappedField = new Map<string, Record<string, unknown>>();
+  const pdfQuestionPrompts = getSnapshotQuestionPrompts(record);
   const targetPdfFieldName = String(options.targetPdfFieldName || "").trim();
   const pdfPopulationInstructions = options.pdfPopulationInstructions || new Map<string, string>();
 
@@ -181,7 +213,8 @@ function buildTargets(
     .map((field) => {
       const fieldName = String(field.name);
       const mappedQuestion = questionByMappedField.get(fieldName);
-      const inferredNumberedPrompt = buildNumberedPdfQuestionPrompt(fieldName);
+      const questionNumber = getPdfQuestionNumber(fieldName);
+      const inferredNumberedPrompt = buildNumberedPdfQuestionPrompt(fieldName, questionNumber ? pdfQuestionPrompts.get(questionNumber) || "" : "");
       const basePrompt = mappedQuestion?.prompt
         ? `PDF field "${fieldName}" should answer this interview prompt: ${String(mappedQuestion.prompt)}`
         : inferredNumberedPrompt
@@ -494,6 +527,36 @@ function recordWithGuideSnapshot(record: Record<string, unknown>, guide: Record<
   };
 }
 
+function mergeGuideVersionContext(
+  guide: Record<string, unknown>,
+  version: Record<string, unknown> | null,
+) {
+  if (!version) return guide;
+  const snapshot = (guide.template_snapshot || {}) as Record<string, unknown>;
+  const snapshotVersion = (snapshot.version || {}) as Record<string, unknown>;
+  const mergedVersion = {
+    ...snapshotVersion,
+    metadata: {
+      ...((snapshotVersion.metadata || {}) as Record<string, unknown>),
+      ...((version.metadata || {}) as Record<string, unknown>),
+    },
+    pdf_field_manifest: Array.isArray(snapshotVersion.pdf_field_manifest) && snapshotVersion.pdf_field_manifest.length
+      ? snapshotVersion.pdf_field_manifest
+      : version.pdf_field_manifest,
+    source_pdf_bucket: snapshotVersion.source_pdf_bucket || version.source_pdf_bucket,
+    source_pdf_path: snapshotVersion.source_pdf_path || version.source_pdf_path,
+    source_pdf_file_name: snapshotVersion.source_pdf_file_name || version.source_pdf_file_name,
+    pdf_page_count: snapshotVersion.pdf_page_count || version.pdf_page_count,
+  };
+  return {
+    ...guide,
+    template_snapshot: {
+      ...snapshot,
+      version: mergedVersion,
+    },
+  };
+}
+
 async function loadInterviewGuide(
   supabase: ReturnType<typeof createClient>,
   record: Record<string, unknown>,
@@ -511,7 +574,16 @@ async function loadInterviewGuide(
   if (error) throw new InterviewFunctionError(error.message || "Unable to load attached interview guide.", 500);
   const guide = Array.isArray(data) && data.length ? data[0] : null;
   if (requestedGuideId && !guide) throw new InterviewFunctionError("Attached interview guide was not found.", 404);
-  if (guide) return guide as Record<string, unknown>;
+  if (guide) {
+    const templateVersionId = String((guide as Record<string, unknown>).template_version_id || "").trim();
+    if (!templateVersionId) return guide as Record<string, unknown>;
+    const { data: version } = await supabase
+      .from("labor_interview_template_versions")
+      .select("metadata,pdf_field_manifest,source_pdf_bucket,source_pdf_path,source_pdf_file_name,pdf_page_count")
+      .eq("id", templateVersionId)
+      .maybeSingle();
+    return mergeGuideVersionContext(guide as Record<string, unknown>, (version || null) as Record<string, unknown> | null);
+  }
   return null;
 }
 
