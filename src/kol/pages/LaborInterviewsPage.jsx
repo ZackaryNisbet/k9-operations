@@ -194,6 +194,13 @@ function getResponseDraft(response) {
   return getInterviewDraftResponseText(response);
 }
 
+function draftMapsEqual(left = {}, right = {}) {
+  const leftKeys = Object.keys(left || {});
+  const rightKeys = Object.keys(right || {});
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => String(left?.[key] || "") === String(right?.[key] || ""));
+}
+
 function SectionHeading({ title, detail, action }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
@@ -2995,8 +3002,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         nextDrafts[fieldKey("pdf_field", response.pdf_field_name)] = getResponseDraft(response);
       }
     });
-    setResponseDrafts(nextDrafts);
-    setGuidePreviewDrafts(nextDrafts);
+    setResponseDrafts((prev) => (draftMapsEqual(prev, nextDrafts) ? prev : nextDrafts));
+    setGuidePreviewDrafts((prev) => (draftMapsEqual(prev, nextDrafts) ? prev : nextDrafts));
   }, [responsesByTarget]);
 
   useEffect(() => {
@@ -3018,7 +3025,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     if (!showGuideModal) return undefined;
     if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
     guidePreviewTimerRef.current = setTimeout(() => {
-      setGuidePreviewDrafts(responseDrafts);
+      setGuidePreviewDrafts((prev) => (draftMapsEqual(prev, responseDrafts) ? prev : responseDrafts));
     }, 180);
     return () => {
       if (guidePreviewTimerRef.current) clearTimeout(guidePreviewTimerRef.current);
@@ -3042,7 +3049,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
 
   const buildCurrentPdfResponseMap = useCallback((drafts = responseDrafts) => {
-    const map = buildPdfResponseMap(Object.values(responsesByTarget), selectedRecord, selectedPdfFields, { includeDrafts: true });
+    const map = buildPdfResponseMap([], selectedRecord, selectedPdfFields, { includeDrafts: true });
     Object.entries(drafts || {}).forEach(([key, value]) => {
       if (!key.startsWith("pdf_field:")) return;
       const fieldName = key.replace(/^pdf_field:/, "");
@@ -3052,7 +3059,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     const overallScore = computeOverallScoreFromPdfMap(map, selectedPdfFields);
     if (overallScoreField && overallScore) map[overallScoreField.name] = overallScore;
     return map;
-  }, [responseDrafts, responsesByTarget, selectedPdfFields, selectedRecord]);
+  }, [responseDrafts, selectedPdfFields, selectedRecord]);
 
   useEffect(() => {
     if (!showGuideModal) {
