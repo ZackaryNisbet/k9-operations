@@ -86,6 +86,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeAiReviewMode(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return INTERVIEW_AI_REVIEW_MODES.some((mode) => mode.value === text) ? text : "literal";
+}
+
+function reviewModeDraftInstruction(mode, label) {
+  if (mode === "speculative") {
+    return `${label} mode selected by the manager. Fill every defensible guide field from the transcript at this evidence strictness. Prefer a concise, evidence-backed inference over leaving a field blank when the transcript logically supports the question. Do not fabricate unsupported facts.`;
+  }
+  if (mode === "inferred") {
+    return `${label} mode selected by the manager. Fill guide fields when the transcript demonstrates a relevant behavior, trait, or response quality, even when the exact question was not asked. Keep unsupported fields blank.`;
+  }
+  return `${label} mode selected by the manager. Fill guide fields only from direct answers, near-verbatim rephrases, or clearly matching interview exchanges. Keep loosely related fields blank.`;
+}
+
 async function readEdgeFunctionError(error, fallbackMessage) {
   if (!error) return fallbackMessage;
   try {
@@ -1034,14 +1049,14 @@ function conciseBullet(value = "", maxLength = 190) {
 
 function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap }) {
   const guideBullets = buildPdfReviewItems(fields)
+    .filter((item) => item.type === "question_part")
     .map((item) => {
       const value = composePdfReviewItemValue(item, (field) => finalMap[field.name] || "");
       if (!String(value || "").trim()) return "";
       const label = item.type === "question_part" ? questionPartLabel(item) : humanizePdfFieldName(item.field.name);
       return `${label}: ${conciseBullet(value)}`;
     })
-    .filter(Boolean)
-    .slice(0, 18);
+    .filter(Boolean);
 
   const customBullets = (questions || [])
     .map((question) => {
@@ -1050,8 +1065,7 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
       if (!value) return "";
       return `${question.prompt}: ${conciseBullet(value)}`;
     })
-    .filter(Boolean)
-    .slice(0, 18);
+    .filter(Boolean);
 
   const scoreBullets = [];
   const overallScore = finalMap.overall_score || computeOverallScoreFromPdfMap(finalMap, fields);
@@ -1071,6 +1085,108 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
     subtitle: `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`,
     sections,
   }];
+}
+
+function estimateSummaryBulletLines(text = "") {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  return Math.max(1, Math.ceil(clean.length / 92));
+}
+
+function paginateInterviewSummaryPreview(summaryPages = []) {
+  const sourcePages = Array.isArray(summaryPages) ? summaryPages.filter(Boolean) : [];
+  const previewPages = [];
+  const maxLines = 45;
+
+  sourcePages.forEach((summary) => {
+    const title = String(summary.title || "Interview Summary");
+    const subtitle = String(summary.subtitle || "");
+    let page = { title, subtitle, sections: [] };
+    let lineCount = 5;
+
+    const pushPage = () => {
+      if (page.sections.some((section) => section.bullets?.length)) previewPages.push(page);
+      page = { title: `${title} (continued)`, subtitle, sections: [] };
+      lineCount = 5;
+    };
+
+    (summary.sections || []).forEach((section) => {
+      const heading = String(section.heading || "").trim();
+      const bullets = (Array.isArray(section.bullets) ? section.bullets : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      if (!bullets.length) return;
+
+      let activeSection = null;
+      const ensureSection = () => {
+        if (!activeSection) {
+          activeSection = { heading, bullets: [] };
+          page.sections.push(activeSection);
+          lineCount += heading ? 2 : 1;
+        }
+      };
+
+      bullets.forEach((bullet) => {
+        const needed = estimateSummaryBulletLines(bullet) + 1;
+        if (lineCount + needed > maxLines && page.sections.some((row) => row.bullets?.length)) {
+          pushPage();
+          activeSection = null;
+        }
+        ensureSection();
+        activeSection.bullets.push(bullet);
+        lineCount += needed;
+      });
+      lineCount += 1;
+    });
+
+    pushPage();
+  });
+
+  return previewPages;
+}
+
+function InterviewSummaryPreviewPage({ page, width }) {
+  if (!page) return null;
+  const safeWidth = Number(width) > 0 ? Number(width) : 816;
+  const scale = safeWidth / 612;
+  return (
+    <div
+      aria-label="Interview summary appendix preview"
+      style={{
+        width: safeWidth,
+        minHeight: 792 * scale,
+        background: "#fff",
+        boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
+        boxSizing: "border-box",
+        padding: `${58 * scale}px ${54 * scale}px`,
+        color: "#0f172a",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <div style={{ fontSize: 18 * scale, fontWeight: 800, lineHeight: 1.2 }}>{page.title || "Interview Summary"}</div>
+      {page.subtitle ? (
+        <div style={{ marginTop: 8 * scale, marginBottom: 22 * scale, fontSize: 9 * scale, color: "#64748b", lineHeight: 1.35 }}>{page.subtitle}</div>
+      ) : (
+        <div style={{ height: 18 * scale }} />
+      )}
+      <div style={{ display: "grid", gap: 12 * scale }}>
+        {(page.sections || []).map((section, sectionIndex) => (
+          <div key={`${section.heading || "section"}-${sectionIndex}`} style={{ display: "grid", gap: 6 * scale }}>
+            {section.heading ? (
+              <div style={{ fontSize: 11 * scale, fontWeight: 800, color: "#111827" }}>{section.heading}</div>
+            ) : null}
+            <div style={{ display: "grid", gap: 5 * scale }}>
+              {(section.bullets || []).map((bullet, bulletIndex) => (
+                <div key={bulletIndex} style={{ display: "grid", gridTemplateColumns: `${12 * scale}px minmax(0, 1fr)`, gap: 6 * scale, alignItems: "start", fontSize: 10 * scale, lineHeight: 1.35, color: "#334155" }}>
+                  <span>-</span>
+                  <span>{String(bullet || "").replace(/^[-*]\s*/, "")}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function StaticField({ label, value }) {
@@ -1957,7 +2073,7 @@ function PdfFieldValueLayer({ fields, activePageNumber, containerSize, pageSize:
   );
 }
 
-function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, activePageNumber, activeKey, onSelectField }) {
+function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages, activePageNumber, activeKey, onSelectField }) {
   const containerRef = useRef(null);
   const pageCanvasRefs = useRef(new Map());
   const pageFrameRefs = useRef(new Map());
@@ -1965,6 +2081,7 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, activePageNu
   const renderRunRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState(0);
   const [pageState, setPageState] = useState({ loading: false, error: "", pages: [] });
+  const summaryPreviewPages = useMemo(() => paginateInterviewSummaryPreview(summaryPages), [summaryPages]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -2102,49 +2219,60 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, activePageNu
         </div>
       ) : (
         <div style={{ display: "grid", gap: 18, justifyItems: "center", padding: 0 }}>
-          {pageState.pages.length ? pageState.pages.map((pageInfo) => (
-            <div
-              key={pageInfo.pageNumber}
-              ref={(node) => {
-                if (node) pageFrameRefs.current.set(pageInfo.pageNumber, node);
-                else pageFrameRefs.current.delete(pageInfo.pageNumber);
-              }}
-              style={{
-                position: "relative",
-                width: pageInfo.renderSize?.width || 1,
-                minHeight: pageInfo.renderSize?.height || 540,
-                background: "#fff",
-                boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
-              }}
-            >
-              <canvas
-                ref={(node) => {
-                  if (node) pageCanvasRefs.current.set(pageInfo.pageNumber, node);
-                  else pageCanvasRefs.current.delete(pageInfo.pageNumber);
-                }}
-                style={{ display: "block", background: "#fff" }}
-              />
-              {pageInfo.pageSize && pageInfo.renderSize && (
-                <>
-                  <PdfFieldValueLayer
-                    fields={fields}
-                    activePageNumber={pageInfo.pageNumber}
-                    containerSize={pageInfo.renderSize}
-                    pageSize={pageInfo.pageSize}
-                    fieldValues={fieldValues}
+          {pageState.pages.length ? (
+            <>
+              {pageState.pages.map((pageInfo) => (
+                <div
+                  key={pageInfo.pageNumber}
+                  ref={(node) => {
+                    if (node) pageFrameRefs.current.set(pageInfo.pageNumber, node);
+                    else pageFrameRefs.current.delete(pageInfo.pageNumber);
+                  }}
+                  style={{
+                    position: "relative",
+                    width: pageInfo.renderSize?.width || 1,
+                    minHeight: pageInfo.renderSize?.height || 540,
+                    background: "#fff",
+                    boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
+                  }}
+                >
+                  <canvas
+                    ref={(node) => {
+                      if (node) pageCanvasRefs.current.set(pageInfo.pageNumber, node);
+                      else pageCanvasRefs.current.delete(pageInfo.pageNumber);
+                    }}
+                    style={{ display: "block", background: "#fff" }}
                   />
-                  <PdfFieldClickLayer
-                    fields={fields}
-                    activePageNumber={pageInfo.pageNumber}
-                    activeKey={activeKey}
-                    containerSize={pageInfo.renderSize}
-                    pageSize={pageInfo.pageSize}
-                    onSelectField={onSelectField}
-                  />
-                </>
-              )}
-            </div>
-          )) : (
+                  {pageInfo.pageSize && pageInfo.renderSize && (
+                    <>
+                      <PdfFieldValueLayer
+                        fields={fields}
+                        activePageNumber={pageInfo.pageNumber}
+                        containerSize={pageInfo.renderSize}
+                        pageSize={pageInfo.pageSize}
+                        fieldValues={fieldValues}
+                      />
+                      <PdfFieldClickLayer
+                        fields={fields}
+                        activePageNumber={pageInfo.pageNumber}
+                        activeKey={activeKey}
+                        containerSize={pageInfo.renderSize}
+                        pageSize={pageInfo.pageSize}
+                        onSelectField={onSelectField}
+                      />
+                    </>
+                  )}
+                </div>
+              ))}
+              {summaryPreviewPages.map((summaryPage, index) => (
+                <InterviewSummaryPreviewPage
+                  key={`summary-${index}`}
+                  page={summaryPage}
+                  width={pageState.pages[0]?.renderSize?.width || Math.max(260, containerWidth - 28)}
+                />
+              ))}
+            </>
+          ) : (
             <div style={{ minHeight: 540, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: C.textMut, fontSize: 13, fontWeight: 800 }}>
               Loading PDF preview...
             </div>
@@ -2342,6 +2470,7 @@ function ReviewGuideModal({
   responsesByTarget,
   responseDrafts,
   pdfFieldValues,
+  summaryPages,
   savingKey,
   exporting,
   activeIndex,
@@ -2550,6 +2679,7 @@ function ReviewGuideModal({
                 loadingPdf={loadingPdf}
                 fields={reviewFields}
                 fieldValues={pdfFieldValues}
+                summaryPages={summaryPages}
                 activePageNumber={activeField?.page_number || 1}
                 activeKey={activeKey}
                 onSelectField={selectField}
@@ -2747,6 +2877,9 @@ function QuestionReviewModal({
                       const response = responsesByTarget[key] || {};
                       const value = responseDrafts[key] || "";
                       const approved = !!response.metadata?.approved;
+                      const officialValue = getInterviewOfficialResponseText(response);
+                      const reviewedDirty = approved && String(value || "").trim() !== String(officialValue || "").trim();
+                      const approveLabel = approved ? (reviewedDirty ? "Update Review" : "Reviewed") : "Approve";
                       return (
                         <div
                           key={question.question_key}
@@ -2778,8 +2911,13 @@ function QuestionReviewModal({
                             <span style={{ color: C.textMut, fontSize: 12 }}>{savingKey === key ? "Saving..." : "Autosaves as you type"}</span>
                             <div style={{ display: "flex", gap: 8 }}>
                               <Btn variant="secondary" size="sm" onClick={() => rejectQuestion?.(question)}>Reject</Btn>
-                              <Btn variant={approved ? "secondary" : "primary"} size="sm" onClick={() => approveQuestion(question, value)}>
-                                {approved ? "Reviewed" : "Approve"}
+                              <Btn
+                                variant={approved && !reviewedDirty ? "secondary" : "primary"}
+                                size="sm"
+                                onClick={() => approveQuestion(question, value)}
+                                disabled={approved && !reviewedDirty}
+                              >
+                                {approveLabel}
                               </Btn>
                             </div>
                           </div>
@@ -3024,25 +3162,42 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [autoScoreStorageKey]);
 
   useEffect(() => {
+    if (!selectedRecord?.id) return;
+    setAiReviewMode(normalizeAiReviewMode(selectedRecord?.metadata?.ai_review_mode));
+  }, [selectedRecord?.id, selectedRecord?.metadata?.ai_review_mode]);
+
+  const loadInterviewDetail = useCallback(async (interviewId) => {
+    if (!interviewId) {
+      setResponses([]);
+      setArtifacts([]);
+      return { responses: [], artifacts: [] };
+    }
+    const [responseRes, artifactRes] = await Promise.all([
+      supabase.from("labor_interview_responses").select("*").eq("interview_id", interviewId).order("created_at"),
+      supabase.from("labor_interview_artifacts").select("*").eq("interview_id", interviewId).order("created_at", { ascending: false }),
+    ]);
+    if (responseRes.error) throw responseRes.error;
+    if (artifactRes.error) throw artifactRes.error;
+    setResponses(responseRes.data || []);
+    setArtifacts(artifactRes.data || []);
+    return { responses: responseRes.data || [], artifacts: artifactRes.data || [] };
+  }, []);
+
+  useEffect(() => {
     const loadRecordDetail = async () => {
       if (!selectedRecord?.id) {
         setResponses([]);
         setArtifacts([]);
         return;
       }
-      const [responseRes, artifactRes] = await Promise.all([
-        supabase.from("labor_interview_responses").select("*").eq("interview_id", selectedRecord.id).order("created_at"),
-        supabase.from("labor_interview_artifacts").select("*").eq("interview_id", selectedRecord.id).order("created_at", { ascending: false }),
-      ]);
-      if (responseRes.error) {
+      try {
+        await loadInterviewDetail(selectedRecord.id);
+      } catch (_) {
         showToast("Failed to load interview responses", "error");
-        return;
       }
-      setResponses(responseRes.data || []);
-      setArtifacts(artifactRes.data || []);
     };
     loadRecordDetail();
-  }, [selectedRecord?.id, showToast]);
+  }, [loadInterviewDetail, selectedRecord?.id, showToast]);
 
   useEffect(() => {
     setAudioFileName("");
@@ -3142,6 +3297,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [responseDrafts, selectedPdfFields, selectedRecord]);
 
   const guidePreviewFieldValues = useMemo(() => buildCurrentPdfResponseMap(responseDrafts), [buildCurrentPdfResponseMap, responseDrafts]);
+
+  const reviewedSummaryPages = useMemo(() => {
+    const guideResponses = Object.values(responsesByTarget || {});
+    const finalMap = buildPdfResponseMap(guideResponses, selectedRecord, selectedPdfFields, { includeDrafts: false });
+    const overallScoreField = selectedPdfFields.find((field) => /^overall_score$/i.test(field.name || ""));
+    const overallScore = computeOverallScoreFromPdfMap(finalMap, selectedPdfFields);
+    if (overallScoreField && overallScore) finalMap[overallScoreField.name] = overallScore;
+    return buildInterviewSummaryPages({
+      record: selectedRecord,
+      guide: selectedGuide,
+      fields: selectedPdfFields,
+      questions: selectedQuestions,
+      responsesByTarget,
+      finalMap,
+    });
+  }, [responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord]);
 
   const setAutoScorePreference = (enabled) => {
     setAutoScoreCandidates(enabled);
@@ -3387,7 +3558,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       documentPdfInstruction = "",
       pdfOnly = false,
       customOnly = false,
+      reviewModeOverride = "",
     } = options;
+    const draftReviewMode = normalizeAiReviewMode(reviewModeOverride || aiReviewMode);
     if (!interviewId) return null;
     if (requireLocalTranscript && !String(selectedRecord?.transcript_text || "").trim()) {
       showToast("Upload interview audio or a transcript first.", "error");
@@ -3406,7 +3579,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           interview_guide_id: selectedGuide?.id || undefined,
           action: "start",
           auto_score_candidate: autoScoreCandidates,
-          review_mode: aiReviewMode,
+          review_mode: draftReviewMode,
           target_pdf_field_name: targetPdfFieldName || undefined,
           pdf_population_instructions: pdfPopulationInstructions,
           pdf_only: pdfOnly || !!documentPdfInstruction || undefined,
@@ -3428,7 +3601,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               interview_guide_id: selectedGuide?.id || undefined,
               action: "poll",
               request_id: requestId,
-              review_mode: aiReviewMode,
+              review_mode: draftReviewMode,
               custom_only: customOnly || undefined,
             },
           });
@@ -3451,6 +3624,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           ? `AI wrote guide text into ${populatedCount} field${populatedCount === 1 ? "" : "s"}`
           : `AI populated ${result?.saved_count || 0} response${result?.saved_count === 1 ? "" : "s"}`);
       await loadAll(locationId);
+      await loadInterviewDetail(interviewId);
       setSelectedRecordId(interviewId);
       return result;
     } catch (error) {
@@ -3470,6 +3644,26 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       pdfOnly: true,
     });
     return result;
+  };
+
+  const changeAiReviewMode = async (nextValue) => {
+    const nextMode = normalizeAiReviewMode(nextValue);
+    if (nextMode === aiReviewMode && selectedRecord?.metadata?.ai_review_mode === nextMode) return;
+    setAiReviewMode(nextMode);
+    await saveRecordMetadataPatch({ ai_review_mode: nextMode });
+    const label = INTERVIEW_AI_REVIEW_MODE_LABELS[nextMode] || "AI";
+    if (!selectedRecord?.id) return;
+    if (!String(selectedRecord?.transcript_text || "").trim()) {
+      showToast(`${label} mode selected. Upload interview audio or a transcript before drafting.`, "error");
+      return;
+    }
+    showToast(`${label} mode selected. Redrafting this guide from the transcript.`);
+    await draftInterview(selectedRecord.id, {
+      reviewModeOverride: nextMode,
+      documentPdfInstruction: reviewModeDraftInstruction(nextMode, label),
+      pdfOnly: true,
+      quietStart: false,
+    });
   };
 
   const waitForInterviewTranscript = async (interviewId) => {
@@ -4437,12 +4631,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 320px) minmax(0, 1fr)", gap: 12, alignItems: "center" }}>
               <CustomSelect
                 value={aiReviewMode}
-                onChange={setAiReviewMode}
+                onChange={changeAiReviewMode}
                 options={INTERVIEW_AI_REVIEW_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
                 placeholder="AI strictness"
+                disabled={aiDrafting || recordSaving}
               />
               <div style={{ color: C.textMut, fontSize: 12, lineHeight: 1.45 }}>
-                {INTERVIEW_AI_REVIEW_MODES.find((mode) => mode.value === aiReviewMode)?.description}
+                {aiDrafting ? "AI is drafting responses with the selected strictness." : INTERVIEW_AI_REVIEW_MODES.find((mode) => mode.value === aiReviewMode)?.description}
               </div>
             </div>
           </div>
@@ -4800,6 +4995,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           responsesByTarget={responsesByTarget}
           responseDrafts={responseDrafts}
           pdfFieldValues={guidePreviewFieldValues}
+          summaryPages={reviewedSummaryPages}
           savingKey={savingResponseKey}
           exporting={exportingPdf}
           activeIndex={pdfReviewIndex}
