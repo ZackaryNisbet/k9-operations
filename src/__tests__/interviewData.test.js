@@ -217,6 +217,21 @@ describe("interview PDF form utilities", () => {
 
     expect(pdfDoc.getPageCount()).toBe(2);
   });
+
+  it("continues long interview summary bullets onto additional pages", async () => {
+    const bytes = await createFillableInterviewPdf();
+    const longBullet = Array.from({ length: 900 }, (_, index) => `detail ${index + 1}`).join(" ");
+    const filled = await fillInterviewPdfBytes(bytes, {}, {
+      summaryPages: [{
+        title: "Interview Summary",
+        subtitle: "Alexis Turner - Supervisor",
+        sections: [{ heading: "Call Summary", bullets: [longBullet] }],
+      }],
+    });
+    const pdfDoc = await PDFDocument.load(filled);
+
+    expect(pdfDoc.getPageCount()).toBeGreaterThan(2);
+  });
 });
 
 describe("interview template snapshots", () => {
