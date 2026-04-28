@@ -993,61 +993,18 @@ function fitPdfFieldValueForSlot(value = "", field = {}) {
   return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
-function cleanPdfExportSnippet(value = "") {
-  let text = String(value || "").replace(/\s+/g, " ").trim();
-  for (let index = 0; index < 3; index += 1) {
-    text = text
-      .replace(/[,\s;:–-]+$/g, "")
-      .replace(/\b(?:about|regarding|around) (?:her|him|his|their|its|the)$/i, "")
-      .replace(/\b(?:making|doing|being|having|getting|using)$/i, "")
-      .replace(/\b(?:and|or|with|without|for|to|from|of|in|on|at|by|while|because|but|that|the|a|an)$/i, "")
-      .trim();
-  }
-  return text;
-}
-
-function choosePdfExportCutPoint(text = "", limit = 80) {
-  const normalized = String(text || "");
-  const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
-  if (normalized.length <= safeLimit) return normalized.length;
-
-  const windowText = normalized.slice(0, safeLimit + 1);
-  const punctuationCut = Math.max(
-    windowText.lastIndexOf(". "),
-    windowText.lastIndexOf("; "),
-    windowText.lastIndexOf(", "),
-    windowText.lastIndexOf(": "),
-  );
-  if (punctuationCut >= Math.floor(safeLimit * 0.45)) return punctuationCut + 1;
-
-  const dashCut = Math.max(windowText.lastIndexOf(" - "), windowText.lastIndexOf(" – "));
-  if (dashCut >= Math.floor(safeLimit * 0.45)) return dashCut;
-
-  const spaceCut = windowText.lastIndexOf(" ");
-  if (spaceCut >= Math.floor(safeLimit * 0.35)) return spaceCut;
-
-  return safeLimit;
-}
-
-function fitPdfFieldValueForExport(value = "", field = {}) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  if (field.type && field.type !== "text") return text;
-  const limit = getPdfFieldFitLimit(field);
-  if (text.length <= limit) return text;
-  const cutAt = choosePdfExportCutPoint(text, limit);
-  let snippet = cleanPdfExportSnippet(text.slice(0, Math.max(1, cutAt)));
-  if (snippet.length < Math.min(8, limit)) {
-    snippet = cleanPdfExportSnippet(text.slice(0, limit));
-  }
-  return snippet;
+function getPdfExportFieldCharLimit(field = {}) {
+  const rect = getInterviewPdfFieldDisplayRect(field) || {};
+  const width = Number(rect.width || 0);
+  if (!Number.isFinite(width) || width <= 0) return 120;
+  return Math.max(60, Math.min(180, Math.floor(width / 3.55)));
 }
 
 function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
   const targets = fields || [];
   const text = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!targets.length) return [];
-  if (targets.length === 1) return [fitPdfFieldValueForExport(text, targets[0])];
+  if (targets.length === 1) return [text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim()];
   const chunks = [];
   let remaining = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
   targets.forEach((field, index) => {
@@ -1056,11 +1013,11 @@ function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
       return;
     }
     if (index === targets.length - 1) {
-      chunks.push(fitPdfFieldValueForExport(remaining, field));
+      chunks.push(remaining);
       remaining = "";
       return;
     }
-    const limit = Math.max(18, Math.floor(getPdfFieldFitLimit(field) * 0.96));
+    const limit = getPdfExportFieldCharLimit(field);
     if (remaining.length <= limit) {
       chunks.push(remaining);
       remaining = "";
@@ -1072,7 +1029,7 @@ function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
       remaining.lastIndexOf(";", limit),
       remaining.lastIndexOf(",", limit),
     );
-    const cutAt = breakpoint >= Math.floor(limit * 0.58) ? breakpoint : limit;
+    const cutAt = breakpoint >= Math.floor(limit * 0.45) ? breakpoint : limit;
     chunks.push(remaining.slice(0, cutAt).trim());
     remaining = remaining.slice(cutAt).trim();
   });
@@ -1100,10 +1057,11 @@ function buildExportPdfFieldMap(map = {}, fields = []) {
         next[field.name] = chunks[index] || "";
         handled.add(field.name);
       });
-    });
+  });
   Object.entries(map || {}).forEach(([name, value]) => {
     if (handled.has(name)) return;
-    next[name] = fitPdfFieldValueForExport(value, fieldByName.get(name) || { name });
+    const field = fieldByName.get(name) || { name };
+    next[name] = field.type && field.type !== "text" ? value : String(value || "").replace(/\s+/g, " ").trim();
   });
   return next;
 }
@@ -2419,14 +2377,15 @@ function PdfFieldValueLayer({ fields, activePageNumber, activeKey, containerSize
     <div className="interview-pdf-value-layer" style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
       {pageFields.map((field) => {
         const rawValue = String(fieldValues?.[field.name] || "").trim();
-        const value = fitPdfFieldValueForSlot(rawValue, field);
+        const isActive = responseKeyForPdfField(field) === activeKey;
+        const value = isActive ? rawValue.replace(/\s+/g, " ").trim() : fitPdfFieldValueForSlot(rawValue, field);
         if (!value) return null;
         const style = getPdfFieldValueOverlayStyle(field, pageBox, pageSize);
         if (!style) return null;
         const rect = getInterviewPdfFieldDisplayRect(field) || {};
         const smallField = Number(rect.width || 0) <= 14 && Number(rect.height || 0) <= 14;
-        const isActive = responseKeyForPdfField(field) === activeKey;
-        const doesFit = rawValue.replace(/\s+/g, " ").trim() === value;
+        const normalizedRaw = rawValue.replace(/\s+/g, " ").trim();
+        const doesFit = normalizedRaw === value;
         if (!smallField && !isActive && !doesFit) {
           return (
             <div
@@ -2446,7 +2405,14 @@ function PdfFieldValueLayer({ fields, activePageNumber, activeKey, containerSize
             />
           );
         }
-        const fontSize = smallField ? Math.max(8, style.height * 0.74) : Math.max(isActive ? 8.5 : 7.25, Math.min(isActive ? 10.5 : 8.75, style.height * 0.72));
+        const activeFitSize = normalizedRaw
+          ? Math.max(5.2, Math.min(10.5, style.width / Math.max(1, normalizedRaw.length * 0.48)))
+          : 10.5;
+        const fontSize = smallField
+          ? Math.max(8, style.height * 0.74)
+          : isActive
+            ? Math.min(activeFitSize, Math.max(8.5, Math.min(10.5, style.height * 0.72)))
+            : Math.max(7.25, Math.min(8.75, style.height * 0.72));
         const height = smallField ? style.height : Math.max(style.height, isActive ? 17 : 12);
         return (
           <div
