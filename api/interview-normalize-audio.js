@@ -294,6 +294,8 @@ export default async function handler(req, res) {
       audio_normalized_for_stt: true,
       audio_chunks: uploadedChunks,
       chunk_count: uploadedChunks.length,
+      original_audio_file_bucket: audioBucket,
+      original_audio_file_path: audioPath,
       original_audio_file_name: audioFileName,
       original_audio_mime_type: audioMimeType || audioBlob.type || null,
       original_audio_size_bytes: audioBlob.size,
