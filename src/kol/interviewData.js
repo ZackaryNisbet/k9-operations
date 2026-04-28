@@ -5,8 +5,10 @@ import {
   PDFOptionList,
   PDFRadioGroup,
   PDFSignature,
+  StandardFonts,
   PDFTextField,
   TextAlignment,
+  rgb,
 } from "pdf-lib";
 
 export const LABOR_INTERVIEW_DOCUMENT_BUCKET = "labor-interview-documents";
@@ -25,6 +27,38 @@ export const LABOR_INTERVIEW_STATUS_LABELS = {
   reviewed: "Reviewed",
   completed: "Completed",
   archived: "Archived",
+};
+
+export const INTERVIEW_AI_REVIEW_MODES = [
+  {
+    value: "literal",
+    label: "Literal",
+    description: "Only direct answers or very clear rephrases of the guide question.",
+  },
+  {
+    value: "inferred",
+    label: "Inferred",
+    description: "Use demonstrated behavior from the transcript when the exact question was not asked.",
+  },
+  {
+    value: "speculative",
+    label: "Speculative",
+    description: "Looser trait matching, still grounded in transcript evidence.",
+  },
+];
+
+export const INTERVIEW_AI_REVIEW_MODE_LABELS = INTERVIEW_AI_REVIEW_MODES.reduce((map, mode) => {
+  map[mode.value] = mode.label;
+  return map;
+}, {});
+
+export const INTERVIEW_RESPONSE_STATES = {
+  blank: "Blank",
+  manual: "Manual",
+  ai_draft: "AI Draft",
+  ai_approved: "Approved",
+  merged_draft: "Merged Draft",
+  rejected: "Rejected",
 };
 
 export const INTERVIEW_RECOMMENDATION_OPTIONS = [
@@ -593,11 +627,43 @@ export function buildInterviewMetadataPdfMap(record = {}, fields = []) {
   return map;
 }
 
-export function buildPdfResponseMap(responses = [], record = null, fields = []) {
+export function getInterviewResponseState(response = {}) {
+  const state = response?.response_state || "";
+  if (INTERVIEW_RESPONSE_STATES[state]) return state;
+  if (response?.metadata?.approved && String(response?.response_text || "").trim()) return "ai_approved";
+  if (String(response?.response_text || "").trim()) return "manual";
+  if (String(response?.ai_merged_text || "").trim()) return "merged_draft";
+  if (String(response?.ai_draft_text || "").trim()) return "ai_draft";
+  return "blank";
+}
+
+export function isInterviewResponseReviewed(response = {}) {
+  const state = getInterviewResponseState(response);
+  return state === "manual" || state === "ai_approved" || !!response?.metadata?.approved;
+}
+
+export function getInterviewOfficialResponseText(response = {}) {
+  if (!response) return "";
+  const responseText = String(response.response_text || "").trim();
+  if (responseText && isInterviewResponseReviewed(response)) return responseText;
+  return "";
+}
+
+export function getInterviewDraftResponseText(response = {}) {
+  if (!response) return "";
+  if (getInterviewResponseState(response) === "rejected") return "";
+  if (getInterviewResponseState(response) === "merged_draft") {
+    return response.ai_merged_text ?? response.response_text ?? response.ai_draft_text ?? "";
+  }
+  return response.response_text ?? response.ai_merged_text ?? response.ai_draft_text ?? "";
+}
+
+export function buildPdfResponseMap(responses = [], record = null, fields = [], options = {}) {
+  const includeDrafts = !!options.includeDrafts;
   const initial = record ? buildInterviewMetadataPdfMap(record, fields) : {};
   return (responses || []).reduce((map, response) => {
     if (response?.response_type !== "pdf_field" || !response.pdf_field_name) return map;
-    const text = response.response_text ?? response.ai_draft_text ?? "";
+    const text = includeDrafts ? getInterviewDraftResponseText(response) : getInterviewOfficialResponseText(response);
     if (text === "" && map[response.pdf_field_name]) return map;
     map[response.pdf_field_name] = text;
     return map;
@@ -710,11 +776,38 @@ function combineProviderWordTurns(turns = []) {
   return grouped;
 }
 
+function transcriptTextToTurns(text = "") {
+  const cleaned = cleanInterviewTranscriptText(text);
+  if (!cleaned) return [];
+  return cleaned
+    .split(/\n{2,}/)
+    .map((paragraph, index) => {
+      const speakerMatch = paragraph.match(/^([^:\n]{1,40}):\s*(.+)$/s);
+      return {
+        id: `uploaded-transcript-${index}`,
+        timestamp: "",
+        startSeconds: null,
+        endSeconds: null,
+        speaker: speakerMatch ? speakerMatch[1].trim() : "Transcript",
+        text: speakerMatch ? cleanInterviewTranscriptText(speakerMatch[2]) : paragraph,
+        words: [],
+        estimatedTiming: true,
+        providerSegment: false,
+      };
+    })
+    .filter((turn) => turn.text);
+}
+
 export function getInterviewTranscriptTurns(record = {}) {
   const transcription = record?.metadata?.audio_transcription || {};
   const turns = transcription.transcript_turns || transcription.provider_turns || transcription.segments || [];
   if (transcription.segmentation_source === "xai_word_segments") return combineProviderWordTurns(turns);
-  return normalizeProviderTranscriptTurns(turns);
+  const providerTurns = normalizeProviderTranscriptTurns(turns);
+  if (providerTurns.length) return providerTurns;
+  if (["upload", "paste"].includes(record?.transcript_source) || record?.metadata?.transcript_upload) {
+    return transcriptTextToTurns(record?.transcript_text || "");
+  }
+  return [];
 }
 
 function getPdfTextAppearanceValue(fieldName, value) {
@@ -727,6 +820,26 @@ function getPdfTextAppearanceValue(fieldName, value) {
     return `  ${textValue}`;
   }
   return textValue;
+}
+
+function prepareInterviewTextField(field, fieldName, value) {
+  const textValue = String(value || "");
+  const normalized = normalizeFieldName(fieldName);
+  if (/candidate.*name|applicant.*name|interviewer|manager|date|time|location|scorecard.*interviewer|scorecard.*date/.test(normalized)) {
+    return;
+  }
+  try {
+    if (textValue.includes("\n") || textValue.length > 70) field.enableMultiline();
+  } catch {
+    // Some imported fields may not allow changing multiline flags.
+  }
+  try {
+    if (/^score_/.test(normalized) && !/^score_notes_/.test(normalized)) field.setFontSize(8.5);
+    else if (textValue.length > 120 || textValue.includes("\n")) field.setFontSize(7.4);
+    else field.setFontSize(8.2);
+  } catch {
+    // Keep filling even if one field rejects appearance changes.
+  }
 }
 
 function applyInterviewPdfFieldGeometry(field) {
@@ -753,7 +866,116 @@ function applyInterviewPdfFieldGeometry(field) {
   }
 }
 
-export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false } = {}) {
+function wrapPdfLine(text, maxChars) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  });
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+async function appendInterviewSummaryPages(pdfDoc, summaryPages = []) {
+  const pages = Array.isArray(summaryPages) ? summaryPages.filter(Boolean) : [];
+  if (!pages.length) return;
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const titleColor = rgb(0.09, 0.14, 0.23);
+  const bodyColor = rgb(0.19, 0.24, 0.33);
+  const mutedColor = rgb(0.44, 0.5, 0.58);
+  const marginX = 54;
+  const marginTop = 58;
+  const marginBottom = 58;
+  const lineHeight = 14;
+  const maxChars = 88;
+
+  const addPage = () => {
+    const page = pdfDoc.addPage([612, 792]);
+    return { page, y: 792 - marginTop };
+  };
+
+  let context = addPage();
+  const ensureSpace = (needed = lineHeight) => {
+    if (context.y - needed < marginBottom) context = addPage();
+  };
+
+  pages.forEach((summary, pageIndex) => {
+    if (pageIndex > 0) context = addPage();
+    const title = String(summary.title || "Interview Summary");
+    context.page.drawText(title, {
+      x: marginX,
+      y: context.y,
+      size: 18,
+      font: boldFont,
+      color: titleColor,
+    });
+    context.y -= 22;
+
+    if (summary.subtitle) {
+      context.page.drawText(String(summary.subtitle), {
+        x: marginX,
+        y: context.y,
+        size: 9,
+        font,
+        color: mutedColor,
+      });
+      context.y -= 22;
+    } else {
+      context.y -= 8;
+    }
+
+    (summary.sections || []).forEach((section) => {
+      const heading = String(section.heading || "").trim();
+      const bullets = (Array.isArray(section.bullets) ? section.bullets : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      if (!heading && !bullets.length) return;
+      ensureSpace(28);
+      if (heading) {
+        context.page.drawText(heading, {
+          x: marginX,
+          y: context.y,
+          size: 11,
+          font: boldFont,
+          color: titleColor,
+        });
+        context.y -= 16;
+      }
+      bullets.forEach((bullet) => {
+        const lines = wrapPdfLine(bullet.replace(/^[-*]\s*/, ""), maxChars);
+        ensureSpace(lines.length * lineHeight + 4);
+        context.page.drawText("-", {
+          x: marginX + 4,
+          y: context.y,
+          size: 10,
+          font,
+          color: bodyColor,
+        });
+        lines.forEach((line, index) => {
+          context.page.drawText(line, {
+            x: marginX + 18,
+            y: context.y - (index * lineHeight),
+            size: 10,
+            font,
+            color: bodyColor,
+          });
+        });
+        context.y -= (lines.length * lineHeight) + 4;
+      });
+      context.y -= 6;
+    });
+  });
+}
+
+export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatten = false, summaryPages = [] } = {}) {
   const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const form = pdfDoc.getForm();
   const fields = form.getFields();
@@ -765,6 +987,7 @@ export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatte
     const textValue = value == null ? "" : String(value);
     try {
       if (field instanceof PDFTextField) {
+        prepareInterviewTextField(field, name, textValue);
         field.setText(getPdfTextAppearanceValue(name, textValue));
       } else if (field instanceof PDFCheckBox) {
         if (["true", "yes", "checked", "1", "x"].includes(textValue.trim().toLowerCase())) field.check();
@@ -778,6 +1001,7 @@ export async function fillInterviewPdfBytes(pdfBytes, responseMap = {}, { flatte
   });
   form.updateFieldAppearances();
   if (flatten) form.flatten();
+  await appendInterviewSummaryPages(pdfDoc, summaryPages);
   return pdfDoc.save();
 }
 

@@ -168,6 +168,55 @@ describe("interview PDF form utilities", () => {
       decision_move_forward: "X",
     });
   });
+
+  it("excludes unreviewed AI drafts from final PDF maps unless explicitly requested", () => {
+    const responses = [
+      {
+        response_type: "pdf_field",
+        pdf_field_name: "interview_notes",
+        ai_draft_text: "Draft only",
+        response_state: "ai_draft",
+      },
+      {
+        response_type: "pdf_field",
+        pdf_field_name: "approved_notes",
+        response_text: "Reviewed answer",
+        response_state: "ai_approved",
+      },
+      {
+        response_type: "pdf_field",
+        pdf_field_name: "rejected_notes",
+        ai_draft_text: "Rejected draft",
+        response_state: "rejected",
+      },
+    ];
+
+    expect(buildPdfResponseMap(responses)).toMatchObject({
+      approved_notes: "Reviewed answer",
+    });
+    expect(buildPdfResponseMap(responses).interview_notes).toBe("");
+    expect(buildPdfResponseMap(responses, null, [], { includeDrafts: true })).toMatchObject({
+      interview_notes: "Draft only",
+      approved_notes: "Reviewed answer",
+    });
+    expect(buildPdfResponseMap(responses, null, [], { includeDrafts: true }).rejected_notes).toBe("");
+  });
+
+  it("can append an interview summary page to an exported PDF", async () => {
+    const bytes = await createFillableInterviewPdf();
+    const filled = await fillInterviewPdfBytes(bytes, {
+      candidate_name: "Alexis Turner",
+    }, {
+      summaryPages: [{
+        title: "Interview Summary",
+        subtitle: "Alexis Turner - Supervisor",
+        sections: [{ heading: "Guide Responses", bullets: ["Discussed scheduling judgment and supervisor communication."] }],
+      }],
+    });
+    const pdfDoc = await PDFDocument.load(filled);
+
+    expect(pdfDoc.getPageCount()).toBe(2);
+  });
 });
 
 describe("interview template snapshots", () => {
@@ -309,6 +358,18 @@ describe("interview transcript display helpers", () => {
     expect(withoutProviderTurns).toEqual([]);
     expect(withProviderTurns).toHaveLength(1);
     expect(withProviderTurns[0]).toMatchObject({ speaker: "Person 1", timestamp: "00:01", text: "Hello there." });
+  });
+
+  it("renders uploaded transcript text when the record source is upload or paste", () => {
+    const turns = getInterviewTranscriptTurns({
+      transcript_source: "upload",
+      transcript_text: "Zack: Tell me about your leadership style.\n\nAlexis: I try to stay calm and direct.",
+      metadata: { audio_transcription: {} },
+    });
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ speaker: "Zack", text: "Tell me about your leadership style." });
+    expect(turns[1]).toMatchObject({ speaker: "Alexis", text: "I try to stay calm and direct." });
   });
 
   it("groups provider word-level diarization into speaker turns for review", () => {
