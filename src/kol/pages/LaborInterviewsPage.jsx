@@ -1244,6 +1244,26 @@ function summarySectionKey(value = "") {
   return key || "summary";
 }
 
+const CUSTOM_SUMMARY_SECTION_PREFIX = "custom_page_";
+
+function normalizeCustomSummaryPageId(value = "") {
+  const key = summarySectionKey(String(value || "").replace(new RegExp(`^${CUSTOM_SUMMARY_SECTION_PREFIX}`), ""));
+  return key === "summary" ? "" : key;
+}
+
+function createCustomSummaryPageId() {
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function customSummarySectionKey(pageId = "", index = 0) {
+  const id = normalizeCustomSummaryPageId(pageId) || `page_${index + 1}`;
+  return `${CUSTOM_SUMMARY_SECTION_PREFIX}${id}`;
+}
+
+function isCustomSummarySectionKey(value = "") {
+  return String(value || "").startsWith(CUSTOM_SUMMARY_SECTION_PREFIX);
+}
+
 const SUMMARY_SECTION_KEYS = new Set([
   "call_summary",
   "scorecard",
@@ -1255,16 +1275,49 @@ function isSummarySectionKey(value = "") {
   return SUMMARY_SECTION_KEYS.has(String(value || ""));
 }
 
+function isEditableSummarySectionKey(value = "") {
+  return isSummarySectionKey(value) || isCustomSummarySectionKey(value);
+}
+
+function getInterviewSummaryEditSource(recordOrEdits) {
+  return recordOrEdits?.metadata?.interview_summary_edits || recordOrEdits || {};
+}
+
 function getStoredSummaryEdits(recordOrEdits) {
-  const source = recordOrEdits?.metadata?.interview_summary_edits || recordOrEdits || {};
+  const source = getInterviewSummaryEditSource(recordOrEdits);
   const sections = source.sections || source;
   if (!sections || typeof sections !== "object" || Array.isArray(sections)) return {};
   return Object.entries(sections).reduce((next, [key, value]) => {
-    if (!isSummarySectionKey(key)) return next;
+    if (!isEditableSummarySectionKey(key)) return next;
     const bullets = Array.isArray(value) ? value : summaryTextToBullets(value);
     next[key] = bullets.map((bullet) => normalizeSummaryBulletText(bullet)).filter(Boolean);
     return next;
   }, {});
+}
+
+function getStoredCustomSummaryPages(recordOrEdits) {
+  const source = getInterviewSummaryEditSource(recordOrEdits);
+  const sections = source.sections && typeof source.sections === "object" && !Array.isArray(source.sections) ? source.sections : {};
+  const pages = Array.isArray(source.custom_pages) ? source.custom_pages : [];
+  return pages.map((page, index) => {
+    const rawSectionKey = page?.section_key || page?.sectionKey || "";
+    const id = normalizeCustomSummaryPageId(page?.id || page?.key || rawSectionKey) || `page_${index + 1}`;
+    const sectionKey = isCustomSummarySectionKey(rawSectionKey) ? rawSectionKey : customSummarySectionKey(id, index);
+    const title = String(page?.title || page?.heading || `Custom Summary Page ${index + 1}`).trim() || `Custom Summary Page ${index + 1}`;
+    const sectionValue = Object.prototype.hasOwnProperty.call(sections, sectionKey)
+      ? sections[sectionKey]
+      : (page?.bullets || page?.body || page?.text || "");
+    const bullets = (Array.isArray(sectionValue) ? sectionValue : summaryTextToBullets(sectionValue))
+      .map((bullet) => normalizeSummaryBulletText(bullet))
+      .filter(Boolean);
+    return {
+      id,
+      sectionKey,
+      title,
+      heading: page?.heading || "Notes",
+      bullets,
+    };
+  });
 }
 
 function applySummarySectionEdits(sections = [], summaryEdits = {}) {
@@ -1384,7 +1437,6 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
     customBullets.length ? { key: "reviewed_custom_questions", heading: "Reviewed Custom Questions", bullets: customBullets } : null,
   ].filter(Boolean), summaryEdits || record);
 
-  if (!sections.length) return [];
   const subtitle = `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`;
   const callSummarySections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) === "call_summary");
   const detailSections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) !== "call_summary");
@@ -1403,6 +1455,19 @@ function buildInterviewSummaryPages({ record, guide, fields, questions, response
       sections: detailSections,
     });
   }
+  getStoredCustomSummaryPages(summaryEdits || record).forEach((customPage) => {
+    pages.push({
+      title: customPage.title,
+      subtitle,
+      custom: true,
+      sections: [{
+        key: customPage.sectionKey,
+        heading: customPage.heading || "Notes",
+        bullets: customPage.bullets || [],
+      }],
+    });
+  });
+  if (!pages.length) return [];
   return pages;
 }
 
@@ -2888,6 +2953,7 @@ function ReviewGuideModal({
   summaryPages,
   summaryDraftTextByKey,
   summarySavingKey,
+  customSummaryPages = [],
   savingKey,
   exporting,
   activeIndex,
@@ -2895,6 +2961,9 @@ function ReviewGuideModal({
   getFieldValue,
   setFieldDraft,
   onSummarySectionChange,
+  onAddCustomSummaryPage,
+  onCustomSummaryPageTitleChange,
+  onRemoveCustomSummaryPage,
   approveField,
   rejectField,
   aiDrafting,
@@ -2906,7 +2975,10 @@ function ReviewGuideModal({
   const reviewFields = fields;
   const reviewItems = useMemo(() => buildPdfReviewItems(reviewFields), [reviewFields]);
   const summarySections = (summaryPages || []).flatMap((page) => page?.sections || []);
-  const summaryAvailable = summarySections.length > 0;
+  const customSummaryPageBySectionKey = useMemo(() => {
+    return new Map((customSummaryPages || []).map((page) => [page.sectionKey, page]));
+  }, [customSummaryPages]);
+  const summaryAvailable = summarySections.length > 0 || customSummaryPages.length > 0;
   const summaryActive = summaryAvailable && activeIndex >= reviewItems.length;
   const boundedIndex = summaryActive ? -1 : Math.min(activeIndex, Math.max(0, reviewItems.length - 1));
   const activeItem = summaryActive ? null : (reviewItems[boundedIndex] || reviewItems[0] || null);
@@ -3052,6 +3124,7 @@ function ReviewGuideModal({
             >
               Draft Guide
             </Btn>
+            <Btn variant="secondary" size="sm" onClick={onAddCustomSummaryPage}>Add Custom Page</Btn>
             <Btn variant="secondary" size="sm" onClick={() => approveReviewItems(activePageItems)} disabled={!activePageItems.length}>Approve Page</Btn>
             <Btn variant="secondary" size="sm" onClick={() => approveReviewItems(reviewItems)} disabled={!reviewItems.length}>Approve All Drafts</Btn>
             <Btn variant="secondary" size="sm" onClick={() => rejectReviewItems(reviewItems)} disabled={!reviewItems.length}>Reject All</Btn>
@@ -3147,25 +3220,48 @@ function ReviewGuideModal({
           <div style={{ borderLeft: `1px solid ${C.border}`, background: "#fff", padding: 16, overflowY: "auto" }}>
             {summaryActive ? (
               <div style={{ display: "grid", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Summary Appendix</div>
-                  <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950 }}>Interview Summary</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Edits save into this interview and export with the final PDF.</div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Summary Appendix</div>
+                    <div style={{ marginTop: 5, fontSize: 16, color: C.text, fontWeight: 950 }}>Interview Summary</div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>Edits save into this interview and export with the final PDF.</div>
+                  </div>
+                  <Btn variant="secondary" size="sm" onClick={onAddCustomSummaryPage} style={{ flexShrink: 0 }}>Add Page</Btn>
                 </div>
                 {summarySections.map((section) => {
                   const sectionKey = section.key || summarySectionKey(section.heading);
+                  const customPage = customSummaryPageBySectionKey.get(sectionKey);
                   const textValue = Object.prototype.hasOwnProperty.call(summaryDraftTextByKey || {}, sectionKey)
                     ? summaryDraftTextByKey[sectionKey] || ""
                     : summaryBulletsToText(section.bullets);
                   return (
                     <div key={sectionKey} style={{ display: "grid", gap: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                        <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>{section.heading || "Summary"}</div>
-                        <span style={{ color: C.textMut, fontSize: 11 }}>{summarySavingKey === sectionKey ? "Saving..." : "Autosaves"}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: customPage ? "flex-end" : "center" }}>
+                        {customPage ? (
+                          <label style={{ display: "grid", gap: 5, flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: 11, color: C.textMut, fontWeight: 900 }}>Custom page title</span>
+                            <input
+                              type="text"
+                              value={customPage.title || ""}
+                              onChange={(event) => onCustomSummaryPageTitleChange?.(customPage.id, event.target.value)}
+                              placeholder="Intended Role For Krystina"
+                              style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "9px 10px", fontFamily: "inherit", fontSize: 13, fontWeight: 800, color: C.text, outline: "none" }}
+                            />
+                          </label>
+                        ) : (
+                          <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>{section.heading || "Summary"}</div>
+                        )}
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                          <span style={{ color: C.textMut, fontSize: 11 }}>{summarySavingKey === sectionKey ? "Saving..." : "Autosaves"}</span>
+                          {customPage && (
+                            <Btn variant="danger" size="sm" onClick={() => onRemoveCustomSummaryPage?.(customPage.id)} style={{ padding: "6px 9px", borderRadius: 8 }}>Remove</Btn>
+                          )}
+                        </div>
                       </div>
                       <textarea
                         value={textValue}
                         onChange={(event) => onSummarySectionChange?.(sectionKey, event.target.value)}
+                        placeholder={customPage ? "Add HR handoff notes, intended responsibilities, role expectations, risks, or follow-up context for this applicant." : ""}
                         rows={Math.max(5, Math.min(14, textValue.split("\n").length + 2))}
                         style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 13, lineHeight: 1.5, color: C.text, resize: "vertical", outline: "none", background: "#fff", minHeight: 138, whiteSpace: "pre-wrap" }}
                       />
@@ -3456,6 +3552,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [responseDrafts, setResponseDrafts] = useState({});
   const [savingResponseKey, setSavingResponseKey] = useState("");
   const [summaryDraftTextByKey, setSummaryDraftTextByKey] = useState({});
+  const [customSummaryPages, setCustomSummaryPages] = useState([]);
   const [savingSummaryKey, setSavingSummaryKey] = useState("");
   const [questionDrafts, setQuestionDrafts] = useState({});
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
@@ -3713,6 +3810,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setGuideAttachVersionId("");
     setResponseDrafts({});
     setSummaryDraftTextByKey({});
+    setCustomSummaryPages([]);
     setSavingSummaryKey("");
     if (summarySaveTimerRef.current) {
       window.clearTimeout(summarySaveTimerRef.current);
@@ -3730,12 +3828,25 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   useEffect(() => {
     if (!selectedRecord?.id) {
       setSummaryDraftTextByKey({});
+      setCustomSummaryPages([]);
       return;
     }
     const edits = getStoredSummaryEdits(selectedRecord);
-    setSummaryDraftTextByKey(Object.fromEntries(
+    const customPages = getStoredCustomSummaryPages(selectedRecord);
+    const draftTextByKey = Object.fromEntries(
       Object.entries(edits).map(([key, bullets]) => [key, summaryBulletsToText(bullets)]),
-    ));
+    );
+    customPages.forEach((page) => {
+      if (!Object.prototype.hasOwnProperty.call(draftTextByKey, page.sectionKey)) {
+        draftTextByKey[page.sectionKey] = summaryBulletsToText(page.bullets);
+      }
+    });
+    setSummaryDraftTextByKey(draftTextByKey);
+    setCustomSummaryPages(customPages.map((page) => ({
+      id: page.id,
+      sectionKey: page.sectionKey,
+      title: page.title,
+    })));
   }, [selectedRecord?.id]);
 
   useEffect(() => {
@@ -3846,19 +3957,31 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const guidePreviewFieldValues = useMemo(() => buildCurrentPdfResponseMap(responseDrafts), [buildCurrentPdfResponseMap, responseDrafts]);
 
+  const buildSummaryEditsPayload = useCallback((draftTextByKey = {}, pages = []) => {
+    const sections = Object.entries(draftTextByKey || {}).reduce((next, [key, text]) => {
+      if (!isEditableSummarySectionKey(key)) return next;
+      next[key] = summaryTextToBullets(text);
+      return next;
+    }, {});
+    const custom_pages = (pages || []).map((page, index) => {
+      const sectionKey = page.sectionKey || customSummarySectionKey(page.id, index);
+      return {
+        id: normalizeCustomSummaryPageId(page.id || sectionKey) || `page_${index + 1}`,
+        section_key: sectionKey,
+        title: String(page.title || "").trim() || `Custom Summary Page ${index + 1}`,
+      };
+    });
+    return { sections, custom_pages };
+  }, []);
+
   const reviewedSummaryPages = useMemo(() => {
     const guideResponses = Object.values(responsesByTarget || {});
     const finalMap = buildPdfResponseMap(guideResponses, selectedRecord, selectedPdfFields, { includeDrafts: false });
     const overallScoreField = selectedPdfFields.find((field) => /^overall_score$/i.test(field.name || ""));
     const overallScore = computeOverallScoreFromPdfMap(finalMap, selectedPdfFields);
     if (overallScoreField && overallScore) finalMap[overallScoreField.name] = overallScore;
-    const liveSummaryEdits = Object.keys(summaryDraftTextByKey || {}).length
-      ? {
-          sections: Object.entries(summaryDraftTextByKey).reduce((next, [key, text]) => {
-            next[key] = summaryTextToBullets(text);
-            return next;
-          }, {}),
-        }
+    const liveSummaryEdits = Object.keys(summaryDraftTextByKey || {}).length || customSummaryPages.length
+      ? buildSummaryEditsPayload(summaryDraftTextByKey, customSummaryPages)
       : selectedRecord;
     return buildInterviewSummaryPages({
       record: selectedRecord,
@@ -3869,7 +3992,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       finalMap,
       summaryEdits: liveSummaryEdits,
     });
-  }, [responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord, summaryDraftTextByKey]);
+  }, [buildSummaryEditsPayload, customSummaryPages, responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord, summaryDraftTextByKey]);
 
   const setAutoScorePreference = (enabled) => {
     setAutoScoreCandidates(enabled);
@@ -4084,18 +4207,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     });
   };
 
-  const saveSummaryDraftsToMetadata = async (draftTextByKey, activeKey = "") => {
+  const saveSummaryDraftsToMetadata = async (draftTextByKey, activeKey = "", customPagesOverride = customSummaryPages) => {
     if (!selectedRecord?.id) return null;
-    const sections = Object.entries(draftTextByKey || {}).reduce((next, [key, text]) => {
-      if (!isSummarySectionKey(key)) return next;
-      next[key] = summaryTextToBullets(text);
-      return next;
-    }, {});
+    const summaryPayload = buildSummaryEditsPayload(draftTextByKey, customPagesOverride);
     setSavingSummaryKey(activeKey);
     try {
       return await saveRecordMetadataPatch({
         interview_summary_edits: {
-          sections,
+          ...summaryPayload,
           updated_at: new Date().toISOString(),
           updated_by: actorName,
         },
@@ -4105,17 +4224,59 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     }
   };
 
+  const scheduleSummaryMetadataSave = (draftTextByKey, activeKey = "", customPagesOverride = customSummaryPages) => {
+    if (summarySaveTimerRef.current) window.clearTimeout(summarySaveTimerRef.current);
+    summarySaveTimerRef.current = window.setTimeout(() => {
+      summarySaveTimerRef.current = null;
+      saveSummaryDraftsToMetadata(draftTextByKey, activeKey, customPagesOverride);
+    }, 650);
+  };
+
   const setSummarySectionDraft = (sectionKey, value) => {
     if (!sectionKey) return;
     setSummaryDraftTextByKey((prev) => {
       const next = { ...(prev || {}), [sectionKey]: value };
-      if (summarySaveTimerRef.current) window.clearTimeout(summarySaveTimerRef.current);
-      summarySaveTimerRef.current = window.setTimeout(() => {
-        summarySaveTimerRef.current = null;
-        saveSummaryDraftsToMetadata(next, sectionKey);
-      }, 650);
+      scheduleSummaryMetadataSave(next, sectionKey);
       return next;
     });
+  };
+
+  const addCustomSummaryPage = () => {
+    if (!selectedRecord?.id) return;
+    const id = createCustomSummaryPageId();
+    const firstName = String(selectedRecord.candidate_full_name || "").trim().split(/\s+/)[0] || "Candidate";
+    const page = {
+      id,
+      sectionKey: customSummarySectionKey(id),
+      title: `Custom HR Notes For ${firstName}`,
+    };
+    const nextPages = [...customSummaryPages, page];
+    const nextDrafts = { ...(summaryDraftTextByKey || {}), [page.sectionKey]: "" };
+    setCustomSummaryPages(nextPages);
+    setSummaryDraftTextByKey(nextDrafts);
+    setPdfReviewIndex(buildPdfReviewItems(selectedPdfFields).length);
+    saveSummaryDraftsToMetadata(nextDrafts, page.sectionKey, nextPages);
+  };
+
+  const updateCustomSummaryPageTitle = (pageId, title) => {
+    const nextPages = customSummaryPages.map((page) => (
+      page.id === pageId ? { ...page, title } : page
+    ));
+    const activePage = nextPages.find((page) => page.id === pageId);
+    setCustomSummaryPages(nextPages);
+    scheduleSummaryMetadataSave(summaryDraftTextByKey, activePage?.sectionKey || "", nextPages);
+  };
+
+  const removeCustomSummaryPage = (pageId) => {
+    const targetPage = customSummaryPages.find((page) => page.id === pageId);
+    if (!targetPage) return;
+    if (!window.confirm(`Remove custom page "${targetPage.title || "Custom Summary Page"}"?`)) return;
+    const nextPages = customSummaryPages.filter((page) => page.id !== pageId);
+    const nextDrafts = { ...(summaryDraftTextByKey || {}) };
+    delete nextDrafts[targetPage.sectionKey];
+    setCustomSummaryPages(nextPages);
+    setSummaryDraftTextByKey(nextDrafts);
+    saveSummaryDraftsToMetadata(nextDrafts, targetPage.sectionKey, nextPages);
   };
 
   const deleteSelectedInterview = async () => {
@@ -4787,13 +4948,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         questions: selectedQuestions,
         responsesByTarget,
         finalMap,
-        summaryEdits: Object.keys(summaryDraftTextByKey || {}).length
-          ? {
-              sections: Object.entries(summaryDraftTextByKey).reduce((next, [key, text]) => {
-                next[key] = summaryTextToBullets(text);
-                return next;
-              }, {}),
-            }
+        summaryEdits: Object.keys(summaryDraftTextByKey || {}).length || customSummaryPages.length
+          ? buildSummaryEditsPayload(summaryDraftTextByKey, customSummaryPages)
           : selectedRecord,
       });
       const exportFinalMap = buildExportPdfFieldMap(finalMap, selectedPdfFields);
@@ -5851,6 +6007,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           summaryPages={reviewedSummaryPages}
           summaryDraftTextByKey={summaryDraftTextByKey}
           summarySavingKey={savingSummaryKey}
+          customSummaryPages={customSummaryPages}
           savingKey={savingResponseKey}
           exporting={exportingPdf}
           activeIndex={pdfReviewIndex}
@@ -5858,6 +6015,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           getFieldValue={getPdfFieldValue}
           setFieldDraft={setPdfFieldDraft}
           onSummarySectionChange={setSummarySectionDraft}
+          onAddCustomSummaryPage={addCustomSummaryPage}
+          onCustomSummaryPageTitleChange={updateCustomSummaryPageTitle}
+          onRemoveCustomSummaryPage={removeCustomSummaryPage}
           approveField={approvePdfField}
           rejectField={rejectPdfField}
           aiDrafting={aiDrafting}
