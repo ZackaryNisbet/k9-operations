@@ -1,7 +1,7 @@
 // © 2026 K9 Operations LLC. All Rights Reserved.
 // Proprietary and Confidential.
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // ─── Light Theme Colors ────────────────────────────────────────────────────────
 const C = {
@@ -74,7 +74,18 @@ const Icon = ({ name, size = 24, color = 'currentColor' }) => {
 
 // ─── K9 Operations Logo ──────────────────────────────────────────────────────
 const K9Logo = ({ size = 36 }) => (
-  <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: size }} />
+  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+    <img src="/k9_mark.svg" alt="" aria-hidden="true" style={{ height: size, width: size }} />
+    <span style={{
+      fontSize: Math.max(14, Math.round(size * 0.46)),
+      fontWeight: 800,
+      color: C.pri,
+      lineHeight: 1,
+      letterSpacing: 0,
+    }}>
+      K9 Operations
+    </span>
+  </div>
 );
 
 
@@ -660,28 +671,24 @@ function FeatureGraphic({ type, color }) {
 // MAIN LANDING PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function LandingPage() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [legalModal, setLegalModal] = useState(null); // 'tos' | 'privacy'
-  const [scrollY, setScrollY] = useState(0);
-  const [activeDemo, setActiveDemo] = useState(0);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
-  useEffect(() => {
-    const handler = () => setScrollY(window.scrollY);
-    window.addEventListener('scroll', handler, { passive: true });
-    return () => window.removeEventListener('scroll', handler);
-  }, []);
+  const handleSignIn = (event) => {
+    event.preventDefault();
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    window.setTimeout(() => {
+      window.location.href = '/login';
+    }, 1050);
+  };
 
   const navStyle = {
     position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-    background: scrollY > 20 ? 'rgba(255,255,255,0.95)' : 'transparent',
-    backdropFilter: scrollY > 20 ? 'blur(20px)' : 'none',
-    borderBottom: scrollY > 20 ? `1px solid ${C.border}` : '1px solid transparent',
+    background: 'rgba(255,255,255,0.82)',
+    backdropFilter: 'blur(18px)',
+    borderBottom: `1px solid ${C.borderLight}`,
     transition: 'all 0.3s ease',
-  };
-
-  const scrollTo = (id) => {
-    setMobileMenuOpen(false);
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
@@ -690,69 +697,19 @@ export default function LandingPage() {
       {/* ─── NAVIGATION ─── */}
       <nav style={navStyle}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <K9Logo size={32} />
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: C.pri, lineHeight: 1.1, letterSpacing: '-0.02em' }}>K9 Operations</div>
-              <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Lite · KOL</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 32 }} className="nav-links">
-            {['Demos', 'Pricing'].map(item => (
-              <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
-                background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: C.textSec,
-                padding: '4px 0', transition: 'color 0.2s',
-              }} onMouseEnter={e => e.target.style.color = C.pri} onMouseLeave={e => e.target.style.color = C.textSec}>
-                {item}
-              </button>
-            ))}
-            <a href="/login" style={{
-              padding: '8px 20px', borderRadius: 8, background: 'transparent', color: C.pri,
-              fontSize: 13, fontWeight: 700, textDecoration: 'none', transition: 'all 0.2s',
-              border: `1.5px solid ${C.border}`, cursor: 'pointer',
-            }}>Sign In</a>
-            <a href="/signup" style={{
-              padding: '8px 20px', borderRadius: 8, background: C.pri, color: '#fff',
-              fontSize: 13, fontWeight: 700, textDecoration: 'none', transition: 'all 0.2s',
-              border: 'none', cursor: 'pointer',
-            }}>Start Free Trial</a>
-          </div>
-          {/* Mobile menu button */}
-          <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{
-            display: 'none', background: 'none', border: 'none', cursor: 'pointer', color: C.text, padding: 4,
-          }} className="mobile-menu-btn">
-            <Icon name={mobileMenuOpen ? 'close' : 'menu'} size={24} />
-          </button>
+          <K9Logo size={34} />
         </div>
-        {/* Mobile menu */}
-        {mobileMenuOpen && (
-          <div style={{ padding: '16px 24px', background: '#fff', borderTop: `1px solid ${C.border}` }} className="mobile-menu">
-            {['Demos', 'Pricing'].map(item => (
-              <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
-                display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none',
-                padding: '12px 0', fontSize: 15, fontWeight: 600, color: C.text, cursor: 'pointer',
-                borderBottom: `1px solid ${C.borderLight}`,
-              }}>{item}</button>
-            ))}
-            <a href="/login" style={{
-              display: 'block', textAlign: 'center', marginTop: 12, padding: '12px', borderRadius: 8,
-              background: 'transparent', color: C.pri, fontSize: 14, fontWeight: 700, textDecoration: 'none',
-              border: `1.5px solid ${C.border}`,
-            }}>Sign In</a>
-            <a href="/signup" style={{
-              display: 'block', textAlign: 'center', marginTop: 8, padding: '12px', borderRadius: 8,
-              background: C.pri, color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
-            }}>Start Free Trial</a>
-          </div>
-        )}
       </nav>
 
       {/* ─── HERO ─── */}
       <section style={{
-        paddingTop: 140, paddingBottom: 80,
+        minHeight: 'calc(100vh - 176px)',
+        paddingTop: 148, paddingBottom: 88,
         textAlign: 'center',
         background: `linear-gradient(180deg, #FFFFFF 0%, #F7FEE7 100%)`,
         position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
       }}>
         {/* Subtle background dots */}
         <div style={{
@@ -766,258 +723,55 @@ export default function LandingPage() {
         <div style={{ position: 'relative', maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
 
           {/* ─── Hero Brand Mark + Tagline ─── */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginBottom: 34 }}>
             <img
               src="/k9_mark.svg"
               alt="K9 Operations"
+              className="hero-mark"
               style={{
-                height: 'clamp(80px, 14vw, 140px)',
                 width: 'auto',
                 filter: 'drop-shadow(0 4px 24px rgba(20,83,45,0.12))',
               }}
             />
-            <div style={{
-              fontSize: 'clamp(14px, 2vw, 18px)', fontWeight: 700, color: C.pri,
-              letterSpacing: '0.18em', textTransform: 'uppercase',
+            <div className="hero-tagline" style={{
+              fontWeight: 700, color: C.pri,
+              letterSpacing: 0, textTransform: 'uppercase',
               opacity: 0.65, lineHeight: 1.3,
             }}>
               The operating system for pet care facilities
             </div>
           </div>
 
-          <h1 style={{
-            fontSize: 'clamp(36px, 5.5vw, 64px)', fontWeight: 900, lineHeight: 1.08,
-            color: C.pri, margin: '0 0 20px', letterSpacing: '-0.03em',
+          <h1 className="hero-heading" style={{
+            fontWeight: 900, lineHeight: 1.08,
+            color: C.pri, margin: '0 0 36px', letterSpacing: 0,
           }}>
             Gingr data,<br />
             <span style={{ color: C.acc }}>transformed</span> into<br />
             operational intelligence
           </h1>
 
-          <p style={{
-            fontSize: 'clamp(16px, 2vw, 19px)', color: C.textSec, lineHeight: 1.6,
-            maxWidth: 560, margin: '0 auto 36px',
-          }}>
-            K9 Operations syncs with your Gingr PMS and turns raw reservation
-            and client data into automated checklists, lifecycle management,
-            and real-time facility oversight.
-          </p>
-
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <a href="/signup" style={{
-              padding: '14px 32px', borderRadius: 10, background: C.pri, color: '#fff',
-              fontSize: 15, fontWeight: 700, textDecoration: 'none',
-              boxShadow: '0 4px 14px rgba(20,83,45,0.25)',
-              transition: 'all 0.2s',
-            }}>Start Free Trial</a>
-            <a href="#demos" style={{
-              padding: '14px 32px', borderRadius: 10, background: '#fff', color: C.pri,
-              fontSize: 15, fontWeight: 700, textDecoration: 'none',
-              border: `1.5px solid ${C.border}`,
-              transition: 'all 0.2s',
-            }}>See Demos</a>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── TRUST BAR ─── */}
-      <section style={{ padding: '40px 24px', background: '#fff', borderBottom: `1px solid ${C.borderLight}` }}>
-        <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', justifyContent: 'center', gap: 48, flexWrap: 'wrap', alignItems: 'center' }}>
-          {[
-            { label: 'Gingr Integration', icon: 'sync' },
-            { label: 'Real-Time Sync', icon: 'sync' },
-            { label: 'Role-Based Access', icon: 'shield' },
-            { label: 'AES-256 Encryption', icon: 'shield' },
-          ].map((item, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Icon name={item.icon} size={18} color={C.textMut} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.textMut }}>{item.label}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-
-      {/* ─── PRODUCT DEMOS ─── */}
-      <section id="demos" style={{ padding: '80px 24px', background: '#FAFAFA' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 14px', borderRadius: 100,
-            background: C.acc + '15', marginBottom: 16,
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Product Demos</span>
-          </div>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            See it in action
-          </h2>
-          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.6 }}>
-            Real data. Real workflows.
-          </p>
-
-          {/* Demo Selector Tabs */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
-            {[
-              { label: 'Data Flow', color: '#6366F1' },
-              { label: 'Dashboard', color: C.pri },
-              { label: 'Lifecycle CRM', color: C.pri },
-              { label: 'Operations Hub', color: '#0EA5E9' },
-              { label: 'EOD Notes', color: '#D97706' },
-              { label: 'Inventory', color: '#8B5CF6' },
-              { label: 'Checkout TV', color: '#84CC16' },
-            ].map((demo, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveDemo(i)}
-                style={{
-                  padding: '8px 18px', borderRadius: 100, border: 'none', cursor: 'pointer',
-                  fontSize: 13, fontWeight: activeDemo === i ? 700 : 500,
-                  background: activeDemo === i ? demo.color : '#fff',
-                  color: activeDemo === i ? '#fff' : C.textSec,
-                  boxShadow: activeDemo === i ? `0 2px 12px ${demo.color}30` : '0 1px 3px rgba(0,0,0,0.08)',
-                  transition: 'all 0.25s ease',
-                }}
-              >
-                {demo.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Video Player */}
-          <div style={{
-            maxWidth: 960, margin: '0 auto', borderRadius: 16, overflow: 'hidden',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)',
-            border: `1px solid ${C.border}`,
-            background: '#000',
-          }}>
-            <video
-              key={activeDemo}
-              autoPlay
-              loop
-              muted
-              playsInline
-              style={{ width: '100%', display: 'block' }}
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <a
+              href="/login"
+              onClick={handleSignIn}
+              className={`signin-button${isSigningIn ? ' is-signing-in' : ''}`}
+              aria-label="Sign in to K9 Operations"
             >
-              <source src={[
-                '/demos/data-flow.mp4',
-                '/demos/dashboard.mp4',
-                '/demos/customer-lifecycle.mp4',
-                '/demos/operations-hub.mp4',
-                '/demos/eod-notes.mp4',
-                '/demos/weekly-inventory.mp4',
-                '/demos/checkout-tv.mp4',
-              ][activeDemo]} type="video/mp4" />
-            </video>
-          </div>
-
-          {/* Demo Description */}
-          <div style={{ maxWidth: 600, margin: '24px auto 0', textAlign: 'center' }}>
-            <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
-              {[
-                'Gingr and Ignite data flows into K9 Operations, which distributes intelligence across your entire operation.',
-                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — daycare and boarding revenue auto-calculated from your Gingr data.',
-                'Automatic lifecycle staging with follow-up logging, Ignite call tracking integration, and lead-to-booking conversion.',
-                'Six operational checklists plus smart room cleaning with automated status tracking from reservation data.',
-                'Staff notes with @mention dog tagging — notes automatically link to client profiles for persistent history.',
-                'Weekly supply tracking with par levels, restock alerts, and cost-per-dog-day analytics.',
-                'Fullscreen facility display showing every checked-in dog with photos, breeds, owners, and room assignments.',
-              ][activeDemo]}
-            </p>
+              <span>Sign In</span>
+              <span className="signin-button-glow" aria-hidden="true" />
+            </a>
           </div>
         </div>
       </section>
-
-
-
-      {/* ─── PRICING ─── */}
-      <section id="pricing" style={{ padding: '80px 24px', background: C.bg }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 14px', borderRadius: 100,
-            background: C.acc + '15', marginBottom: 16,
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Simple, transparent pricing</span>
-          </div>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            The operating system your resort deserves
-          </h2>
-          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 500, margin: '0 auto 48px' }}>
-            One simple price. Everything included. 14-day free trial.
-          </p>
-
-          <div style={{ display: 'flex', justifyContent: 'center', maxWidth: 440, margin: '0 auto' }}>
-            <div style={{
-              background: '#fff',
-              border: `2px solid ${C.acc}`,
-              borderRadius: 20, padding: '32px 28px', width: '100%',
-              display: 'flex', flexDirection: 'column',
-              position: 'relative', textAlign: 'left',
-              transition: 'transform 0.2s, box-shadow 0.2s',
-            }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.08)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.accDk, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
-                Everything You Need
-              </div>
-              <div style={{ fontSize: 28, fontWeight: 900, color: C.text, marginBottom: 12 }}>
-                K9 Operations
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 24 }}>
-                <span style={{ fontSize: 48, fontWeight: 900, color: C.text, lineHeight: 1 }}>$50</span>
-                <span style={{ fontSize: 16, color: C.textMut, fontWeight: 500 }}>/mo</span>
-              </div>
-
-              <div style={{ flex: 1, marginBottom: 24 }}>
-                {['Unlimited locations', 'Unlimited team members', 'Operations Hub + checklists', 'Customer Lifecycle CRM', 'Gingr integration', 'Revenue dashboard', 'Enterprise reporting', 'EOD reports', 'Priority support'].map((f, fi) => (
-                  <div key={fi} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0' }}>
-                    <div style={{
-                      width: 20, height: 20, borderRadius: 6,
-                      background: C.acc + '20', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
-                    }}>
-                      <Icon name="check" size={12} color={C.accDk} />
-                    </div>
-                    <span style={{ fontSize: 14, color: C.textSec, lineHeight: 1.4 }}>{f}</span>
-                  </div>
-                ))}
-              </div>
-
-              <a
-                href="/signup"
-                style={{
-                  display: 'block', width: '100%', padding: '14px 0', textAlign: 'center',
-                  background: C.pri, color: '#fff',
-                  border: 'none',
-                  borderRadius: 12, fontSize: 15, fontWeight: 700,
-                  cursor: 'pointer', textDecoration: 'none',
-                  transition: 'opacity 0.2s, background 0.2s',
-                }}
-              >
-                Start Free Trial
-              </a>
-            </div>
-          </div>
-
-          <div style={{ textAlign: 'center', maxWidth: 500, margin: '40px auto 0', color: C.textMut, fontSize: 14, lineHeight: 1.6 }}>
-            All plans include a 14-day free trial. No credit card required to start.
-            Cancel anytime. Prices in USD.
-          </div>
-        </div>
-      </section>
-
-
 
       {/* ─── FOOTER ─── */}
-      <footer style={{ padding: '48px 24px 32px', background: C.bg, borderTop: `1px solid ${C.border}` }}>
+      <footer style={{ padding: '34px 24px 28px', background: C.bg, borderTop: `1px solid ${C.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 32, marginBottom: 32 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 28, marginBottom: 24 }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                 <K9Logo size={28} />
-                <span style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>K9 Operations</span>
               </div>
               <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
                 The operating system for<br />pet care facilities.
@@ -1025,17 +779,7 @@ export default function LandingPage() {
             </div>
             <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Product</div>
-                {['Demos', 'Pricing', 'Sign In', 'Sign Up'].map((l, i) => (
-                  <div key={i} style={{ marginBottom: 8 }}>
-                    <a href={l === 'Sign In' ? '/login' : l === 'Sign Up' ? '/signup' : l === 'Pricing' ? '#pricing' : '#demos'} style={{
-                      fontSize: 14, color: C.textSec, textDecoration: 'none',
-                    }}>{l}</a>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Legal</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: 0, textTransform: 'uppercase', marginBottom: 12 }}>Legal</div>
                 <div style={{ marginBottom: 8 }}>
                   <button onClick={() => setLegalModal('tos')} style={{
                     background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: C.textSec, padding: 0,
@@ -1048,18 +792,33 @@ export default function LandingPage() {
                 </div>
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Contact</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: 0, textTransform: 'uppercase', marginBottom: 12 }}>Contact</div>
                 <div style={{ fontSize: 14, color: C.textSec }}>zack.nisbet@k9operations.com</div>
               </div>
             </div>
           </div>
           <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div style={{ fontSize: 12, color: C.textMut }}>© 2026 K9 Operations LLC. All rights reserved.</div>
-            <div style={{ fontSize: 12, color: C.textMut }}>Built in New Jersey 🐾</div>
+            <div style={{ fontSize: 12, color: C.textMut }}>Built in New Jersey</div>
           </div>
         </div>
       </footer>
 
+      {isSigningIn && (
+        <div className="signin-transition" role="status" aria-live="polite">
+          <div className="signin-grid" />
+          <div className="signin-ring ring-one" />
+          <div className="signin-ring ring-two" />
+          <div className="signin-ring ring-three" />
+          {[...Array(18)].map((_, i) => (
+            <span key={i} className="signin-streak" style={{ '--i': i }} />
+          ))}
+          <div className="signin-transition-mark">
+            <img src="/k9_mark.svg" alt="" aria-hidden="true" />
+            <span>Opening secure workspace</span>
+          </div>
+        </div>
+      )}
 
       {/* ─── LEGAL MODAL ─── */}
       {legalModal && (
@@ -1098,12 +857,181 @@ export default function LandingPage() {
 
       {/* ─── GLOBAL STYLES ─── */}
       <style>{`
-        @media (max-width: 768px) {
-          .nav-links { display: none !important; }
-          .mobile-menu-btn { display: flex !important; }
+        .signin-button {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 172px;
+          height: 54px;
+          padding: 0 34px;
+          border-radius: 14px;
+          overflow: hidden;
+          background: #14532D;
+          color: #fff;
+          font-size: 15px;
+          font-weight: 800;
+          text-decoration: none;
+          box-shadow: 0 14px 32px rgba(20,83,45,0.26);
+          transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
         }
-        @media (min-width: 769px) {
-          .mobile-menu { display: none !important; }
+        .signin-button:hover {
+          transform: translateY(-2px);
+          background: #166534;
+          box-shadow: 0 18px 42px rgba(20,83,45,0.32);
+        }
+        .signin-button span:first-child {
+          position: relative;
+          z-index: 2;
+        }
+        .signin-button-glow {
+          position: absolute;
+          inset: -60%;
+          background:
+            radial-gradient(circle at 20% 30%, rgba(217,249,157,0.9), transparent 20%),
+            radial-gradient(circle at 78% 65%, rgba(132,204,22,0.55), transparent 24%),
+            linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.38) 48%, transparent 66%);
+          opacity: 0.48;
+          transform: translateX(-36%);
+          animation: signinButtonSweep 4s linear infinite;
+        }
+        .signin-button.is-signing-in {
+          transform: scale(0.98);
+          box-shadow: 0 0 0 10px rgba(132,204,22,0.14), 0 18px 42px rgba(20,83,45,0.34);
+        }
+        .signin-transition {
+          position: fixed;
+          inset: 0;
+          z-index: 500;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at center, rgba(217,249,157,0.28), transparent 30%),
+            linear-gradient(135deg, #052E16 0%, #14532D 55%, #0B1F12 100%);
+          animation: signinFadeIn 0.18s ease-out both;
+        }
+        .signin-grid {
+          position: absolute;
+          inset: -20%;
+          background-image:
+            linear-gradient(rgba(217,249,157,0.08) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(217,249,157,0.08) 1px, transparent 1px);
+          background-size: 46px 46px;
+          transform: perspective(520px) rotateX(60deg) translateY(18%);
+          animation: signinGridMove 1.05s linear infinite;
+        }
+        .signin-ring {
+          position: absolute;
+          width: 180px;
+          height: 180px;
+          border-radius: 50%;
+          border: 1px solid rgba(217,249,157,0.48);
+          box-shadow: 0 0 40px rgba(132,204,22,0.22), inset 0 0 30px rgba(217,249,157,0.12);
+          animation: signinRing 1.05s cubic-bezier(.17,.84,.44,1) both;
+        }
+        .ring-two {
+          animation-delay: 0.12s;
+        }
+        .ring-three {
+          animation-delay: 0.24s;
+        }
+        .signin-streak {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 2px;
+          height: 42vh;
+          transform-origin: 50% 0;
+          transform: rotate(calc(var(--i) * 20deg)) translateY(-50vh);
+          background: linear-gradient(180deg, transparent, rgba(217,249,157,0.84), transparent);
+          animation: signinStreak 0.72s ease-out both;
+          animation-delay: calc(var(--i) * 0.015s);
+        }
+        .signin-transition-mark {
+          position: relative;
+          z-index: 2;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 18px;
+          color: #F7FEE7;
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 0;
+          text-transform: uppercase;
+          animation: signinMark 0.86s ease-out both;
+        }
+        .signin-transition-mark img {
+          height: 104px;
+          width: auto;
+          filter: drop-shadow(0 0 28px rgba(217,249,157,0.48));
+        }
+        @keyframes signinButtonSweep {
+          0% { transform: translateX(-42%) rotate(0deg); }
+          100% { transform: translateX(42%) rotate(360deg); }
+        }
+        @keyframes signinFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes signinGridMove {
+          from { background-position: 0 0; }
+          to { background-position: 46px 46px; }
+        }
+        @keyframes signinRing {
+          from { opacity: 0.9; transform: scale(0.15); }
+          to { opacity: 0; transform: scale(4.8); }
+        }
+        @keyframes signinStreak {
+          from { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(-54vh) scaleY(0.4); }
+          35% { opacity: 1; }
+          to { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(8vh) scaleY(1); }
+        }
+        @keyframes signinMark {
+          from { opacity: 0; transform: scale(0.92); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        .hero-mark {
+          height: 140px;
+        }
+        .hero-tagline {
+          font-size: 18px;
+        }
+        .hero-heading {
+          font-size: 64px;
+        }
+        @media (max-width: 768px) {
+          .hero-mark {
+            height: 96px;
+          }
+          .hero-tagline {
+            font-size: 14px;
+          }
+          .hero-heading {
+            font-size: 42px;
+          }
+          .signin-transition-mark span {
+            font-size: 11px;
+            letter-spacing: 0;
+          }
+        }
+        @media (max-width: 420px) {
+          .hero-heading {
+            font-size: 36px;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .signin-button,
+          .signin-button-glow,
+          .signin-grid,
+          .signin-ring,
+          .signin-streak,
+          .signin-transition-mark {
+            animation: none !important;
+            transition: none !important;
+          }
         }
       `}</style>
     </div>
