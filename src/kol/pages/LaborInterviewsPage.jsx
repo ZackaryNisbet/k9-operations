@@ -1506,11 +1506,12 @@ function paginateInterviewSummaryPreview(summaryPages = []) {
   sourcePages.forEach((summary) => {
     const title = String(summary.title || "Interview Summary");
     const subtitle = String(summary.subtitle || "");
+    const keepEmptySections = !!summary.custom;
     let page = { title, subtitle, sections: [] };
     let lineCount = 5;
 
     const pushPage = () => {
-      if (page.sections.some((section) => section.bullets?.length)) previewPages.push(page);
+      if (page.sections.some((section) => section.bullets?.length || (keepEmptySections && section.heading))) previewPages.push(page);
       const continuedTitle = /\(continued\)/i.test(title) ? title : `${title} (continued)`;
       page = { title: continuedTitle, subtitle, sections: [] };
       lineCount = 5;
@@ -1521,6 +1522,12 @@ function paginateInterviewSummaryPreview(summaryPages = []) {
       const bullets = (Array.isArray(section.bullets) ? section.bullets : [])
         .map((item) => String(item || "").trim())
         .filter(Boolean);
+      if (!bullets.length && keepEmptySections && heading) {
+        if (lineCount + 3 > maxLines && page.sections.some((row) => row.bullets?.length || row.heading)) pushPage();
+        page.sections.push({ heading, bullets: [] });
+        lineCount += 3;
+        return;
+      }
       if (!bullets.length) return;
 
       let activeSection = null;
@@ -2974,7 +2981,16 @@ function ReviewGuideModal({
 }) {
   const reviewFields = fields;
   const reviewItems = useMemo(() => buildPdfReviewItems(reviewFields), [reviewFields]);
-  const summarySections = (summaryPages || []).flatMap((page) => page?.sections || []);
+  const summarySections = useMemo(() => {
+    const renderedSections = (summaryPages || []).flatMap((page) => page?.sections || []);
+    const customKeys = new Set((customSummaryPages || []).map((page) => page.sectionKey).filter(Boolean));
+    const customSections = (customSummaryPages || []).map((page) => {
+      const existing = renderedSections.find((section) => (section.key || summarySectionKey(section.heading)) === page.sectionKey);
+      return existing || { key: page.sectionKey, heading: "Notes", bullets: [] };
+    });
+    const standardSections = renderedSections.filter((section) => !customKeys.has(section.key || summarySectionKey(section.heading)));
+    return [...customSections, ...standardSections];
+  }, [customSummaryPages, summaryPages]);
   const customSummaryPageBySectionKey = useMemo(() => {
     return new Map((customSummaryPages || []).map((page) => [page.sectionKey, page]));
   }, [customSummaryPages]);
@@ -4248,7 +4264,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     const page = {
       id,
       sectionKey: customSummarySectionKey(id),
-      title: `Custom HR Notes For ${firstName}`,
+      title: `Intended Role For ${firstName}`,
     };
     const nextPages = [...customSummaryPages, page];
     const nextDrafts = { ...(summaryDraftTextByKey || {}), [page.sectionKey]: "" };
