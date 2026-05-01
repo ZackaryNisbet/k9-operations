@@ -99,6 +99,11 @@ const TABS = [
   { id: "notes", label: "Notes" },
 ];
 
+const LABOR_TAB_IDS = new Set(TABS.map((tab) => tab.id));
+const normalizeLaborTab = (value) => LABOR_TAB_IDS.has(value) ? value : "home";
+const normalizeAttendanceView = (value) => value === "summary" ? "summary" : "input";
+const normalizeInterviewView = (value) => value === "config" ? "config" : "records";
+
 const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
@@ -701,15 +706,19 @@ export function applyLaborRosterFilters(rows, filters) {
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export default function TrainingPage({ data, save, nav, profile, addGlobalToast, locationName }) {
-  const [tab, setTab] = useState("home");
+export default function TrainingPage({ data, save, nav, profile, addGlobalToast, locationName, params = {} }) {
+  const routeLaborTab = normalizeLaborTab(params?.laborTab);
+  const routeAttendanceView = normalizeAttendanceView(params?.attendanceView);
+  const routeInterviewView = normalizeInterviewView(params?.interviewView);
+  const routeInterviewId = typeof params?.interviewId === "string" ? params.interviewId : "";
+  const [tab, setTab] = useState(routeLaborTab);
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
   const [trainingBundleLoading, setTrainingBundleLoading] = useState(false);
   const [supportBundleLoaded, setSupportBundleLoaded] = useState(false);
   const [supportBundleLoading, setSupportBundleLoading] = useState(false);
-  const [attendanceView, setAttendanceView] = useState("input");
-  const [interviewView, setInterviewView] = useState("records");
+  const [attendanceView, setAttendanceView] = useState(routeAttendanceView);
+  const [interviewView, setInterviewView] = useState(routeInterviewView);
   const [interviewDetailOpen, setInterviewDetailOpen] = useState(false);
 
   // Data state
@@ -765,6 +774,75 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [templateStatusFilter, setTemplateStatusFilter] = useState("active");
   const [templateManageStructure, setTemplateManageStructure] = useState(false);
+
+  const navigateLaborRoute = useCallback((nextTab, nextParams = {}) => {
+    const nextLaborTab = normalizeLaborTab(nextTab);
+    const nextRouteParams = { laborTab: nextLaborTab, ...nextParams };
+    if (nextLaborTab === "interviews") {
+      nextRouteParams.interviewView = normalizeInterviewView(nextRouteParams.interviewView);
+      if (!nextRouteParams.interviewId) delete nextRouteParams.interviewId;
+    } else {
+      delete nextRouteParams.interviewView;
+      delete nextRouteParams.interviewId;
+    }
+    if (nextLaborTab === "attendance") {
+      nextRouteParams.attendanceView = normalizeAttendanceView(nextRouteParams.attendanceView);
+      if (nextRouteParams.attendanceView === "input") delete nextRouteParams.attendanceView;
+    } else {
+      delete nextRouteParams.attendanceView;
+    }
+    nav?.("training", nextRouteParams);
+  }, [nav]);
+
+  const changeLaborTab = useCallback((nextTab) => {
+    const nextLaborTab = normalizeLaborTab(nextTab);
+    setTab(nextLaborTab);
+    if (nextLaborTab === "interviews") {
+      navigateLaborRoute(nextLaborTab, { interviewView: interviewView || "records" });
+      return;
+    }
+    if (nextLaborTab === "attendance") {
+      navigateLaborRoute(nextLaborTab, { attendanceView });
+      return;
+    }
+    navigateLaborRoute(nextLaborTab);
+  }, [attendanceView, interviewView, navigateLaborRoute]);
+
+  const changeAttendanceView = useCallback((nextView) => {
+    const normalizedView = normalizeAttendanceView(nextView);
+    setAttendanceView(normalizedView);
+    navigateLaborRoute("attendance", { attendanceView: normalizedView });
+  }, [navigateLaborRoute]);
+
+  const changeInterviewView = useCallback((nextView) => {
+    const normalizedView = normalizeInterviewView(nextView);
+    setInterviewView(normalizedView);
+    setInterviewDetailOpen(false);
+    navigateLaborRoute("interviews", { interviewView: normalizedView });
+  }, [navigateLaborRoute]);
+
+  const handleInterviewRecordRouteChange = useCallback((recordId) => {
+    const nextRecordId = typeof recordId === "string" ? recordId : "";
+    setInterviewView("records");
+    setInterviewDetailOpen(!!nextRecordId);
+    navigateLaborRoute("interviews", nextRecordId ? { interviewView: "records", interviewId: nextRecordId } : { interviewView: "records" });
+  }, [navigateLaborRoute]);
+
+  useEffect(() => {
+    if (tab !== routeLaborTab) setTab(routeLaborTab);
+  }, [routeLaborTab, tab]);
+
+  useEffect(() => {
+    if (routeLaborTab === "attendance" && attendanceView !== routeAttendanceView) {
+      setAttendanceView(routeAttendanceView);
+    }
+  }, [attendanceView, routeAttendanceView, routeLaborTab]);
+
+  useEffect(() => {
+    if (routeLaborTab === "interviews" && interviewView !== routeInterviewView) {
+      setInterviewView(routeInterviewView);
+    }
+  }, [interviewView, routeInterviewView, routeLaborTab]);
 
   // New record form
   const [newLaborEmployeeId, setNewLaborEmployeeId] = useState("");
@@ -2339,13 +2417,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       resetNewRecordForm();
       await refreshLaborData();
       setSelectedRecordId(record.id);
-      setTab("training");
+      changeLaborTab("training");
     } catch (err) {
       console.error("Create record error:", err);
       addGlobalToast("Failed to create record: " + (err.message || "Unknown error"), "error");
     }
     setCreating(false);
-  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, changeLaborTab, laborLocationRef, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId, refreshLaborData]);
 
   const resetNewRecordForm = () => {
     setNewLaborEmployeeId("");
@@ -6257,6 +6335,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
         @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
         @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
+        @keyframes laborModuleEnter {
+          from { opacity: 0; transform: translate3d(0, 10px, 0); filter: blur(2px); }
+          to { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+        }
+        .labor-module-tabs {
+          min-height: 43px;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+        .labor-module-tabs::-webkit-scrollbar { display: none; }
+        .labor-module-panel {
+          min-height: 560px;
+          animation: laborModuleEnter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+          will-change: opacity, transform;
+        }
+        .labor-module-switcher {
+          min-height: 74px;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .labor-module-panel { animation: none; }
+        }
       `}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -6266,9 +6365,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         {headerAction}
       </div>
 
-      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}` }}>
+      <div className="labor-module-tabs" style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}` }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
+          <button key={t.id} onClick={() => changeLaborTab(t.id)} style={{
             padding: "10px 18px", fontSize: 13, fontWeight: tab === t.id ? 700 : 500,
             color: tab === t.id ? C.pri : C.textMut, background: "none", border: "none",
             borderBottom: tab === t.id ? `2px solid ${C.pri}` : "2px solid transparent",
@@ -6279,6 +6378,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {loading && <div style={{ textAlign: "center", padding: 60, color: C.textMut }}>Loading labor data...</div>}
 
+      <div
+        key={`${tab}:${tab === "interviews" ? interviewView : ""}:${tab === "attendance" ? attendanceView : ""}:${interviewDetailOpen ? "detail" : "list"}`}
+        className="labor-module-panel"
+      >
       {!loading && tab === "home" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
@@ -6930,7 +7033,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "attendance" && (
         <div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+          <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
             {[
               { id: "input", label: "Attendance Input", subtitle: "Attendance marks and policy actions" },
               { id: "summary", label: "Attendance Summary", subtitle: "Summary, history, and reference guidance" },
@@ -6938,7 +7041,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <button
                 key={option.id}
                 type="button"
-                onClick={() => setAttendanceView(option.id)}
+                onClick={() => changeAttendanceView(option.id)}
                 style={{
                   flex: "1 1 260px",
                   minWidth: 220,
@@ -6974,33 +7077,33 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "interviews" && (
         <div>
           {!interviewDetailOpen && (
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-            {[
-              { id: "records", label: "Interviews", subtitle: "Candidate records and interview review" },
-              { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" },
-            ].map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setInterviewView(option.id)}
-                style={{
-                  flex: "1 1 260px",
-                  minWidth: 220,
-                  padding: "14px 16px",
-                  borderRadius: 14,
-                  border: `1.5px solid ${interviewView === option.id ? C.pri : C.border}`,
-                  background: interviewView === option.id ? C.priLt : C.surface,
-                  color: interviewView === option.id ? C.pri : C.text,
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
-                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
-              </button>
-            ))}
-          </div>
+            <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+              {[
+                { id: "records", label: "Interviews", subtitle: "Candidate records and interview review" },
+                { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => changeInterviewView(option.id)}
+                  style={{
+                    flex: "1 1 260px",
+                    minWidth: 220,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: `1.5px solid ${interviewView === option.id ? C.pri : C.border}`,
+                    background: interviewView === option.id ? C.priLt : C.surface,
+                    color: interviewView === option.id ? C.pri : C.text,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
+                </button>
+              ))}
+            </div>
           )}
           <LaborInterviewsPage
             data={data}
@@ -7009,7 +7112,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             locationName={laborContactLocationName}
             embedded
             viewPreset={interviewView}
-            onViewChange={setInterviewView}
+            recordIdPreset={routeLaborTab === "interviews" ? routeInterviewId : ""}
+            onViewChange={changeInterviewView}
+            onRecordChange={handleInterviewRecordRouteChange}
             onDetailChange={setInterviewDetailOpen}
           />
         </div>
@@ -7641,6 +7746,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
         </div>
       )}
+      </div>
 
       {showHierarchyManager && (
         <Modal title="Manage Hierarchy" onClose={() => setShowHierarchyManager(false)}>

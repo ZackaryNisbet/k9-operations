@@ -624,31 +624,34 @@ async function saveDraftPayload(
   const { valid, skipped } = validateDrafts(aiPayload, targets);
   const transcriptSummaryBullets = cleanTranscriptSummaryBullets(aiPayload);
 
-  let responseQuery = supabase
+  const responseQuery = supabase
     .from("labor_interview_responses")
     .select("*")
     .eq("interview_id", interviewId);
-  responseQuery = interviewGuideId
-    ? responseQuery.eq("interview_guide_id", interviewGuideId)
-    : responseQuery.is("interview_guide_id", null);
   const { data: existingRows, error: responseError } = await responseQuery;
   if (responseError) throw responseError;
 
-  const existingByTarget = new Map<string, Record<string, unknown>>();
-  for (const row of existingRows || []) {
-    if (row.response_type === "custom_question" && row.question_key) {
-      existingByTarget.set(`custom_question:${row.question_key}`, row);
+  const findExistingResponse = (target: AiDraftResponse) => {
+    const matches = (existingRows || []).filter((existingRow) => {
+      if (target.target_type === "custom_question") {
+        return existingRow.response_type === "custom_question" && existingRow.question_key === target.question_key;
+      }
+      return existingRow.response_type === "pdf_field" && existingRow.pdf_field_name === target.pdf_field_name;
+    });
+    if (!matches.length) return null;
+    if (target.target_type === "custom_question") {
+      return matches.find((match) => !match.interview_guide_id)
+        || matches.find((match) => String(match.interview_guide_id || "") === String(interviewGuideId || ""))
+        || matches[0];
     }
-    if (row.response_type === "pdf_field" && row.pdf_field_name) {
-      existingByTarget.set(`pdf_field:${row.pdf_field_name}`, row);
-    }
-  }
+    return matches.find((match) => String(match.interview_guide_id || "") === String(interviewGuideId || "")) || null;
+  };
 
   let savedCount = 0;
   let populatedCount = 0;
   for (const row of valid) {
-    const key = targetMapKey(row);
-    const existing = existingByTarget.get(key);
+    const existing = findExistingResponse(row);
+    const targetGuideId = row.target_type === "custom_question" ? null : interviewGuideId;
     const draftText = String(row.draft_text || "").trim();
     if (draftText) populatedCount += 1;
     const existingManualText = String(existing?.response_text || "").trim();
@@ -670,7 +673,10 @@ async function saveDraftPayload(
     if (existing?.id) {
       const { error } = await supabase
         .from("labor_interview_responses")
-        .update(payload)
+        .update({
+          ...payload,
+          interview_guide_id: targetGuideId,
+        })
         .eq("id", existing.id);
       if (error) throw error;
     } else {
@@ -678,7 +684,7 @@ async function saveDraftPayload(
         .from("labor_interview_responses")
         .insert({
           interview_id: interviewId,
-          interview_guide_id: interviewGuideId,
+          interview_guide_id: targetGuideId,
           response_type: row.target_type,
           question_key: row.question_key,
           pdf_field_name: row.pdf_field_name,
