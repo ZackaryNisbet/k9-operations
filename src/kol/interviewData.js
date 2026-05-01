@@ -371,6 +371,44 @@ export function normalizeInterviewCandidateDraft(draft = {}) {
   };
 }
 
+export function normalizeInterviewPayRates(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    min_rate: String(source.min_rate ?? source.minimum ?? source.min ?? "").trim(),
+    max_rate: String(source.max_rate ?? source.maximum ?? source.max ?? "").trim(),
+    notes: String(source.notes ?? source.note ?? "").trim(),
+  };
+}
+
+function formatPayRateAmount(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/[$a-z]/i.test(text)) return text;
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric)) return text;
+  return `$${numeric.toLocaleString(undefined, {
+    minimumFractionDigits: numeric % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+export function formatInterviewPayRateRange(value = {}) {
+  const payRates = normalizeInterviewPayRates(value);
+  const min = formatPayRateAmount(payRates.min_rate);
+  const max = formatPayRateAmount(payRates.max_rate);
+  if (min && max) return `${min}-${max}/hr`;
+  if (min) return `From ${min}/hr`;
+  if (max) return `Up to ${max}/hr`;
+  return "";
+}
+
+export function formatInterviewPayRateSummary(value = {}) {
+  const payRates = normalizeInterviewPayRates(value);
+  const range = formatInterviewPayRateRange(payRates);
+  if (range && payRates.notes) return `${range} - ${payRates.notes}`;
+  return range || payRates.notes || "";
+}
+
 export function buildInterviewTemplateSnapshot({ template, version, questions }) {
   return {
     template: {
