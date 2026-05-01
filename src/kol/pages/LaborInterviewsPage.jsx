@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
-import { Badge, Btn, Card, CustomSelect, Inp, Modal } from "../../shared/ui";
+import { Badge, Btn, CustomSelect, Inp, Modal } from "../../shared/ui";
 import {
   buildInterviewAudioPath,
   buildInterviewArtifactPath,
@@ -14,6 +14,8 @@ import {
   countInterviewPdfPages,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  formatInterviewPayRateRange,
+  formatInterviewPayRateSummary,
   getInterviewDraftResponseText,
   getInterviewPdfFieldDisplayRect,
   getInterviewOfficialResponseText,
@@ -35,6 +37,7 @@ import {
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
   isInterviewResponseReviewed,
   normalizeInterviewCandidateDraft,
+  normalizeInterviewPayRates,
   normalizeQuestionKey,
   pdfFieldsFromSnapshot,
   questionRowsFromSnapshot,
@@ -64,6 +67,36 @@ function buildNewInterviewDraft() {
     zoom_passcode: "",
     template_version_id: "",
   };
+}
+
+function buildNewPositionDraft() {
+  return {
+    role_label: "",
+    description: "",
+    pay_rate_min: "",
+    pay_rate_max: "",
+    pay_rate_notes: "",
+  };
+}
+
+function payRatesFromVersion(version = {}) {
+  return normalizeInterviewPayRates(version?.metadata?.pay_rates || {});
+}
+
+function buildPayRateMetadata(version = {}, payRates = {}, actorName = "") {
+  const normalized = normalizeInterviewPayRates(payRates);
+  const hasValue = normalized.min_rate || normalized.max_rate || normalized.notes;
+  const metadata = { ...(version?.metadata || {}) };
+  if (hasValue) {
+    metadata.pay_rates = normalized;
+    metadata.pay_rates_updated_at = new Date().toISOString();
+    metadata.pay_rates_updated_by = actorName || null;
+  } else {
+    delete metadata.pay_rates;
+    delete metadata.pay_rates_updated_at;
+    delete metadata.pay_rates_updated_by;
+  }
+  return metadata;
 }
 
 function fieldKey(responseType, key) {
@@ -190,14 +223,24 @@ function buildLegacyGuideFromRecord(record) {
 function mapResponsesByTarget(responses = [], guideId = "") {
   return (responses || []).reduce((map, response) => {
     const rowGuideId = response.interview_guide_id || "";
+    if (response.response_type === "custom_question" && response.question_key) {
+      const key = fieldKey("custom_question", response.question_key);
+      const existing = map[key];
+      const existingGuideId = existing?.interview_guide_id || "";
+      if (
+        !existing
+        || (!rowGuideId && existingGuideId)
+        || (guideId && rowGuideId === guideId && existingGuideId && existingGuideId !== guideId)
+      ) {
+        map[key] = response;
+      }
+      return map;
+    }
     if (guideId && rowGuideId && rowGuideId !== guideId) return map;
     if (guideId && !rowGuideId) {
       // Legacy responses without a guide id belong to the primary guide only.
       const hasExplicitGuideRows = responses.some((row) => row.interview_guide_id === guideId);
       if (hasExplicitGuideRows) return map;
-    }
-    if (response.response_type === "custom_question" && response.question_key) {
-      map[fieldKey("custom_question", response.question_key)] = response;
     }
     if (response.response_type === "pdf_field" && response.pdf_field_name) {
       map[fieldKey("pdf_field", response.pdf_field_name)] = response;
@@ -346,7 +389,7 @@ function InterviewStyles() {
       .interview-transcript-line:hover { border-color: #cbd5e1; background: #ffffff; }
       .interview-question-rail-line:hover .interview-question-tooltip {
         opacity: 1;
-        transform: translateX(0);
+        transform: translate(0, -50%);
       }
       .interview-pdf-field-hotspot:hover {
         border-color: rgba(22, 101, 52, 0.72) !important;
@@ -1615,6 +1658,38 @@ function StaticField({ label, value }) {
   );
 }
 
+function InterviewWorkspaceTabs({ tabs = [], active, onChange }) {
+  if (!tabs.length) return null;
+  return (
+    <div style={{ display: "inline-grid", gridTemplateColumns: `repeat(${tabs.length}, minmax(140px, 1fr))`, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff", maxWidth: 520 }}>
+      {tabs.map((tab, index) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            type="button"
+            key={tab.id}
+            onClick={() => onChange?.(tab.id)}
+            style={{
+              border: "none",
+              borderRight: index === tabs.length - 1 ? "none" : `1px solid ${C.border}`,
+              background: selected ? C.pri : "#fff",
+              color: selected ? "#fff" : C.textSec,
+              padding: "9px 12px",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
+              minWidth: 0,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 950, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab.label}</div>
+            {tab.detail && <div style={{ marginTop: 2, fontSize: 10, fontWeight: 800, opacity: selected ? 0.86 : 0.72 }}>{tab.detail}</div>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MergeTrace({ responses = [] }) {
   const rows = (Array.isArray(responses) ? responses : [responses]).filter((response) => (
     response?.manual_notes_text || response?.ai_merged_text || getInterviewResponseState(response) === "merged_draft"
@@ -1736,7 +1811,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
   );
 }
 
-function CandidateHeader({ record, recommendation, onRecommendationChange, onEdit, onDelete, onBack, saving }) {
+function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving }) {
   const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
   return (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
@@ -1758,6 +1833,7 @@ function CandidateHeader({ record, recommendation, onRecommendationChange, onEdi
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
         <StaticField label="Date" value={compactDateTime(record)} />
+        <StaticField label="Pay Range" value={payRateSummary} />
         <StaticField label="Candidate Email" value={record.candidate_email} />
         <StaticField label="Candidate Phone" value={record.candidate_phone} />
         <StaticField label="Zoom Link" value={record.zoom_recording_url} />
@@ -2977,6 +3053,10 @@ function ReviewGuideModal({
   onAiFillDocument,
   exportFinalPdf,
   downloadArtifact,
+  workspaceTabs,
+  activePane,
+  onPaneChange,
+  payRateSummary,
   onClose,
 }) {
   const reviewFields = fields;
@@ -3120,9 +3200,14 @@ function ReviewGuideModal({
     <div className="interview-modal-backdrop" onClick={onClose}>
       <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()}>
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interview Guide</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{reviewItems.length} responses reviewed</div>
+          <div style={{ minWidth: 0, display: "grid", gap: 9 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Active Interview</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>
+                {record.candidate_full_name} - Guide {approvedCount}/{reviewItems.length} reviewed{payRateSummary ? ` - Pay ${payRateSummary}` : ""}
+              </div>
+            </div>
+            <InterviewWorkspaceTabs tabs={workspaceTabs} active={activePane} onChange={onPaneChange} />
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <IconButton
@@ -3361,13 +3446,34 @@ function QuestionReviewModal({
   approveQuestion,
   rejectQuestion,
   onAiDraftQuestions,
+  workspaceTabs,
+  activePane,
+  onPaneChange,
+  payRateSummary,
   onClose,
 }) {
+  const [questionSearch, setQuestionSearch] = useState("");
   const approvedCount = questions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length;
-  const grouped = questions.reduce((groups, question, index) => {
+  const filteredRows = useMemo(() => {
+    const tokens = normalizeTranscriptSearch(questionSearch).split(/\s+/).filter(Boolean);
+    return questions
+      .map((question, index) => ({ question, index }))
+      .filter(({ question }) => {
+        if (!tokens.length) return true;
+        const searchable = normalizeTranscriptSearch([
+          question.category,
+          question.prompt,
+          question.helper_text,
+          question.question_key,
+        ].filter(Boolean).join(" "));
+        return tokens.every((token) => searchable.includes(token));
+      });
+  }, [questionSearch, questions]);
+  const grouped = filteredRows.reduce((groups, row) => {
+    const { question } = row;
     const category = question.category || "Interview";
     if (!groups[category]) groups[category] = [];
-    groups[category].push({ question, index });
+    groups[category].push(row);
     return groups;
   }, {});
   const questionRefs = useRef({});
@@ -3387,11 +3493,16 @@ function QuestionReviewModal({
 
   return (
     <div className="interview-modal-backdrop" onClick={onClose}>
-      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1180px, 94vw)" }}>
+      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1280px, 94vw)" }}>
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{record.candidate_full_name} - {approvedCount}/{questions.length} approved</div>
+          <div style={{ minWidth: 0, display: "grid", gap: 9 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Active Interview</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>
+                {record.candidate_full_name} - Questions {approvedCount}/{questions.length} approved{payRateSummary ? ` - Pay ${payRateSummary}` : ""}
+              </div>
+            </div>
+            <InterviewWorkspaceTabs tabs={workspaceTabs} active={activePane} onChange={onPaneChange} />
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Btn variant="primary" size="sm" onClick={onAiDraftQuestions} disabled={!questions.length}>Draft Questions</Btn>
@@ -3400,10 +3511,22 @@ function QuestionReviewModal({
             <IconButton label="Close questions" onClick={onClose}>{"x"}</IconButton>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "190px minmax(0, 1fr)", minHeight: 0 }}>
-          <div style={{ borderRight: `1px solid ${C.border}`, background: "#fff", overflowY: "auto", padding: "18px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "230px minmax(0, 1fr)", minHeight: 0 }}>
+          <div style={{ borderRight: `1px solid ${C.border}`, background: "#fff", overflowY: "auto", padding: "18px 16px", display: "grid", alignContent: "start", gap: 16 }}>
+            <div style={{ display: "grid", gap: 7 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Find Question</span>
+                <input
+                  value={questionSearch}
+                  onChange={(event) => setQuestionSearch(event.target.value)}
+                  placeholder="Search every question"
+                  style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "10px 11px", fontFamily: "inherit", color: C.text, fontSize: 13, outline: "none" }}
+                />
+              </label>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>{filteredRows.length}/{questions.length} shown</div>
+            </div>
             {Object.entries(grouped).map(([category, rows]) => (
-              <div key={category} style={{ marginBottom: 20 }}>
+              <div key={category}>
                 <div style={{ color: C.text, fontSize: 12, fontWeight: 950, marginBottom: 8 }}>{category}</div>
                 <div style={{ display: "grid", gap: 5 }}>
                   {rows.map(({ question, index }) => {
@@ -3436,7 +3559,7 @@ function QuestionReviewModal({
                             transform: "translate(-6px, -50%)",
                             opacity: 0,
                             pointerEvents: "none",
-                            width: 300,
+                            width: 340,
                             borderRadius: 8,
                             background: "#0f172a",
                             color: "#fff",
@@ -3461,6 +3584,8 @@ function QuestionReviewModal({
           <div style={{ padding: 20, background: C.surfaceHover, overflowY: "auto" }}>
             {questions.length === 0 ? (
               <EmptyState title="No Questions" body="Add shared custom questions in configuration." />
+            ) : filteredRows.length === 0 ? (
+              <EmptyState title="No Matching Questions" body="Adjust the search to bring questions back into the active interview workspace." />
             ) : (
               <div style={{ maxWidth: 880, display: "grid", gap: 20 }}>
                 {Object.entries(grouped).map(([category, rows]) => (
@@ -3529,7 +3654,7 @@ function QuestionReviewModal({
   );
 }
 
-export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, onViewChange = null, onDetailChange = null }) {
+export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", onViewChange = null, onRecordChange = null, onDetailChange = null }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const locationRef = profile?.location_id || data?.locationId || "";
@@ -3544,12 +3669,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [guides, setGuides] = useState([]);
   const [responses, setResponses] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
-  const [selectedRecordId, setSelectedRecordId] = useState("");
+  const [selectedRecordId, setSelectedRecordIdState] = useState(() => String(recordIdPreset || ""));
   const [showNewInterview, setShowNewInterview] = useState(false);
   const [showCandidateEdit, setShowCandidateEdit] = useState(false);
   const [candidateEditDraft, setCandidateEditDraft] = useState(() => buildNewInterviewDraft());
-  const [showGuideModal, setShowGuideModal] = useState(false);
-  const [showQuestionsModal, setShowQuestionsModal] = useState(false);
+  const [showActiveInterview, setShowActiveInterview] = useState(false);
+  const [activeInterviewPane, setActiveInterviewPane] = useState("guide");
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
   const [activeGuideId, setActiveGuideId] = useState("");
   const [guideAttachVersionId, setGuideAttachVersionId] = useState("");
@@ -3560,7 +3685,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [pdfReviewIndex, setPdfReviewIndex] = useState(0);
   const [configQuestionsOpen, setConfigQuestionsOpen] = useState(false);
   const [showNewPosition, setShowNewPosition] = useState(false);
-  const [newPositionDraft, setNewPositionDraft] = useState({ role_label: "", description: "" });
+  const [newPositionDraft, setNewPositionDraft] = useState(() => buildNewPositionDraft());
   const [dragQuestionId, setDragQuestionId] = useState("");
   const [newInterviewDraft, setNewInterviewDraft] = useState(() => buildNewInterviewDraft());
   const [savingNewInterview, setSavingNewInterview] = useState(false);
@@ -3570,6 +3695,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [summaryDraftTextByKey, setSummaryDraftTextByKey] = useState({});
   const [customSummaryPages, setCustomSummaryPages] = useState([]);
   const [savingSummaryKey, setSavingSummaryKey] = useState("");
+  const [payRateDrafts, setPayRateDrafts] = useState({});
   const [questionDrafts, setQuestionDrafts] = useState({});
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
   const [templateActionId, setTemplateActionId] = useState("");
@@ -3597,6 +3723,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const summarySaveTimerRef = useRef(null);
   const summaryRequestRef = useRef(new Set());
 
+  const setSelectedRecordId = useCallback((nextRecordId) => {
+    const cleanRecordId = String(typeof nextRecordId === "function" ? nextRecordId(selectedRecordId) : (nextRecordId || ""));
+    setSelectedRecordIdState((current) => current === cleanRecordId ? current : cleanRecordId);
+    onRecordChange?.(cleanRecordId);
+  }, [onRecordChange, selectedRecordId]);
+
   const versionsByTemplate = useMemo(() => {
     return versions.reduce((map, version) => {
       if (!map[version.template_id]) map[version.template_id] = [];
@@ -3621,6 +3753,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return records.find((record) => record.id === selectedRecordId) || null;
   }, [records, selectedRecordId]);
 
+  useEffect(() => {
+    if (!loading && selectedRecordId && !selectedRecord) setSelectedRecordId("");
+  }, [loading, selectedRecord, selectedRecordId, setSelectedRecordId]);
+
   const selectedGuides = useMemo(() => {
     if (!selectedRecord) return [];
     const rows = guides
@@ -3635,9 +3771,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [activeGuideId, selectedGuides]);
 
   useEffect(() => {
-    onDetailChange?.(!!selectedRecordId);
+    const nextRecordId = String(recordIdPreset || "");
+    setSelectedRecordIdState((current) => current === nextRecordId ? current : nextRecordId);
+  }, [recordIdPreset]);
+
+  useEffect(() => {
+    onDetailChange?.(!!selectedRecord);
     return () => onDetailChange?.(false);
-  }, [onDetailChange, selectedRecordId]);
+  }, [onDetailChange, selectedRecord]);
 
   useEffect(() => {
     return () => {
@@ -3680,18 +3821,49 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       .sort((a, b) => (a.sequence_order || 0) - (b.sequence_order || 0));
   }, [questionsByVersion, sharedQuestionSourceVersion]);
 
+  const selectedPayRates = useMemo(() => payRatesFromVersion(selectedSnapshot?.version || {}), [selectedSnapshot]);
+  const selectedPayRateSummary = useMemo(() => formatInterviewPayRateSummary(selectedPayRates), [selectedPayRates]);
+  const selectedGuideReviewItems = useMemo(() => buildPdfReviewItems(selectedPdfFields), [selectedPdfFields]);
+  const selectedGuideReviewedCount = useMemo(() => {
+    return selectedGuideReviewItems.filter((item) => (
+      !!item?.fields?.length && item.fields.every((field) => isInterviewResponseReviewed(responsesByTarget[responseKeyForPdfField(field)] || {}))
+    )).length;
+  }, [responsesByTarget, selectedGuideReviewItems]);
+  const selectedQuestionReviewedCount = useMemo(() => {
+    return selectedQuestions.filter((question) => isInterviewResponseReviewed(responsesByTarget[responseKeyForQuestion(question)] || {})).length;
+  }, [responsesByTarget, selectedQuestions]);
+  const workspaceTabs = useMemo(() => [
+    { id: "guide", label: "Interview Guide", detail: `${selectedGuideReviewedCount}/${selectedGuideReviewItems.length} items` },
+    { id: "questions", label: "Custom Questions", detail: `${selectedQuestionReviewedCount}/${selectedQuestions.length} reviewed` },
+  ], [selectedGuideReviewedCount, selectedGuideReviewItems.length, selectedQuestionReviewedCount, selectedQuestions.length]);
+
   const showToast = useCallback((message, type = "success") => {
     addGlobalToast?.(message, type);
   }, [addGlobalToast]);
 
   const changeView = useCallback((nextView) => {
-    setView(nextView);
-    onViewChange?.(nextView);
+    const normalizedView = nextView === "config" ? "config" : "records";
+    setView(normalizedView);
+    if (normalizedView !== "records") setSelectedRecordIdState("");
+    onViewChange?.(normalizedView);
   }, [onViewChange]);
 
   useEffect(() => {
-    if (viewPreset && viewPreset !== view) setView(viewPreset);
+    if (viewPreset && viewPreset !== view) {
+      setView(viewPreset);
+      if (viewPreset !== "records") setSelectedRecordIdState("");
+    }
   }, [view, viewPreset]);
+
+  useEffect(() => {
+    setPayRateDrafts((prev) => {
+      const next = {};
+      versions.forEach((version) => {
+        next[version.id] = prev[version.id] || payRatesFromVersion(version);
+      });
+      return next;
+    });
+  }, [versions]);
 
   const loadAll = useCallback(async (resolvedLocationId = locationId) => {
     if (!resolvedLocationId) return;
@@ -3817,8 +3989,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setAudioFileName("");
     setPdfReviewIndex(0);
     setShowCandidateEdit(false);
-    setShowGuideModal(false);
-    setShowQuestionsModal(false);
+    setShowActiveInterview(false);
+    setActiveInterviewPane("guide");
     setShowTranscriptModal(false);
     setShowTranscriptInput(false);
     setTranscriptDraft("");
@@ -4341,7 +4513,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           .update({
             response_text: value || null,
             prompt_snapshot: prompt,
-            interview_guide_id: selectedGuide?.id || null,
+            interview_guide_id: responseType === "custom_question" ? null : (selectedGuide?.id || null),
             response_state: nextState,
             metadata: metadataPatch ? { ...(existing.metadata || {}), ...metadataPatch } : existing.metadata,
             reviewed_at: nextState === "ai_approved" || nextState === "manual" ? new Date().toISOString() : existing.reviewed_at,
@@ -4359,7 +4531,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       } else {
         const insertRow = {
           interview_id: selectedRecord.id,
-          interview_guide_id: selectedGuide?.id || null,
+          interview_guide_id: responseType === "custom_question" ? null : (selectedGuide?.id || null),
           response_type: responseType,
           question_key: responseType === "custom_question" ? key : null,
           pdf_field_name: responseType === "pdf_field" ? key : null,
@@ -4606,12 +4778,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   useEffect(() => {
-    if (!showGuideModal || !selectedRecord?.id || !String(selectedRecord?.transcript_text || "").trim()) return;
+    if (!showActiveInterview || activeInterviewPane !== "guide" || !selectedRecord?.id || !String(selectedRecord?.transcript_text || "").trim()) return;
     if (hasStoredTranscriptSummary || summaryDrafting || aiDrafting) return;
     if (summaryRequestRef.current.has(selectedRecord.id)) return;
     summaryRequestRef.current.add(selectedRecord.id);
     draftTranscriptSummary(selectedRecord.id, { quiet: true });
-  }, [showGuideModal, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting, aiDrafting]);
+  }, [activeInterviewPane, showActiveInterview, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting, aiDrafting]);
 
   const fillPdfDocumentWithAiInstruction = async (instruction) => {
     if (!selectedRecord?.id || !String(instruction || "").trim()) return null;
@@ -5138,6 +5310,34 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     },
   });
 
+  const saveTemplatePayRates = async (version) => {
+    if (!version?.id) return;
+    if (version.status !== "draft") {
+      showToast("Create a draft template version before changing pay rates.", "error");
+      return;
+    }
+    const draft = payRateDrafts[version.id] || payRatesFromVersion(version);
+    setTemplateActionId(`pay-${version.id}`);
+    try {
+      const { data: updated, error } = await supabase
+        .from("labor_interview_template_versions")
+        .update({
+          metadata: buildPayRateMetadata(version, draft, actorName),
+        })
+        .eq("id", version.id)
+        .select("*")
+        .single();
+      if (error) throw error;
+      setVersions((prev) => prev.map((row) => row.id === updated.id ? updated : row));
+      setPayRateDrafts((prev) => ({ ...prev, [updated.id]: payRatesFromVersion(updated) }));
+      showToast("Pay rates saved");
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to save pay rates"), "error");
+    } finally {
+      setTemplateActionId("");
+    }
+  };
+
   const uploadTemplatePdf = async (version, file) => {
     if (!version || !file || version.status !== "draft") return;
     setTemplateActionId(version.id);
@@ -5258,6 +5458,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           pdf_page_count: baseVersion?.pdf_page_count || null,
           pdf_field_manifest: baseVersion?.pdf_field_manifest || [],
           pdf_verification_status: baseVersion?.pdf_verification_status || "missing_pdf",
+          metadata: baseVersion?.metadata || {},
           changelog: `Draft copied from version ${baseVersion?.version_no || 1}.`,
           created_by_user_id: actorUserId,
         })
@@ -5322,6 +5523,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           is_current: false,
           pdf_field_manifest: [],
           pdf_verification_status: "missing_pdf",
+          metadata: buildPayRateMetadata({}, {
+            min_rate: newPositionDraft.pay_rate_min,
+            max_rate: newPositionDraft.pay_rate_max,
+            notes: newPositionDraft.pay_rate_notes,
+          }, actorName),
           created_by_user_id: actorUserId,
         })
         .select("*")
@@ -5344,7 +5550,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         if (questionError) throw questionError;
       }
       setShowNewPosition(false);
-      setNewPositionDraft({ role_label: "", description: "" });
+      setNewPositionDraft(buildNewPositionDraft());
       await loadAll(locationId);
       showToast("Position type created");
     } catch (error) {
@@ -5589,6 +5795,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           <CandidateHeader
             record={selectedRecord}
             recommendation={getInterviewRecommendation(selectedRecord)}
+            payRateSummary={selectedPayRateSummary}
             onRecommendationChange={(value) => saveRecordMetadataPatch({ hiring_recommendation: value })}
             onEdit={() => setShowCandidateEdit(true)}
             onDelete={deleteSelectedInterview}
@@ -5693,40 +5900,59 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             onAudioError={handleAudioPlaybackError}
           />
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-            <button
-              type="button"
-              onClick={() => setShowGuideModal(true)}
-              disabled={!selectedSnapshot?.version?.source_pdf_path}
-              style={{
-                textAlign: "left",
-                border: `1px solid ${C.border}`,
-                background: "#fff",
-                borderRadius: 8,
-                padding: 18,
-                cursor: selectedSnapshot?.version?.source_pdf_path ? "pointer" : "not-allowed",
-                fontFamily: "inherit",
-                opacity: selectedSnapshot?.version?.source_pdf_path ? 1 : 0.55,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Fill Out Interview Guide</div>
-                <Badge color={selectedPdfFields.length ? "success" : "warning"}>{selectedPdfFields.length} fields</Badge>
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Active Interview Workspace</div>
+                <div style={{ marginTop: 5, fontSize: 13, color: C.textMut, lineHeight: 1.45, maxWidth: 820 }}>
+                  Guide fields, custom responses, transcript artifacts, and pay context for this applicant.
+                </div>
               </div>
-              <div style={{ marginTop: 10, fontSize: 13, color: C.textMut }}>{pdfPreviewUrl ? selectedSnapshot?.version?.source_pdf_file_name || "Branded PDF ready" : "No published guide PDF"}</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowQuestionsModal(true)}
-              style={{ textAlign: "left", border: `1px solid ${C.border}`, background: "#fff", borderRadius: 8, padding: 18, cursor: "pointer", fontFamily: "inherit" }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Custom Questions</div>
-                <Badge color={selectedQuestions.length ? "info" : "default"}>{selectedQuestions.length} questions</Badge>
+              <Btn
+                variant="primary"
+                onClick={() => {
+                  setActiveInterviewPane(selectedPdfFields.length ? "guide" : "questions");
+                  setShowActiveInterview(true);
+                }}
+              >
+                Open Workspace
+              </Btn>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveInterviewPane("guide");
+                  setShowActiveInterview(true);
+                }}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Interview Guide</div>
+                  <Badge color={selectedGuideReviewItems.length ? "success" : "warning"}>{selectedGuideReviewedCount}/{selectedGuideReviewItems.length}</Badge>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{pdfPreviewUrl ? selectedSnapshot?.version?.source_pdf_file_name || "Branded PDF ready" : "No published guide PDF"}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveInterviewPane("questions");
+                  setShowActiveInterview(true);
+                }}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Custom Questions</div>
+                  <Badge color={selectedQuestions.length ? "info" : "default"}>{selectedQuestionReviewedCount}/{selectedQuestions.length}</Badge>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>Applicant-level answers shared across attached guides.</div>
+              </button>
+              <div style={{ border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Pay Reference</div>
+                <div style={{ fontSize: 15, fontWeight: 950, color: C.text }}>{selectedPayRateSummary || "Not configured"}</div>
+                <div style={{ fontSize: 12, color: C.textMut }}>Configured on the selected interview template.</div>
               </div>
-              <div style={{ marginTop: 10, fontSize: 13, color: C.textMut }}>{selectedQuestions.filter((question) => responsesByTarget[responseKeyForQuestion(question)]?.metadata?.approved).length} approved</div>
-            </button>
+            </div>
           </div>
         </div>
       )}
@@ -5778,6 +6004,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               const editableVersion = draft || current || templateVersions[0];
               const pdfFields = Array.isArray(editableVersion?.pdf_field_manifest) ? editableVersion.pdf_field_manifest : [];
               const editable = editableVersion?.status === "draft";
+              const payRateDraft = editableVersion ? (payRateDrafts[editableVersion.id] || payRatesFromVersion(editableVersion)) : {};
+              const payRateSummary = formatInterviewPayRateSummary(payRateDraft);
               return (
                 <div key={template.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
@@ -5791,6 +6019,57 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                     <div>{editableVersion?.source_pdf_file_name || "No PDF uploaded"}</div>
                     <div>{editableVersion ? `${LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS[editableVersion.status] || editableVersion.status} v${editableVersion.version_no}` : "No template version"}</div>
                   </div>
+                  {editableVersion && (
+                    <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>Pay Rates</div>
+                          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{payRateSummary || "No pay range configured"}</div>
+                        </div>
+                        <Btn
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => saveTemplatePayRates(editableVersion)}
+                          disabled={!editable || templateActionId === `pay-${editableVersion.id}`}
+                        >
+                          {templateActionId === `pay-${editableVersion.id}` ? "Saving..." : "Save"}
+                        </Btn>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <Inp
+                          label="Min"
+                          value={payRateDraft.min_rate || ""}
+                          disabled={!editable}
+                          placeholder="18"
+                          onChange={(value) => setPayRateDrafts((prev) => ({
+                            ...prev,
+                            [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), min_rate: value },
+                          }))}
+                        />
+                        <Inp
+                          label="Max"
+                          value={payRateDraft.max_rate || ""}
+                          disabled={!editable}
+                          placeholder="20"
+                          onChange={(value) => setPayRateDrafts((prev) => ({
+                            ...prev,
+                            [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), max_rate: value },
+                          }))}
+                        />
+                      </div>
+                      <Inp
+                        label="Notes"
+                        value={payRateDraft.notes || ""}
+                        disabled={!editable}
+                        placeholder="DOE, shift differential, training rate"
+                        onChange={(value) => setPayRateDrafts((prev) => ({
+                          ...prev,
+                          [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), notes: value },
+                        }))}
+                      />
+                      {!editable && <div style={{ fontSize: 11, color: C.textMut }}>Create a draft version to edit pay rates.</div>}
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {editableVersion && (
                       <input
@@ -5926,6 +6205,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                 options={templateOptions}
                 placeholder="Select published role template"
               />
+              {selectedTemplateVersion && (
+                <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Pay Reference</div>
+                    <div style={{ marginTop: 4, fontSize: 15, color: C.text, fontWeight: 950 }}>{formatInterviewPayRateSummary(payRatesFromVersion(selectedTemplateVersion)) || "Not configured"}</div>
+                  </div>
+                  <Badge color={formatInterviewPayRateRange(payRatesFromVersion(selectedTemplateVersion)) ? "success" : "default"}>{selectedTemplate?.role_label || "Template"}</Badge>
+                </div>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Inp label="Candidate Name" required value={newInterviewDraft.candidate_full_name} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_full_name: value }))} autoFocus />
                 <Inp label="Position" value={newInterviewDraft.candidate_position} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_position: value }))} />
@@ -5993,6 +6281,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           <div style={{ display: "grid", gap: 14 }}>
             <Inp label="Position Name" value={newPositionDraft.role_label} onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, role_label: value }))} autoFocus />
             <Inp label="Description" value={newPositionDraft.description} onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, description: value }))} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Inp label="Pay Min" value={newPositionDraft.pay_rate_min} placeholder="18" onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, pay_rate_min: value }))} />
+              <Inp label="Pay Max" value={newPositionDraft.pay_rate_max} placeholder="20" onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, pay_rate_max: value }))} />
+            </div>
+            <Inp label="Pay Notes" value={newPositionDraft.pay_rate_notes} placeholder="DOE, training rate, shift differential" onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, pay_rate_notes: value }))} />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <Btn variant="secondary" onClick={() => setShowNewPosition(false)}>Cancel</Btn>
               <Btn variant="primary" onClick={createPositionType} disabled={templateActionId === "new-position"}>{templateActionId === "new-position" ? "Creating..." : "Create"}</Btn>
@@ -6010,7 +6303,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         />
       )}
 
-      {showGuideModal && selectedRecord && (
+      {showActiveInterview && activeInterviewPane === "guide" && selectedRecord && (
         <ReviewGuideModal
           record={selectedRecord}
           fields={selectedPdfFields}
@@ -6040,11 +6333,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           onAiFillDocument={fillPdfDocumentWithAiInstruction}
           exportFinalPdf={exportFinalPdf}
           downloadArtifact={downloadArtifact}
-          onClose={() => setShowGuideModal(false)}
+          workspaceTabs={workspaceTabs}
+          activePane={activeInterviewPane}
+          onPaneChange={setActiveInterviewPane}
+          payRateSummary={selectedPayRateSummary}
+          onClose={() => setShowActiveInterview(false)}
         />
       )}
 
-      {showQuestionsModal && selectedRecord && (
+      {showActiveInterview && activeInterviewPane === "questions" && selectedRecord && (
         <QuestionReviewModal
           record={selectedRecord}
           questions={selectedQuestions}
@@ -6055,7 +6352,11 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           approveQuestion={approveCustomQuestion}
           rejectQuestion={rejectCustomQuestion}
           onAiDraftQuestions={() => draftInterview(selectedRecord.id, { customOnly: true })}
-          onClose={() => setShowQuestionsModal(false)}
+          workspaceTabs={workspaceTabs}
+          activePane={activeInterviewPane}
+          onPaneChange={setActiveInterviewPane}
+          payRateSummary={selectedPayRateSummary}
+          onClose={() => setShowActiveInterview(false)}
         />
       )}
     </div>
