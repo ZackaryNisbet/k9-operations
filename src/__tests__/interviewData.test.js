@@ -7,12 +7,15 @@ import {
   encodePcm16Wav,
   extractPdfFieldManifest,
   fillInterviewPdfBytes,
+  formatInterviewPayRateRange,
+  formatInterviewPayRateSummary,
   getInterviewPdfFieldDisplayRect,
   getInterviewAudioContentType,
   getInterviewRecommendation,
   getInterviewTranscriptTurns,
   INTERVIEW_AUDIO_MAX_BYTES,
   INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE,
+  normalizeInterviewPayRates,
   shouldNormalizeInterviewAudioForStt,
   validateAiDraftPayload,
   validateInterviewAudioFile,
@@ -254,6 +257,18 @@ describe("interview template snapshots", () => {
 
     expect(snapshot.questions[0].prompt).toBe("Are you available weekends?");
     expect(snapshot.version.pdf_field_manifest).toHaveLength(1);
+  });
+});
+
+describe("interview pay rate helpers", () => {
+  it("normalizes and formats role pay ranges for active interviews", () => {
+    expect(normalizeInterviewPayRates({ minimum: "18", maximum: "20", note: "DOE" })).toEqual({
+      min_rate: "18",
+      max_rate: "20",
+      notes: "DOE",
+    });
+    expect(formatInterviewPayRateRange({ min_rate: "18", max_rate: "20" })).toBe("$18-$20/hr");
+    expect(formatInterviewPayRateSummary({ min_rate: "18.5", notes: "training rate" })).toBe("From $18.50/hr - training rate");
   });
 });
 

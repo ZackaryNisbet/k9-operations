@@ -122,11 +122,43 @@ Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v])
 LITE_SLUG_TO_PAGE.training = "training";
 LITE_SLUG_TO_PAGE["client-management"] = "client-management";
 
+const LITE_LABOR_TAB_SLUGS = {
+  home: "",
+  training: "training",
+  "performance-reviews": "performance-reviews",
+  templates: "templates",
+  attendance: "attendance",
+  interviews: "interviews",
+  notes: "notes",
+};
+const LITE_LABOR_SLUG_TO_TAB = {
+  home: "home",
+  training: "training",
+  "performance-reviews": "performance-reviews",
+  templates: "templates",
+  attendance: "attendance",
+  interviews: "interviews",
+  notes: "notes",
+};
+
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
   const slug = LITE_PAGE_SLUGS[pg] || pg;
   // Top-level pages (no location slug)
   if (pg === "onboarding" || pg === "pricing") return `${LITE_BASE}/${slug}`;
   if (locSlug === "enterprise") return `${LITE_BASE}/enterprise/${slug.replace("enterprise/", "")}`;
+  if (pg === "training") {
+    const laborTab = prms?.laborTab || "";
+    const tabSlug = LITE_LABOR_TAB_SLUGS[laborTab] ?? "";
+    const laborBase = `${LITE_BASE}/${locSlug}/labor`;
+    if (!laborTab || laborTab === "home" || !tabSlug) return laborBase;
+    if (laborTab === "interviews") {
+      if (prms?.interviewId) return `${laborBase}/interviews/${encodeURIComponent(prms.interviewId)}`;
+      if (prms?.interviewView === "config") return `${laborBase}/interviews/config`;
+      return `${laborBase}/interviews`;
+    }
+    if (laborTab === "attendance" && prms?.attendanceView === "summary") return `${laborBase}/attendance/summary`;
+    return `${laborBase}/${tabSlug}`;
+  }
   if (pg === "client-detail" && prms?.clientId && dataRef) {
     // Lite clients: use lc_ ID directly in URL
     if (prms.clientId.startsWith("lc_")) return `${LITE_BASE}/${locSlug}/client/${prms.clientId}`;
@@ -186,6 +218,25 @@ function parseLiteUrl(pathname, dataRef) {
       if (c) return { locSlug, page: "client-detail", params: { clientId: c.id } };
     }
     return { locSlug, page: "lifecycle", params: {} };
+  }
+  if (parts[1] === "labor") {
+    const tabSlug = parts[2] || "home";
+    const laborTab = LITE_LABOR_SLUG_TO_TAB[tabSlug] || "home";
+    const params = { laborTab };
+    if (laborTab === "interviews") {
+      if (parts[3] === "config") {
+        params.interviewView = "config";
+      } else if (parts[3]) {
+        params.interviewView = "records";
+        params.interviewId = decodeURIComponent(parts[3]);
+      } else {
+        params.interviewView = "records";
+      }
+    }
+    if (laborTab === "attendance" && parts[3] === "summary") {
+      params.attendanceView = "summary";
+    }
+    return { locSlug, page: "training", params };
   }
   const pgSlug = parts.slice(1).join("/");
   const pg = LITE_SLUG_TO_PAGE[pgSlug] || "home";
@@ -1011,7 +1062,7 @@ function LeanAppInner() {
       case "enterprise-users":
         return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
       case "training":
-        return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationName={currentLocationName} />;
+        return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationName={currentLocationName} params={params} />;
       case "client-management":
         return <ClientManagementPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "resources":
