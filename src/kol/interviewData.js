@@ -94,6 +94,9 @@ export const INTERVIEW_TRANSCRIPT_ACCEPT = ".txt,.vtt,text/plain,text/vtt";
 export const INTERVIEW_AUDIO_ACCEPT = ".aac,.flac,.m4a,.mkv,.mp3,.mp4,.ogg,.opus,.wav,audio/*,video/mp4,video/x-matroska";
 export const INTERVIEW_AUDIO_MAX_BYTES = 500 * 1024 * 1024;
 export const INTERVIEW_AUDIO_MAX_LABEL = "500 MB";
+export const INTERVIEW_RESUME_ACCEPT = ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export const INTERVIEW_RESUME_MAX_BYTES = 25 * 1024 * 1024;
+export const INTERVIEW_RESUME_MAX_LABEL = "25 MB";
 export const INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE = 16000;
 export const INTERVIEW_STT_NORMALIZED_AUDIO_MIME_TYPE = "audio/mpeg";
 
@@ -126,6 +129,19 @@ export const INTERVIEW_AUDIO_ALLOWED_MIME_TYPES = [
   "video/mp4",
   "video/x-matroska",
   "application/x-matroska",
+];
+
+const INTERVIEW_RESUME_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
+const INTERVIEW_RESUME_CONTENT_TYPES = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+
+const INTERVIEW_RESUME_ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
 const PDF_FIELD_TYPE_LABELS = {
@@ -248,6 +264,12 @@ export function getInterviewAudioContentType(file = {}) {
   return INTERVIEW_AUDIO_CONTENT_TYPES[getFileExtension(file.name)] || "";
 }
 
+export function getInterviewResumeContentType(file = {}) {
+  const explicitType = String(file.type || "").trim().toLowerCase();
+  if (explicitType && explicitType !== "application/octet-stream") return explicitType;
+  return INTERVIEW_RESUME_CONTENT_TYPES[getFileExtension(file.name)] || "";
+}
+
 export function shouldNormalizeInterviewAudioForStt(file = {}) {
   const extension = getFileExtension(file.name);
   const contentType = getInterviewAudioContentType(file);
@@ -317,6 +339,24 @@ export function validateInterviewAudioFile(file) {
   return { ok: true, contentType };
 }
 
+export function validateInterviewResumeFile(file) {
+  if (!file) return { ok: false, error: "Choose a resume file first." };
+  const extension = getFileExtension(file.name);
+  const contentType = getInterviewResumeContentType(file);
+  const isSupported = INTERVIEW_RESUME_EXTENSIONS.has(extension)
+    || INTERVIEW_RESUME_ALLOWED_MIME_TYPES.includes(contentType);
+
+  if (!isSupported) {
+    return { ok: false, error: "Upload a PDF, DOC, or DOCX resume." };
+  }
+
+  if (Number(file.size || 0) > INTERVIEW_RESUME_MAX_BYTES) {
+    return { ok: false, error: `Resume must be ${INTERVIEW_RESUME_MAX_LABEL} or smaller.` };
+  }
+
+  return { ok: true, contentType };
+}
+
 export function buildInterviewTemplatePdfPath({ locationId, templateId, versionNo, fileName }) {
   return [
     locationId,
@@ -344,6 +384,16 @@ export function buildInterviewAudioPath({ locationId, interviewId, fileName }) {
     interviewId,
     "audio",
     sanitizeInterviewFileName(fileName || "interview-audio.m4a"),
+  ].filter(Boolean).join("/");
+}
+
+export function buildInterviewResumePath({ locationId, interviewId, fileName }) {
+  return [
+    locationId,
+    "interviews",
+    interviewId,
+    "resume",
+    sanitizeInterviewFileName(fileName || "resume.pdf"),
   ].filter(Boolean).join("/");
 }
 
