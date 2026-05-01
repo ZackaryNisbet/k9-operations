@@ -2,6 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import {
   buildPdfResponseMap,
   buildInterviewSttAudioFileName,
+  buildInterviewResumePath,
   buildInterviewTemplateSnapshot,
   cleanInterviewTranscriptText,
   encodePcm16Wav,
@@ -11,14 +12,17 @@ import {
   formatInterviewPayRateSummary,
   getInterviewPdfFieldDisplayRect,
   getInterviewAudioContentType,
+  getInterviewResumeContentType,
   getInterviewRecommendation,
   getInterviewTranscriptTurns,
   INTERVIEW_AUDIO_MAX_BYTES,
+  INTERVIEW_RESUME_MAX_BYTES,
   INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE,
   normalizeInterviewPayRates,
   shouldNormalizeInterviewAudioForStt,
   validateAiDraftPayload,
   validateInterviewAudioFile,
+  validateInterviewResumeFile,
 } from "../kol/interviewData";
 
 async function createFillableInterviewPdf() {
@@ -326,6 +330,34 @@ describe("interview audio helpers", () => {
     expect(validateInterviewAudioFile(file)).toMatchObject({
       ok: false,
       error: "Interview audio must be 500 MB or smaller.",
+    });
+  });
+});
+
+describe("interview resume helpers", () => {
+  it("accepts common resume formats and builds private interview resume paths", () => {
+    const file = { name: "Jane Doe Resume.docx", type: "", size: 300 * 1024 };
+
+    expect(validateInterviewResumeFile(file)).toMatchObject({
+      ok: true,
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(getInterviewResumeContentType(file)).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    expect(buildInterviewResumePath({
+      locationId: "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+      interviewId: "record-123",
+      fileName: file.name,
+    })).toBe("8ea382b0-63f7-44ac-b6f8-83243c03d946/interviews/record-123/resume/Jane-Doe-Resume.docx");
+  });
+
+  it("rejects unsupported or oversized resume files", () => {
+    expect(validateInterviewResumeFile({ name: "resume.pages", type: "", size: 1000 })).toMatchObject({
+      ok: false,
+      error: "Upload a PDF, DOC, or DOCX resume.",
+    });
+    expect(validateInterviewResumeFile({ name: "resume.pdf", type: "application/pdf", size: INTERVIEW_RESUME_MAX_BYTES + 1 })).toMatchObject({
+      ok: false,
+      error: "Resume must be 25 MB or smaller.",
     });
   });
 });

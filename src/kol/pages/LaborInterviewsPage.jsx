@@ -6,6 +6,7 @@ import { Badge, Btn, CustomSelect, Inp, Modal } from "../../shared/ui";
 import {
   buildInterviewAudioPath,
   buildInterviewArtifactPath,
+  buildInterviewResumePath,
   buildInterviewTemplatePdfPath,
   buildInterviewTranscriptPath,
   buildInterviewTemplateSnapshot,
@@ -32,6 +33,7 @@ import {
   INTERVIEW_PDF_ACCEPT,
   INTERVIEW_RECOMMENDATION_OPTIONS,
   INTERVIEW_RESPONSE_STATES,
+  INTERVIEW_RESUME_ACCEPT,
   INTERVIEW_TRANSCRIPT_ACCEPT,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
@@ -43,6 +45,7 @@ import {
   questionRowsFromSnapshot,
   shouldNormalizeInterviewAudioForStt,
   validateInterviewAudioFile,
+  validateInterviewResumeFile,
 } from "../interviewData";
 import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingData";
 
@@ -1839,6 +1842,48 @@ function CandidateHeader({ record, recommendation, payRateSummary, onRecommendat
         <StaticField label="Zoom Link" value={record.zoom_recording_url} />
         <StaticField label="Zoom Passcode" value={record.zoom_passcode} />
       </div>
+    </div>
+  );
+}
+
+function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload }) {
+  const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
+  const uploadedAt = resumeArtifact?.created_at ? new Date(resumeArtifact.created_at).toLocaleDateString() : "";
+  const sizeLabel = formatFileSize(metadata.size_bytes);
+  const hasResume = !!resumeArtifact?.storage_path;
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 16, display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 16, fontWeight: 950, color: C.text }}>Resume</div>
+            <Badge color={hasResume ? "success" : "default"}>{hasResume ? "Attached" : "Missing"}</Badge>
+            {resumeCount > 1 && <Badge color="default">{resumeCount} files</Badge>}
+          </div>
+          <div style={{ marginTop: 4, color: C.textMut, fontSize: 12 }}>
+            {hasResume ? "Candidate resume stays with this interview record." : "Attach the applicant's resume before or during the interview."}
+          </div>
+        </div>
+        <Btn variant={hasResume ? "secondary" : "primary"} size="sm" onClick={onUploadClick} disabled={uploading}>
+          {uploading ? "Uploading..." : hasResume ? "Replace Resume" : "Upload Resume"}
+        </Btn>
+      </div>
+      {hasResume ? (
+        <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {resumeArtifact.file_name || metadata.original_file_name || "Resume"}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+              {[sizeLabel, uploadedAt ? `Uploaded ${uploadedAt}` : ""].filter(Boolean).join(" - ")}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" size="sm" onClick={() => onOpen?.(resumeArtifact)}>Open</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => onDownload?.(resumeArtifact)}>Download</Btn>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3713,8 +3758,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [summaryDrafting, setSummaryDrafting] = useState(false);
   const [audioTranscribing, setAudioTranscribing] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [resumeUploading, setResumeUploading] = useState(false);
   const pdfInputRefs = useRef({});
   const audioInputRef = useRef(null);
+  const resumeInputRef = useRef(null);
   const transcriptInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
   const pendingAudioPlaybackRef = useRef(null);
@@ -3823,6 +3870,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const selectedPayRates = useMemo(() => payRatesFromVersion(selectedSnapshot?.version || {}), [selectedSnapshot]);
   const selectedPayRateSummary = useMemo(() => formatInterviewPayRateSummary(selectedPayRates), [selectedPayRates]);
+  const resumeArtifacts = useMemo(() => artifacts.filter((artifact) => artifact.artifact_type === "resume"), [artifacts]);
+  const selectedResumeArtifact = resumeArtifacts[0] || null;
   const selectedGuideReviewItems = useMemo(() => buildPdfReviewItems(selectedPdfFields), [selectedPdfFields]);
   const selectedGuideReviewedCount = useMemo(() => {
     return selectedGuideReviewItems.filter((item) => (
@@ -5200,18 +5249,78 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     try {
       const { data: signed, error } = await supabase.storage
         .from(artifact.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET)
-        .createSignedUrl(artifact.storage_path, 60 * 5, { download: artifact.file_name || "interview.pdf" });
+        .createSignedUrl(artifact.storage_path, 60 * 5, { download: artifact.file_name || "interview-file" });
       if (error) throw error;
       if (signed?.signedUrl && typeof document !== "undefined") {
         const link = document.createElement("a");
         link.href = signed.signedUrl;
-        link.download = artifact.file_name || "interview.pdf";
+        link.download = artifact.file_name || "interview-file";
         document.body.appendChild(link);
         link.click();
         link.remove();
       }
     } catch (error) {
-      showToast(safeUiError(error, "Failed to download PDF"), "error");
+      showToast(safeUiError(error, "Failed to download file"), "error");
+    }
+  };
+
+  const openArtifact = async (artifact) => {
+    if (!artifact?.storage_path) return;
+    try {
+      const { data: signed, error } = await supabase.storage
+        .from(artifact.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .createSignedUrl(artifact.storage_path, 60 * 10);
+      if (error) throw error;
+      if (signed?.signedUrl && typeof window !== "undefined") {
+        window.open(signed.signedUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to open file"), "error");
+    }
+  };
+
+  const handleResumeUpload = async (file) => {
+    if (!selectedRecord?.id || !locationId || !file) return;
+    const validation = validateInterviewResumeFile(file);
+    if (!validation.ok) {
+      showToast(validation.error, "error");
+      return;
+    }
+    setResumeUploading(true);
+    try {
+      const path = buildInterviewResumePath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
+      const contentType = validation.contentType || file.type || "application/octet-stream";
+      const { error: uploadError } = await supabase.storage
+        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
+        .upload(path, file, { upsert: true, contentType });
+      if (uploadError) throw uploadError;
+      const { data: artifact, error: artifactError } = await supabase
+        .from("labor_interview_artifacts")
+        .insert({
+          interview_id: selectedRecord.id,
+          interview_guide_id: null,
+          artifact_type: "resume",
+          file_name: sanitizeInterviewFileName(file.name || "resume"),
+          storage_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+          storage_path: path,
+          mime_type: contentType,
+          metadata: {
+            original_file_name: file.name || "resume",
+            size_bytes: Number(file.size || 0) || null,
+            source: "active_interview_workspace",
+          },
+          created_by_user_id: actorUserId,
+          created_by_name: actorName,
+        })
+        .select("*")
+        .single();
+      if (artifactError) throw artifactError;
+      setArtifacts((prev) => [artifact, ...prev]);
+      showToast("Resume uploaded");
+    } catch (error) {
+      showToast(safeUiError(error, "Failed to upload resume"), "error");
+    } finally {
+      setResumeUploading(false);
     }
   };
 
@@ -5803,6 +5912,26 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             saving={recordSaving}
           />
 
+          <input
+            ref={resumeInputRef}
+            type="file"
+            accept={INTERVIEW_RESUME_ACCEPT}
+            style={{ display: "none" }}
+            onChange={(event) => {
+              handleResumeUpload(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+
+          <ResumePanel
+            resumeArtifact={selectedResumeArtifact}
+            resumeCount={resumeArtifacts.length}
+            uploading={resumeUploading}
+            onUploadClick={() => resumeInputRef.current?.click()}
+            onOpen={openArtifact}
+            onDownload={downloadArtifact}
+          />
+
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
@@ -5905,7 +6034,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Active Interview Workspace</div>
                 <div style={{ marginTop: 5, fontSize: 13, color: C.textMut, lineHeight: 1.45, maxWidth: 820 }}>
-                  Guide fields, custom responses, transcript artifacts, and pay context for this applicant.
+                  Resume, guide fields, custom responses, transcript artifacts, and pay context for this applicant.
                 </div>
               </div>
               <Btn
@@ -5919,6 +6048,19 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </Btn>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => selectedResumeArtifact ? openArtifact(selectedResumeArtifact) : resumeInputRef.current?.click()}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Resume</div>
+                  <Badge color={selectedResumeArtifact ? "success" : "default"}>{selectedResumeArtifact ? "Attached" : "Missing"}</Badge>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selectedResumeArtifact?.file_name || "Upload the candidate resume"}
+                </div>
+              </button>
               <button
                 type="button"
                 onClick={() => {
