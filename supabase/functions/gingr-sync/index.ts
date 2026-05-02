@@ -2558,10 +2558,144 @@ async function syncAllAnimalIcons(
 // Change detection: compares image_url to photo_synced_from — when Gingr
 // updates a photo the URL changes (contains unique upload UUID).
 
+type AnimalPhotoSyncOptions = {
+  subdomain?: string;
+  apiKey?: string;
+  refreshPhotoUrls?: boolean;
+};
+
+function normalizePhotoUrl(value: any): string | null {
+  const text = normalizeText(value);
+  return text || null;
+}
+
+async function refreshCheckedInAnimalPhotoUrls(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string,
+  animalIds: string[],
+): Promise<{ checked: number; changed: number; inserted: number; cleared: number; missing: number }> {
+  const targetIds = [...new Set(animalIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (targetIds.length === 0) {
+    return { checked: 0, changed: 0, inserted: 0, cleared: 0, missing: 0 };
+  }
+
+  const result = await gingrFetch(subdomain, "animals", apiKey);
+  const liveAnimals = Array.isArray(result?.data) ? result.data : [];
+  const targetSet = new Set(targetIds);
+  const liveById = new Map<string, any>();
+
+  for (const animal of liveAnimals) {
+    const animalId = String(animal?.id || "").trim();
+    if (targetSet.has(animalId)) {
+      liveById.set(animalId, animal);
+    }
+  }
+
+  const { data: currentRows, error: currentError } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, image_url, local_photo_url, photo_synced_from")
+    .eq("location_id", locationId)
+    .in("gingr_id", targetIds);
+
+  if (currentError) {
+    throw new Error(`Photo URL refresh read error: ${currentError.message}`);
+  }
+
+  const currentById = new Map<string, any>(
+    (currentRows || []).map((row: any) => [String(row.gingr_id), row]),
+  );
+  const now = new Date().toISOString();
+  let changed = 0;
+  let inserted = 0;
+  let cleared = 0;
+
+  for (const animalId of targetIds) {
+    const liveAnimal = liveById.get(animalId);
+    if (!liveAnimal) continue;
+
+    const nextImageUrl = normalizePhotoUrl(liveAnimal.image);
+    const current = currentById.get(animalId);
+
+    if (!current) {
+      const ownerId = normalizeText(liveAnimal.owner_id);
+      if (!ownerId) continue;
+
+      const { error } = await supabase
+        .from("gingr_animals")
+        .upsert({
+          gingr_id: animalId,
+          location_id: locationId,
+          owner_gingr_id: ownerId,
+          name: normalizeText(liveAnimal.first_name),
+          breed_id: normalizeText(liveAnimal.breed_id),
+          species_id: normalizeText(liveAnimal.species_id),
+          gender: normalizeText(liveAnimal.gender),
+          fixed: liveAnimal.fixed === "1",
+          birthday: liveAnimal.birthday ? parseInt(liveAnimal.birthday) : null,
+          weight: normalizeText(liveAnimal.weight),
+          image_url: nextImageUrl,
+          vip: liveAnimal.vip === "1",
+          banned: liveAnimal.banned === "1",
+          medicines: normalizeText(liveAnimal.medicines),
+          allergies: normalizeText(liveAnimal.allergies),
+          notes: normalizeText(liveAnimal.notes),
+          grooming_notes: normalizeText(liveAnimal.grooming_notes),
+          owner_first_name: normalizeText(liveAnimal.owner_first_name),
+          owner_last_name: normalizeText(liveAnimal.owner_last_name),
+          raw_data: liveAnimal,
+          synced_at: now,
+        }, { onConflict: "location_id,gingr_id" });
+
+      if (error) {
+        throw new Error(`Photo URL refresh insert error for animal ${animalId}: ${error.message}`);
+      }
+      inserted++;
+      if (nextImageUrl) changed++;
+      continue;
+    }
+
+    const currentImageUrl = normalizePhotoUrl(current.image_url);
+    if (currentImageUrl === nextImageUrl) continue;
+
+    const patch: Record<string, any> = {
+      image_url: nextImageUrl,
+      synced_at: now,
+    };
+
+    if (!nextImageUrl) {
+      patch.local_photo_url = null;
+      patch.photo_synced_from = null;
+      cleared++;
+    }
+
+    const { error } = await supabase
+      .from("gingr_animals")
+      .update(patch)
+      .eq("location_id", locationId)
+      .eq("gingr_id", animalId);
+
+    if (error) {
+      throw new Error(`Photo URL refresh update error for animal ${animalId}: ${error.message}`);
+    }
+    changed++;
+  }
+
+  return {
+    checked: targetIds.length,
+    changed,
+    inserted,
+    cleared,
+    missing: targetIds.length - liveById.size,
+  };
+}
+
 async function syncAnimalPhotos(
   supabase: any,
-  locationId: string
-): Promise<{ synced: number; skipped: number; errors: number }> {
+  locationId: string,
+  options: AnimalPhotoSyncOptions = {},
+): Promise<{ synced: number; skipped: number; errors: number; no_photo: number; photo_url_refresh: { checked: number; changed: number; inserted: number; cleared: number; missing: number; skipped?: boolean } }> {
   // 1. Get checked-in animal IDs
   const { data: checkedIn } = await supabase
     .from("gingr_reservations")
@@ -2579,7 +2713,31 @@ async function syncAnimalPhotos(
     ),
   ] as string[];
 
-  if (animalIds.length === 0) return { synced: 0, skipped: 0, errors: 0 };
+  let photoUrlRefresh = {
+    checked: animalIds.length,
+    changed: 0,
+    inserted: 0,
+    cleared: 0,
+    missing: 0,
+    skipped: true,
+  };
+
+  if (animalIds.length === 0) {
+    return { synced: 0, skipped: 0, errors: 0, no_photo: 0, photo_url_refresh: photoUrlRefresh };
+  }
+
+  if (options.refreshPhotoUrls !== false && options.subdomain && options.apiKey) {
+    photoUrlRefresh = {
+      ...(await refreshCheckedInAnimalPhotoUrls(
+        supabase,
+        options.subdomain,
+        options.apiKey,
+        locationId,
+        animalIds,
+      )),
+      skipped: false,
+    };
+  }
 
   // 2. Fetch ALL animals (with and without photos) for accurate logging
   const { data: allAnimals } = await supabase
@@ -2593,7 +2751,7 @@ async function syncAnimalPhotos(
 
   if (animals.length === 0) {
     console.log(`Photo sync: 0 to sync, ${noPhotoCount} have no photo in Gingr`);
-    return { synced: 0, skipped: 0, errors: 0 };
+    return { synced: 0, skipped: 0, errors: 0, no_photo: noPhotoCount, photo_url_refresh: photoUrlRefresh };
   }
 
   // Filter to only dogs that need syncing (new photo or changed photo)
@@ -2601,7 +2759,7 @@ async function syncAnimalPhotos(
     (a: any) => !a.local_photo_url || a.image_url !== a.photo_synced_from
   );
 
-  if (toSync.length === 0) return { synced: 0, skipped: animals.length, errors: 0 };
+  if (toSync.length === 0) return { synced: 0, skipped: animals.length, errors: 0, no_photo: noPhotoCount, photo_url_refresh: photoUrlRefresh };
 
   let synced = 0;
   let errors = 0;
@@ -2690,7 +2848,10 @@ async function syncAnimalPhotos(
   }
 
   console.log(`Photo sync: ${synced} downloaded, ${animals.length - toSync.length} already cached, ${errors} failed, ${noPhotoCount} no photo in Gingr`);
-  return { synced, skipped: animals.length - toSync.length, errors };
+  if (errors > 0) {
+    throw new Error(`Photo sync failed for ${errors} animal${errors === 1 ? "" : "s"} (${synced} downloaded, ${animals.length - toSync.length} already cached)`);
+  }
+  return { synced, skipped: animals.length - toSync.length, errors, no_photo: noPhotoCount, photo_url_refresh: photoUrlRefresh };
 }
 
 async function fetchOperationalAnimalIds(
@@ -3558,7 +3719,12 @@ Deno.serve(async (req: Request) => {
           case "animal_photos":
             results.animal_photos = await syncAnimalPhotos(
               supabase,
-              location_id
+              location_id,
+              {
+                subdomain,
+                apiKey: api_key,
+                refreshPhotoUrls: !(sync_type === "full" && toSync.includes("animals")),
+              },
             );
             break;
           case "backfill_room_occupancy": {

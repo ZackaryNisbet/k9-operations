@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   BOH_SNAPSHOT_STALE_MS,
+  PHOTO_SYNC_STALE_MS,
+  derivePhotoSyncHealth,
   getBohSnapshotAgeMs,
   isBohSnapshotStale,
   normalizeBohTransitionGroups,
+  selectCheckoutPhotoUrl,
 } from "../kol/pages/checkoutTvFreshness";
 
 describe("checkoutTvFreshness", () => {
@@ -71,5 +74,43 @@ describe("checkoutTvFreshness", () => {
     expect(normalized.arrivals).toEqual([arrival]);
     expect(normalized.departures).toEqual([departure]);
     expect(normalized.correction).toBe(null);
+  });
+
+  it("uses cached local photos only when they match the current Gingr photo URL", () => {
+    expect(selectCheckoutPhotoUrl({
+      image_url: "https://gingr.example/new.jpg",
+      local_photo_url: "https://supabase.example/old.jpg",
+      photo_synced_from: "https://gingr.example/old.jpg",
+    })).toBe("https://gingr.example/new.jpg");
+
+    expect(selectCheckoutPhotoUrl({
+      image_url: "https://gingr.example/current.jpg",
+      local_photo_url: "https://supabase.example/current.jpg",
+      photo_synced_from: "https://gingr.example/current.jpg",
+    })).toBe("https://supabase.example/current.jpg");
+  });
+
+  it("marks server photo sync unhealthy when the pull is stale or errored", () => {
+    const now = Date.UTC(2026, 4, 2, 13, 30, 0);
+    const freshSync = derivePhotoSyncHealth({
+      status: "idle",
+      last_sync_at: new Date(now - PHOTO_SYNC_STALE_MS + 1_000).toISOString(),
+      records_synced: 3,
+    }, now);
+    const staleSync = derivePhotoSyncHealth({
+      status: "idle",
+      last_sync_at: new Date(now - PHOTO_SYNC_STALE_MS - 1_000).toISOString(),
+      records_synced: 0,
+    }, now);
+    const erroredSync = derivePhotoSyncHealth({
+      status: "error",
+      last_sync_at: new Date(now - 5_000).toISOString(),
+      error_message: "Photo download failed for animal 123",
+    }, now);
+
+    expect(freshSync.status).toBe("healthy");
+    expect(staleSync.status).toBe("warning");
+    expect(erroredSync.status).toBe("critical");
+    expect(erroredSync.error).toContain("Photo download failed");
   });
 });
