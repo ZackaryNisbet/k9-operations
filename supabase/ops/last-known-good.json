@@ -2,11 +2,11 @@
   "projectRef": "YOUR_SUPABASE_PROJECT_REF",
   "functions": {
     "gingr-sync": {
-      "commit": "305bf1e1b50c4b91847db0bb163a37c558df160a",
+      "commit": "b9ec2b64379a8fe025b89ba7081695593d3e639d",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Checkout TV photo freshness",
-      "updatedAt": "2026-05-02T14:41:37.120Z"
+      "note": "Allow larger Checkout TV profile photo cache uploads",
+      "updatedAt": "2026-05-02T14:46:08.422Z"
     },
     "compute-scheduling-matrix": {
       "commit": "17e68aaf6f395e6dca4b822fc9d0cd2a44b2630f",
