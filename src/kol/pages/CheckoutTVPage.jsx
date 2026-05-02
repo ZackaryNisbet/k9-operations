@@ -23,6 +23,7 @@ import {
   getOperationalPlaygroup,
 } from "../../shared/playgroupAssignments";
 import { shouldShowDepartingTodayLabel } from "./checkoutTvDogLabels";
+import { derivePhotoSyncHealth, selectCheckoutPhotoUrl } from "./checkoutTvFreshness";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
 const STYLE_ID = "checkout-tv-styles";
@@ -245,7 +246,13 @@ const CHECKOUT_HEALTH_SPECS = {
     title: "Photos + Profile Icons",
     frequencyLabel: "Every 5 minutes",
     staleAfterMs: 11 * 60_000,
-    description: "Loads local profile photos and GINGR profile icons for TV cards and spotlight notices.",
+    description: "Loads cached profile photos and GINGR profile icons for TV cards and spotlight notices.",
+  },
+  photoSync: {
+    title: "Server Photo Pull",
+    frequencyLabel: "Every 15 minutes from GINGR sync",
+    staleAfterMs: 30 * 60_000,
+    description: "Tracks current GINGR animal photo URLs and Supabase Storage downloads.",
   },
 };
 
@@ -443,6 +450,8 @@ function createInitialCheckoutHealth() {
 
 function deriveSectionStatus(section, spec, nowMs) {
   if (section?.status === "running") return "running";
+  if (section?.status === "critical") return "critical";
+  if (section?.status === "warning") return "warning";
   if (section?.error) return "critical";
   if (!section?.lastSuccessAt) return "waiting";
   const lastSuccessMs = new Date(section.lastSuccessAt).getTime();
@@ -2058,16 +2067,22 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       try {
         const { data, error } = await supabase
           .from("gingr_animals")
-          .select("gingr_id, local_photo_url")
+          .select("gingr_id, image_url, local_photo_url, photo_synced_from")
           .eq("location_id", locationId)
-          .not("local_photo_url", "is", null);
+          .or("local_photo_url.not.is.null,image_url.not.is.null");
 
         if (cancelled) return;
         if (error) throw error;
 
         const map = {};
+        let staleLocalCount = 0;
         for (const a of (data || [])) {
-          map[a.gingr_id] = a.local_photo_url;
+          const selectedUrl = selectCheckoutPhotoUrl(a);
+          if (!selectedUrl) continue;
+          if (a.local_photo_url && a.image_url && a.photo_synced_from !== a.image_url) {
+            staleLocalCount += 1;
+          }
+          map[a.gingr_id] = selectedUrl;
         }
         setDogPhotoMap(map);
         updateHealthSection("photos", {
@@ -2076,7 +2091,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           durationMs: Date.now() - startedMs,
           nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
           error: null,
-          details: { "Local Photos": Object.keys(map).length },
+          details: { "Usable Photos": Object.keys(map).length, "Stale Local Cache Bypassed": staleLocalCount },
         });
       } catch (e) {
         updateHealthSection("photos", {
@@ -2090,6 +2105,54 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
     fetchPhotos();
     const interval = setInterval(fetchPhotos, ASSET_REFRESH_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId, updateHealthSection]);
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const fetchPhotoSyncHealth = async () => {
+      const startedMs = Date.now();
+      updateHealthSection("photoSync", {
+        status: "running",
+        lastStartedAt: new Date(startedMs).toISOString(),
+        nextRunAt: new Date(startedMs + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+        error: null,
+      });
+      try {
+        const { data, error } = await supabase
+          .from("gingr_sync_state")
+          .select("status,last_sync_at,error_message,records_synced,sync_duration_ms")
+          .eq("location_id", locationId)
+          .eq("entity_type", "animal_photos")
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) throw error;
+
+        const health = derivePhotoSyncHealth(data, Date.now());
+        updateHealthSection("photoSync", {
+          status: health.status,
+          lastSuccessAt: health.lastSuccessAt,
+          lastErrorAt: health.status === "critical" ? new Date().toISOString() : null,
+          durationMs: data?.sync_duration_ms || Date.now() - startedMs,
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: health.error,
+          details: health.details,
+        });
+      } catch (e) {
+        updateHealthSection("photoSync", {
+          status: "critical",
+          lastErrorAt: new Date().toISOString(),
+          nextRunAt: new Date(Date.now() + ASSET_REFRESH_INTERVAL_MS).toISOString(),
+          error: e?.message || "Server photo sync health load failed",
+        });
+      }
+    };
+
+    fetchPhotoSyncHealth();
+    const interval = setInterval(fetchPhotoSyncHealth, ASSET_REFRESH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId, updateHealthSection]);
 
