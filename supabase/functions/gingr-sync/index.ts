@@ -33,6 +33,7 @@ const PRESENCE_SYNC_FRESH_MS = 5_000;
 const PRESENCE_SYNC_SETTING_KEY = "presence_sync_config_v1";
 const PRESENCE_WORKER_MAX_RUN_MS = 55_000;
 const PRESENCE_ALLOWED_INTERVAL_SECONDS = [3, 5, 10, 15, 30];
+const MAX_PROFILE_PHOTO_BYTES = 12 * 1024 * 1024;
 
 const PRESENCE_SYNC_DEFAULT_CONFIG = {
   enabled: true,
@@ -2791,8 +2792,8 @@ async function syncAnimalPhotos(
           }
 
           const imageBlob = await imageResp.blob();
-          if (imageBlob.size > 5 * 1024 * 1024) {
-            console.warn(`Photo too large for animal ${animal.gingr_id}: ${(imageBlob.size / 1024 / 1024).toFixed(1)}MB (max 5MB), skipping`);
+          if (imageBlob.size > MAX_PROFILE_PHOTO_BYTES) {
+            console.warn(`Photo too large for animal ${animal.gingr_id}: ${(imageBlob.size / 1024 / 1024).toFixed(1)}MB (max ${(MAX_PROFILE_PHOTO_BYTES / 1024 / 1024).toFixed(0)}MB), skipping`);
             errors++;
             return;
           }
