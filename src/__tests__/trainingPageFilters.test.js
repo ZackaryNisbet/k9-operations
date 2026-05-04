@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLaborRosterFilters,
+  buildLaborModulePanelKey,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
@@ -98,5 +99,10 @@ describe("applyLaborRosterFilters", () => {
     expect(noteMatchesSearch(note, "larrissa")).toBe(true);
     expect(noteMatchesSearch(note, "disciplinary")).toBe(false);
     expect(noteMatchesSearch(note, "")).toBe(true);
+  });
+
+  it("keeps interview detail state out of the labor panel remount key", () => {
+    expect(buildLaborModulePanelKey({ tab: "interviews", interviewView: "records", attendanceView: "summary" })).toBe("interviews:records:");
+    expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary");
   });
 });
