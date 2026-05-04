@@ -343,7 +343,7 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
 
 
 // ─── Full-Screen Photo Viewer ───────────────────────────────────────────────
-function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, onUpdate, onDetectBreeds }) {
+function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, canEditPairings = true, onUpdate, onDetectBreeds }) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [enterRect, setEnterRect] = useState(null);
   const [animState, setAnimState] = useState("entering"); // entering | open | exiting
@@ -448,6 +448,7 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
 
   // One-tap pair
   const handleQuickPair = useCallback(async (dogId, dogName) => {
+    if (!canEditPairings) return;
     setPairCheckId(dogId);
     const updateData = {
       paired_dog_id: dogId,
@@ -465,10 +466,11 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
       onUpdate({ ...photo, ...updateData });
     }
     setTimeout(() => setPairCheckId(null), 1200);
-  }, [photo, profile, onUpdate]);
+  }, [canEditPairings, photo, profile, onUpdate]);
 
   // Unpair
   const handleUnpair = useCallback(async () => {
+    if (!canEditPairings) return;
     const updateData = {
       paired_dog_id: null, paired_dog_name: null,
       paired_dog_ids: [], paired_dog_names: [],
@@ -481,7 +483,7 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
     if (!error) {
       onUpdate({ ...photo, ...updateData });
     }
-  }, [photo, onUpdate]);
+  }, [canEditPairings, photo, onUpdate]);
 
   // Determine viewer opacity for animation
   const isVisible = animState === "open";
@@ -626,28 +628,30 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
                   </span>
                 )}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={handleUnpair}
-                  style={{
-                    background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
-                    padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
-                    fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
-                  }}
-                >
-                  Unpair
-                </button>
-                <button
-                  onClick={() => setShowBrowse(true)}
-                  style={{
-                    background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
-                    padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
-                    fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
-                  }}
-                >
-                  Change
-                </button>
-              </div>
+              {canEditPairings && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={handleUnpair}
+                    style={{
+                      background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
+                      padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
+                      fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                    }}
+                  >
+                    Unpair
+                  </button>
+                  <button
+                    onClick={() => setShowBrowse(true)}
+                    style={{
+                      background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
+                      padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
+                      fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                    }}
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -670,7 +674,7 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
                   </div>
 
                   {/* Suggested matches */}
-                  {loadingSuggestions ? (
+                  {!canEditPairings ? null : loadingSuggestions ? (
                     <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, padding: "8px 0" }}>
                       Finding matches...
                     </div>
@@ -738,19 +742,21 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
                     </div>
                   ) : null}
 
-                  <button
-                    onClick={() => setShowBrowse(true)}
-                    style={{
-                      width: "100%", marginTop: 12,
-                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: 12, padding: "12px 16px",
-                      color: "#fff", fontSize: 14, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
-                      transition: "background 0.2s",
-                    }}
-                  >
-                    Browse All Dogs In House
-                  </button>
+                  {canEditPairings && (
+                    <button
+                      onClick={() => setShowBrowse(true)}
+                      style={{
+                        width: "100%", marginTop: 12,
+                        background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                        borderRadius: 12, padding: "12px 16px",
+                        color: "#fff", fontSize: 14, fontWeight: 600,
+                        cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                        transition: "background 0.2s",
+                      }}
+                    >
+                      Browse All Dogs In House
+                    </button>
+                  )}
                 </div>
               ) : photo.breed_detection_status === "processing" || photo.breed_detection_status === "pending" ? (
                 <div>
@@ -763,36 +769,40 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
                   <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, fontFamily: "'Outfit', sans-serif" }}>
                     Analyzing photo...
                   </div>
-                  <button
-                    onClick={() => setShowBrowse(true)}
-                    style={{
-                      width: "100%", marginTop: 12,
-                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: 12, padding: "12px 16px",
-                      color: "#fff", fontSize: 14, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
-                    }}
-                  >
-                    Browse Dogs In House
-                  </button>
+                  {canEditPairings && (
+                    <button
+                      onClick={() => setShowBrowse(true)}
+                      style={{
+                        width: "100%", marginTop: 12,
+                        background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                        borderRadius: 12, padding: "12px 16px",
+                        color: "#fff", fontSize: 14, fontWeight: 600,
+                        cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                      }}
+                    >
+                      Browse Dogs In House
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div>
                   <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 12, fontFamily: "'Outfit', sans-serif" }}>
                     No breed detected
                   </div>
-                  <button
-                    onClick={() => setShowBrowse(true)}
-                    style={{
-                      width: "100%",
-                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: 12, padding: "12px 16px",
-                      color: "#fff", fontSize: 14, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
-                    }}
-                  >
-                    Browse Dogs In House
-                  </button>
+                  {canEditPairings && (
+                    <button
+                      onClick={() => setShowBrowse(true)}
+                      style={{
+                        width: "100%",
+                        background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                        borderRadius: 12, padding: "12px 16px",
+                        color: "#fff", fontSize: 14, fontWeight: 600,
+                        cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                      }}
+                    >
+                      Browse Dogs In House
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -801,7 +811,7 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
       )}
 
       {/* Browse All Dogs panel (slide-up full screen) */}
-      {showBrowse && (
+      {showBrowse && canEditPairings && (
         <BrowseDogsPanel
           photo={photo}
           locationId={locationId}
@@ -1208,6 +1218,8 @@ function BulkPairModal({ selectedIds, onClose, locationId, profile, onBulkUpdate
 
 function PhotosPage({ data, nav, profile }) {
   const locationId = profile?.location_id;
+  const canUploadPhotos = hasLeanPermission(profile, "Photos Upload");
+  const canEditPairings = hasLeanPermission(profile, "Photos Edit Pairings");
 
   // ─── State ──────────────────────────────────────────────────────────────────
   const [photos, setPhotos] = useState([]);
@@ -1275,6 +1287,7 @@ function PhotosPage({ data, nav, profile }) {
 
   // ─── Upload handler (with HEIC conversion + thumbnail generation) ─────────
   const handleUpload = useCallback(async (files) => {
+    if (!canUploadPhotos) return;
     if (!locationId || !files || files.length === 0) return;
     setUploading(true);
     setUploadProgress({ done: 0, total: files.length });
@@ -1375,7 +1388,7 @@ function PhotosPage({ data, nav, profile }) {
     setUploading(false);
     setUploadProgress({ done: 0, total: 0 });
     fetchPhotos();
-  }, [locationId, profile, fetchPhotos]);
+  }, [canUploadPhotos, locationId, profile, fetchPhotos]);
 
   // ─── Drag and drop handlers ────────────────────────────────────────────────
   const handleDragOver = useCallback((e) => {
@@ -1397,23 +1410,24 @@ function PhotosPage({ data, nav, profile }) {
     const droppedFiles = Array.from(e.dataTransfer.files).filter(f =>
       ACCEPTED_TYPES.includes(f.type) || isHeicFile(f)
     );
-    if (droppedFiles.length > 0) handleUpload(droppedFiles);
-  }, [handleUpload]);
+    if (canUploadPhotos && droppedFiles.length > 0) handleUpload(droppedFiles);
+  }, [canUploadPhotos, handleUpload]);
 
   const handleFileSelect = useCallback((e) => {
     const files = Array.from(e.target.files || []);
-    if (files.length > 0) handleUpload(files);
+    if (canUploadPhotos && files.length > 0) handleUpload(files);
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }, [handleUpload]);
+  }, [canUploadPhotos, handleUpload]);
 
   // ─── Selection handlers ────────────────────────────────────────────────────
   const toggleSelect = useCallback((id) => {
+    if (!canEditPairings) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  }, []);
+  }, [canEditPairings]);
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -1454,9 +1468,11 @@ function PhotosPage({ data, nav, profile }) {
             onChange={handleFileSelect}
             style={{ display: "none" }}
           />
-          <Btn onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-            <I.Camera /> Upload Photos
-          </Btn>
+          {canUploadPhotos && (
+            <Btn onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+              <I.Camera /> Upload Photos
+            </Btn>
+          )}
         </div>
       </div>
 
@@ -1465,14 +1481,14 @@ function PhotosPage({ data, nav, profile }) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => !uploading && fileInputRef.current?.click()}
+        onClick={() => canUploadPhotos && !uploading && fileInputRef.current?.click()}
         style={{
           padding: uploading ? "20px" : "36px 20px",
           borderRadius: 16,
           border: `2px dashed ${dragOver ? C.pri : C.border}`,
           background: dragOver ? C.priLt : C.bg,
           textAlign: "center",
-          cursor: uploading ? "default" : "pointer",
+          cursor: uploading || !canUploadPhotos ? "default" : "pointer",
           transition: "all 0.25s cubic-bezier(0.4,0,0.2,1)",
           marginBottom: 20,
         }}
@@ -1496,10 +1512,10 @@ function PhotosPage({ data, nav, profile }) {
           <>
             <div style={{ color: dragOver ? C.pri : C.textMut, marginBottom: 8 }}><Icons.Camera /></div>
             <div style={{ fontSize: 14, fontWeight: 600, color: dragOver ? C.pri : C.text }}>
-              {dragOver ? "Drop photos here" : "Drag & drop photos here"}
+              {canUploadPhotos ? (dragOver ? "Drop photos here" : "Drag & drop photos here") : "Photo uploads are restricted"}
             </div>
             <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
-              or click to browse · JPG, PNG, WebP, HEIC · Max 25MB per file
+              {canUploadPhotos ? "or click to browse · JPG, PNG, WebP, HEIC · Max 25MB per file" : "You can view photos, but cannot upload new files."}
             </div>
           </>
         )}
@@ -1538,7 +1554,7 @@ function PhotosPage({ data, nav, profile }) {
         </div>
 
         {/* Bulk actions */}
-        {selectedIds.size > 0 && (
+        {canEditPairings && selectedIds.size > 0 && (
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
               {selectedIds.size} selected
@@ -1617,20 +1633,22 @@ function PhotosPage({ data, nav, profile }) {
                 }}
               >
                 {/* Selection checkbox */}
-                <div
-                  onClick={(e) => { e.stopPropagation(); toggleSelect(photo.id); }}
-                  style={{
-                    position: "absolute", top: 8, left: 8, zIndex: 2,
-                    width: 22, height: 22, borderRadius: 6,
-                    border: `2px solid ${isSelected ? C.pri : "rgba(255,255,255,0.8)"}`,
-                    background: isSelected ? C.pri : "rgba(255,255,255,0.5)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    cursor: "pointer", backdropFilter: "blur(4px)",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-                  }}
-                >
-                  {isSelected && <I.Check />}
-                </div>
+                {canEditPairings && (
+                  <div
+                    onClick={(e) => { e.stopPropagation(); toggleSelect(photo.id); }}
+                    style={{
+                      position: "absolute", top: 8, left: 8, zIndex: 2,
+                      width: 22, height: 22, borderRadius: 6,
+                      border: `2px solid ${isSelected ? C.pri : "rgba(255,255,255,0.8)"}`,
+                      background: isSelected ? C.pri : "rgba(255,255,255,0.5)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", backdropFilter: "blur(4px)",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                    }}
+                  >
+                    {isSelected && <I.Check />}
+                  </div>
+                )}
 
                 {/* Status indicator dot */}
                 {statusDot && (
@@ -1710,13 +1728,14 @@ function PhotosPage({ data, nav, profile }) {
           onClose={() => setViewerIndex(null)}
           locationId={locationId}
           profile={profile}
+          canEditPairings={canEditPairings}
           onUpdate={handlePhotoUpdate}
           onDetectBreeds={detectBreeds}
         />
       )}
 
       {/* Bulk pair modal */}
-      {showBulkPair && selectedIds.size > 0 && (
+      {showBulkPair && canEditPairings && selectedIds.size > 0 && (
         <BulkPairModal
           selectedIds={[...selectedIds]}
           onClose={() => setShowBulkPair(false)}
