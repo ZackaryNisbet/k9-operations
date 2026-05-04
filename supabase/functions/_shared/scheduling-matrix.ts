@@ -75,6 +75,34 @@ type GingrWidgetSourceCounts = {
 };
 
 const ANIMAL_HISTORY_BATCH_SIZE = 200;
+const PROJECTION_MODEL_VERSION = "booking_curve_v2_dow_yoy_capacity";
+const PROJECTION_CALIBRATION_LOOKBACK_DAYS = 28;
+const PROJECTION_CALIBRATION_MIN_SAMPLES = 3;
+const PROJECTION_YOY_ADJUSTMENT_MIN = 0.75;
+const PROJECTION_YOY_ADJUSTMENT_MAX = 1.25;
+const PROJECTION_WEEKLY_YOY_ADJUSTMENT_MIN = 0.8;
+const PROJECTION_WEEKLY_YOY_ADJUSTMENT_MAX = 1.2;
+const PROJECTION_WEEKLY_LOOKBACK_WEEKS = 6;
+const PROJECTION_WEEKLY_ADJUSTMENT_MIN = 0.25;
+const PROJECTION_WEEKLY_ADJUSTMENT_MAX = 1.15;
+const DEFAULT_BOARDING_MULTI_DOG_FACTOR = 1.25;
+const OPENING_BOARDING_DISPLAY_KEYS = [
+  "large_boarding",
+  "small_boarding",
+  "private_play_boarding",
+  "half_and_half_boarding",
+  "evaluation_boarding",
+  "unclassified_boarding",
+];
+const CLOSING_BOARDING_DISPLAY_KEYS = [...OPENING_BOARDING_DISPLAY_KEYS];
+const DAYCARE_DISPLAY_KEYS = [
+  "evaluations",
+  "private_play_dayboarding",
+  "half_and_half_daytime",
+  "large_daycare",
+  "small_daycare",
+  "unclassified_daycare",
+];
 
 function getDateKey(value?: string | null): string {
   return String(value || "").slice(0, 10);
@@ -123,6 +151,12 @@ function getWeekday(dateStr: string): number {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function capacityLimit(value: unknown): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.max(0, Math.round(numeric));
 }
 
 function toWidgetCount(value: unknown): number | null {
@@ -300,7 +334,8 @@ type ProjectionFallbackMode =
   | "exact_prior_year"
   | "same_weekday_prior_year"
   | "exact_prior_years_2_to_4"
-  | "same_weekday_prior_years_2_to_4";
+  | "same_weekday_prior_years_2_to_4"
+  | "weighted_comparable_blend";
 
 type ProjectionCandidate = {
   sampleDate: string;
@@ -386,6 +421,326 @@ function buildDateOverlapOrFilter(dateKeys: string[]) {
   return uniqueDates
     .map((dateKey) => `and(start_date.lt.${addDaysStr(dateKey, 1)}T00:00:00,end_date.gte.${dateKey}T00:00:00)`)
     .join(",");
+}
+
+function buildProjectionCalibrationDates(currentDate: string): string[] {
+  const dates: string[] = [];
+  for (let offset = PROJECTION_CALIBRATION_LOOKBACK_DAYS; offset >= 1; offset -= 1) {
+    dates.push(addDaysStr(currentDate, -offset));
+  }
+  return dates;
+}
+
+function buildDateRangeOverlapQuery(
+  query: any,
+  dateFrom: string | null,
+  dateTo: string | null,
+) {
+  if (!dateFrom || !dateTo) return query;
+  return query
+    .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
+    .gte("end_date", `${dateFrom}T00:00:00`);
+}
+
+function normalizePositiveNumber(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function normalizeProjectionCapacityConfig(rawConfig: any, totalRooms: number) {
+  const multiDogFactor = normalizePositiveNumber(
+    rawConfig?.boarding_multi_dog_factor
+    ?? rawConfig?.boardingMultiDogFactor
+    ?? rawConfig?.multi_dog_factor,
+  ) ?? DEFAULT_BOARDING_MULTI_DOG_FACTOR;
+
+  const practicalBoardingDogCapacity = normalizePositiveNumber(
+    rawConfig?.boarding_practical_dog_capacity
+    ?? rawConfig?.boardingPracticalDogCapacity
+    ?? rawConfig?.typical_boarding_capacity,
+  ) ?? (totalRooms > 0 ? Number((totalRooms * multiDogFactor).toFixed(1)) : null);
+
+  return {
+    multiDogFactor,
+    practicalBoardingDogCapacity,
+    theoreticalBoardingDogCapacity: normalizePositiveNumber(
+      rawConfig?.boarding_theoretical_dog_capacity
+      ?? rawConfig?.boardingTheoreticalDogCapacity
+      ?? rawConfig?.max_boarding_capacity,
+    ),
+    largeDaycareCapacity: normalizePositiveNumber(
+      rawConfig?.large_daycare_capacity
+      ?? rawConfig?.largeDaycareCapacity
+      ?? rawConfig?.large_play_capacity,
+    ),
+    smallDaycareCapacity: normalizePositiveNumber(
+      rawConfig?.small_daycare_capacity
+      ?? rawConfig?.smallDaycareCapacity
+      ?? rawConfig?.small_play_capacity,
+    ),
+    groupPlayCapacity: normalizePositiveNumber(
+      rawConfig?.group_play_capacity
+      ?? rawConfig?.groupPlayCapacity,
+    ),
+  };
+}
+
+function buildProjectionCapacityEnvelope({
+  display,
+  totalRooms,
+  capacityConfig,
+}: {
+  display: any;
+  totalRooms: number;
+  capacityConfig?: ReturnType<typeof normalizeProjectionCapacityConfig> | null;
+}) {
+  const config = capacityConfig || normalizeProjectionCapacityConfig({}, totalRooms);
+  const boardingDemand = Math.max(
+    Number(display?.opening?.total_boarding || 0),
+    Number(display?.closing?.total_boarding || 0),
+  );
+  const largePlayDemand = Number(display?.play_yard?.large_play_dogs || 0);
+  const smallPlayDemand = Number(display?.play_yard?.small_play_dogs || 0);
+  const groupPlayDemand = largePlayDemand + smallPlayDemand;
+  const groupPlayCapacity = config.groupPlayCapacity
+    ?? (
+      config.largeDaycareCapacity !== null && config.smallDaycareCapacity !== null
+        ? config.largeDaycareCapacity + config.smallDaycareCapacity
+        : null
+    );
+
+  const constraints = [
+    {
+      key: "boarding_practical",
+      label: "Practical boarding dog capacity",
+      demand: boardingDemand,
+      capacity: config.practicalBoardingDogCapacity,
+    },
+    {
+      key: "large_play",
+      label: "Large play group capacity",
+      demand: largePlayDemand,
+      capacity: config.largeDaycareCapacity,
+    },
+    {
+      key: "small_play",
+      label: "Small play group capacity",
+      demand: smallPlayDemand,
+      capacity: config.smallDaycareCapacity,
+    },
+    {
+      key: "group_play_total",
+      label: "Total group play capacity",
+      demand: groupPlayDemand,
+      capacity: groupPlayCapacity,
+    },
+  ].map((constraint) => {
+    const capacity = constraint.capacity;
+    const overflow = capacity === null || capacity === undefined ? null : Number((constraint.demand - capacity).toFixed(2));
+    return {
+      ...constraint,
+      capacity,
+      constrained_forecast: capacity === null || capacity === undefined ? constraint.demand : Math.min(constraint.demand, capacity),
+      overflow: overflow !== null ? Math.max(0, overflow) : null,
+      status: overflow !== null && overflow > 0 ? "over_capacity" : "within_capacity",
+    };
+  });
+
+  return {
+    model: "practical_room_factor_plus_play_yard_caps",
+    overnight_rooms: {
+      total_rooms: totalRooms || 0,
+      multi_dog_factor: config.multiDogFactor,
+      practical_dog_capacity: config.practicalBoardingDogCapacity,
+      theoretical_dog_capacity: config.theoreticalBoardingDogCapacity,
+      capacity_source: config.practicalBoardingDogCapacity !== null ? "schedule_config_or_total_rooms_x_factor" : "missing",
+    },
+    play_yards: {
+      large_capacity: config.largeDaycareCapacity,
+      small_capacity: config.smallDaycareCapacity,
+      group_play_capacity: groupPlayCapacity,
+    },
+    unconstrained_forecast: {
+      boarding_dogs: boardingDemand,
+      large_play_dogs: largePlayDemand,
+      small_play_dogs: smallPlayDemand,
+      group_play_dogs: groupPlayDemand,
+    },
+    capacity_constrained_forecast: Object.fromEntries(
+      constraints.map((constraint) => [constraint.key, constraint.constrained_forecast]),
+    ),
+    constraints,
+    has_capacity_risk: constraints.some((constraint) => constraint.status === "over_capacity"),
+  };
+}
+
+function scaleDisplaySectionToCapacity(section: Record<string, number>, keys: string[], capacity: number | null) {
+  if (capacity === null) return { constrained: false, before: sumDisplaySection(section, keys), after: sumDisplaySection(section, keys) };
+  const before = sumDisplaySection(section, keys);
+  if (before <= capacity) return { constrained: false, before, after: before };
+  if (before <= 0) return { constrained: false, before, after: before };
+
+  const scaled = keys.map((key) => {
+    const value = Number(section[key] || 0);
+    const exact = (value / before) * capacity;
+    return {
+      key,
+      floor: Math.floor(exact),
+      remainder: exact - Math.floor(exact),
+    };
+  });
+  let remaining = capacity - scaled.reduce((sum, item) => sum + item.floor, 0);
+  const remainderOrder = [...scaled].sort((a, b) => b.remainder - a.remainder);
+  const bumpKeys = new Set<string>();
+  for (const item of remainderOrder) {
+    if (remaining <= 0) break;
+    if (Number(section[item.key] || 0) <= 0) continue;
+    bumpKeys.add(item.key);
+    remaining -= 1;
+  }
+  for (const item of scaled) {
+    section[item.key] = item.floor + (bumpKeys.has(item.key) ? 1 : 0);
+  }
+  return { constrained: true, before, after: capacity };
+}
+
+function reduceDaycarePlayDemand(display: any, daycareKey: "large_daycare" | "small_daycare", capacity: number | null) {
+  if (capacity === null) return false;
+  const boardingKey = daycareKey === "large_daycare" ? "large_boarding" : "small_boarding";
+  const boardingDemand = Math.max(
+    Number(display.opening?.[boardingKey] || 0),
+    Number(display.closing?.[boardingKey] || 0),
+  );
+  const daycareDemand = Number(display.daycare?.[daycareKey] || 0);
+  const availableDaycare = Math.max(0, capacity - boardingDemand);
+  if (daycareDemand <= availableDaycare) return false;
+  display.daycare[daycareKey] = availableDaycare;
+  return true;
+}
+
+function reduceGroupPlayDaycareDemand(display: any, groupCapacity: number | null) {
+  if (groupCapacity === null) return false;
+  const largeBoarding = Math.max(Number(display.opening?.large_boarding || 0), Number(display.closing?.large_boarding || 0));
+  const smallBoarding = Math.max(Number(display.opening?.small_boarding || 0), Number(display.closing?.small_boarding || 0));
+  const largeDaycare = Number(display.daycare?.large_daycare || 0);
+  const smallDaycare = Number(display.daycare?.small_daycare || 0);
+  const groupDemand = largeBoarding + smallBoarding + largeDaycare + smallDaycare;
+  if (groupDemand <= groupCapacity) return false;
+
+  const boardingDemand = largeBoarding + smallBoarding;
+  const daycareCapacity = Math.max(0, groupCapacity - boardingDemand);
+  return scaleDisplaySectionToCapacity(display.daycare, ["large_daycare", "small_daycare"], daycareCapacity).constrained;
+}
+
+function recomputeCapacityConstrainedDisplay(display: any) {
+  display.opening.total_boarding = sumDisplaySection(display.opening, OPENING_BOARDING_DISPLAY_KEYS);
+  display.closing.total_boarding = sumDisplaySection(display.closing, CLOSING_BOARDING_DISPLAY_KEYS);
+  display.daycare.total_daycare = sumDisplaySection(display.daycare, DAYCARE_DISPLAY_KEYS);
+  display.support.morning_feeding_dogs = display.opening.total_boarding;
+  display.support.evening_feeding_dogs = display.closing.total_boarding;
+  display.support.total_dog_volume = display.closing.total_boarding + display.daycare.total_daycare;
+  display.play_yard.large_play_dogs = Math.max(display.opening.large_boarding || 0, display.closing.large_boarding || 0) + Number(display.daycare.large_daycare || 0);
+  display.play_yard.small_play_dogs = Math.max(display.opening.small_boarding || 0, display.closing.small_boarding || 0) + Number(display.daycare.small_daycare || 0);
+  display.play_yard.private_play_dogs = Math.max(display.opening.private_play_boarding || 0, display.closing.private_play_boarding || 0) + Number(display.daycare.private_play_dayboarding || 0);
+  display.play_yard.split_play_dogs = Math.max(display.opening.half_and_half_boarding || 0, display.closing.half_and_half_boarding || 0) + Number(display.daycare.half_and_half_daytime || 0);
+}
+
+function summarizeCapacityDisplay(display: any) {
+  const largePlayDogs = Number(display?.play_yard?.large_play_dogs || 0);
+  const smallPlayDogs = Number(display?.play_yard?.small_play_dogs || 0);
+  return {
+    boarding_dogs: Math.max(
+      Number(display?.opening?.total_boarding || 0),
+      Number(display?.closing?.total_boarding || 0),
+    ),
+    large_play_dogs: largePlayDogs,
+    small_play_dogs: smallPlayDogs,
+    group_play_dogs: largePlayDogs + smallPlayDogs,
+    total_dog_volume: Number(display?.support?.total_dog_volume || 0),
+  };
+}
+
+function buildCapacityConstrainedDisplay(demandDisplay: any, capacityEnvelope: any) {
+  const display = cloneDisplay(demandDisplay);
+  const practicalBoardingCapacity = capacityLimit(capacityEnvelope?.overnight_rooms?.practical_dog_capacity);
+  const largePlayCapacity = capacityLimit(capacityEnvelope?.play_yards?.large_capacity);
+  const smallPlayCapacity = capacityLimit(capacityEnvelope?.play_yards?.small_capacity);
+  const groupPlayCapacity = capacityLimit(capacityEnvelope?.play_yards?.group_play_capacity);
+  let changed = false;
+
+  if (largePlayCapacity !== null) {
+    const nextOpeningLarge = Math.min(Number(display.opening.large_boarding || 0), largePlayCapacity);
+    const nextClosingLarge = Math.min(Number(display.closing.large_boarding || 0), largePlayCapacity);
+    changed = changed || nextOpeningLarge !== Number(display.opening.large_boarding || 0) || nextClosingLarge !== Number(display.closing.large_boarding || 0);
+    display.opening.large_boarding = nextOpeningLarge;
+    display.closing.large_boarding = nextClosingLarge;
+  }
+  if (smallPlayCapacity !== null) {
+    const nextOpeningSmall = Math.min(Number(display.opening.small_boarding || 0), smallPlayCapacity);
+    const nextClosingSmall = Math.min(Number(display.closing.small_boarding || 0), smallPlayCapacity);
+    changed = changed || nextOpeningSmall !== Number(display.opening.small_boarding || 0) || nextClosingSmall !== Number(display.closing.small_boarding || 0);
+    display.opening.small_boarding = nextOpeningSmall;
+    display.closing.small_boarding = nextClosingSmall;
+  }
+
+  changed = scaleDisplaySectionToCapacity(display.opening, OPENING_BOARDING_DISPLAY_KEYS, practicalBoardingCapacity).constrained || changed;
+  changed = scaleDisplaySectionToCapacity(display.closing, CLOSING_BOARDING_DISPLAY_KEYS, practicalBoardingCapacity).constrained || changed;
+  if (changed) {
+    recomputeCapacityConstrainedDisplay(display);
+  }
+
+  changed = reduceDaycarePlayDemand(display, "large_daycare", largePlayCapacity) || changed;
+  changed = reduceDaycarePlayDemand(display, "small_daycare", smallPlayCapacity) || changed;
+  changed = reduceGroupPlayDaycareDemand(display, groupPlayCapacity) || changed;
+  if (changed) {
+    recomputeCapacityConstrainedDisplay(display);
+  }
+
+  return display;
+}
+
+function explainCapacityConstrainedMetrics({
+  explanations,
+  demandDisplay,
+  achievableDisplay,
+  capacity,
+}: {
+  explanations: Record<string, any>;
+  demandDisplay: any;
+  achievableDisplay: any;
+  capacity: any;
+}) {
+  const demandFlat = flattenDisplay(demandDisplay);
+  const achievableFlat = flattenDisplay(achievableDisplay);
+  const overCapacity = (capacity?.constraints || [])
+    .filter((constraint: any) => constraint?.status === "over_capacity")
+    .map((constraint: any) => ({
+      key: constraint.key,
+      label: constraint.label,
+      demand: constraint.demand,
+      capacity: constraint.capacity,
+      overflow: constraint.overflow,
+    }));
+
+  for (const [metricKey, demandValueRaw] of Object.entries(demandFlat)) {
+    const demandValue = Number(demandValueRaw || 0);
+    const achievableValue = Number(achievableFlat[metricKey] || 0);
+    if (!Number.isFinite(demandValue) || !Number.isFinite(achievableValue) || achievableValue >= demandValue) continue;
+    const explanationKey = metricKey.replaceAll(".", "_");
+    const existing = explanations[explanationKey] || {};
+    explanations[explanationKey] = {
+      ...existing,
+      projected_value: achievableValue,
+      unconstrained_projected_value: demandValue,
+      capacity_constrained_value: achievableValue,
+      capacity_constraint: {
+        constrained: true,
+        demand_value: demandValue,
+        achievable_value: achievableValue,
+        constrained_by: overCapacity,
+      },
+    };
+  }
 }
 
 export function classifySchedulingReservationType(
@@ -1352,10 +1707,32 @@ export function computeDemandSnapshotForDate({
   };
 }
 
-function projectionWeight(candidate: ProjectionCandidate) {
+function projectionWeight(candidate: ProjectionCandidate, targetDate: string) {
   const recencyWeight = 1 / candidate.yearOffset;
   const distanceWeight = candidate.dateDistance === 0 ? 1 : 1 / (candidate.dateDistance + 1);
-  return recencyWeight * distanceWeight;
+  const sameWeekdayWeight = getWeekday(candidate.sampleDate) === getWeekday(targetDate) ? 1.4 : 0.35;
+  const modeWeight = candidate.fallbackMode === "same_weekday_prior_year"
+    ? 1.25
+    : candidate.fallbackMode === "same_weekday_prior_years_2_to_4"
+      ? 0.85
+      : candidate.fallbackMode === "exact_prior_years_2_to_4"
+        ? 0.55
+        : 0.9;
+  return recencyWeight * distanceWeight * sameWeekdayWeight * modeWeight;
+}
+
+function summarizeProjectionSampleModes(samples: any[]) {
+  return samples.reduce((acc: Record<string, number>, sample) => {
+    const key = sample.fallbackMode || "unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function projectionModeForSamples(samples: any[]): ProjectionFallbackMode | null {
+  if (!samples.length) return null;
+  const modes = new Set(samples.map((sample) => sample.fallbackMode));
+  return modes.size === 1 ? samples[0].fallbackMode : "weighted_comparable_blend";
 }
 
 export function buildProjectionForDate({
@@ -1363,15 +1740,23 @@ export function buildProjectionForDate({
   currentDate,
   currentSnapshot,
   historicalReservations,
+  calibrationReservations = [],
+  calibrationHistoricalReservations = [],
+  weeklyPaceCalibration = null,
   roomByDate,
   totalRooms,
+  capacityConfig,
 }: {
   targetDate: string;
   currentDate: string;
   currentSnapshot: ReturnType<typeof computeDemandSnapshotForDate>;
   historicalReservations: any[];
+  calibrationReservations?: any[];
+  calibrationHistoricalReservations?: any[];
+  weeklyPaceCalibration?: any;
   roomByDate: Record<string, { occupied: number; available: number; total: number }>;
   totalRooms: number;
+  capacityConfig?: ReturnType<typeof normalizeProjectionCapacityConfig> | null;
 }) {
   const leadDays = Math.max(0, diffDays(currentDate, targetDate));
   const currentFlat = flattenDisplay(currentSnapshot.display);
@@ -1388,11 +1773,24 @@ export function buildProjectionForDate({
   const exactLastYearDisplay = exactLastYearSnapshot?.display || null;
 
   if (leadDays <= 0) {
+    const actualCapacity = buildProjectionCapacityEnvelope({
+      display: currentSnapshot.display,
+      totalRooms,
+      capacityConfig,
+    });
     return {
       as_of_date: currentDate,
       lead_days: leadDays,
       state: "actual",
+      model_version: PROJECTION_MODEL_VERSION,
       display: currentSnapshot.display,
+      demand_display: currentSnapshot.display,
+      achievable_display: currentSnapshot.display,
+      capacity: {
+        ...actualCapacity,
+        achievable_forecast: summarizeCapacityDisplay(currentSnapshot.display),
+        has_capacity_constrained_projection: false,
+      },
       exact_last_year_display: exactLastYearDisplay,
       comparisons: {
         last_year_total_dog_volume: Number(exactLastYearDisplay?.support?.total_dog_volume ?? 0) || null,
@@ -1437,7 +1835,7 @@ export function buildProjectionForDate({
     const finalSnapshot = getHistoricalSnapshot(sampleDate);
     const asOfDate = addDaysStr(sampleDate, -leadDays);
     const asOfSnapshot = getHistoricalSnapshot(sampleDate, asOfDate);
-    const weight = projectionWeight(candidate);
+    const weight = projectionWeight(candidate, targetDate);
     if (sampleDate === exactLastYear) {
       exactLastYearDisplayProjected = finalSnapshot.display;
     }
@@ -1476,21 +1874,19 @@ export function buildProjectionForDate({
       );
     }
 
-    const chosenMode = (
-      usableByMode.get("exact_prior_year")?.length
-        ? "exact_prior_year"
-        : usableByMode.get("same_weekday_prior_year")?.length
-          ? "same_weekday_prior_year"
-          : usableByMode.get("exact_prior_years_2_to_4")?.length
-            ? "exact_prior_years_2_to_4"
-            : usableByMode.get("same_weekday_prior_years_2_to_4")?.length
-              ? "same_weekday_prior_years_2_to_4"
-              : null
-    ) as ProjectionFallbackMode | null;
+    const primarySamples = [
+      ...(usableByMode.get("exact_prior_year") || []),
+      ...(usableByMode.get("same_weekday_prior_year") || []),
+    ];
+    const olderSamples = [
+      ...(usableByMode.get("exact_prior_years_2_to_4") || []),
+      ...(usableByMode.get("same_weekday_prior_years_2_to_4") || []),
+    ];
+    const usableSamples = primarySamples.length ? primarySamples : olderSamples;
 
     return {
-      chosenMode,
-      usableSamples: chosenMode ? usableByMode.get(chosenMode) || [] : [],
+      chosenMode: projectionModeForSamples(usableSamples),
+      usableSamples,
     };
   };
 
@@ -1510,11 +1906,147 @@ export function buildProjectionForDate({
     };
   };
 
+  const buildYoyPickupCalibration = () => {
+    if (leadDays <= 0 || !calibrationReservations.length || !calibrationHistoricalReservations.length) {
+      return {
+        factor: 1,
+        raw_factor: 1,
+        sample_count: 0,
+        confidence: "none",
+        lookback_days: PROJECTION_CALIBRATION_LOOKBACK_DAYS,
+        min_samples: PROJECTION_CALIBRATION_MIN_SAMPLES,
+        sample_dates: [],
+      };
+    }
+
+    const currentCache = new Map<string, ReturnType<typeof computeDemandSnapshotForDate>>();
+    const historicalCache = new Map<string, ReturnType<typeof computeDemandSnapshotForDate>>();
+    const getSnapshot = (
+      sampleDate: string,
+      rows: any[],
+      cache: Map<string, ReturnType<typeof computeDemandSnapshotForDate>>,
+      asOfDate?: string,
+    ) => {
+      const cacheKey = `${sampleDate}|${asOfDate || "final"}`;
+      const existing = cache.get(cacheKey);
+      if (existing) return existing;
+      const snapshotRows = asOfDate
+        ? rows.filter((row) => !row.bookedDateKey || row.bookedDateKey <= asOfDate)
+        : rows;
+      const snapshot = computeDemandSnapshotForDate({
+        targetDate: sampleDate,
+        reservations: snapshotRows,
+        roomByDate,
+        totalRooms,
+      });
+      cache.set(cacheKey, snapshot);
+      return snapshot;
+    };
+
+    const sampleRows = buildProjectionCalibrationDates(currentDate)
+      .map((sampleDate) => {
+        const currentFinal = flattenDisplay(
+          getSnapshot(sampleDate, calibrationReservations, currentCache).display,
+        );
+        const currentAsOf = flattenDisplay(
+          getSnapshot(sampleDate, calibrationReservations, currentCache, addDaysStr(sampleDate, -leadDays)).display,
+        );
+        const currentFinalValue = Number(currentFinal.support_total_dog_volume || 0);
+        const currentAsOfValue = Number(currentAsOf.support_total_dog_volume || 0);
+        if (currentFinalValue <= 0 || currentAsOfValue <= 0) return null;
+
+        const comparableSamples = getProjectionCandidates(sampleDate)
+          .filter((candidate) => candidate.yearOffset === 1)
+          .map((candidate) => {
+            const finalFlat = flattenDisplay(
+              getSnapshot(candidate.sampleDate, calibrationHistoricalReservations, historicalCache).display,
+            );
+            const asOfFlat = flattenDisplay(
+              getSnapshot(candidate.sampleDate, calibrationHistoricalReservations, historicalCache, addDaysStr(candidate.sampleDate, -leadDays)).display,
+            );
+            const finalValue = Number(finalFlat.support_total_dog_volume || 0);
+            const asOfValue = Number(asOfFlat.support_total_dog_volume || 0);
+            if (finalValue <= 0 || asOfValue <= 0) return null;
+            return {
+              ...candidate,
+              weight: projectionWeight(candidate, sampleDate),
+              finalValue,
+              asOfValue,
+            };
+          })
+          .filter(Boolean) as any[];
+
+        if (!comparableSamples.length) return null;
+
+        const priorFinal = weightedAverage(
+          comparableSamples.map((sample) => sample.finalValue),
+          comparableSamples.map((sample) => sample.weight),
+          0,
+        );
+        const priorAsOf = weightedAverage(
+          comparableSamples.map((sample) => sample.asOfValue),
+          comparableSamples.map((sample) => sample.weight),
+          0,
+        );
+        if (priorFinal <= 0 || priorAsOf <= 0) return null;
+
+        const currentCompletion = clampNumber(currentAsOfValue / currentFinalValue, 0.01, 1);
+        const priorCompletion = clampNumber(priorAsOf / priorFinal, 0.01, 1);
+        const factor = priorCompletion / currentCompletion;
+        const recencyDays = Math.max(1, diffDays(sampleDate, currentDate));
+        return {
+          sampleDate,
+          factor,
+          current_completion_rate: Number(currentCompletion.toFixed(4)),
+          prior_completion_rate: Number(priorCompletion.toFixed(4)),
+          current_as_of: currentAsOfValue,
+          current_final: currentFinalValue,
+          prior_as_of: Number(priorAsOf.toFixed(2)),
+          prior_final: Number(priorFinal.toFixed(2)),
+          weight: (1 / recencyDays) * Math.max(1, currentFinalValue),
+        };
+      })
+      .filter(Boolean) as any[];
+
+    if (sampleRows.length < PROJECTION_CALIBRATION_MIN_SAMPLES) {
+      return {
+        factor: 1,
+        raw_factor: sampleRows.length
+          ? Number(weightedAverage(sampleRows.map((row) => row.factor), sampleRows.map((row) => row.weight), 1).toFixed(4))
+          : 1,
+        sample_count: sampleRows.length,
+        confidence: "insufficient_samples",
+        lookback_days: PROJECTION_CALIBRATION_LOOKBACK_DAYS,
+        min_samples: PROJECTION_CALIBRATION_MIN_SAMPLES,
+        sample_dates: sampleRows.map((row) => row.sampleDate),
+      };
+    }
+
+    const rawFactor = weightedAverage(
+      sampleRows.map((row) => row.factor),
+      sampleRows.map((row) => row.weight),
+      1,
+    );
+    const factor = clampNumber(rawFactor, PROJECTION_YOY_ADJUSTMENT_MIN, PROJECTION_YOY_ADJUSTMENT_MAX);
+
+    return {
+      factor: Number(factor.toFixed(4)),
+      raw_factor: Number(rawFactor.toFixed(4)),
+      sample_count: sampleRows.length,
+      confidence: sampleRows.length >= 10 ? "high" : "medium",
+      lookback_days: PROJECTION_CALIBRATION_LOOKBACK_DAYS,
+      min_samples: PROJECTION_CALIBRATION_MIN_SAMPLES,
+      sample_dates: sampleRows.map((row) => row.sampleDate),
+      samples: sampleRows.map(({ weight, ...row }) => row),
+    };
+  };
+
   const basisSelection = selectSamplesForMetric(
     "support_total_dog_volume",
     Number(currentFlat.support_total_dog_volume || 0),
   );
   const basis = getCompletionRateFromSamples(basisSelection.usableSamples);
+  const yoyCalibration = buildYoyPickupCalibration();
 
   for (const metricKey of metricKeys) {
     const currentValue = Number(currentFlat[metricKey] || 0);
@@ -1542,6 +2074,8 @@ export function buildProjectionForDate({
           : null,
         fallback_mode: "carry_forward_no_history",
         sample_count: 0,
+        yoy_adjustment_factor: 1,
+        formula: "carry_forward_current_bookings",
       };
       continue;
     }
@@ -1563,13 +2097,17 @@ export function buildProjectionForDate({
       : completionRate > 0
         ? Math.round(currentValue / completionRate)
         : currentValue;
+    const yoyAdjustmentFactor = Number(yoyCalibration.factor || 1);
+    const weeklyPaceAdjustmentFactor = Number(weeklyPaceCalibration?.factor || 1);
+    const adjustedProjectedValue = Math.round(projectedValue * yoyAdjustmentFactor * weeklyPaceAdjustmentFactor);
 
-    projectedFlat[metricKey] = Math.max(currentValue, projectedValue);
+    projectedFlat[metricKey] = Math.max(currentValue, adjustedProjectedValue);
     explanations[explanationKey] = {
       target_date: targetDate,
       as_of_date: currentDate,
       current_value: currentValue,
       projected_value: projectedFlat[metricKey],
+      raw_projected_value: projectedValue,
       lead_days: leadDays,
       exact_prior_year_as_of: exactLastYearAsOf || null,
       exact_prior_year_final: exactLastYearFinal || null,
@@ -1578,12 +2116,21 @@ export function buildProjectionForDate({
       fallback_mode: projectionMode,
       sample_count: projectionSamples.length,
       sample_dates: projectionSamples.map((sample) => sample.sampleDate),
+      sample_modes: summarizeProjectionSampleModes(projectionSamples),
       baseline_final_average: Number(weightedFinal.toFixed(2)),
+      baseline_as_of_average: Number(weightedAsOf.toFixed(2)),
+      yoy_adjustment_factor: yoyAdjustmentFactor,
+      yoy_adjustment: yoyCalibration,
+      weekly_pace_adjustment_factor: weeklyPaceAdjustmentFactor,
+      weekly_pace: weeklyPaceCalibration,
+      formula: currentValue === 0
+        ? "historical_final_average_x_yoy_pickup_adjustment_x_weekly_pace_adjustment"
+        : "currently_booked_divided_by_historical_completion_rate_x_yoy_pickup_adjustment_x_weekly_pace_adjustment",
     };
   }
 
-  const projectedDisplay = buildDisplayFromFlat(projectedFlat);
-  const derivedProjectedFlat = flattenDisplay(projectedDisplay);
+  const demandDisplay = buildDisplayFromFlat(projectedFlat);
+  const derivedProjectedFlat = flattenDisplay(demandDisplay);
   for (const metricKey of DERIVED_PROJECTION_METRIC_KEYS) {
     const explanationKey = metricKey.replaceAll(".", "_");
     const existing = explanations[explanationKey] || {};
@@ -1602,17 +2149,238 @@ export function buildProjectionForDate({
     };
   }
 
+  const capacity = buildProjectionCapacityEnvelope({
+    display: demandDisplay,
+    totalRooms,
+    capacityConfig,
+  });
+  const achievableDisplay = buildCapacityConstrainedDisplay(demandDisplay, capacity);
+  const achievableForecast = summarizeCapacityDisplay(achievableDisplay);
+  const demandForecast = summarizeCapacityDisplay(demandDisplay);
+  const hasCapacityConstrainedProjection = Object.keys(demandForecast).some((key) => {
+    const demandValue = Number((demandForecast as any)[key] || 0);
+    const achievableValue = Number((achievableForecast as any)[key] || 0);
+    return Number.isFinite(demandValue) && Number.isFinite(achievableValue) && achievableValue < demandValue;
+  });
+  explainCapacityConstrainedMetrics({
+    explanations,
+    demandDisplay,
+    achievableDisplay,
+    capacity,
+  });
+
   return {
     as_of_date: currentDate,
     lead_days: leadDays,
     state: "projected",
-    display: projectedDisplay,
+    model_version: PROJECTION_MODEL_VERSION,
+    display: achievableDisplay,
+    demand_display: demandDisplay,
+    achievable_display: achievableDisplay,
+    capacity: {
+      ...capacity,
+      demand_forecast: demandForecast,
+      achievable_forecast: achievableForecast,
+      has_capacity_constrained_projection: hasCapacityConstrainedProjection,
+    },
     exact_last_year_display: exactLastYearDisplayProjected,
     comparisons: {
       last_year_total_dog_volume: Number(exactLastYearDisplayProjected?.support?.total_dog_volume ?? 0) || null,
     },
     explanations,
+    calibration: {
+      yoy_pickup: yoyCalibration,
+      weekly_pace: weeklyPaceCalibration,
+    },
     sample_count: sampleCount,
+  };
+}
+
+function totalDogVolumeForDate({
+  targetDate,
+  reservations,
+  roomByDate,
+  totalRooms,
+  asOfDate,
+}: {
+  targetDate: string;
+  reservations: any[];
+  roomByDate: Record<string, { occupied: number; available: number; total: number }>;
+  totalRooms: number;
+  asOfDate?: string | null;
+}) {
+  const rows = asOfDate
+    ? reservations.filter((row) => !row.bookedDateKey || row.bookedDateKey <= asOfDate)
+    : reservations;
+  return Number(computeDemandSnapshotForDate({
+    targetDate,
+    reservations: rows,
+    roomByDate,
+    totalRooms,
+  }).display.support.total_dog_volume || 0);
+}
+
+function totalDogVolumeForDateRange({
+  dates,
+  reservations,
+  roomByDate,
+  totalRooms,
+}: {
+  dates: string[];
+  reservations: any[];
+  roomByDate: Record<string, { occupied: number; available: number; total: number }>;
+  totalRooms: number;
+}) {
+  return dates.reduce((sum, targetDate) => sum + totalDogVolumeForDate({
+    targetDate,
+    reservations,
+    roomByDate,
+    totalRooms,
+  }), 0);
+}
+
+export function buildWeeklyPaceCalibration({
+  targetDates,
+  currentDate,
+  currentDisplaysByDate,
+  firstPassProjectionsByDate,
+  historicalReservations,
+  calibrationReservations = [],
+  calibrationHistoricalReservations = [],
+  roomByDate,
+  totalRooms,
+}: {
+  targetDates: string[];
+  currentDate: string;
+  currentDisplaysByDate: Record<string, any>;
+  firstPassProjectionsByDate: Record<string, any>;
+  historicalReservations: any[];
+  calibrationReservations?: any[];
+  calibrationHistoricalReservations?: any[];
+  roomByDate: Record<string, { occupied: number; available: number; total: number }>;
+  totalRooms: number;
+}) {
+  const projectedDates = (targetDates || []).filter((dateKey) => diffDays(currentDate, dateKey) > 0);
+  if (!projectedDates.length) {
+    return {
+      factor: 1,
+      confidence: "none",
+      reason: "no_future_dates",
+    };
+  }
+
+  const currentWeekBooked = projectedDates.reduce((sum, dateKey) =>
+    sum + Number(currentDisplaysByDate[dateKey]?.support?.total_dog_volume || 0), 0);
+  const rawWeekProjected = projectedDates.reduce((sum, dateKey) =>
+    sum + Number(
+      firstPassProjectionsByDate[dateKey]?.demand_display?.support?.total_dog_volume
+      ?? firstPassProjectionsByDate[dateKey]?.display?.support?.total_dog_volume
+      ?? 0,
+    ), 0);
+
+  const priorYearWeekFinal = projectedDates.reduce((sum, dateKey) => {
+    const priorDate = shiftYearsStr(dateKey, -1);
+    return sum + totalDogVolumeForDate({
+      targetDate: priorDate,
+      reservations: historicalReservations,
+      roomByDate,
+      totalRooms,
+    });
+  }, 0);
+
+  const priorYearWeekAsOf = projectedDates.reduce((sum, dateKey) => {
+    const leadDays = Math.max(0, diffDays(currentDate, dateKey));
+    const priorDate = shiftYearsStr(dateKey, -1);
+    return sum + totalDogVolumeForDate({
+      targetDate: priorDate,
+      reservations: historicalReservations,
+      roomByDate,
+      totalRooms,
+      asOfDate: addDaysStr(priorDate, -leadDays),
+    });
+  }, 0);
+
+  const currentVsPriorAsOfFactor = priorYearWeekAsOf > 0
+    ? currentWeekBooked / priorYearWeekAsOf
+    : null;
+
+  const completedWeekSamples = Array.from({ length: PROJECTION_WEEKLY_LOOKBACK_WEEKS }, (_, index) => {
+    const endDate = addDaysStr(currentDate, -1 - (index * 7));
+    const startDate = addDaysStr(endDate, -(projectedDates.length - 1));
+    const dates = enumerateDates(startDate, endDate);
+    const currentFinal = totalDogVolumeForDateRange({
+      dates,
+      reservations: calibrationReservations,
+      roomByDate,
+      totalRooms,
+    });
+    const priorDates = dates.map((dateKey) => shiftYearsStr(dateKey, -1));
+    const priorFinal = totalDogVolumeForDateRange({
+      dates: priorDates,
+      reservations: calibrationHistoricalReservations,
+      roomByDate,
+      totalRooms,
+    });
+    if (currentFinal <= 0 || priorFinal <= 0) return null;
+    return {
+      start_date: startDate,
+      end_date: endDate,
+      current_final: currentFinal,
+      prior_year_final: priorFinal,
+      yoy_factor: currentFinal / priorFinal,
+      weight: (PROJECTION_WEEKLY_LOOKBACK_WEEKS - index) * Math.max(1, currentFinal),
+    };
+  }).filter(Boolean) as any[];
+
+  const recentCompletedWeekYoyFactor = completedWeekSamples.length
+    ? weightedAverage(
+      completedWeekSamples.map((sample) => sample.yoy_factor),
+      completedWeekSamples.map((sample) => sample.weight),
+      1,
+    )
+    : null;
+
+  const rawBlendedFactor = recentCompletedWeekYoyFactor !== null && currentVsPriorAsOfFactor !== null
+    ? (recentCompletedWeekYoyFactor * 0.7) + (currentVsPriorAsOfFactor * 0.3)
+    : recentCompletedWeekYoyFactor ?? currentVsPriorAsOfFactor ?? 1;
+  const blendedYoyFactor = clampNumber(
+    rawBlendedFactor,
+    PROJECTION_WEEKLY_YOY_ADJUSTMENT_MIN,
+    PROJECTION_WEEKLY_YOY_ADJUSTMENT_MAX,
+  );
+  const weeklyTarget = Math.max(
+    currentWeekBooked,
+    priorYearWeekFinal > 0 ? Math.round(priorYearWeekFinal * blendedYoyFactor) : rawWeekProjected,
+  );
+  const factor = rawWeekProjected > 0
+    ? clampNumber(
+      weeklyTarget / rawWeekProjected,
+      PROJECTION_WEEKLY_ADJUSTMENT_MIN,
+      PROJECTION_WEEKLY_ADJUSTMENT_MAX,
+    )
+    : 1;
+
+  return {
+    factor: Number(factor.toFixed(4)),
+    raw_factor: rawWeekProjected > 0 ? Number((weeklyTarget / rawWeekProjected).toFixed(4)) : 1,
+    method: "visible_range_weekly_yoy_pace",
+    period_start: projectedDates[0],
+    period_end: projectedDates[projectedDates.length - 1],
+    confidence: completedWeekSamples.length >= 3 ? "high" : completedWeekSamples.length ? "medium" : "target_week_only",
+    current_week_booked: currentWeekBooked,
+    prior_year_week_as_of: priorYearWeekAsOf,
+    prior_year_week_final: priorYearWeekFinal,
+    current_vs_prior_as_of_factor: currentVsPriorAsOfFactor !== null ? Number(currentVsPriorAsOfFactor.toFixed(4)) : null,
+    recent_completed_week_yoy_factor: recentCompletedWeekYoyFactor !== null ? Number(recentCompletedWeekYoyFactor.toFixed(4)) : null,
+    raw_blended_yoy_factor: Number(rawBlendedFactor.toFixed(4)),
+    blended_yoy_factor: Number(blendedYoyFactor.toFixed(4)),
+    raw_week_projected: rawWeekProjected,
+    weekly_target: weeklyTarget,
+    sample_count: completedWeekSamples.length,
+    samples: completedWeekSamples.map(({ weight, ...sample }) => ({
+      ...sample,
+      yoy_factor: Number(sample.yoy_factor.toFixed(4)),
+    })),
   };
 }
 
@@ -1628,10 +2396,17 @@ export async function computeSchedulingMatrixRows({
   dateTo: string;
 }) {
   const targetDates = enumerateDates(dateFrom, dateTo);
-  const exactHistoricalDates = [...new Set(targetDates.map((dateKey) => shiftYearsStr(dateKey, -1)))];
-  const exactHistoricalOverlapFilter = buildDateOverlapOrFilter(exactHistoricalDates);
+  const currentDate = dateStrET();
+  const historicalWindow = buildHistoricalWindow(targetDates);
+  const exactHistoricalOverlapFilter = buildDateOverlapOrFilter(historicalWindow?.referenceDates || []);
+  const calibrationDates = buildProjectionCalibrationDates(currentDate);
+  const weeklyCalibrationStart = addDaysStr(currentDate, -(PROJECTION_WEEKLY_LOOKBACK_WEEKS * 7));
+  const calibrationStart = [calibrationDates[0], weeklyCalibrationStart].filter(Boolean).sort()[0] || null;
+  const calibrationEnd = calibrationDates[calibrationDates.length - 1] || null;
+  const calibrationHistoricalStart = calibrationStart ? addDaysStr(shiftYearsStr(calibrationStart, -1), -21) : null;
+  const calibrationHistoricalEnd = calibrationEnd ? addDaysStr(shiftYearsStr(calibrationEnd, -1), 21) : null;
 
-  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationsRes, playgroupAssignments] = await Promise.all([
+  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationsRes, calibrationReservationsRes, calibrationHistoricalReservationsRes, scheduleConfigRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("gingr_id, name, is_boarding, is_daycare, single_day")
@@ -1667,6 +2442,30 @@ export async function computeSchedulingMatrixRows({
         .is("cancelled_date", null)
         .or(exactHistoricalOverlapFilter)
       : Promise.resolve({ data: [], error: null }),
+    buildDateRangeOverlapQuery(
+      supabase
+        .from("gingr_reservations")
+        .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+        .eq("location_id", locationId)
+        .is("cancelled_date", null),
+      calibrationStart,
+      calibrationEnd,
+    ),
+    buildDateRangeOverlapQuery(
+      supabase
+        .from("gingr_reservations")
+        .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+        .eq("location_id", locationId)
+        .is("cancelled_date", null),
+      calibrationHistoricalStart,
+      calibrationHistoricalEnd,
+    ),
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "schedule_config")
+      .maybeSingle(),
     fetchPlaygroupAssignments({
       supabase,
       locationId,
@@ -1679,6 +2478,9 @@ export async function computeSchedulingMatrixRows({
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
   if (widgetSourceRes.error) throw widgetSourceRes.error;
+  if (calibrationReservationsRes.error) throw calibrationReservationsRes.error;
+  if (calibrationHistoricalReservationsRes.error) throw calibrationHistoricalReservationsRes.error;
+  if (scheduleConfigRes.error) throw scheduleConfigRes.error;
 
   const resTypeMaps = buildReservationTypeMaps(resTypesRes.data || []);
   const widgetSourceByDate = buildGingrWidgetSourceCountsByDate(widgetSourceRes.data || [], resTypeMaps);
@@ -1690,6 +2492,7 @@ export async function computeSchedulingMatrixRows({
       .map((row: any) => String(row.gingr_run_id || row.id || ""))
       .filter(Boolean),
   ).size;
+  const capacityConfig = normalizeProjectionCapacityConfig(scheduleConfigRes.data?.setting_value || {}, totalRooms);
   const roomByDate = summarizeRoomOccupancy(roomOccRes.data || []);
   const historicalFetchCache = new Map<string, any[]>();
   const fetchReservationRecordsForDateKeys = async (dateKeys: string[]) => {
@@ -1726,6 +2529,12 @@ export async function computeSchedulingMatrixRows({
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
   const exactHistoricalReservations = (exactHistoricalReservationsRes.data || []).map((row: ReservationRow) =>
+    buildReservationRecord(row, resTypeMaps, playgroupMap),
+  );
+  const baseCalibrationReservations = (calibrationReservationsRes.data || []).map((row: ReservationRow) =>
+    buildReservationRecord(row, resTypeMaps, playgroupMap),
+  );
+  const baseCalibrationHistoricalReservations = (calibrationHistoricalReservationsRes.data || []).map((row: ReservationRow) =>
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
   const baseHistoricalReservations = [...exactHistoricalReservations];
@@ -1765,14 +2574,17 @@ export async function computeSchedulingMatrixRows({
     animalIds: [
       ...baseReservations.map((row: any) => row.animalId),
       ...baseHistoricalReservations.map((row: any) => row.animalId),
+      ...baseCalibrationReservations.map((row: any) => row.animalId),
+      ...baseCalibrationHistoricalReservations.map((row: any) => row.animalId),
     ],
     resTypeMaps,
   });
   const reservations = annotateReservationsWithOperationalHistory(baseReservations, earliestOperationalStartByAnimal);
   const historicalReservations = annotateReservationsWithOperationalHistory(baseHistoricalReservations, earliestOperationalStartByAnimal);
+  const calibrationReservations = annotateReservationsWithOperationalHistory(baseCalibrationReservations, earliestOperationalStartByAnimal);
+  const calibrationHistoricalReservations = annotateReservationsWithOperationalHistory(baseCalibrationHistoricalReservations, earliestOperationalStartByAnimal);
 
-  const rows = [];
-  const currentDate = dateStrET();
+  const preparedByDate = new Map<string, any>();
   for (const targetDate of targetDates) {
     const snapshot = computeDemandSnapshotForDate({
       targetDate,
@@ -1784,14 +2596,61 @@ export async function computeSchedulingMatrixRows({
       snapshot.display,
       widgetSourceByDate.get(targetDate),
     );
-    const display = sourceAdjustment.display;
+    preparedByDate.set(targetDate, {
+      snapshot,
+      display: sourceAdjustment.display,
+      sourceAdjustment,
+    });
+  }
+
+  const firstPassProjectionsByDate: Record<string, any> = {};
+  const currentDisplaysByDate: Record<string, any> = {};
+  for (const targetDate of targetDates) {
+    const prepared = preparedByDate.get(targetDate);
+    if (!prepared) continue;
+    currentDisplaysByDate[targetDate] = prepared.display;
+    firstPassProjectionsByDate[targetDate] = buildProjectionForDate({
+      targetDate,
+      currentDate,
+      currentSnapshot: { ...prepared.snapshot, display: prepared.display },
+      historicalReservations,
+      calibrationReservations,
+      calibrationHistoricalReservations,
+      roomByDate,
+      totalRooms,
+      capacityConfig,
+    });
+  }
+
+  const weeklyPaceCalibration = buildWeeklyPaceCalibration({
+    targetDates,
+    currentDate,
+    currentDisplaysByDate,
+    firstPassProjectionsByDate,
+    historicalReservations,
+    calibrationReservations,
+    calibrationHistoricalReservations,
+    roomByDate,
+    totalRooms,
+  });
+
+  const rows = [];
+  for (const targetDate of targetDates) {
+    const prepared = preparedByDate.get(targetDate);
+    const snapshot = prepared.snapshot;
+    const sourceAdjustment = prepared.sourceAdjustment;
+    const display = prepared.display;
     const projection = buildProjectionForDate({
       targetDate,
       currentDate,
       currentSnapshot: { ...snapshot, display },
       historicalReservations,
+      calibrationReservations,
+      calibrationHistoricalReservations,
+      weeklyPaceCalibration,
       roomByDate,
       totalRooms,
+      capacityConfig,
     });
 
     const blockerDetails = [
@@ -1865,5 +2724,71 @@ export async function upsertSchedulingMatrixRows(
     .upsert(rows, { onConflict: "location_id,matrix_date" });
 
   if (error) throw error;
+  await upsertSchedulingProjectionSnapshots(supabase, rows);
   return { count: rows.length };
+}
+
+function buildProjectionSnapshotRows(rows: any[]) {
+  return (rows || [])
+    .map((row) => {
+      const projection = row?.detail_json?.projection;
+      if (!projection) return null;
+      const targetDate = getDateKey(row.matrix_date);
+      const asOfDate = getDateKey(projection.as_of_date || row.computed_at);
+      if (!row.location_id || !targetDate || !asOfDate) return null;
+      const currentDisplay = row.detail_json?.display || null;
+      const projectedDisplay = projection.display || currentDisplay;
+      const isActual = projection.state === "actual";
+      return {
+        location_id: row.location_id,
+        target_date: targetDate,
+        as_of_date: asOfDate,
+        lead_days: Number(projection.lead_days || 0),
+        model_version: projection.model_version || PROJECTION_MODEL_VERSION,
+        current_display: currentDisplay,
+        projected_display: projectedDisplay,
+        projection_json: projection,
+        capacity_json: projection.capacity || null,
+        actual_display: isActual ? currentDisplay : null,
+        actualized_at: isActual ? new Date().toISOString() : null,
+        computed_at: row.computed_at || new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+}
+
+export async function upsertSchedulingProjectionSnapshots(
+  supabase: SupabaseClient,
+  rows: any[],
+) {
+  const snapshots = buildProjectionSnapshotRows(rows);
+  if (!snapshots.length) return { count: 0 };
+
+  const { error } = await supabase
+    .from("scheduling_projection_snapshots")
+    .upsert(snapshots, { onConflict: "location_id,target_date,as_of_date,model_version" });
+
+  if (error) {
+    if (error.code === "42P01") {
+      console.warn("scheduling_projection_snapshots table is missing; projection history was not stored.");
+      return { count: 0, skipped: true };
+    }
+    throw error;
+  }
+
+  const actualRows = snapshots.filter((snapshot: any) => snapshot.actual_display);
+  for (const snapshot of actualRows as any[]) {
+    const { error: updateError } = await supabase
+      .from("scheduling_projection_snapshots")
+      .update({
+        actual_display: snapshot.actual_display,
+        actualized_at: snapshot.actualized_at,
+      })
+      .eq("location_id", snapshot.location_id)
+      .eq("target_date", snapshot.target_date);
+
+    if (updateError) throw updateError;
+  }
+
+  return { count: snapshots.length };
 }
