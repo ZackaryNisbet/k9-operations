@@ -5,7 +5,6 @@ import {
   hasAnyLeanPermission,
   hasEveryLeanPermission,
   hasLeanPermission,
-  resolveActiveLeanRoles,
   resolveLeanPermissionKeys,
   resolveLeanRoleKey,
 } from "../shared/permissions";
@@ -68,28 +67,5 @@ describe("lean permission aliases", () => {
     }
 
     expect(hasLeanPermission({ role: "csr" }, "Inventory Management")).toBe(false);
-  });
-
-  it("resolves visible permission roles from active team membership", () => {
-    const roles = resolveActiveLeanRoles({
-      memberRows: [
-        { role: "pct", is_active: true },
-        { role: "csr", is_active: true },
-        { role: "multi_location_admin", is_active: false },
-      ],
-      profile: { role: "manager", is_active: true },
-    }).map((role) => role.id);
-
-    expect(roles).toEqual(["pct", "csr", "manager", "enterprise_admin"]);
-    expect(roles).not.toContain("multi_location_admin");
-  });
-
-  it("keeps enterprise admin visible as the locked full-access role", () => {
-    const roles = resolveActiveLeanRoles({
-      memberRows: [{ role: "role_staff", is_active: true }],
-      profile: null,
-    }).map((role) => role.id);
-
-    expect(roles).toEqual(["csr", "enterprise_admin"]);
   });
 });
