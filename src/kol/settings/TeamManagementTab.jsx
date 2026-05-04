@@ -117,6 +117,36 @@ function formatLastActive(value) {
   };
 }
 
+function latestActivity(member) {
+  const times = [member?.last_active, member?.last_web_active, member?.last_mobile_active]
+    .map((value) => {
+      const date = value ? new Date(value) : null;
+      return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+    });
+  const latest = Math.max(...times, 0);
+  return latest ? new Date(latest).toISOString() : null;
+}
+
+function formatChannelActivity(label, value) {
+  if (!value) return `${label}: not recorded`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return `${label}: invalid`;
+  return `${label}: ${date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
+
+function isActivityStale(member) {
+  const value = latestActivity(member);
+  if (!value) return true;
+  return Date.now() - new Date(value).getTime() > 30 * 24 * 60 * 60 * 1000;
+}
+
+function formatResetTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function IconButton({ title, onClick, disabled, tone = "default", children }) {
   const toneStyle = tone === "danger"
     ? { color: C.dan, background: C.danLt, border: "rgba(220,38,38,0.16)" }
@@ -167,6 +197,10 @@ function TeamManagementTab({ profile, data, save }) {
   const [editRole, setEditRole] = useState("pct");
   const [editError, setEditError] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(null);
+  const [resettingId, setResettingId] = useState(null);
+  const [resetCredentials, setResetCredentials] = useState(null);
+  const [resetError, setResetError] = useState("");
 
   // Determine current user's Lite role for permission gating
   const myRole = profile?.role || "pct";
@@ -191,7 +225,7 @@ function TeamManagementTab({ profile, data, save }) {
     setTeamError("");
     const { data: members, error } = await supabase
       .from("lite_profiles")
-      .select("id,user_id,email,full_name,role,location_id,is_active,created_at,updated_at,last_active")
+      .select("id,user_id,email,full_name,role,location_id,is_active,created_at,updated_at,last_active,last_web_active,last_mobile_active,last_active_source,last_password_reset_at,last_password_reset_by,password_reset_required")
       .eq("location_id", profile?.location_id)
       .eq("is_active", true)
       .order("full_name", { ascending: true, nullsFirst: false });
@@ -217,8 +251,10 @@ function TeamManagementTab({ profile, data, save }) {
 
   const teamStats = useMemo(() => {
     const admins = team.filter((m) => ["enterprise_admin", "location_admin", "manager"].includes(m.role)).length;
-    const activeRecently = team.filter((m) => m.last_active).length;
-    return { total: team.length, admins, activeRecently };
+    const activityRecorded = team.filter((m) => latestActivity(m)).length;
+    const stale = team.filter(isActivityStale).length;
+    const resetRequired = team.filter((m) => m.password_reset_required).length;
+    return { total: team.length, admins, activityRecorded, stale, resetRequired };
   }, [team]);
 
   const openEditMember = (member) => {
@@ -279,6 +315,31 @@ function TeamManagementTab({ profile, data, save }) {
       return;
     }
     setTeamError(result?.error || error?.message || "Team member could not be removed.");
+  };
+
+  const resetPasswordForMember = async (member) => {
+    if (!member) return;
+    setResettingId(member.id);
+    setResetError("");
+    setResetCredentials(null);
+    const { data: result, error } = await supabase.rpc("reset_lite_team_member_password", {
+      p_profile_id: member.id,
+      p_send_email: true,
+    });
+    setResettingId(null);
+    if (error || result?.success === false) {
+      setResetError(result?.error || error?.message || "Password could not be reset.");
+      return;
+    }
+    setConfirmReset(null);
+    setResetCredentials({
+      email: result.email || member.email,
+      password: result.temp_password,
+      name: result.full_name || member.full_name || member.email,
+      message: result.message || "Temporary password created.",
+      emailSent: !!result.email_sent,
+    });
+    fetchTeam();
   };
 
   const handleInvite = async () => {
@@ -360,7 +421,7 @@ function TeamManagementTab({ profile, data, save }) {
     textTransform: "uppercase",
     letterSpacing: "0.04em",
   };
-  const tableCols = "minmax(210px, 1.25fr) minmax(230px, 1.35fr) minmax(170px, 0.95fr) minmax(170px, 0.85fr) 102px";
+  const tableCols = "minmax(220px, 1.25fr) minmax(230px, 1.25fr) minmax(170px, 0.85fr) minmax(220px, 1fr) 150px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -377,7 +438,9 @@ function TeamManagementTab({ profile, data, save }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Badge color="default">{teamStats.total} active</Badge>
           <Badge color="info">{teamStats.admins} admin</Badge>
-          <Badge color={teamStats.activeRecently === teamStats.total && teamStats.total ? "success" : "warning"}>{teamStats.activeRecently}/{teamStats.total || 0} last active</Badge>
+          <Badge color={teamStats.activityRecorded === teamStats.total && teamStats.total ? "success" : "warning"}>{teamStats.activityRecorded}/{teamStats.total || 0} activity</Badge>
+          <Badge color={teamStats.stale ? "warning" : "success"}>{teamStats.stale} stale</Badge>
+          {teamStats.resetRequired > 0 && <Badge color="warning">{teamStats.resetRequired} reset pending</Badge>}
         </div>
       </div>
 
@@ -391,17 +454,48 @@ function TeamManagementTab({ profile, data, save }) {
             </div>
           )}
 
+          {resetError && (
+            <div style={{ padding: "12px 14px", borderRadius: 8, background: C.danLt, color: C.dan, fontSize: 13, fontWeight: 700, border: "1px solid rgba(220,38,38,0.16)" }}>
+              {resetError}
+            </div>
+          )}
+
+          {resetCredentials && (
+            <div style={{ padding: 16, background: C.sucLt, border: "1.5px solid #A7F3D0", borderRadius: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#065F46", marginBottom: 12 }}>
+                <I.CheckCircle />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 900 }}>Temporary password created for {resetCredentials.name}</div>
+                  <div style={{ marginTop: 3, fontSize: 12 }}>{resetCredentials.message}</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #A7F3D0", borderRadius: 8, padding: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#065F46", minWidth: 54, textTransform: "uppercase" }}>Email</span>
+                  <code style={{ flex: 1, fontSize: 13, color: "#065F46", overflow: "hidden", textOverflow: "ellipsis" }}>{resetCredentials.email}</code>
+                  <button type="button" onClick={() => copyToClipboard(resetCredentials.email, "reset-email")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 900, color: copiedField === "reset-email" ? "#10B981" : "#065F46" }}>{copiedField === "reset-email" ? "Copied" : "Copy"}</button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #A7F3D0", borderRadius: 8, padding: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#065F46", minWidth: 72, textTransform: "uppercase" }}>Password</span>
+                  <code style={{ flex: 1, fontSize: 14, color: "#065F46", fontWeight: 900, letterSpacing: 1 }}>{resetCredentials.password}</code>
+                  <button type="button" onClick={() => copyToClipboard(resetCredentials.password, "reset-pw")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 900, color: copiedField === "reset-pw" ? "#10B981" : "#065F46" }}>{copiedField === "reset-pw" ? "Copied" : "Copy"}</button>
+                </div>
+              </div>
+              <Btn variant="secondary" size="sm" onClick={() => setResetCredentials(null)} style={{ marginTop: 12, borderColor: "#A7F3D0", color: "#065F46" }}>Done</Btn>
+            </div>
+          )}
+
           {/* Team members table */}
           <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8, boxShadow: "0 12px 34px rgba(15,23,42,0.07)" }}>
             <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Team Directory</div>
-                <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>Active members and access levels</div>
+                <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>Active members, access levels, and app activity</div>
               </div>
               <Btn variant="secondary" size="sm" onClick={fetchTeam} icon={<I.RefreshCw />}>Refresh</Btn>
             </div>
             <div style={{ overflowX: "auto" }}>
-              <div style={{ minWidth: 884 }}>
+              <div style={{ minWidth: 990 }}>
                 <div style={{ padding: "11px 18px", background: "#F8FAFC", borderBottom: `1px solid ${C.border}`, display: "grid", gridTemplateColumns: tableCols, gap: 14, alignItems: "center", fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                   <div>Name</div><div>Email</div><div>Role</div><div>Last active</div><div style={{ textAlign: "right" }}>Actions</div>
                 </div>
@@ -409,9 +503,11 @@ function TeamManagementTab({ profile, data, save }) {
                   <div style={{ padding: "34px 20px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No active team members found.</div>
                 )}
                 {team.map((m) => {
-                  const lastActive = formatLastActive(m.last_active);
+                  const lastActive = formatLastActive(latestActivity(m));
                   const editable = canEditMember(m);
                   const isSelf = m.user_id === currentUserId;
+                  const stale = isActivityStale(m);
+                  const resetAt = formatResetTimestamp(m.last_password_reset_at);
                   return (
                     <div key={m.id} style={{ padding: "14px 18px", borderBottom: `1px solid ${C.borderLight}`, display: "grid", gridTemplateColumns: tableCols, gap: 14, alignItems: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
@@ -429,14 +525,36 @@ function TeamManagementTab({ profile, data, save }) {
                       <div style={{ fontSize: 13, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.email}</div>
                       <div><RoleBadge role={m.role} /></div>
                       <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: lastActive.muted ? C.textMut : C.text }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: lastActive.muted || stale ? C.textMut : C.text }}>
                           <I.Clock />
                           <span>{lastActive.label}</span>
+                          {m.last_active_source && <span style={{ padding: "2px 6px", borderRadius: 6, background: "#F1F5F9", color: C.textMut, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{m.last_active_source}</span>}
                         </div>
                         {lastActive.detail && <div style={{ marginTop: 3, fontSize: 11, color: C.textMut }}>{lastActive.detail}</div>}
+                        <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 2, fontSize: 10.5, color: C.textMut, lineHeight: 1.25 }}>
+                          <span>{formatChannelActivity("Desktop", m.last_web_active)}</span>
+                          <span>{formatChannelActivity("Mobile", m.last_mobile_active)}</span>
+                        </div>
+                        {m.password_reset_required && (
+                          <div style={{ marginTop: 6, width: "fit-content", padding: "3px 7px", borderRadius: 6, background: "#FEF3C7", color: "#92400E", fontSize: 10, fontWeight: 900 }}>
+                            Reset pending{resetAt ? ` since ${resetAt}` : ""}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 }}>
-                        {confirmRemove === m.id ? (
+                        {confirmReset === m.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => resetPasswordForMember(m)}
+                              disabled={resettingId === m.id}
+                              style={{ border: "none", background: C.pri, color: "#fff", borderRadius: 8, padding: "8px 10px", fontSize: 11, fontWeight: 900, cursor: resettingId === m.id ? "wait" : "pointer" }}
+                            >
+                              {resettingId === m.id ? "..." : "Reset"}
+                            </button>
+                            <IconButton title="Cancel password reset" onClick={() => setConfirmReset(null)}><I.X /></IconButton>
+                          </>
+                        ) : confirmRemove === m.id ? (
                           <>
                             <button
                               type="button"
@@ -450,8 +568,9 @@ function TeamManagementTab({ profile, data, save }) {
                           </>
                         ) : (
                           <>
+                            <IconButton title="Reset password" onClick={() => { setResetError(""); setResetCredentials(null); setConfirmRemove(null); setConfirmReset(m.id); }} disabled={!editable}><I.RefreshCw /></IconButton>
                             <IconButton title="Edit member" onClick={() => openEditMember(m)} disabled={!editable}><I.Edit /></IconButton>
-                            <IconButton title="Remove member" tone="danger" onClick={() => setConfirmRemove(m.id)} disabled={!editable}><I.Trash /></IconButton>
+                            <IconButton title="Remove member" tone="danger" onClick={() => { setConfirmReset(null); setConfirmRemove(m.id); }} disabled={!editable}><I.Trash /></IconButton>
                           </>
                         )}
                       </div>
