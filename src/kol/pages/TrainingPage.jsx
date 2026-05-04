@@ -100,6 +100,15 @@ const TABS = [
 ];
 
 const LABOR_TAB_IDS = new Set(TABS.map((tab) => tab.id));
+const LABOR_TAB_PERMISSION_MAP = {
+  home: "Labor Roster",
+  training: "Labor Roster",
+  "performance-reviews": "Labor Performance Reviews",
+  templates: "Labor Templates",
+  attendance: "Labor Attendance",
+  interviews: "Labor Interviews",
+  notes: "Labor Employee Notes",
+};
 const normalizeLaborTab = (value) => LABOR_TAB_IDS.has(value) ? value : "home";
 const normalizeAttendanceView = (value) => value === "summary" ? "summary" : "input";
 const normalizeInterviewView = (value) => value === "config" ? "config" : "records";
@@ -775,6 +784,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [templateStatusFilter, setTemplateStatusFilter] = useState("active");
   const [templateManageStructure, setTemplateManageStructure] = useState(false);
 
+  const hasLaborModuleAccess = hasLeanPermission(profile, "Labor Management");
+  const canEditRoster = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Edit Roster");
+  const canLogAttendance = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Log Attendance");
+  const canManageInterviews = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Manage Interviews");
+  const canManageTemplates = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Templates");
+  const canAccessEmployeeNotes = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Employee Notes");
+  const canUseLaborTab = useCallback((tabId) => {
+    if (!hasLaborModuleAccess) return false;
+    const permissionKey = LABOR_TAB_PERMISSION_MAP[normalizeLaborTab(tabId)];
+    return !permissionKey || hasLeanPermission(profile, permissionKey);
+  }, [hasLaborModuleAccess, profile]);
+  const visibleTabs = useMemo(() => TABS.filter((item) => canUseLaborTab(item.id)), [canUseLaborTab]);
+
   const navigateLaborRoute = useCallback((nextTab, nextParams = {}) => {
     const nextLaborTab = normalizeLaborTab(nextTab);
     const nextRouteParams = { laborTab: nextLaborTab, ...nextParams };
@@ -796,6 +818,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const changeLaborTab = useCallback((nextTab) => {
     const nextLaborTab = normalizeLaborTab(nextTab);
+    if (!canUseLaborTab(nextLaborTab)) {
+      addGlobalToast?.("You do not have permission to access that Labor area", "error");
+      return;
+    }
     setTab(nextLaborTab);
     if (nextLaborTab === "interviews") {
       navigateLaborRoute(nextLaborTab, { interviewView: interviewView || "records" });
@@ -806,7 +832,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return;
     }
     navigateLaborRoute(nextLaborTab);
-  }, [attendanceView, interviewView, navigateLaborRoute]);
+  }, [addGlobalToast, attendanceView, canUseLaborTab, interviewView, navigateLaborRoute]);
 
   const changeAttendanceView = useCallback((nextView) => {
     const normalizedView = normalizeAttendanceView(nextView);
@@ -816,10 +842,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const changeInterviewView = useCallback((nextView) => {
     const normalizedView = normalizeInterviewView(nextView);
+    if (normalizedView === "config" && !canManageInterviews) {
+      addGlobalToast?.("You do not have permission to manage interview configuration", "error");
+      return;
+    }
     setInterviewView(normalizedView);
     setInterviewDetailOpen(false);
     navigateLaborRoute("interviews", { interviewView: normalizedView });
-  }, [navigateLaborRoute]);
+  }, [addGlobalToast, canManageInterviews, navigateLaborRoute]);
 
   const handleInterviewRecordRouteChange = useCallback((recordId) => {
     const nextRecordId = typeof recordId === "string" ? recordId : "";
@@ -829,8 +859,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [navigateLaborRoute]);
 
   useEffect(() => {
-    if (tab !== routeLaborTab) setTab(routeLaborTab);
-  }, [routeLaborTab, tab]);
+    const nextTab = canUseLaborTab(routeLaborTab) ? routeLaborTab : (visibleTabs[0]?.id || "home");
+    if (tab !== nextTab) setTab(nextTab);
+  }, [canUseLaborTab, routeLaborTab, tab, visibleTabs]);
 
   useEffect(() => {
     if (routeLaborTab === "attendance" && attendanceView !== routeAttendanceView) {
@@ -839,10 +870,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [attendanceView, routeAttendanceView, routeLaborTab]);
 
   useEffect(() => {
-    if (routeLaborTab === "interviews" && interviewView !== routeInterviewView) {
-      setInterviewView(routeInterviewView);
+    const nextInterviewView = routeInterviewView === "config" && !canManageInterviews ? "records" : routeInterviewView;
+    if (routeLaborTab === "interviews" && interviewView !== nextInterviewView) {
+      setInterviewView(nextInterviewView);
     }
-  }, [interviewView, routeInterviewView, routeLaborTab]);
+  }, [canManageInterviews, interviewView, routeInterviewView, routeLaborTab]);
 
   // New record form
   const [newLaborEmployeeId, setNewLaborEmployeeId] = useState("");
@@ -965,7 +997,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const laborContactLocationName = String(locationName || data?.locationName || profile?.location_name || "K9 Operations").trim();
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
-  const canManageTemplates = hasLeanPermission(profile, "Checklist Templates");
 
   useEffect(() => {
     if (!laborLocationRef) return;
@@ -2585,13 +2616,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [resetInlineLaborEmployeeComposer]);
 
   const openInlineLaborEmployeeComposer = useCallback(() => {
+    if (!canEditRoster) {
+      addGlobalToast?.("You do not have permission to edit the labor roster", "error");
+      return;
+    }
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
     resetInlineLaborEmployeeComposer();
     setShowInlineLaborEmployeeComposer(true);
-  }, [resetInlineLaborEmployeeComposer, resetLaborEmployeeEditor]);
+  }, [addGlobalToast, canEditRoster, resetInlineLaborEmployeeComposer, resetLaborEmployeeEditor]);
 
   const openLaborEmployeeEditor = useCallback((employee = null) => {
+    if (!canEditRoster) {
+      addGlobalToast?.("You do not have permission to edit the labor roster", "error");
+      return;
+    }
     if (!employee) {
       openInlineLaborEmployeeComposer();
       return;
@@ -2607,7 +2646,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeeStartDate(employee.start_date || "");
     setLaborEmployeeEndDate(employee.end_date || "");
     setShowLaborEmployeeEditor(true);
-  }, [closeInlineLaborEmployeeComposer, openInlineLaborEmployeeComposer]);
+  }, [addGlobalToast, canEditRoster, closeInlineLaborEmployeeComposer, openInlineLaborEmployeeComposer]);
 
   const persistLaborEmployeeContact = useCallback(async (employeeId, existingMetadata = {}, updates = {}) => {
     const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, updates);
@@ -2653,6 +2692,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [justCreatedLaborEmployeeId]);
 
   const handleSaveLaborEmployee = useCallback(async () => {
+    if (!canEditRoster) {
+      addGlobalToast("You do not have permission to edit the labor roster", "error");
+      return;
+    }
     if (!laborEmployeeName.trim() || !laborEmployeeRole.trim() || !laborEmployeeStartDate) {
       addGlobalToast("Employee name, position title, and start date are required", "error");
       return;
@@ -2721,9 +2764,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setSavingLaborEmployee(false);
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
-  }, [actorName, actorUserId, addGlobalToast, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
 
   const handleCreateLaborEmployeeInline = useCallback(async () => {
+    if (!canEditRoster) {
+      addGlobalToast("You do not have permission to edit the labor roster", "error");
+      return;
+    }
     const fullName = `${newRosterEmployeeFirstName} ${newRosterEmployeeLastName}`.replace(/\s+/g, " ").trim();
     if (!newRosterEmployeeFirstName.trim() || !newRosterEmployeeLastName.trim() || !newRosterEmployeeRole.trim() || !newRosterEmployeeStartDate) {
       addGlobalToast("First name, last name, position title, and start date are required", "error");
@@ -2769,6 +2816,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     actorName,
     actorUserId,
     addGlobalToast,
+    canEditRoster,
     closeInlineLaborEmployeeComposer,
     laborLocationRef,
     refreshLaborData,
@@ -3370,6 +3418,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [addGlobalToast]);
 
   const handleAddEmployeeNote = useCallback(async () => {
+    if (!canAccessEmployeeNotes) {
+      addGlobalToast("You do not have permission to add employee notes", "error");
+      return;
+    }
     if (!selectedLaborEmployeeView?.id || !employeeNoteText.trim()) return;
     setSavingEmployeeNote(true);
     const { data, error } = await appendEmployeeNote({
@@ -3413,9 +3465,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       attachmentError ? "Employee note saved, but one or more attachments failed" : "Employee note added",
       attachmentError ? "error" : "success"
     );
-  }, [addGlobalToast, appendEmployeeNote, employeeNoteFiles, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData, uploadEmployeeNoteAttachments]);
+  }, [addGlobalToast, appendEmployeeNote, canAccessEmployeeNotes, employeeNoteFiles, employeeNoteText, employeeNoteType, selectedLaborEmployeeView, refreshLaborData, uploadEmployeeNoteAttachments]);
 
   const handleSaveEmployeeNoteEdit = useCallback(async () => {
+    if (!canAccessEmployeeNotes) {
+      addGlobalToast("You do not have permission to edit employee notes", "error");
+      return;
+    }
     if (!editingEmployeeNote?.id || !editingEmployeeNoteText.trim()) return;
     setSavingEmployeeNoteEdit(true);
 
@@ -3465,6 +3521,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     actorName,
     actorUserId,
     addGlobalToast,
+    canAccessEmployeeNotes,
     editingEmployeeNote,
     editingEmployeeNoteFiles,
     editingEmployeeNoteText,
@@ -3476,6 +3533,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ]);
 
   const handleAddGlobalEmployeeNote = useCallback(async () => {
+    if (!canAccessEmployeeNotes) {
+      addGlobalToast("You do not have permission to add employee notes", "error");
+      return;
+    }
     if (!globalNoteEmployeeId || !globalNoteText.trim()) {
       addGlobalToast("Choose an employee and add note text", "error");
       return;
@@ -3498,7 +3559,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await refreshLaborData();
     setSavingGlobalNote(false);
     addGlobalToast("Employee note added", "success");
-  }, [addGlobalToast, appendEmployeeNote, globalNoteEmployeeId, globalNoteText, globalNoteType, refreshLaborData]);
+  }, [addGlobalToast, appendEmployeeNote, canAccessEmployeeNotes, globalNoteEmployeeId, globalNoteText, globalNoteType, refreshLaborData]);
 
   const findReviewTemplateForEmployee = useCallback((employee) => {
     const templates = toObjectRows(reviewTemplates);
@@ -3908,6 +3969,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ]);
 
   const saveHierarchy = useCallback(async () => {
+    if (!canEditRoster) {
+      addGlobalToast("You do not have permission to edit the labor roster", "error");
+      setShowHierarchyManager(false);
+      return;
+    }
     if (!resolvedLaborLocationId || hierarchyDraft.length === 0) {
       setShowHierarchyManager(false);
       return;
@@ -3968,7 +4034,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       addGlobalToast(error.message || "Failed to save roster hierarchy", "error");
     }
     setSavingHierarchy(false);
-  }, [actorName, actorUserId, addGlobalToast, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
 
   // ── Section toggle ──
   const toggleSection = useCallback((sectionId) => {
@@ -4677,7 +4743,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     );
   }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
-  const laborEmployeeEditorModal = showLaborEmployeeEditor && editingLaborEmployeeId ? (
+  const laborEmployeeEditorModal = canEditRoster && showLaborEmployeeEditor && editingLaborEmployeeId ? (
     <Modal
       title="Edit Employee"
       onClose={() => {
@@ -5473,7 +5539,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               >
                 {contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}` ? "Downloading..." : "Contact Card"}
               </Btn>
-              <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>
+              {canEditRoster && <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>}
               {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
                 <Btn
                   variant="primary"
@@ -5486,7 +5552,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 >
                   Open Active Training
                 </Btn>
-              ) : (
+              ) : canUseLaborTab("training") ? (
                 <Btn
                   variant="primary"
                   size="sm"
@@ -5504,7 +5570,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 >
                   New Training Record
                 </Btn>
-              )}
+              ) : null}
             </div>
           </div>
         </Card>
@@ -6279,6 +6345,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const configuringRosterValue = configuringRosterKey ? rosterDraftFilters[configuringRosterKey] : null;
   const headerAction = (() => {
     if (tab === "home") {
+      if (!canEditRoster) return null;
       return showInlineLaborEmployeeComposer ? (
         <Btn variant="secondary" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
       ) : (
@@ -6302,6 +6369,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return null;
     }
     if (tab === "notes") {
+      if (!canAccessEmployeeNotes) return null;
       return <Btn variant="primary" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>;
     }
     return null;
@@ -6366,7 +6434,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       </div>
 
       <div className="labor-module-tabs" style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}` }}>
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button key={t.id} onClick={() => changeLaborTab(t.id)} style={{
             padding: "10px 18px", fontSize: 13, fontWeight: tab === t.id ? 700 : 500,
             color: tab === t.id ? C.pri : C.textMut, background: "none", border: "none",
@@ -6377,12 +6445,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: 60, color: C.textMut }}>Loading labor data...</div>}
+      {!loading && visibleTabs.length === 0 && (
+        <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>
+          You do not have permission to access Labor Management.
+        </Card>
+      )}
 
       <div
         key={`${tab}:${tab === "interviews" ? interviewView : ""}:${tab === "attendance" ? attendanceView : ""}:${interviewDetailOpen ? "detail" : "list"}`}
         className="labor-module-panel"
       >
-      {!loading && tab === "home" && (
+      {!loading && tab === "home" && canUseLaborTab("home") && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
             <MetricCard label="Active Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.pri} />
@@ -6690,9 +6763,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               >
                 Hierarchy
               </Btn>
-              <Btn variant="ghost" size="sm" onClick={() => setShowHierarchyManager(true)}>
-                Manage Hierarchy
-              </Btn>
+              {canEditRoster && (
+                <Btn variant="ghost" size="sm" onClick={() => setShowHierarchyManager(true)}>
+                  Manage Hierarchy
+                </Btn>
+              )}
               <Btn
                 variant={showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? "secondary" : "ghost"}
                 size="sm"
@@ -6709,11 +6784,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               >
                 {contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}
               </Btn>
-	              {showInlineLaborEmployeeComposer ? (
+	              {canEditRoster && (showInlineLaborEmployeeComposer ? (
                 <Btn variant="ghost" size="sm" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
               ) : (
                 <Btn variant="secondary" size="sm" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
-              )}
+              ))}
             </div>
           </SectionHeader>
           {hasRosterEmployeesInGraceWindow && (
@@ -6771,7 +6846,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   ))}
 	                </tr></thead>
                 <tbody>
-                  {showInlineLaborEmployeeComposer && (
+                  {canEditRoster && showInlineLaborEmployeeComposer && (
                     <tr>
                       <td colSpan={9} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
                         <form
@@ -7031,7 +7106,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "attendance" && (
+      {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
           <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
             {[
@@ -7070,18 +7145,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             params={{ tab: attendanceView === "input" ? "log" : "summary" }}
             embedded
             tabPreset={attendanceView}
+            canLogAttendance={canLogAttendance}
           />
         </div>
       )}
 
-      {!loading && tab === "interviews" && (
+      {!loading && tab === "interviews" && canUseLaborTab("interviews") && (
         <div>
           {!interviewDetailOpen && (
             <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
               {[
                 { id: "records", label: "Interviews", subtitle: "Candidate records and interview review" },
-                { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" },
-              ].map((option) => (
+                canManageInterviews ? { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" } : null,
+              ].filter(Boolean).map((option) => (
                 <button
                   key={option.id}
                   type="button"
@@ -7113,6 +7189,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             embedded
             viewPreset={interviewView}
             recordIdPreset={routeLaborTab === "interviews" ? routeInterviewId : ""}
+            canManage={canManageInterviews}
             onViewChange={changeInterviewView}
             onRecordChange={handleInterviewRecordRouteChange}
             onDetailChange={setInterviewDetailOpen}
@@ -7120,7 +7197,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "performance-reviews" && (
+      {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && (
         <div>
           {supportBundleLoading && !supportBundleLoaded ? (
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading performance reviews...</Card>
@@ -7234,7 +7311,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "training" && (
+      {!loading && tab === "training" && canUseLaborTab("training") && (
         <div>
           {trainingBundleLoading && !trainingBundleLoaded ? (
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading training records…</Card>
@@ -7279,7 +7356,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "templates" && !previewTemplateId && (
+      {!loading && tab === "templates" && canUseLaborTab("templates") && !previewTemplateId && (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -7339,7 +7416,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "templates" && previewTemplateId && previewTemplate && (
+      {!loading && tab === "templates" && canUseLaborTab("templates") && previewTemplateId && previewTemplate && (
         <div>
           <button onClick={() => { setPreviewTemplateId(null); setPreviewTemplateVersionId(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
             <I.Back /> Back to Templates
@@ -7650,13 +7727,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       )}
 
-      {!loading && tab === "notes" && (
+      {!loading && tab === "notes" && canUseLaborTab("notes") && (
         <div>
           {supportBundleLoading && !supportBundleLoaded ? (
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading employee notes…</Card>
           ) : null}
           <SectionHeader title="Global Notes Feed" count={filteredGlobalNotes.length}>
-            <Btn variant="secondary" size="sm" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>
+            {canAccessEmployeeNotes && <Btn variant="secondary" size="sm" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>}
           </SectionHeader>
 	          <Card style={{ padding: 16, marginBottom: 16 }}>
 	            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -7748,7 +7825,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
       </div>
 
-      {showHierarchyManager && (
+      {canEditRoster && showHierarchyManager && (
         <Modal title="Manage Hierarchy" onClose={() => setShowHierarchyManager(false)}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
@@ -7801,7 +7878,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </Modal>
       )}
 
-      {showNewRecord && (
+      {canUseLaborTab("training") && showNewRecord && (
         <Modal title="New Training Record" onClose={() => { setShowNewRecord(false); resetNewRecordForm(); }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <CustomSelect
@@ -7862,7 +7939,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {employeeNoteEditorModal}
       {attachmentPreviewModal}
 
-      {showGlobalNoteModal && (
+      {canAccessEmployeeNotes && showGlobalNoteModal && (
         <Modal title="Add Employee Note" onClose={() => setShowGlobalNoteModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <CustomSelect
@@ -7896,7 +7973,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </Modal>
       )}
 
-      {showCreateTemplateModal && (
+      {canManageTemplates && showCreateTemplateModal && (
         <Modal title="Create Template" onClose={resetCreateTemplateModal}>
           <div style={{ display: "grid", gap: 14, minWidth: 560, maxWidth: 620 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

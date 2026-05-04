@@ -7,7 +7,7 @@ import { supabase } from "../../supabaseClient";
 import { C, OPERATIONS_CATALOG, OPS_TYPES, LITE_DEF_PRICING, CHART_PTS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, ROOM_TYPES, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, buildUrl, parseUrl, gid, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, LEAN_ROLES, NAV_ITEMS, K9_LOGO_SRC, K9_LOGO_PNG, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, formatDogNames, fmtPhoneInput, IDB_VERSION, idbGet, idbSet } from "../../shared/theme";
 import { I, Icons } from "../../shared/icons";
 import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
-import { hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
+import { hasEveryLeanPermission, hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
@@ -326,6 +326,30 @@ const ANALYTICS_ONLY_SETTINGS = new Set([
   "checklist-templates",
 ]);
 
+const SETTINGS_CARD_PERMISSIONS = {
+  "dashboard-refresh": ["Permissions Management"],
+  gingr: ["Gingr Integration"],
+  "gingr-icons": ["Gingr Integration"],
+  "api-overview": ["Gingr Integration"],
+  "api-dashboard": ["Gingr Integration"],
+  "ignite-settings": ["Gingr Integration"],
+  "ignite-parser": ["Gingr Integration"],
+  team: ["User Management"],
+  permissions: ["Permissions Management"],
+  "room-cleaning": ["Checklist Templates"],
+  "roll-call": ["Checklist Templates"],
+  "emergency-contacts": ["Checklist Templates"],
+  "role-layout": ["Checklist Templates"],
+  "lapsed-thresholds": ["Customer Lifecycle"],
+  "required-fields": ["Gingr Integration"],
+  "checklist-templates": ["Checklist Templates"],
+  subscription: ["User Management"],
+};
+
+function canAccessSettingsCard(profile, cardId) {
+  return hasEveryLeanPermission(profile, SETTINGS_CARD_PERMISSIONS[cardId] || []);
+}
+
 export function buildSettingsSections({ analyticsMode = false } = {}) {
   const sections = [
     {
@@ -419,14 +443,19 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
   const filteredSections = sections.map(section => ({
     ...section,
     cards: section.cards.filter(card =>
-      card.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      card.desc.toLowerCase().includes(searchQuery.toLowerCase())
+      canAccessSettingsCard(profile, card.id) && (
+        card.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        card.desc.toLowerCase().includes(searchQuery.toLowerCase())
+      )
     ),
   })).filter(section => section.cards.length > 0);
 
   // Tab detail components
   const renderDetail = () => {
     if (!analyticsMode && ANALYTICS_ONLY_SETTINGS.has(tab)) return null;
+    if (!canAccessSettingsCard(profile, tab)) {
+      return <Card style={{ padding: 28, textAlign: "center", color: C.dan, fontWeight: 700 }}>Access denied.</Card>;
+    }
     switch (tab) {
       case "dashboard-refresh":
         return <DashboardRefreshTab />;
@@ -437,7 +466,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
       case "team":
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
-        return <PermissionsTab />;
+        return <PermissionsTab profile={profile} />;
       case "lapsed-thresholds":
         return <RetentionThresholdsTab />;
       case "required-fields":

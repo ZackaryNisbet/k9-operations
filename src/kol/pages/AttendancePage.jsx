@@ -129,7 +129,7 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full" }) {
+export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null }) {
   const [tab, setTab] = useState("roster");
   const [loading, setLoading] = useState(true);
   const [resolvedLocationId, setResolvedLocationId] = useState("");
@@ -183,7 +183,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const laborLocationRef = resolvedLocationId || locationRef || "";
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
-  const canManage = hasLeanPermission(profile, "Attendance Tracker");
+  const canManage = canLogAttendance ?? (hasLeanPermission(profile, "Labor Log Attendance") || hasLeanPermission(profile, "Attendance Tracker"));
   const legacyRoster = data?.attendanceRoster || [];
   const legacyEntries = data?.attendanceEntries || [];
 
