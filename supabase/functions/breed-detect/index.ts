@@ -14,6 +14,15 @@ const corsHeaders = {
 const SUPABASE_URL = 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+const PET_PHOTOS_BUCKET = 'pet-photos';
+
+function encodeStoragePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function publicStorageUrl(path: string): string {
+  return `${SUPABASE_URL}/storage/v1/object/public/${PET_PHOTOS_BUCKET}/${encodeStoragePath(path)}`;
+}
 
 async function callOpenAI(model: string, systemPrompt: string, userContent: Array<Record<string, unknown>>, maxTokens = 1024): Promise<string> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -72,7 +81,9 @@ serve(async (req) => {
 
     await supabase.from('photos').update({ breed_detection_status: 'processing' }).eq('id', photo_id);
 
-    // Build image URL — send full quality to OpenAI (supports up to 20MB, detail:high uses 512px tiles)
+    // Build image URL — send the stored image directly. Avoid Supabase's render/image
+    // transformation endpoint here because each origin photo counts against the
+    // Storage Image Transformations quota.
     const storagePath = photo.storage_path || photo.thumbnail_path;
     if (!storagePath) {
       await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo_id);
@@ -81,8 +92,7 @@ serve(async (req) => {
       });
     }
 
-    // Use high quality transform — OpenAI handles large images well with tile system
-    const imageUrl = `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${storagePath}?width=4000&quality=95`;
+    const imageUrl = publicStorageUrl(storagePath);
 
     // ═══════════════════════════════════════════════════════════
     // PASS 1: GPT-4.1 — Describe then classify (breed + collar)
