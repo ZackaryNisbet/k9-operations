@@ -44,6 +44,57 @@ function MetricPill({ label, value, sub, warn }) {
   );
 }
 
+function ProjectionMethodologyPanel({ day }) {
+  const steps = getProjectionMethodologySteps(day);
+  const headline = getProjectionHeadline(day);
+  const formulaLine = getProjectionFormulaLine(day);
+  if (!steps.length) {
+    return (
+      <div style={{ fontSize: 11, color: C.textMut, borderTop: `1px solid ${C.borderLight}`, paddingTop: 12, marginTop: 14 }}>
+        Selected day: <span style={{ fontWeight: 700, color: C.text }}>{day?.dayName} {formatMatrixDate(day?.date || todayStr())}</span>. Projected mode uses prior-year booking pace from GINGR created dates.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 12, marginTop: 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 10px", marginBottom: 8 }}>
+        <span style={{ fontSize: 11, color: C.textMut }}>
+          Selected day: <span style={{ fontWeight: 800, color: C.text }}>{day?.dayName} {formatMatrixDate(day?.date || todayStr())}</span>
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: C.text }}>Projection Method</span>
+      </div>
+      {headline && (
+        <div style={{ fontSize: 11, color: C.text, fontWeight: 700, lineHeight: 1.45, marginBottom: 6 }}>
+          {headline}
+        </div>
+      )}
+      {formulaLine && (
+        <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.5, borderLeft: `3px solid ${C.pri}`, paddingLeft: 9, marginBottom: 9 }}>
+          <span style={{ fontWeight: 800, color: C.text }}>Formula: </span>
+          {formulaLine}
+        </div>
+      )}
+      <ol style={{ margin: 0, paddingLeft: 0, listStyle: "none", display: "grid", gap: 10, maxWidth: 1060 }}>
+        {steps.map((step, index) => (
+          <li key={step.label} style={{ display: "grid", gridTemplateColumns: "22px minmax(0, 1fr)", gap: 8, color: C.textMut, fontSize: 12, lineHeight: 1.5 }}>
+            <span style={{ width: 20, height: 20, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#EEF4FF", color: C.pri, fontSize: 11, fontWeight: 800 }}>
+              {index + 1}
+            </span>
+            <span>
+              <span style={{ display: "block", fontWeight: 800, color: C.text, marginBottom: 1 }}>{step.label.replace(/^\d+\.\s*/, "")}</span>
+              <span>{step.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div style={{ fontSize: 11, color: C.textMut, marginTop: 9 }}>
+        Weekly totals shown in the workbook are dog-days, not unique reservations.
+      </div>
+    </div>
+  );
+}
+
 function StatusChip({ status }) {
   const map = {
     ok: { bg: C.sucLt, color: C.suc, label: "Covered" },
@@ -275,40 +326,195 @@ function formatSignedPctFromFactor(value) {
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
 
-function getProjectionSummaryLines(day) {
+function getProjectionContext(day) {
   const projection = day?.projection || getMatrixProjection(day?.matrix || day);
   const explanation = projection?.explanations?.support_total_dog_volume;
-  if (!explanation || !projection?.lead_days) return [];
+  const weeklyPace = explanation?.weekly_pace || projection?.calibration?.weekly_pace;
+  return { projection, explanation, weeklyPace };
+}
+
+function getLeadDays(explanation, projection) {
+  const value = Number(explanation?.lead_days ?? projection?.lead_days);
+  return Number.isFinite(value) ? value : null;
+}
+
+function formatRounded(value, fallback = "0") {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return String(Math.round(numeric));
+}
+
+function toFiniteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+export function getProjectionHeadline(day) {
+  const { projection, explanation } = getProjectionContext(day);
+  const leadDays = getLeadDays(explanation, projection);
+  if (!explanation || leadDays === null || leadDays <= 0) return null;
+
+  const exactFinal = toFiniteNumber(explanation.exact_prior_year_final);
+  const exactAsOf = toFiniteNumber(explanation.exact_prior_year_as_of);
+  if (exactFinal !== null && exactFinal > 0 && exactAsOf !== null) {
+    const completion = formatCompletionRate(exactAsOf / exactFinal);
+    return `${leadDays} days out. On this same date last year, ${formatRounded(exactAsOf)} of ${formatRounded(exactFinal)} final dogs were already booked by this point${completion ? ` (${completion})` : ""}.`;
+  }
+
+  return `${leadDays} days out. The projection is based on comparable historical booking pace from GINGR created dates.`;
+}
+
+export function getProjectionFormulaLine(day) {
+  const { projection, explanation, weeklyPace } = getProjectionContext(day);
+  const leadDays = getLeadDays(explanation, projection);
+  if (!explanation || leadDays === null || leadDays <= 0) return null;
+
+  const current = toFiniteNumber(explanation.current_value);
+  const completionRate = toFiniteNumber(explanation.completion_rate);
+  const rawProjected = toFiniteNumber(explanation.raw_projected_value);
+  const pickupFactor = toFiniteNumber(explanation.yoy_adjustment_factor) ?? 1;
+  const weekFactor = toFiniteNumber(explanation.weekly_pace_adjustment_factor ?? weeklyPace?.factor) ?? 1;
+  const unconstrainedProjected = toFiniteNumber(explanation.unconstrained_projected_value ?? explanation.projected_value);
+  const shownProjected = toFiniteNumber(explanation.projected_value);
+
+  if (current !== null && completionRate !== null && completionRate > 0 && rawProjected !== null) {
+    const demandPart = unconstrainedProjected !== null
+      ? ` = ${formatRounded(unconstrainedProjected)} demand`
+      : "";
+    const shownPart = shownProjected !== null && unconstrainedProjected !== null && shownProjected !== unconstrainedProjected
+      ? `; capacity cap changes the shown value to ${formatRounded(shownProjected)}`
+      : shownProjected !== null
+        ? `; shown projection is ${formatRounded(shownProjected)}`
+        : "";
+    return `${formatRounded(current)} currently booked / ${formatCompletionRate(completionRate)} historical completion = ${formatRounded(rawProjected)} raw demand; ${formatRounded(rawProjected)} x ${formatProjectionFactor(pickupFactor)} recent pickup x ${formatProjectionFactor(weekFactor)} full-week check${demandPart}${shownPart}.`;
+  }
+
+  const baselineFinal = toFiniteNumber(explanation.baseline_final_average);
+  if (baselineFinal !== null && rawProjected !== null) {
+    return `No reliable current booking count was available for this row, so the model starts from the historical final average of ${formatRounded(baselineFinal)} dogs, then applies recent pickup, full-week, and capacity checks.`;
+  }
+
+  return null;
+}
+
+export function getProjectionSummaryLines(day) {
+  const { projection, explanation, weeklyPace } = getProjectionContext(day);
+  const leadDays = getLeadDays(explanation, projection);
+  if (!explanation || leadDays === null || leadDays <= 0) return [];
 
   const lines = [];
   if (explanation.exact_prior_year_final !== null && explanation.exact_prior_year_final !== undefined) {
     const completion = explanation.exact_prior_year_final > 0
       ? formatCompletionRate((explanation.exact_prior_year_as_of || 0) / explanation.exact_prior_year_final)
       : null;
-    lines.push(`${explanation.lead_days} days out. On this same date last year, ${explanation.exact_prior_year_as_of || 0} of ${explanation.exact_prior_year_final} final dogs were already booked by this point${completion ? ` (${completion})` : ""}.`);
+    lines.push(`${leadDays} days out: last year ${explanation.exact_prior_year_as_of || 0}/${explanation.exact_prior_year_final} dogs were already booked${completion ? ` (${completion})` : ""}.`);
   }
   if (explanation.fallback_mode && explanation.fallback_mode !== "exact_prior_year" && explanation.fallback_mode !== "carry_forward_no_history") {
-    lines.push(`Fallback: using ${humanizeFallbackMode(explanation.fallback_mode)} (${explanation.sample_count || 0} sample${explanation.sample_count === 1 ? "" : "s"}).`);
+    lines.push(`Also blends ${explanation.sample_count || 0} same-season / same-weekday sample${explanation.sample_count === 1 ? "" : "s"}.`);
   }
   if (explanation.yoy_adjustment_factor && Number(explanation.yoy_adjustment_factor) !== 1) {
     const adjustment = formatSignedPctFromFactor(explanation.yoy_adjustment_factor);
     const sampleCount = explanation.yoy_adjustment?.sample_count || 0;
-    lines.push(`Recent pickup calibration: ${formatProjectionFactor(explanation.yoy_adjustment_factor)}${adjustment ? ` (${adjustment})` : ""} from ${sampleCount} completed day${sampleCount === 1 ? "" : "s"}.`);
+    lines.push(`Recent completed days adjust the forecast ${formatProjectionFactor(explanation.yoy_adjustment_factor)}${adjustment ? ` (${adjustment})` : ""} using ${sampleCount} completed day${sampleCount === 1 ? "" : "s"}.`);
   }
-  const weeklyPace = explanation.weekly_pace || projection.calibration?.weekly_pace;
   if (weeklyPace?.factor && Number(weeklyPace.factor) !== 1) {
     const recent = weeklyPace.recent_completed_week_yoy_factor
       ? ` Recent completed weeks are ${formatProjectionFactor(weeklyPace.recent_completed_week_yoy_factor)} vs last year.`
       : "";
-    lines.push(`Week-level calibration: visible range raw projection ${Math.round(weeklyPace.raw_week_projected || 0)} → ${Math.round(weeklyPace.weekly_target || 0)}.${recent}`);
+    lines.push(`Full-week check scales ${formatRounded(weeklyPace.raw_week_projected)} raw dog-days to ${formatRounded(weeklyPace.weekly_target)}.${recent}`);
   }
   if (projection.capacity?.has_capacity_constrained_projection) {
-    lines.push("Capacity constraint applied: projected mode shows the achievable/bookable forecast while preserving unconstrained demand in the tooltip.");
+    lines.push("Capacity cap applied: matrix shows achievable forecast; tooltip keeps unconstrained demand.");
   }
   if (!lines.length) {
-    lines.push(`${explanation.lead_days} days out. Projected demand uses historical GINGR booking pace for this same date.`);
+    lines.push(`${leadDays} days out. Projected demand uses historical GINGR booking pace for this same date.`);
   }
   return lines;
+}
+
+function getConfiguredCapacitySummary(capacity) {
+  const constraints = (capacity?.constraints || []).filter((constraint) => {
+    const value = Number(constraint.capacity);
+    return Number.isFinite(value) && value > 0;
+  });
+  if (!constraints.length) return "No explicit play-yard caps are configured; boarding still uses the practical room-based cap when rooms are available.";
+  return constraints
+    .map((constraint) => `${constraint.label}: demand ${formatRounded(constraint.demand)}, cap ${formatRounded(constraint.capacity)} (${constraint.status === "over_capacity" ? "binding" : "within cap"})`)
+    .join("; ");
+}
+
+export function getProjectionMethodologySteps(day) {
+  const { projection, explanation, weeklyPace } = getProjectionContext(day);
+  const leadDays = getLeadDays(explanation, projection);
+  if (!explanation || leadDays === null || leadDays <= 0) return [];
+
+  const steps = [];
+  const exactFinal = Number(explanation.exact_prior_year_final || 0);
+  const exactAsOf = Number(explanation.exact_prior_year_as_of || 0);
+  const exactCompletion = exactFinal > 0 ? formatCompletionRate(exactAsOf / exactFinal) : null;
+  const baselineFinal = toFiniteNumber(explanation.baseline_final_average);
+  const baselineAsOf = toFiniteNumber(explanation.baseline_as_of_average);
+  const completionRate = toFiniteNumber(explanation.completion_rate);
+  const weightedCompletion = baselineFinal !== null && baselineAsOf !== null && baselineFinal > 0
+    ? `${formatRounded(baselineAsOf)} / ${formatRounded(baselineFinal)} = ${formatCompletionRate(baselineAsOf / baselineFinal)}`
+    : completionRate !== null
+      ? formatCompletionRate(completionRate)
+      : null;
+  if (exactFinal > 0) {
+    steps.push({
+      label: "1. Same-date anchor",
+      detail: `From GINGR reservations.created_date, the app checks what was already booked at the same lead time. ${leadDays} days before last year's matching date, ${exactAsOf} of ${exactFinal} final dogs were booked${exactCompletion ? ` (${exactCompletion})` : ""}. This anchor stays visible because it is the simplest way to audit the projection.`,
+    });
+  }
+
+  const comparableMode = humanizeFallbackMode(explanation.fallback_mode);
+  if (comparableMode && explanation.fallback_mode !== "carry_forward_no_history") {
+    steps.push({
+      label: "2. Weekday and season completion rate",
+      detail: `Because the same calendar date can land on a different weekday, the model also blends ${explanation.sample_count || 0} comparable date sample${explanation.sample_count === 1 ? "" : "s"} using ${comparableMode}. Same-weekday samples get extra weight, so a Wednesday is not treated like a Friday/Saturday/Sunday boarding pattern. The completion rate used by the formula is ${weightedCompletion || "the weighted as-of dogs divided by weighted final dogs"}.`,
+    });
+  }
+
+  if (explanation.yoy_adjustment_factor && Number(explanation.yoy_adjustment_factor) !== 1) {
+    const factor = Number(explanation.yoy_adjustment_factor);
+    const adjustment = formatSignedPctFromFactor(factor);
+    const lookbackDays = explanation.yoy_adjustment?.lookback_days || 28;
+    const sampleCount = explanation.yoy_adjustment?.sample_count || 0;
+    const direction = factor > 1
+      ? "recent completed days were less complete at this lead point than last year's comparable days, so more pickup still arrived later"
+      : "recent completed days were more complete at this lead point than last year's comparable days, so less pickup arrived later";
+    const action = factor > 1 ? "raises" : "lowers";
+    steps.push({
+      label: "3. Recent pickup check",
+      detail: `The app looks at the last ${lookbackDays} completed days with usable history. For each completed day, it calculates this year's completion at the same lead time, then calculates last year's comparable completion the same way. The factor is prior-year completion divided by current-year completion, weighted by recency and dog volume, then clamped to avoid outliers. Here it is ${formatProjectionFactor(factor)}${adjustment ? ` (${adjustment})` : ""} from ${sampleCount} completed day${sampleCount === 1 ? "" : "s"}, meaning ${direction}; this ${action} the daily forecast before the week check.`,
+    });
+  }
+
+  if (weeklyPace?.factor && Number(weeklyPace.factor) !== 1) {
+    const recentWeeks = weeklyPace.recent_completed_week_yoy_factor
+      ? `${formatProjectionFactor(weeklyPace.recent_completed_week_yoy_factor)} vs last year`
+      : "not enough recent completed-week samples";
+    const asOfFactor = weeklyPace.current_vs_prior_as_of_factor
+      ? `${formatProjectionFactor(weeklyPace.current_vs_prior_as_of_factor)} (${formatRounded(weeklyPace.current_week_booked)} currently booked / ${formatRounded(weeklyPace.prior_year_week_as_of)} booked by the same point last year)`
+      : "not available";
+    const blendedFactor = weeklyPace.blended_yoy_factor
+      ? `${formatProjectionFactor(weeklyPace.blended_yoy_factor)}`
+      : "the available weekly pace factor";
+    steps.push({
+      label: "4. Full-week reasonableness check",
+      detail: `Before showing the final projection, the app sums the whole visible week. The daily model produced ${formatRounded(weeklyPace.raw_week_projected)} raw dog-days. The week check compares four inputs: ${formatRounded(weeklyPace.current_week_booked)} currently booked, ${formatRounded(weeklyPace.prior_year_week_as_of)} booked by the same point last year, ${formatRounded(weeklyPace.prior_year_week_final)} final dog-days last year, and recent completed weeks running ${recentWeeks}. Current as-of pace is ${asOfFactor}. The target uses a blended weekly YOY factor of ${blendedFactor}, then sets the visible-week target to ${formatRounded(weeklyPace.weekly_target)} dog-days and scales the daily rows to that target without dropping below currently booked.`,
+    });
+  }
+
+  const capacity = projection?.capacity;
+  if (capacity) {
+    steps.push({
+      label: "5. Capacity check",
+      detail: `After demand is calibrated, the app checks known capacity limits from the scheduling capacity config. ${getConfiguredCapacitySummary(capacity)} If a cap binds, projected mode shows the achievable/bookable value while the tooltip keeps the unconstrained demand forecast.`,
+    });
+  }
+
+  return steps;
 }
 
 function getProjectionTooltip({ explanation, currentValue, projectedValue }) {
@@ -1277,22 +1483,21 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </tbody>
           </table>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
-          <span style={{ fontSize: 11, color: C.textMut }}>
-            Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
-          </span>
-          <span style={{ fontSize: 11, color: C.textMut }}>
-            {matrixMode === "projected"
-              ? (
-                getProjectionSummaryLines(selectedDay).join(" • ")
-                || "Projected mode uses prior-year booking pace from GINGR created dates."
-              )
-              : `Trust notes: ${selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}`}
-          </span>
-          <span style={{ fontSize: 11, color: C.textMut }}>
-            Weekly totals shown in the workbook are dog-days, not unique reservations.
-          </span>
-        </div>
+        {matrixMode === "projected" ? (
+          <ProjectionMethodologyPanel day={selectedDay} />
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+            <span style={{ fontSize: 11, color: C.textMut }}>
+              Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
+            </span>
+            <span style={{ fontSize: 11, color: C.textMut }}>
+              Trust notes: {selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}
+            </span>
+            <span style={{ fontSize: 11, color: C.textMut }}>
+              Weekly totals shown in the workbook are dog-days, not unique reservations.
+            </span>
+          </div>
+        )}
         <ProjectionAccuracyPanel day={selectedDay} />
       </SectionCard>
 
