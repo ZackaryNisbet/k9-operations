@@ -1814,7 +1814,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
   );
 }
 
-function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving }) {
+function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving, canManage = true }) {
   const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
   return (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
@@ -1829,9 +1829,9 @@ function CandidateHeader({ record, recommendation, payRateSummary, onRecommendat
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <SegmentedRecommendation value={recommendation} onChange={onRecommendationChange} disabled={saving} />
-          <Btn variant="secondary" size="sm" onClick={onEdit}>Edit Details</Btn>
-          <Btn variant="danger" size="sm" onClick={onDelete}>Delete</Btn>
+          <SegmentedRecommendation value={recommendation} onChange={onRecommendationChange} disabled={saving || !canManage} />
+          {canManage && <Btn variant="secondary" size="sm" onClick={onEdit}>Edit Details</Btn>}
+          {canManage && <Btn variant="danger" size="sm" onClick={onDelete}>Delete</Btn>}
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
@@ -1846,7 +1846,7 @@ function CandidateHeader({ record, recommendation, payRateSummary, onRecommendat
   );
 }
 
-function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload }) {
+function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload, canUpload = true }) {
   const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
   const uploadedAt = resumeArtifact?.created_at ? new Date(resumeArtifact.created_at).toLocaleDateString() : "";
   const sizeLabel = formatFileSize(metadata.size_bytes);
@@ -1864,9 +1864,11 @@ function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick
             {hasResume ? "Candidate resume stays with this interview record." : "Attach the applicant's resume before or during the interview."}
           </div>
         </div>
-        <Btn variant={hasResume ? "secondary" : "primary"} size="sm" onClick={onUploadClick} disabled={uploading}>
-          {uploading ? "Uploading..." : hasResume ? "Replace Resume" : "Upload Resume"}
-        </Btn>
+        {canUpload && (
+          <Btn variant={hasResume ? "secondary" : "primary"} size="sm" onClick={onUploadClick} disabled={uploading}>
+            {uploading ? "Uploading..." : hasResume ? "Replace Resume" : "Upload Resume"}
+          </Btn>
+        )}
       </div>
       {hasResume ? (
         <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -2094,6 +2096,7 @@ function AudioUploadPanel({
   onAudioLoadedMetadata,
   onAudioEnded,
   onAudioError,
+  canUpload = true,
 }) {
   const sourceAudio = record?.metadata?.audio_transcription?.source_audio || {};
   const transcription = record?.metadata?.audio_transcription || {};
@@ -2145,6 +2148,7 @@ function AudioUploadPanel({
 
   const handleDrop = (event) => {
     event.preventDefault();
+    if (!canUpload) return;
     const file = event.dataTransfer.files?.[0];
     if (file) onUpload(file);
   };
@@ -2176,8 +2180,10 @@ function AudioUploadPanel({
         ref={inputRef}
         type="file"
         accept={INTERVIEW_AUDIO_ACCEPT}
+        disabled={!canUpload}
         style={{ display: "none" }}
         onChange={(event) => {
+          if (!canUpload) return;
           onUpload(event.target.files?.[0]);
           event.target.value = "";
         }}
@@ -2186,8 +2192,10 @@ function AudioUploadPanel({
         ref={transcriptInputRef}
         type="file"
         accept={INTERVIEW_TRANSCRIPT_ACCEPT}
+        disabled={!canUpload}
         style={{ display: "none" }}
         onChange={(event) => {
+          if (!canUpload) return;
           onTranscriptUpload?.(event.target.files?.[0]);
           event.target.value = "";
         }}
@@ -2206,11 +2214,11 @@ function AudioUploadPanel({
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={transcribing || drafting}>
+          <Btn variant={complete ? "success" : "primary"} onClick={() => inputRef.current?.click()} disabled={!canUpload || transcribing || drafting}>
             {transcribing || drafting ? "Processing..." : complete ? "Replace Audio" : "Choose File"}
           </Btn>
-          <Btn variant="secondary" onClick={() => transcriptInputRef.current?.click()} disabled={transcribing || drafting}>Upload Transcript</Btn>
-          <Btn variant="secondary" onClick={onTranscriptPasteOpen} disabled={transcribing || drafting}>Paste Transcript</Btn>
+          <Btn variant="secondary" onClick={() => transcriptInputRef.current?.click()} disabled={!canUpload || transcribing || drafting}>Upload Transcript</Btn>
+          <Btn variant="secondary" onClick={onTranscriptPasteOpen} disabled={!canUpload || transcribing || drafting}>Paste Transcript</Btn>
         </div>
       </div>
       {audioUrl && (
@@ -3699,7 +3707,7 @@ function QuestionReviewModal({
   );
 }
 
-export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", onViewChange = null, onRecordChange = null, onDetailChange = null }) {
+export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", canManage = true, onViewChange = null, onRecordChange = null, onDetailChange = null }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const locationRef = profile?.location_id || data?.locationId || "";
@@ -3890,19 +3898,30 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     addGlobalToast?.(message, type);
   }, [addGlobalToast]);
 
+  const requireInterviewManagement = useCallback(() => {
+    if (canManage) return true;
+    showToast("You do not have permission to manage interviews", "error");
+    return false;
+  }, [canManage, showToast]);
+
   const changeView = useCallback((nextView) => {
     const normalizedView = nextView === "config" ? "config" : "records";
+    if (normalizedView === "config" && !canManage) {
+      showToast("You do not have permission to manage interview configuration", "error");
+      return;
+    }
     setView(normalizedView);
     if (normalizedView !== "records") setSelectedRecordIdState("");
     onViewChange?.(normalizedView);
-  }, [onViewChange]);
+  }, [canManage, onViewChange, showToast]);
 
   useEffect(() => {
-    if (viewPreset && viewPreset !== view) {
-      setView(viewPreset);
-      if (viewPreset !== "records") setSelectedRecordIdState("");
+    const nextView = viewPreset === "config" && !canManage ? "records" : viewPreset;
+    if (nextView && nextView !== view) {
+      setView(nextView);
+      if (nextView !== "records") setSelectedRecordIdState("");
     }
-  }, [view, viewPreset]);
+  }, [canManage, view, viewPreset]);
 
   useEffect(() => {
     setPayRateDrafts((prev) => {
@@ -4232,6 +4251,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [buildSummaryEditsPayload, customSummaryPages, responsesByTarget, selectedGuide, selectedPdfFields, selectedQuestions, selectedRecord, summaryDraftTextByKey]);
 
   const setAutoScorePreference = (enabled) => {
+    if (!requireInterviewManagement()) return;
     setAutoScoreCandidates(enabled);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(autoScoreStorageKey, enabled ? "true" : "false");
@@ -4332,6 +4352,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const createNewInterview = async () => {
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return;
+    }
     const normalized = normalizeInterviewCandidateDraft({
       ...newInterviewDraft,
       interviewer_name: newInterviewDraft.interviewer_name || actorName,
@@ -4403,6 +4427,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const saveRecordPatch = async (patch) => {
     if (!selectedRecord?.id) return;
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return null;
+    }
     setRecordSaving(true);
     try {
       const { data: updated, error } = await supabase
@@ -4518,6 +4546,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const deleteSelectedInterview = async () => {
     if (!selectedRecord?.id) return;
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return;
+    }
     if (!window.confirm(`Delete interview for ${selectedRecord.candidate_full_name}?`)) return;
     setRecordSaving(true);
     try {
@@ -4537,6 +4569,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const saveCandidateEdit = async () => {
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return;
+    }
     const normalized = normalizeInterviewCandidateDraft(candidateEditDraft);
     if (!normalized.candidate_full_name) {
       showToast("Candidate name is required.", "error");
@@ -4551,6 +4587,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const saveResponse = async ({ responseType, key, prompt, value, metadataPatch = null, responseState = null }) => {
     if (!selectedRecord?.id || !key) return;
+    if (!requireInterviewManagement()) return false;
     const targetKey = fieldKey(responseType, key);
     const existing = responsesByTarget[targetKey];
     const nextState = responseState || (String(value || "").trim() ? "manual" : "blank");
@@ -4629,6 +4666,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       customOnly = false,
       reviewModeOverride = "",
     } = options;
+    if (!canManage) return null;
     const draftReviewMode = normalizeAiReviewMode(reviewModeOverride || aiReviewMode);
     if (!interviewId) return null;
     const transcriptForLocalCheck = String(localTranscriptText || selectedRecord?.transcript_text || "").trim();
@@ -4772,6 +4810,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const draftTranscriptSummary = async (interviewId = selectedRecord?.id, options = {}) => {
     const { quiet = true } = options;
+    if (!canManage) return null;
     if (!interviewId || !String(selectedRecord?.transcript_text || "").trim()) return null;
     setSummaryDrafting(true);
     try {
@@ -4827,14 +4866,16 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   useEffect(() => {
+    if (!canManage) return;
     if (!showActiveInterview || activeInterviewPane !== "guide" || !selectedRecord?.id || !String(selectedRecord?.transcript_text || "").trim()) return;
     if (hasStoredTranscriptSummary || summaryDrafting || aiDrafting) return;
     if (summaryRequestRef.current.has(selectedRecord.id)) return;
     summaryRequestRef.current.add(selectedRecord.id);
     draftTranscriptSummary(selectedRecord.id, { quiet: true });
-  }, [activeInterviewPane, showActiveInterview, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting, aiDrafting]);
+  }, [activeInterviewPane, canManage, showActiveInterview, selectedRecord?.id, selectedRecord?.transcript_text, hasStoredTranscriptSummary, summaryDrafting, aiDrafting]);
 
   const fillPdfDocumentWithAiInstruction = async (instruction) => {
+    if (!requireInterviewManagement()) return null;
     if (!selectedRecord?.id || !String(instruction || "").trim()) return null;
     const result = await draftInterview(selectedRecord.id, {
       requireLocalTranscript: true,
@@ -4846,6 +4887,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const changeAiReviewMode = async (nextValue) => {
+    if (!requireInterviewManagement()) return;
     const nextMode = normalizeAiReviewMode(nextValue);
     if (nextMode === aiReviewMode && selectedRecord?.metadata?.ai_review_mode === nextMode) return;
     setAiReviewMode(nextMode);
@@ -4985,6 +5027,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const handleAudioUpload = async (file) => {
     if (!selectedRecord?.id || !file) return;
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return;
+    }
     const validation = validateInterviewAudioFile(file);
     if (!validation.ok) {
       showToast(validation.error, "error");
@@ -5092,6 +5138,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const saveTranscriptText = async ({ text, fileName = "interview-transcript.txt", source = "upload" }) => {
     if (!selectedRecord?.id) return null;
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return null;
+    }
     const cleaned = cleanInterviewTranscriptText(text);
     if (!cleaned) {
       showToast("Transcript text is empty.", "error");
@@ -5281,6 +5331,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const handleResumeUpload = async (file) => {
     if (!selectedRecord?.id || !locationId || !file) return;
+    if (!canManage) {
+      showToast("You do not have permission to manage interviews", "error");
+      return;
+    }
     const validation = validateInterviewResumeFile(file);
     if (!validation.ok) {
       showToast(validation.error, "error");
@@ -5448,6 +5502,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const uploadTemplatePdf = async (version, file) => {
+    if (!requireInterviewManagement()) return;
     if (!version || !file || version.status !== "draft") return;
     setTemplateActionId(version.id);
     try {
@@ -5510,6 +5565,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const publishVersion = async (template, version) => {
+    if (!requireInterviewManagement()) return;
     if (!template || !version || version.pdf_verification_status !== "verified_fields") return;
     setTemplateActionId(version.id);
     try {
@@ -5547,6 +5603,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const createDraftVersion = async (template) => {
+    if (!requireInterviewManagement()) return;
     const templateVersions = versionsByTemplate[template.id] || [];
     const baseVersion = templateVersions.find((version) => version.is_current) || templateVersions[0];
     const nextNo = Math.max(0, ...templateVersions.map((version) => Number(version.version_no || 0))) + 1;
@@ -5601,6 +5658,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const createPositionType = async () => {
+    if (!requireInterviewManagement()) return;
     const roleLabel = String(newPositionDraft.role_label || "").trim();
     if (!roleLabel) {
       showToast("Position name is required.", "error");
@@ -5678,6 +5736,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const saveSharedQuestion = async (question, patch) => {
+    if (!requireInterviewManagement()) return;
     const rows = getDraftQuestionMatches(question);
     if (!rows.length) {
       showToast("Create draft template versions before editing shared questions.", "error");
@@ -5707,6 +5766,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const addSharedQuestion = async () => {
+    if (!requireInterviewManagement()) return;
     const draft = newQuestionDrafts.shared || {};
     const prompt = String(draft.prompt || "").trim();
     if (!prompt) return;
@@ -5740,6 +5800,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const deleteSharedQuestion = async (question) => {
+    if (!requireInterviewManagement()) return;
     if (!window.confirm("Delete this shared draft question from all draft templates?")) return;
     const rows = getDraftQuestionMatches(question);
     if (!rows.length) return;
@@ -5755,6 +5816,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const reorderSharedQuestion = async (sourceId, targetId) => {
+    if (!requireInterviewManagement()) return;
     if (!sourceId || !targetId || sourceId === targetId || !draftVersions.length) return;
     const sourceIndex = sharedQuestions.findIndex((question) => question.id === sourceId);
     const targetIndex = sharedQuestions.findIndex((question) => question.id === targetId);
@@ -5776,6 +5838,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   };
 
   const attachGuideToInterview = async () => {
+    if (!requireInterviewManagement()) return;
     if (!selectedRecord?.id || !guideAttachVersionId) return;
     const version = publishedVersions.find((row) => row.id === guideAttachVersionId);
     const template = templates.find((row) => row.id === version?.template_id);
@@ -5870,8 +5933,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           <div style={{ display: "inline-flex", border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
             {[
               { id: "records", label: "Interviews" },
-              { id: "config", label: "Configuration" },
-            ].map((item) => (
+              canManage ? { id: "config", label: "Configuration" } : null,
+            ].filter(Boolean).map((item) => (
               <button
                 key={item.id}
                 onClick={() => changeView(item.id)}
@@ -5891,12 +5954,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </button>
             ))}
           </div>
-          <Btn variant="primary" onClick={() => setShowNewInterview(true)} disabled={templateOptions.length === 0}>Add New Interview</Btn>
+          {canManage && <Btn variant="primary" onClick={() => setShowNewInterview(true)} disabled={templateOptions.length === 0}>Add New Interview</Btn>}
         </div>
       )}
 
       {view === "records" && !selectedRecord && (
-        <InterviewRoster records={records} onOpen={setSelectedRecordId} onAdd={() => setShowNewInterview(true)} canAdd={templateOptions.length > 0} />
+        <InterviewRoster records={records} onOpen={setSelectedRecordId} onAdd={() => setShowNewInterview(true)} canAdd={canManage && templateOptions.length > 0} />
       )}
 
       {view === "records" && selectedRecord && (
@@ -5910,6 +5973,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             onDelete={deleteSelectedInterview}
             onBack={() => setSelectedRecordId("")}
             saving={recordSaving}
+            canManage={canManage}
           />
 
           <input
@@ -5930,6 +5994,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             onUploadClick={() => resumeInputRef.current?.click()}
             onOpen={openArtifact}
             onDownload={downloadArtifact}
+            canUpload={canManage}
           />
 
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
@@ -5944,8 +6009,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                   onChange={setGuideAttachVersionId}
                   options={attachGuideOptions}
                   placeholder={attachGuideOptions.length ? "Attach another guide" : "All guides attached"}
+                  disabled={!canManage}
                 />
-                <Btn variant="secondary" size="sm" onClick={attachGuideToInterview} disabled={!guideAttachVersionId || recordSaving}>Attach</Btn>
+                <Btn variant="secondary" size="sm" onClick={attachGuideToInterview} disabled={!canManage || !guideAttachVersionId || recordSaving}>Attach</Btn>
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -5983,7 +6049,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                 onChange={changeAiReviewMode}
                 options={INTERVIEW_AI_REVIEW_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
                 placeholder="AI strictness"
-                disabled={aiDrafting || recordSaving}
+                disabled={!canManage || aiDrafting || recordSaving}
               />
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ color: C.textMut, fontSize: 12, lineHeight: 1.45, flex: "1 1 260px" }}>
@@ -5993,7 +6059,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                   variant="secondary"
                   size="sm"
                   onClick={() => draftAttachedGuides({ onlyEmpty: false, reason: "manual" })}
-                  disabled={aiDrafting || recordSaving || !selectedGuides.length || !String(selectedRecord?.transcript_text || "").trim()}
+                  disabled={!canManage || aiDrafting || recordSaving || !selectedGuides.length || !String(selectedRecord?.transcript_text || "").trim()}
                 >
                   Draft Attached Guides
                 </Btn>
@@ -6027,6 +6093,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             onAudioLoadedMetadata={handleAudioLoadedMetadata}
             onAudioEnded={handleAudioEnded}
             onAudioError={handleAudioPlaybackError}
+            canUpload={canManage}
           />
 
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 16 }}>
@@ -6099,7 +6166,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </div>
       )}
 
-      {view === "config" && (
+      {view === "config" && canManage && (
         <div style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <SectionHeading title="Interview Configuration" />
@@ -6327,7 +6394,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </div>
       )}
 
-      {showNewInterview && (
+      {canManage && showNewInterview && (
         <Modal title="Add New Interview" onClose={() => setShowNewInterview(false)} wide>
           {templateOptions.length === 0 ? (
             <EmptyState title="No Published Templates" body="Upload Acrobat-prepared PDFs, verify fields, and publish a role template before creating interview records." />
@@ -6375,7 +6442,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </Modal>
       )}
 
-      {showCandidateEdit && selectedRecord && (
+      {canManage && showCandidateEdit && selectedRecord && (
         <Modal title="Edit Interview Details" onClose={() => setShowCandidateEdit(false)} wide>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -6396,7 +6463,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </Modal>
       )}
 
-      {showTranscriptInput && selectedRecord && (
+      {canManage && showTranscriptInput && selectedRecord && (
         <Modal title="Paste Interview Transcript" onClose={() => setShowTranscriptInput(false)} wide>
           <div style={{ display: "grid", gap: 12 }}>
             <textarea
@@ -6418,7 +6485,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         </Modal>
       )}
 
-      {showNewPosition && (
+      {canManage && showNewPosition && (
         <Modal title="Create Position Type" onClose={() => setShowNewPosition(false)}>
           <div style={{ display: "grid", gap: 14 }}>
             <Inp label="Position Name" value={newPositionDraft.role_label} onChange={(value) => setNewPositionDraft((prev) => ({ ...prev, role_label: value }))} autoFocus />
