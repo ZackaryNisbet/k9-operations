@@ -56,6 +56,29 @@ function mergeLiteProfile(baseProfile, liteProfile, userId, authUser) {
   };
 }
 
+const ACTIVITY_STAMP_THROTTLE_MS = 2 * 60 * 1000;
+const ACTIVITY_STAMP_INTERVAL_MS = 5 * 60 * 1000;
+
+function stampLiteAppActivity(userId, surface = 'web') {
+  if (!userId) return Promise.resolve();
+  const now = new Date().toISOString();
+  return supabase
+    .rpc('record_lite_app_activity', { p_surface: surface })
+    .then(({ error }) => {
+      if (!error) return null;
+      return supabase
+        .from('lite_profiles')
+        .update({ last_active: now })
+        .eq('user_id', userId)
+        .eq('is_active', true);
+    })
+    .catch(() => supabase
+      .from('lite_profiles')
+      .update({ last_active: now })
+      .eq('user_id', userId)
+      .eq('is_active', true));
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -65,6 +88,7 @@ export function AuthProvider({ children }) {
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
   const runIdRef = useRef(0);
   const userRef = useRef(null);
+  const lastActivityStampRef = useRef(0);
 
   useEffect(() => {
     userRef.current = user;
@@ -86,6 +110,14 @@ export function AuthProvider({ children }) {
     setAuthStatus('signed_out');
     setLoading(false);
   }, [isRunActive]);
+
+  const stampActivity = useCallback((userId, { force = false } = {}) => {
+    if (!userId) return;
+    const now = Date.now();
+    if (!force && now - lastActivityStampRef.current < ACTIVITY_STAMP_THROTTLE_MS) return;
+    lastActivityStampRef.current = now;
+    stampLiteAppActivity(userId, 'web');
+  }, []);
 
   const fetchProfile = useCallback(async (userId) => {
     const authUserResult = await withAuthTimeout(
@@ -130,16 +162,16 @@ export function AuthProvider({ children }) {
     const existing = rpcRows?.[0] || null;
 
     if (existing) {
-      // Stamp last_accessed_at (fire-and-forget)
+      // Stamp activity fire-and-forget so both Team Management and legacy POS
+      // account surfaces reflect the authenticated session.
       const now = new Date().toISOString();
       supabase.from('profiles').update({ last_accessed_at: now }).eq('id', userId).then(() => {});
-      supabase.from('lite_profiles').update({ last_active: now }).eq('user_id', userId).eq('is_active', true).then(() => {});
+      stampLiteAppActivity(userId, 'web');
       return mergeLiteProfile(existing, liteProfile, userId, authUser);
     }
 
     if (liteProfile) {
-      const now = new Date().toISOString();
-      supabase.from('lite_profiles').update({ last_active: now }).eq('user_id', userId).eq('is_active', true).then(() => {});
+      stampLiteAppActivity(userId, 'web');
       return mergeLiteProfile(null, liteProfile, userId, authUser);
     }
 
@@ -171,6 +203,28 @@ export function AuthProvider({ children }) {
       location_id: null,
     }, null, userId, authUser);
   }, []);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    stampActivity(user.id, { force: true });
+
+    const handleActive = () => {
+      if (document.visibilityState === 'visible') {
+        stampActivity(user.id);
+      }
+    };
+
+    window.addEventListener('focus', handleActive);
+    document.addEventListener('visibilitychange', handleActive);
+    const intervalId = window.setInterval(() => stampActivity(user.id), ACTIVITY_STAMP_INTERVAL_MS);
+
+    return () => {
+      window.removeEventListener('focus', handleActive);
+      document.removeEventListener('visibilitychange', handleActive);
+      window.clearInterval(intervalId);
+    };
+  }, [stampActivity, user?.id]);
 
   const hydrateUser = useCallback(async (nextUser, runId = runIdRef.current) => {
     if (!isRunActive(runId)) return;
@@ -333,7 +387,11 @@ export function AuthProvider({ children }) {
       password: newPassword,
       data: { force_password_change: false }
     });
-    if (!error) setNeedsPasswordSet(false);
+    if (!error) {
+      setNeedsPasswordSet(false);
+      supabase.rpc('complete_lite_password_setup').then(() => {}).catch(() => {});
+      stampLiteAppActivity(user?.id, 'web');
+    }
     return { error };
   };
 
