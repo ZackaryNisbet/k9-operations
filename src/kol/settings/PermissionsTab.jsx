@@ -7,56 +7,42 @@ import { supabase } from "../../supabaseClient";
 import { C, OPERATIONS_CATALOG, OPS_TYPES, LITE_DEF_PRICING, CHART_PTS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, ROOM_TYPES, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, buildUrl, parseUrl, gid, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_CATEGORIES, LEAN_PERMISSION_MATRIX, LEAN_ROLES, NAV_ITEMS, K9_LOGO_SRC, K9_LOGO_PNG, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, formatDogNames, fmtPhoneInput, IDB_VERSION, idbGet, idbSet } from "../../shared/theme";
 import { I, Icons } from "../../shared/icons";
 import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
-import { applyLeanPermissionOverrides, buildLeanPermissionMatrix, hasPermission, hasLeanPermission, resolveActiveLeanRoles, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
+import { applyLeanPermissionOverrides, buildLeanPermissionMatrix, hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 
-function PermissionsTab({ profile = null }) {
+function PermissionsTab() {
   // Editable permission state — starts from the built-in matrix
   const [permMatrix, setPermMatrix] = useState(() => {
     const m = {};
     LEAN_ROLES.forEach(r => { m[r.id] = { ...LEAN_PERMISSION_MATRIX[r.id] }; });
     return m;
   });
-  const [visibleRoles, setVisibleRoles] = useState(() => resolveActiveLeanRoles({ profile }));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Load persisted overrides and show the same active role set Team Management uses.
+  // Load persisted overrides from Supabase on mount.
   useEffect(() => {
     let cancelled = false;
     const loadPermissions = async () => {
-      const permissionQuery = supabase.from("lite_permissions").select("*");
-      const activeTeamRoleQuery = profile?.location_id
-        ? supabase
-          .from("lite_profiles")
-          .select("role,is_active")
-          .eq("location_id", profile.location_id)
-          .eq("is_active", true)
-        : Promise.resolve({ data: [], error: null });
-
-      const [{ data: rows, error: permissionError }, { data: memberRows, error: roleError }] = await Promise.all([
-        permissionQuery,
-        activeTeamRoleQuery,
-      ]);
+      const { data: rows, error } = await supabase.from("lite_permissions").select("*");
       if (cancelled) return;
-      if (permissionError) console.log("[K9 Lite] Permission load error:", permissionError.message);
-      if (roleError) console.log("[K9 Lite] Active permission role load error:", roleError.message);
+      if (error) console.log("[K9 Lite] Permission load error:", error.message);
       setPermMatrix(buildLeanPermissionMatrix(rows || []));
-      setVisibleRoles(roleError ? LEAN_ROLES : resolveActiveLeanRoles({ memberRows: memberRows || [], profile }));
     };
 
     loadPermissions();
     return () => {
       cancelled = true;
     };
-  }, [profile?.location_id, profile?.role, profile?.is_active]);
+  }, []);
 
   const LITE_PERM_CATEGORIES = LEAN_PERMISSION_CATEGORIES;
+  const visibleRoles = LEAN_ROLES;
 
   const allPermKeys = LITE_PERM_CATEGORIES.flatMap(c => c.permissions.map(p => p.key));
 
@@ -112,7 +98,7 @@ function PermissionsTab({ profile = null }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Build rows for visible, editable roles. Hidden inactive roles keep their existing saved values.
+      // Build rows for all editable roles. Enterprise Admin is locked to full access.
       const rows = [];
       visibleRoles.filter(r => r.id !== "enterprise_admin").forEach(role => {
         allPermKeys.forEach(k => {
@@ -147,7 +133,7 @@ function PermissionsTab({ profile = null }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Roles & Permissions</div>
-          <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Configure permissions for active team roles at this location. Enterprise Admin stays visible as locked full access.</div>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Configure permissions for every supported role. Team Management only shows people who are currently active.</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {saved && <span style={{ fontSize: 12, fontWeight: 600, color: C.suc }}>✓ Saved</span>}
@@ -156,11 +142,11 @@ function PermissionsTab({ profile = null }) {
       </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflow: "auto", maxHeight: "calc(100vh - 260px)", minHeight: 320 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: labelW + visibleRoles.length * colW }}>
             <thead>
               <tr style={{ background: `linear-gradient(135deg, ${C.pri}08, ${C.bg})` }}>
-                <th style={{ position: "sticky", left: 0, background: C.bg, zIndex: 2, width: labelW, minWidth: labelW, padding: "16px 20px", textAlign: "left", borderBottom: `2px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
+                <th style={{ position: "sticky", top: 0, left: 0, background: C.bg, zIndex: 5, width: labelW, minWidth: labelW, padding: "16px 20px", textAlign: "left", borderBottom: `2px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Permission</div>
                 </th>
                 {visibleRoles.map(role => {
@@ -169,7 +155,7 @@ function PermissionsTab({ profile = null }) {
                   const isEnt = isEntAdmin(role.id);
                   const allOn = allPermKeys.every(k => permMatrix[role.id]?.[k]);
                   return (
-                    <th key={role.id} style={{ width: colW, minWidth: colW, padding: "12px 8px", textAlign: "center", borderBottom: `2px solid ${C.border}`, borderRight: `1px solid ${C.borderLight}`, verticalAlign: "bottom", background: isEnt ? "#F5F3FF20" : "transparent" }}>
+                    <th key={role.id} style={{ position: "sticky", top: 0, zIndex: 4, width: colW, minWidth: colW, padding: "12px 8px", textAlign: "center", borderBottom: `2px solid ${C.border}`, borderRight: `1px solid ${C.borderLight}`, verticalAlign: "bottom", background: isEnt ? "#FBFAFF" : C.bg }}>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                         <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: rc.bg, color: rc.text, whiteSpace: "nowrap" }}>{role.shortName}</span>
                         <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>{ec}/{allPermKeys.length}</div>

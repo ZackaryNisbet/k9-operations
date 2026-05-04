@@ -466,7 +466,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
       case "team":
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
-        return <PermissionsTab profile={profile} />;
+        return <PermissionsTab />;
       case "lapsed-thresholds":
         return <RetentionThresholdsTab />;
       case "required-fields":
