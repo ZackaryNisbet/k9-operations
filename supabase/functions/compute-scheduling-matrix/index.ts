@@ -73,6 +73,27 @@ function chunkDateRange(dateFrom: string, dateTo: string, chunkDays = COMPUTE_CH
   return chunks;
 }
 
+function getWeekScopeForDate(targetDate: string) {
+  const dt = new Date(`${targetDate}T12:00:00Z`);
+  const mondayOffset = (dt.getUTCDay() + 6) % 7;
+  const from = addDaysStr(targetDate, -mondayOffset);
+  return {
+    from,
+    to: addDaysStr(from, 6),
+  };
+}
+
+function getProjectionScope(body: Record<string, unknown>, dateFrom: string, dateTo: string) {
+  const defaultScope = dateFrom === dateTo
+    ? getWeekScopeForDate(dateFrom)
+    : { from: dateFrom, to: dateTo };
+
+  return {
+    from: String(body.projection_scope_date_from || defaultScope.from),
+    to: String(body.projection_scope_date_to || defaultScope.to),
+  };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -426,6 +447,9 @@ Deno.serve(async (req: Request) => {
 
     const dateFrom = String(body.date_from || dateStrET());
     const dateTo = String(body.date_to || addDaysStr(dateFrom, 6));
+    const projectionScope = getProjectionScope(body, dateFrom, dateTo);
+    const projectionScopeDateFrom = projectionScope.from;
+    const projectionScopeDateTo = projectionScope.to;
     const liveHydrationThrough = addDaysStr(dateStrET(), LIVE_HYDRATION_HORIZON_DAYS);
     const shouldLiveHydrate = dateFrom <= liveHydrationThrough;
 
@@ -437,6 +461,7 @@ Deno.serve(async (req: Request) => {
         location_id: locationId,
         requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
         date_range: [dateFrom, dateTo],
+        projection_scope_date_range: [projectionScopeDateFrom, projectionScopeDateTo],
         source: "compute_disabled",
       }, 202);
     }
@@ -478,6 +503,8 @@ Deno.serve(async (req: Request) => {
         locationId,
         dateFrom: chunk.from,
         dateTo: chunk.to,
+        projectionScopeDateFrom,
+        projectionScopeDateTo,
       });
       const result = await upsertSchedulingMatrixRows(serviceClient, rows);
       rowsUpserted += Number(result.count || 0);
@@ -488,6 +515,7 @@ Deno.serve(async (req: Request) => {
       location_id: locationId,
       requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
       date_range: [dateFrom, dateTo],
+      projection_scope_date_range: [projectionScopeDateFrom, projectionScopeDateTo],
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
       reservation_hydration: reservationHydration,

@@ -45,6 +45,9 @@ function validateJob(job) {
     if (!Number.isInteger(job.dayOffset)) {
       throw new Error(`Cron job ${job.jobname} requires an integer dayOffset for payloadMode=single_day.`);
     }
+    if (job.projectionScopeMode && job.projectionScopeMode !== "target_week") {
+      throw new Error(`Cron job ${job.jobname} has unsupported projectionScopeMode=${job.projectionScopeMode}.`);
+    }
     return;
   }
   if (!job.payload || typeof job.payload !== "object") {
@@ -71,14 +74,26 @@ function buildCommand(job) {
   }
 
   if (job.payloadMode === "single_day") {
+    const targetDateSql = `(((now() at time zone 'America/New_York')::date) + ${job.dayOffset})`;
+    const bodyFields = [
+      "'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946'",
+      `'date_from', ${targetDateSql}::text`,
+      `'date_to', ${targetDateSql}::text`,
+    ];
+
+    if (job.projectionScopeMode === "target_week") {
+      bodyFields.push(
+        `'projection_scope_date_from', date_trunc('week', ${targetDateSql}::timestamp)::date::text`,
+        `'projection_scope_date_to', (date_trunc('week', ${targetDateSql}::timestamp)::date + 6)::text`,
+      );
+    }
+
     return [
       "select net.http_post(",
       `url := ${quoteLiteral(`https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/${job.function}`)},`,
       `headers := ${headers},`,
       "body := jsonb_build_object(",
-      "'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',",
-      `'date_from', (((now() at time zone 'America/New_York')::date) + ${job.dayOffset})::text,`,
-      `'date_to', (((now() at time zone 'America/New_York')::date) + ${job.dayOffset})::text`,
+      bodyFields.join(","),
       "),",
       "timeout_milliseconds := 120000",
       ");",
