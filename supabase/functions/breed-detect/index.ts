@@ -63,7 +63,7 @@ serve(async (req) => {
 
     const { data: photo, error: fetchErr } = await supabase
       .from('photos')
-      .select('id, storage_path, thumbnail_path, detected_breeds, breed_detection_status')
+      .select('id, storage_path, ai_image_path, thumbnail_path, detected_breeds, breed_detection_status')
       .eq('id', photo_id)
       .single();
 
@@ -81,10 +81,10 @@ serve(async (req) => {
 
     await supabase.from('photos').update({ breed_detection_status: 'processing' }).eq('id', photo_id);
 
-    // Build image URL — send the stored image directly. Avoid Supabase's render/image
-    // transformation endpoint here because each origin photo counts against the
-    // Storage Image Transformations quota.
-    const storagePath = photo.storage_path || photo.thumbnail_path;
+    // Build image URL from the medium AI derivative when available. This avoids
+    // Supabase render/image transformations and avoids serving full camera
+    // originals to the AI provider for routine analysis.
+    const storagePath = photo.ai_image_path || photo.storage_path || photo.thumbnail_path;
     if (!storagePath) {
       await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo_id);
       return new Response(JSON.stringify({ error: 'No image path' }), {

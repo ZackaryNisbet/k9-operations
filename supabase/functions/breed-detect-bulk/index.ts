@@ -41,23 +41,38 @@ serve(async (req) => {
   }
 
   try {
-    const { location_id, batch_size = 5 } = await req.json();
+    const { location_id, batch_size = 5, allow_bulk = false } = await req.json();
     if (!location_id) {
       return new Response(JSON.stringify({ error: 'Missing location_id' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    if (!allow_bulk) {
+      return new Response(JSON.stringify({
+        processed: 0,
+        remaining: null,
+        results: [],
+        skipped: true,
+        reason: 'Bulk breed detection is disabled by default to protect Supabase Storage egress. Use single-photo detection when a user opens a photo.',
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const safeBatchSize = Math.min(Math.max(Number(batch_size) || 5, 1), 5);
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Get pending photos (with storage_path for full-quality processing)
+    // Get pending photos. Prefer ai_image_path to avoid serving full camera
+    // originals for routine analysis.
     const { data: pendingPhotos, error: queryErr } = await supabase
       .from('photos')
-      .select('id, storage_path, thumbnail_path')
+      .select('id, storage_path, ai_image_path, thumbnail_path')
       .eq('location_id', location_id)
       .eq('breed_detection_status', 'pending')
       .not('storage_path', 'is', null)
-      .limit(batch_size);
+      .limit(safeBatchSize);
 
     if (queryErr || !pendingPhotos || pendingPhotos.length === 0) {
       const { count } = await supabase
@@ -82,10 +97,9 @@ serve(async (req) => {
     for (const photo of pendingPhotos) {
       await supabase.from('photos').update({ breed_detection_status: 'processing' }).eq('id', photo.id);
 
-      // Send the stored image directly instead of using Supabase render/image.
-      // The transform API bills by origin image, so bulk detection can otherwise
-      // consume the whole monthly transformation allowance very quickly.
-      const storagePath = photo.storage_path || photo.thumbnail_path;
+      // Send the medium AI derivative when available instead of using Supabase
+      // render/image or the full camera original.
+      const storagePath = photo.ai_image_path || photo.storage_path || photo.thumbnail_path;
       if (!storagePath) {
         await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo.id);
         results.push({ photo_id: photo.id, status: 'failed', breeds: [] });
