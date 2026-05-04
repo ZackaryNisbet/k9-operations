@@ -3,6 +3,7 @@ import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, CalendarPicker, Card, MiniDatePicker } from "../../shared/ui";
+import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
@@ -638,7 +639,7 @@ const HEADER_CELL_STYLE = {
   whiteSpace: "nowrap",
 };
 
-function TrackerRow({ target, index, categoryConfig, activities, isExpanded, onToggleUpdates, onLog, onMove, onEdit }) {
+function TrackerRow({ target, index, categoryConfig, activities, isExpanded, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit }) {
   const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
   const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
   const gridColumns = getTrackerGridColumns(categoryConfig);
@@ -676,9 +677,9 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, onT
           </button>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-start", gap: 6, flexWrap: "wrap" }}>
-          <Btn variant="secondary" size="sm" onClick={onLog}>{categoryConfig.logLabel}</Btn>
-          <Btn variant="ghost" size="sm" icon={<I.ChevronRight />} onClick={onMove}>Move</Btn>
-          <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={onEdit}>Edit</Btn>
+          <Btn variant="secondary" size="sm" onClick={onLog} disabled={!canLog}>{categoryConfig.logLabel}</Btn>
+          <Btn variant="ghost" size="sm" icon={<I.ChevronRight />} onClick={onMove} disabled={!canEdit}>Move</Btn>
+          <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={onEdit} disabled={!canEdit}>Edit</Btn>
         </div>
       </div>
       {isExpanded && (
@@ -705,6 +706,8 @@ function filterNeedsValue(op) {
 
 export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const locationId = profile?.location_id || "";
+  const canLogActivity = hasLeanPermission(profile, "Grassroots Log Activity");
+  const canEditTargets = hasLeanPermission(profile, "Grassroots Edit Targets");
   const actor = useMemo(() => ({
     userId: normalizeOptionalUuid(profile?.user_id || profile?.id),
     name: profile?.name || profile?.full_name || profile?.email || "Staff",
@@ -843,6 +846,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const openNewDraft = () => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
     setEditDraft(null);
     setNewDraft(makeBlankGrassrootsTarget(activeCategory));
   };
@@ -853,6 +860,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const saveDraft = async () => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
     const draft = editDraft || newDraft;
     if (!draft || !locationId) return;
     if (!String(draft.name || "").trim()) {
@@ -882,6 +893,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const deleteTarget = async (target) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
     if (!window.confirm(`Delete ${target.name || "this row"}? This also deletes its logged updates.`)) return;
     setSaveState("saving");
     const { error: stampError } = await supabase
@@ -914,6 +929,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const openLogPopover = (target, event) => {
+    if (!canLogActivity) {
+      toast("You do not have permission to log grassroots activity", "error");
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     setMovePopover(null);
     setLogPopover({ target, x: rect.left, y: rect.bottom + 6 });
@@ -923,12 +942,20 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const openMovePopover = (target, event) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     setLogPopover(null);
     setMovePopover({ target, x: rect.left, y: rect.bottom + 6 });
   };
 
   const moveTarget = async (target, nextConfig) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
     if (!target || !nextConfig || target.category === nextConfig.dbValue) {
       setMovePopover(null);
       return;
@@ -964,6 +991,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   const saveLog = async () => {
+    if (!canLogActivity) {
+      toast("You do not have permission to log grassroots activity", "error");
+      return;
+    }
     if (!logPopover?.target) return;
     if (!logNotes.trim() || !logDate) {
       toast("Notes and next date are required", "error");
@@ -1098,7 +1129,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           >
             Filter{filterCount > 0 ? ` (${filterCount})` : ""}
           </Btn>
-          <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
+          <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
             Add Row
           </Btn>
         </div>
@@ -1319,7 +1350,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
-          {newDraft && (
+          {canEditTargets && newDraft && (
             <TargetEditor
               draft={newDraft}
               categoryConfig={activeConfig}
@@ -1334,13 +1365,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
               <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
               <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
-              <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add Row</Btn>
+              {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add Row</Btn>}
             </Card>
           ) : (
             <>
               <TrackerHeader categoryConfig={activeConfig} />
               {visibleTargets.map((target, index) => {
-                if (editDraft?.id === target.id) {
+                if (canEditTargets && editDraft?.id === target.id) {
                   return (
                     <TargetEditor
                       key={target.id}
@@ -1363,6 +1394,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     categoryConfig={activeConfig}
                     activities={rowActivities}
                     isExpanded={expandedUpdates.has(target.id)}
+                    canLog={canLogActivity}
+                    canEdit={canEditTargets}
                     onToggleUpdates={() => setExpandedUpdates((prev) => {
                       const next = new Set(prev);
                       if (next.has(target.id)) next.delete(target.id);
@@ -1380,7 +1413,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         </div>
       )}
 
-      {movePopover && (
+      {canEditTargets && movePopover && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => setMovePopover(null)}>
           <div
             onClick={(event) => event.stopPropagation()}
@@ -1434,7 +1467,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         </div>
       )}
 
-      {logPopover && (
+      {canLogActivity && logPopover && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => { setLogPopover(null); setLogNotes(""); setLogDate(""); setLogContactName(""); }}>
           <div
             onClick={(event) => event.stopPropagation()}

@@ -14,6 +14,7 @@ import { supabase } from "../../supabaseClient";
 import { PRESENCE_NOTICE_WINDOW_MS, mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";
 import { getEffectivePresenceCadence, usePresenceSyncConfig } from "../../hooks/presenceSyncConfig";
 import { idbGet, idbSet, todayStr } from "../../shared/theme";
+import { hasLeanPermission } from "../../shared/permissions";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import {
   buildPlaygroupAssignmentMap,
@@ -1782,6 +1783,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const viewport = useCheckoutTvViewport();
   const isCompactTv = viewport.width <= 1500 || viewport.height <= 850;
   const isShortTv = viewport.height <= 760;
+  const canOpenTvSettings = hasLeanPermission(profile, "Checkout TV Settings");
   const tvLocationId = propLocationId || profile?.location_id;
   const presenceSyncConfig = usePresenceSyncConfig(tvLocationId);
   const effectivePresenceCadence = useMemo(
@@ -3047,12 +3049,14 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           onClick={() => setHealthOpen(true)}
           compact={isCompactTv}
         />
-        <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)} compact={isCompactTv}>
-          <svg width={isCompactTv ? "19" : "21"} height={isCompactTv ? "19" : "21"} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
-            <path d="M19.4 15a1.9 1.9 0 0 0 .38 2.1l.06.06a2.3 2.3 0 0 1-3.25 3.25l-.06-.06a1.9 1.9 0 0 0-2.1-.38 1.9 1.9 0 0 0-1.15 1.74V22a2.3 2.3 0 0 1-4.6 0v-.09A1.9 1.9 0 0 0 7.54 20a1.9 1.9 0 0 0-2.1.38l-.06.06a2.3 2.3 0 1 1-3.25-3.25l.06-.06A1.9 1.9 0 0 0 2.56 15a1.9 1.9 0 0 0-1.74-1.15H.73a2.3 2.3 0 1 1 0-4.6h.09A1.9 1.9 0 0 0 2.56 8a1.9 1.9 0 0 0-.38-2.1l-.06-.06a2.3 2.3 0 1 1 3.25-3.25l.06.06A1.9 1.9 0 0 0 7.54 3a1.9 1.9 0 0 0 1.15-1.74V1.2a2.3 2.3 0 1 1 4.6 0v.09A1.9 1.9 0 0 0 14.46 3a1.9 1.9 0 0 0 2.1-.38l.06-.06a2.3 2.3 0 1 1 3.25 3.25l-.06.06A1.9 1.9 0 0 0 19.44 8c.21.73.88 1.24 1.64 1.24h.19a2.3 2.3 0 1 1 0 4.6h-.19A1.9 1.9 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </CheckoutTvActionButton>
+        {canOpenTvSettings && (
+          <CheckoutTvActionButton ariaLabel="Open Checkout TV settings" title="Settings" onClick={() => setSettingsOpen(true)} compact={isCompactTv}>
+            <svg width={isCompactTv ? "19" : "21"} height={isCompactTv ? "19" : "21"} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 15.4A3.4 3.4 0 1 0 12 8.6a3.4 3.4 0 0 0 0 6.8Z" stroke="currentColor" strokeWidth="2.1" />
+              <path d="M19.4 15a1.9 1.9 0 0 0 .38 2.1l.06.06a2.3 2.3 0 0 1-3.25 3.25l-.06-.06a1.9 1.9 0 0 0-2.1-.38 1.9 1.9 0 0 0-1.15 1.74V22a2.3 2.3 0 0 1-4.6 0v-.09A1.9 1.9 0 0 0 7.54 20a1.9 1.9 0 0 0-2.1.38l-.06.06a2.3 2.3 0 1 1-3.25-3.25l.06-.06A1.9 1.9 0 0 0 2.56 15a1.9 1.9 0 0 0-1.74-1.15H.73a2.3 2.3 0 1 1 0-4.6h.09A1.9 1.9 0 0 0 2.56 8a1.9 1.9 0 0 0-.38-2.1l-.06-.06a2.3 2.3 0 1 1 3.25-3.25l.06.06A1.9 1.9 0 0 0 7.54 3a1.9 1.9 0 0 0 1.15-1.74V1.2a2.3 2.3 0 1 1 4.6 0v.09A1.9 1.9 0 0 0 14.46 3a1.9 1.9 0 0 0 2.1-.38l.06-.06a2.3 2.3 0 1 1 3.25 3.25l-.06.06A1.9 1.9 0 0 0 19.44 8c.21.73.88 1.24 1.64 1.24h.19a2.3 2.3 0 1 1 0 4.6h-.19A1.9 1.9 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </CheckoutTvActionButton>
+        )}
       </div>
 
       {/* Stats bar — Icon-based classification counts */}
