@@ -26,6 +26,12 @@ import {
   summarizeLatestInventoryCycle,
   summarizeInventoryUsageForRange,
 } from "./inventoryDepletion";
+import {
+  assignInventoryCatalogSortOrder,
+  buildInventoryCatalogGroups,
+  inventorySectionId,
+  moveInventoryCategory,
+} from "./inventoryCatalog";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +51,21 @@ function clampPositive(val) {
   const s = String(val).replace(/[^0-9]/g, ""); // digits only
   if (s === "") return "";
   return String(parseInt(s, 10)); // strips leading zeros: "02" → "2"
+}
+
+const INVENTORY_VIEW_COLS = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
+const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 44px";
+const INVENTORY_VIEW_HEADERS = ["Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
+const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
+
+function catalogSortPayload(items) {
+  return (items || []).map((item) => ({ id: item.id, sort_order: item.sort_order }));
+}
+
+function normalizeCatalogNumber(value, integer = false) {
+  if (value === "" || value == null) return null;
+  const parsed = integer ? parseInt(value, 10) : parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 // ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
@@ -136,7 +157,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
       onMouseLeave={() => setHovered(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: "2fr 80px 70px 70px 90px 80px 60px 80px 80px",
+        gridTemplateColumns: INVENTORY_VIEW_COLS,
         gap: 8,
         alignItems: "center",
         padding: "8px 16px",
@@ -146,7 +167,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
         transition: "background 0.15s, opacity 0.15s",
       }}
     >
-      {/* Item Name + Vendor Link + Notes Icon */}
+      {/* Product name + Product Link + Notes Icon */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -156,7 +177,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
                 href={item.vendor_link}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Open vendor page"
+                title="Open product link"
                 style={{ marginLeft: 6, color: C.info, display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}
                 onClick={e => e.stopPropagation()}
               >
@@ -559,7 +580,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
           <input value={item.vendor || ""} onChange={e => onChange("vendor", e.target.value)} placeholder="Vendor" style={fieldStyle} />
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Vendor Link</div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Product Link</div>
           <input value={item.vendor_link || ""} onChange={e => onChange("vendor_link", e.target.value)} placeholder="https://..." style={{ ...fieldStyle, fontSize: 11 }} />
         </div>
         <div>
@@ -572,14 +593,6 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div style={{ width: 100 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Min Reorder</div>
-          <input type="number" min="0" value={item.min_reorder ?? ""} onChange={e => onChange("min_reorder", e.target.value === "" ? null : parseInt(e.target.value, 10))} style={{ ...fieldStyle, textAlign: "center" }} />
-        </div>
-        <div style={{ width: 80 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Sort Order</div>
-          <input type="number" min="0" value={item.sort_order ?? ""} onChange={e => onChange("sort_order", e.target.value === "" ? null : parseInt(e.target.value, 10))} style={{ ...fieldStyle, textAlign: "center" }} />
-        </div>
         <div style={{ marginLeft: "auto" }}>
           <button
             onClick={onToggleActive}
@@ -605,7 +618,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
 
 const EditModeItemRow = React.memo(function EditModeItemRow({
   item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragOverIdx, itemIdx, onToggleActive,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragOverIdx, itemIdx, onToggleActive, onOpenDetails,
 }) {
   const [hovered, setHovered] = useState(false);
   const editRef = useRef(null);
@@ -704,7 +717,7 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
         onMouseLeave={() => setHovered(false)}
         style={{
           display: "grid",
-          gridTemplateColumns: "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 30px",
+          gridTemplateColumns: INVENTORY_EDIT_COLS,
           gap: 8,
           alignItems: "center",
           padding: "8px 16px",
@@ -761,17 +774,22 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
           {"\u2014"}
         </div>
 
-        {/* Expand arrow */}
+        {/* Edit details */}
         <button
-          onClick={() => onToggleExpand(isExpanded ? null : item.id)}
+          onClick={() => onOpenDetails(item)}
+          title="Edit product details"
           style={{
-            background: "none", border: "none", cursor: "pointer", padding: 2,
-            color: isExpanded ? C.pri : C.textMut, transition: "color 0.15s, transform 0.2s",
-            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            background: hovered ? C.priLt : C.bg,
+            border: `1px solid ${hovered ? C.pri + "30" : C.borderLight}`,
+            borderRadius: 8,
+            cursor: "pointer",
+            padding: 6,
+            color: hovered ? C.pri : C.textMut,
+            transition: "all 0.15s",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
         >
-          <I.ChevronDown />
+          <I.Pencil />
         </button>
       </div>
       {isExpanded && (
@@ -811,7 +829,7 @@ function AddItemRow({ category, subcategory, onAdd }) {
       onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.color = C.pri; e.currentTarget.style.borderColor = C.pri + "40"; }}
       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textMut; e.currentTarget.style.borderColor = C.border; }}
     >
-      <I.Plus /> Add item
+      <I.Plus /> Add product
     </button>
   );
 }
@@ -821,8 +839,14 @@ function AddItemRow({ category, subcategory, onAdd }) {
 function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
   catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
+  onOpenCatalogItem, onRenameCategory, onMoveCategory, categoryIndex, categoryCount,
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [categoryDraft, setCategoryDraft] = useState(category);
+
+  useEffect(() => {
+    setCategoryDraft(category);
+  }, [category]);
 
   const totalItems = subcategories.reduce((sum, sub) => sum + sub.items.length, 0);
   const categoryValue = subcategories.reduce((sum, sub) =>
@@ -835,16 +859,19 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
       return s;
     }, 0), 0);
 
-  const editCols = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 30px";
-  const viewCols = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
-  const editHeaders = ["", "Item", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
-  const viewHeaders = ["Item", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
+  const commitCategoryRename = () => {
+    const nextName = categoryDraft.trim();
+    if (!nextName || nextName === category) {
+      setCategoryDraft(category);
+      return;
+    }
+    onRenameCategory(category, nextName);
+  };
 
   return (
-    <div style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+    <div id={inventorySectionId(category)} style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", scrollMarginTop: 72 }}>
       {/* Category Header */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
+      <div
         style={{
           width: "100%",
           display: "flex",
@@ -854,51 +881,101 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
           background: `linear-gradient(135deg, ${C.pri}08, ${C.priLt})`,
           border: "none",
           borderBottom: collapsed ? "none" : `1px solid ${C.borderLight}`,
-          cursor: "pointer",
           fontFamily: "inherit",
           gap: 12,
+          boxSizing: "border-box",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s", color: C.pri }}>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? "Expand category" : "Collapse category"}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: `1px solid ${C.borderLight}`,
+              background: C.surface,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
+              transition: "transform 0.2s",
+              color: C.pri,
+            }}
+          >
             <I.ChevronDown />
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: C.pri, fontFamily: "'Outfit', sans-serif" }}>
-            {category}
-          </span>
+          </button>
+          {catalogEditMode ? (
+            <input
+              value={categoryDraft}
+              onChange={e => setCategoryDraft(e.target.value)}
+              onBlur={commitCategoryRename}
+              onKeyDown={e => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") {
+                  setCategoryDraft(category);
+                  e.currentTarget.blur();
+                }
+              }}
+              style={{
+                minWidth: 180,
+                maxWidth: 320,
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: `1.5px solid ${C.border}`,
+                background: C.surface,
+                color: C.pri,
+                fontSize: 14,
+                fontWeight: 800,
+                fontFamily: "'Outfit', sans-serif",
+                outline: "none",
+              }}
+            />
+          ) : (
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.pri, fontFamily: "'Outfit', sans-serif" }}>
+              {category}
+            </span>
+          )}
           <span style={{ fontSize: 11, color: C.textMut, fontWeight: 500 }}>
             {totalItems} item{totalItems !== 1 ? "s" : ""}
           </span>
         </div>
-        {categoryValue > 0 && !catalogEditMode && (
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.suc }}>
-            {fmtCurrency(categoryValue)}
-          </span>
+        {catalogEditMode ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+            <button
+              onClick={() => onMoveCategory(category, -1)}
+              disabled={categoryIndex === 0}
+              title="Move category up"
+              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surface, color: categoryIndex === 0 ? C.textMut : C.textSec, cursor: categoryIndex === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(180deg)", opacity: categoryIndex === 0 ? 0.4 : 1 }}
+            >
+              <I.ChevronDown />
+            </button>
+            <button
+              onClick={() => onMoveCategory(category, 1)}
+              disabled={categoryIndex === categoryCount - 1}
+              title="Move category down"
+              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surface, color: categoryIndex === categoryCount - 1 ? C.textMut : C.textSec, cursor: categoryIndex === categoryCount - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: categoryIndex === categoryCount - 1 ? 0.4 : 1 }}
+            >
+              <I.ChevronDown />
+            </button>
+            <button
+              onClick={() => onAddCatalogItem(category, "")}
+              title="Add product to category"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.pri}25`, background: C.surface, color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}
+            >
+              <I.Plus /> Product
+            </button>
+          </div>
+        ) : (
+          categoryValue > 0 && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.suc, marginLeft: "auto" }}>
+              {fmtCurrency(categoryValue)}
+            </span>
+          )
         )}
-      </button>
-
-      {/* Column Headers */}
-      {!collapsed && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: catalogEditMode ? editCols : viewCols,
-          gap: 8,
-          padding: "6px 16px",
-          background: C.bg,
-          borderBottom: `1px solid ${C.borderLight}`,
-        }}>
-          {(catalogEditMode ? editHeaders : viewHeaders).map((h, i) => (
-            <div key={i} style={{
-              fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em",
-              textAlign: catalogEditMode
-                ? (i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left")
-                : (i === 6 ? "center" : i >= 7 ? "right" : i >= 2 ? "center" : "left"),
-            }}>
-              {h}
-            </div>
-          ))}
-        </div>
-      )}
+      </div>
 
       {/* Items by Subcategory */}
       {!collapsed && subcategories.map((sub, si) => (
@@ -929,6 +1006,7 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
                   dragOverIdx={dragState.overIdx}
                   itemIdx={idx}
                   onToggleActive={onToggleCatalogActive}
+                  onOpenDetails={onOpenCatalogItem}
                 />
               ))}
               <AddItemRow category={category} subcategory={sub.name} onAdd={onAddCatalogItem} />
@@ -951,6 +1029,204 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
         </div>
       ))}
     </div>
+  );
+}
+
+function InventoryColumnHeader({ catalogEditMode }) {
+  const headers = catalogEditMode ? INVENTORY_EDIT_HEADERS : INVENTORY_VIEW_HEADERS;
+  return (
+    <div className="inventory-sticky-columns" style={{
+      display: "grid",
+      gridTemplateColumns: catalogEditMode ? INVENTORY_EDIT_COLS : INVENTORY_VIEW_COLS,
+      gap: 8,
+      padding: "9px 16px",
+      marginBottom: 8,
+      background: C.surface,
+      border: `1px solid ${C.border}`,
+      borderRadius: 10,
+      boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
+    }}>
+      {headers.map((h, i) => (
+        <div key={`${h}-${i}`} style={{
+          fontSize: 10,
+          fontWeight: 800,
+          color: C.textMut,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          textAlign: catalogEditMode
+            ? (i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left")
+            : (i === 6 ? "center" : i >= 7 ? "right" : i >= 2 ? "center" : "left"),
+        }}>
+          {h}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InventorySectionNav({ groups, counts, catalogEditMode, onAddProduct }) {
+  return (
+    <aside className="inventory-sidebar">
+      <Card style={{ padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Sections
+          </div>
+          {catalogEditMode && (
+            <button
+              onClick={() => onAddProduct("", "")}
+              title="Add product"
+              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.pri}25`, background: C.priLt, color: C.pri, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <I.Plus />
+            </button>
+          )}
+        </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {groups.map(({ category, subcategories }) => {
+            const items = subcategories.flatMap((sub) => sub.items);
+            const counted = items.filter((item) => {
+              const stock = counts[item.id]?.stock_count;
+              return stock !== "" && stock != null;
+            }).length;
+            const total = items.length;
+            const progress = total ? Math.round((counted / total) * 100) : 0;
+            return (
+              <button
+                key={category}
+                onClick={() => document.getElementById(inventorySectionId(category))?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                style={{
+                  width: "100%",
+                  border: `1px solid ${C.borderLight}`,
+                  background: C.surface,
+                  borderRadius: 8,
+                  padding: "9px 10px",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{category}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: progress === 100 ? C.suc : C.textMut }}>{counted}/{total}</span>
+                </div>
+                <div style={{ height: 4, borderRadius: 999, background: C.bg, marginTop: 7, overflow: "hidden" }}>
+                  <div style={{ width: `${progress}%`, height: "100%", borderRadius: 999, background: progress === 100 ? C.suc : C.pri }} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+    </aside>
+  );
+}
+
+function CatalogItemModal({ mode, item, defaults, categories, subcategories, onClose, onSave, saving }) {
+  const [form, setForm] = useState(() => ({
+    item_name: item?.item_name || defaults?.item_name || "",
+    gl_account: item?.gl_account || defaults?.gl_account || "",
+    par_level: item?.par_level ?? defaults?.par_level ?? "",
+    size: item?.size || defaults?.size || "",
+    vendor: item?.vendor || defaults?.vendor || "",
+    vendor_link: item?.vendor_link || defaults?.vendor_link || "",
+    category: item?.category || defaults?.category || "",
+    subcategory: item?.subcategory || defaults?.subcategory || "",
+    unit_price: item?.unit_price ?? defaults?.unit_price ?? "",
+  }));
+  const [showError, setShowError] = useState(false);
+  const categoryListId = `inventory-category-list-${item?.id || "new"}`;
+  const subcategoryListId = `inventory-subcategory-list-${item?.id || "new"}`;
+
+  const setField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "item_name" && showError && value.trim()) setShowError(false);
+  };
+
+  const fieldStyle = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 9,
+    border: `1.5px solid ${C.border}`,
+    background: C.surface,
+    color: C.text,
+    fontSize: 13,
+    fontFamily: "inherit",
+    outline: "none",
+    boxSizing: "border-box",
+  };
+  const labelStyle = { fontSize: 10, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 };
+
+  const handleSave = () => {
+    if (!form.item_name.trim()) {
+      setShowError(true);
+      return;
+    }
+    onSave({
+      ...form,
+      item_name: form.item_name.trim(),
+      category: form.category.trim(),
+      subcategory: form.subcategory.trim(),
+      gl_account: form.gl_account.trim(),
+      size: form.size.trim(),
+      vendor: form.vendor.trim(),
+      vendor_link: form.vendor_link.trim(),
+      par_level: normalizeCatalogNumber(form.par_level, true),
+      unit_price: normalizeCatalogNumber(form.unit_price, false),
+    });
+  };
+
+  const renderField = (label, field, props = {}) => (
+    <div>
+      <div style={labelStyle}>{label}</div>
+      <input
+        value={form[field] ?? ""}
+        onChange={e => setField(field, e.target.value)}
+        style={fieldStyle}
+        {...props}
+      />
+      {field === "item_name" && showError && (
+        <div style={{ fontSize: 11, color: C.dan, marginTop: 4 }}>Product name is required.</div>
+      )}
+    </div>
+  );
+
+  return (
+    <Modal title={mode === "edit" ? "Edit Product" : "Add Product"} onClose={onClose}>
+      <datalist id={categoryListId}>
+        {categories.map((category) => <option key={category} value={category} />)}
+      </datalist>
+      <datalist id={subcategoryListId}>
+        {subcategories.map((subcategory) => <option key={subcategory} value={subcategory} />)}
+      </datalist>
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={{ padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textSec }}>
+          Product name is the only required field.
+        </div>
+        {renderField("Product Name", "item_name", { autoFocus: true, placeholder: "Product name" })}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {renderField("Category", "category", { list: categoryListId, placeholder: "Category" })}
+          {renderField("Subcategory", "subcategory", { list: subcategoryListId, placeholder: "Subcategory" })}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          {renderField("GL Code", "gl_account", { placeholder: "GL code" })}
+          {renderField("Par", "par_level", { type: "number", min: "0", placeholder: "0" })}
+          {renderField("Size", "size", { placeholder: "Size" })}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 12 }}>
+          {renderField("Vendor", "vendor", { placeholder: "Vendor" })}
+          {renderField("Product Link", "vendor_link", { placeholder: "https://..." })}
+        </div>
+        {renderField("Unit Cost", "unit_price", { type: "number", min: "0", step: "0.01", placeholder: "0.00" })}
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : mode === "edit" ? "Save Product" : "Add Product"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1797,6 +2073,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [showAddAdhoc, setShowAddAdhoc] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showReopenModal, setShowReopenModal] = useState(false);
+  const [catalogItemModal, setCatalogItemModal] = useState(null);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [submitSaving, setSubmitSaving] = useState(false);
   const [reopenSaving, setReopenSaving] = useState(false);
@@ -1808,6 +2085,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [editingField, setEditingField] = useState(null); // { itemId, field }
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
+  const [catalogItemSaving, setCatalogItemSaving] = useState(false);
   const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
   const currentCycleRef = useRef(thisWeekStart);
 
@@ -1895,6 +2173,32 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         }
         .inv-fade-in { animation: invFadeIn 0.35s cubic-bezier(0.22,1,0.36,1) both; }
         .inv-row-hover:hover { background: ${C.surfaceHover} !important; }
+        .inventory-workspace {
+          display: grid;
+          grid-template-columns: 220px minmax(0, 1fr);
+          gap: 16px;
+          align-items: start;
+        }
+        .inventory-sidebar {
+          position: sticky;
+          top: 12px;
+          z-index: 12;
+        }
+        .inventory-sticky-columns {
+          position: sticky;
+          top: 0;
+          z-index: 20;
+        }
+        @media (max-width: 1080px) {
+          .inventory-workspace {
+            display: block;
+          }
+          .inventory-sidebar {
+            position: relative;
+            top: auto;
+            margin-bottom: 12px;
+          }
+        }
       `;
       document.head.appendChild(s);
     }
@@ -2217,45 +2521,154 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }
   }, [addGlobalToast, canEditCatalog]);
 
-  const handleAddCatalogItem = useCallback(async (category, subcategory) => {
+  const openAddCatalogItem = useCallback((category = "", subcategory = "") => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
       return;
     }
+    setCatalogItemModal({
+      mode: "add",
+      defaults: {
+        category: category || "",
+        subcategory: subcategory || "",
+      },
+    });
+  }, [addGlobalToast, canEditCatalog]);
+
+  const openEditCatalogItem = useCallback((item) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    setCatalogItemModal({ mode: "edit", item });
+  }, [addGlobalToast, canEditCatalog]);
+
+  const persistCatalogSortOrder = useCallback(async (orderedItems) => {
+    const updates = catalogSortPayload(orderedItems);
     setCatalogSaveStatus("saving");
     try {
-      const maxSort = catalogItems.reduce((max, i) => Math.max(max, i.sort_order || 0), 0);
-      const { data: newItem, error } = await supabase
-        .from("inventory_catalog")
-        .insert({
-          location_id: locationId,
-          item_name: "",
-          category: category || "",
-          subcategory: subcategory || "",
-          vendor: "",
-          vendor_link: "",
-          gl_account: "",
-          size: "",
-          par_level: null,
-          min_reorder: null,
-          unit_price: null,
-          sort_order: maxSort + 10,
-          is_active: true,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      setCatalogItems(prev => [...prev, newItem]);
+      for (const update of updates) {
+        await supabase
+          .from("inventory_catalog")
+          .update({ sort_order: update.sort_order, updated_at: new Date().toISOString() })
+          .eq("id", update.id);
+      }
       setCatalogSaveStatus("saved");
       setTimeout(() => setCatalogSaveStatus("idle"), 2200);
-      // Auto-focus the name field
-      setEditingField({ itemId: newItem.id, field: "item_name" });
     } catch (err) {
-      console.error("Add catalog item error:", err);
+      console.error("Catalog reorder error:", err);
       setCatalogSaveStatus("error");
       setTimeout(() => setCatalogSaveStatus("idle"), 3000);
     }
-  }, [addGlobalToast, canEditCatalog, locationId, catalogItems]);
+  }, []);
+
+  const handleSaveCatalogItem = useCallback(async (formData) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    if (!locationId) return;
+
+    const payload = {
+      item_name: formData.item_name,
+      category: formData.category || "",
+      subcategory: formData.subcategory || "",
+      vendor: formData.vendor || "",
+      vendor_link: formData.vendor_link || "",
+      gl_account: formData.gl_account || "",
+      size: formData.size || "",
+      par_level: formData.par_level,
+      unit_price: formData.unit_price,
+      min_reorder: null,
+      updated_at: new Date().toISOString(),
+    };
+
+    setCatalogItemSaving(true);
+    setCatalogSaveStatus("saving");
+    try {
+      if (catalogItemModal?.mode === "edit" && catalogItemModal.item?.id) {
+        const { data: updatedItem, error } = await supabase
+          .from("inventory_catalog")
+          .update(payload)
+          .eq("id", catalogItemModal.item.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setCatalogItems(prev => prev.map(item => item.id === updatedItem.id ? updatedItem : item));
+      } else {
+        const maxSort = catalogItems.reduce((max, item) => Math.max(max, Number(item.sort_order || 0)), 0);
+        const { data: newItem, error } = await supabase
+          .from("inventory_catalog")
+          .insert({
+            location_id: locationId,
+            ...payload,
+            sort_order: maxSort + 10,
+            is_active: true,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        setCatalogItems(prev => assignInventoryCatalogSortOrder([...prev, newItem]));
+      }
+      setCatalogItemModal(null);
+      setCatalogSaveStatus("saved");
+      setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: catalogItemModal?.mode === "edit" ? "Product updated." : "Product added." });
+    } catch (err) {
+      console.error("Catalog item save error:", err);
+      setCatalogSaveStatus("error");
+      setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to save product." });
+    } finally {
+      setCatalogItemSaving(false);
+    }
+  }, [addGlobalToast, canEditCatalog, catalogItemModal, catalogItems, locationId]);
+
+  const handleRenameCategory = useCallback(async (oldCategory, nextCategory) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    const cleanNext = nextCategory.trim();
+    if (!cleanNext || cleanNext === oldCategory) return;
+
+    const affectedIds = catalogItems
+      .filter(item => (item.category || "Uncategorized") === oldCategory || (!item.category && oldCategory === "Uncategorized"))
+      .map(item => item.id);
+    if (affectedIds.length === 0) return;
+
+    const normalized = assignInventoryCatalogSortOrder(catalogItems.map(item => (
+      affectedIds.includes(item.id) ? { ...item, category: cleanNext } : item
+    )));
+    setCatalogItems(normalized);
+    setCatalogSaveStatus("saving");
+    try {
+      const { error } = await supabase
+        .from("inventory_catalog")
+        .update({ category: cleanNext, updated_at: new Date().toISOString() })
+        .in("id", affectedIds);
+      if (error) throw error;
+      await persistCatalogSortOrder(normalized);
+      setCatalogSaveStatus("saved");
+      setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Category renamed." });
+    } catch (err) {
+      console.error("Rename category error:", err);
+      setCatalogSaveStatus("error");
+      setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to rename category." });
+    }
+  }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
+
+  const handleMoveCategory = useCallback((category, direction) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    const nextItems = moveInventoryCategory(catalogItems, category, direction);
+    setCatalogItems(nextItems);
+    void persistCatalogSortOrder(nextItems);
+  }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
 
   // ── Drag and drop reorder ──
   const handleDragStart = useCallback((e, itemId) => {
@@ -2288,26 +2701,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     const targetIdx = fromIdx < overIdx ? overIdx - 1 : overIdx;
     reordered.splice(targetIdx, 0, moved);
 
-    // Update sort_order for all items in this group
-    const updates = reordered.map((item, i) => ({ id: item.id, sort_order: (i + 1) * 10 }));
-
-    // Optimistic update
-    setCatalogItems(prev => {
-      const next = [...prev];
-      updates.forEach(u => {
-        const idx = next.findIndex(i => i.id === u.id);
-        if (idx !== -1) next[idx] = { ...next[idx], sort_order: u.sort_order };
-      });
-      return next;
-    });
-
+    const localRanks = new Map(reordered.map((item, i) => [item.id, (i + 1) * 10]));
+    const nextItems = assignInventoryCatalogSortOrder(catalogItems.map(item => (
+      localRanks.has(item.id) ? { ...item, sort_order: localRanks.get(item.id) } : item
+    )));
+    setCatalogItems(nextItems);
     setDragState({ draggingId: null, overIdx: null });
-
-    // Persist to DB
-    for (const u of updates) {
-      await supabase.from("inventory_catalog").update({ sort_order: u.sort_order }).eq("id", u.id);
-    }
-  }, [addGlobalToast, canEditCatalog, dragState]);
+    void persistCatalogSortOrder(nextItems);
+  }, [addGlobalToast, canEditCatalog, catalogItems, dragState, persistCatalogSortOrder]);
 
   const handleDragEnd = useCallback(() => {
     setDragState({ draggingId: null, overIdx: null });
@@ -2575,35 +2976,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Filtered + grouped catalog ──
   const filteredGrouped = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    const filtered = catalogItems.filter(item => {
-      if (!q) return true;
-      return (
-        (item.item_name || "").toLowerCase().includes(q) ||
-        (item.category || "").toLowerCase().includes(q) ||
-        (item.vendor || "").toLowerCase().includes(q) ||
-        (item.subcategory || "").toLowerCase().includes(q)
-      );
-    });
-
-    // Group: category -> subcategory -> items
-    const grouped = {};
-    filtered.forEach(item => {
-      const cat = item.category || "Uncategorized";
-      const sub = item.subcategory || "";
-      if (!grouped[cat]) grouped[cat] = {};
-      if (!grouped[cat][sub]) grouped[cat][sub] = [];
-      grouped[cat][sub].push(item);
-    });
-
-    // Convert to array, sort items within each subcategory by sort_order
-    return Object.entries(grouped).map(([category, subs]) => ({
-      category,
-      subcategories: Object.entries(subs).map(([name, items]) => ({
-        name,
-        items: [...items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
-      })),
-    }));
+    return buildInventoryCatalogGroups(catalogItems, search);
   }, [catalogItems, search]);
 
   // ── Total inventory value ──
@@ -2686,6 +3059,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
     Array.from(new Set(catalogItems.map(i => i.category).filter(Boolean))).sort(),
+    [catalogItems]
+  );
+  const allSubcategories = useMemo(() =>
+    Array.from(new Set(catalogItems.map(i => i.subcategory).filter(Boolean))).sort(),
     [catalogItems]
   );
 
@@ -2911,7 +3288,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         </div>
         <input
           type="text"
-          placeholder="Search items by name, category, or vendor..."
+          placeholder="Search products by name, category, vendor, size, or GL code..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
@@ -2980,7 +3357,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             No inventory items yet
           </div>
           <div style={{ fontSize: 14, color: C.textSec }}>
-            Add items to the inventory catalog in Settings to get started.
+            Use Edit Catalog to add products to this resort.
           </div>
         </Card>
       ) : (
@@ -3062,11 +3439,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             }}>
               <I.Edit />
               <span style={{ fontSize: 13, color: C.info, fontWeight: 500 }}>
-                Editing catalog — drag to reorder, click fields to edit. Changes auto-save.
+                Editing catalog — rename categories, move sections, drag products, or open a product to edit details. Changes auto-save.
               </span>
-              {catalogSaveStatus === "saving" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.info, fontWeight: 600 }}>Saving...</span>}
-              {catalogSaveStatus === "saved" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.suc, fontWeight: 600 }}>Saved</span>}
-              {catalogSaveStatus === "error" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.dan, fontWeight: 600 }}>Save failed</span>}
+              <button
+                onClick={() => openAddCatalogItem("", "")}
+                style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.info}25`, background: C.surface, color: C.info, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}
+              >
+                <I.Plus /> Add Product
+              </button>
+              {catalogSaveStatus === "saving" && <span style={{ fontSize: 11, color: C.info, fontWeight: 600 }}>Saving...</span>}
+              {catalogSaveStatus === "saved" && <span style={{ fontSize: 11, color: C.suc, fontWeight: 600 }}>Saved</span>}
+              {catalogSaveStatus === "error" && <span style={{ fontSize: 11, color: C.dan, fontWeight: 600 }}>Save failed</span>}
             </div>
           )}
 
@@ -3092,34 +3475,50 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               </div>
             </Card>
           ) : (
-            filteredGrouped.map(({ category, subcategories }) => (
-              <CategorySection
-                key={category}
-                category={category}
-                subcategories={subcategories}
+            <div className="inventory-workspace">
+              <InventorySectionNav
+                groups={filteredGrouped}
                 counts={counts}
-                isReadOnly={isReadOnly}
-                canEditCounts={canEditCounts}
-                canMarkOrdered={canMarkOrdered}
-                onCountChange={handleCountChange}
-                onKeyDown={handleKeyDown}
-                inputRefs={inputRefs}
-                searchQuery={search}
                 catalogEditMode={catalogEditMode}
-                editingField={editingField}
-                onEditField={setEditingField}
-                onCatalogChange={handleCatalogFieldChange}
-                expandedEditId={expandedEditId}
-                onToggleExpand={setExpandedEditId}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                onDragEnd={handleDragEnd}
-                dragState={dragState}
-                onToggleCatalogActive={handleToggleCatalogActive}
-                onAddCatalogItem={handleAddCatalogItem}
+                onAddProduct={openAddCatalogItem}
               />
-            ))
+              <div style={{ minWidth: 0 }}>
+                <InventoryColumnHeader catalogEditMode={catalogEditMode} />
+                {filteredGrouped.map(({ category, subcategories }, index) => (
+                  <CategorySection
+                    key={category}
+                    category={category}
+                    subcategories={subcategories}
+                    counts={counts}
+                    isReadOnly={isReadOnly}
+                    canEditCounts={canEditCounts}
+                    canMarkOrdered={canMarkOrdered}
+                    onCountChange={handleCountChange}
+                    onKeyDown={handleKeyDown}
+                    inputRefs={inputRefs}
+                    searchQuery={search}
+                    catalogEditMode={catalogEditMode}
+                    editingField={editingField}
+                    onEditField={setEditingField}
+                    onCatalogChange={handleCatalogFieldChange}
+                    expandedEditId={expandedEditId}
+                    onToggleExpand={setExpandedEditId}
+                    onDragStart={handleDragStart}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    onDragEnd={handleDragEnd}
+                    dragState={dragState}
+                    onToggleCatalogActive={handleToggleCatalogActive}
+                    onAddCatalogItem={openAddCatalogItem}
+                    onOpenCatalogItem={openEditCatalogItem}
+                    onRenameCategory={handleRenameCategory}
+                    onMoveCategory={handleMoveCategory}
+                    categoryIndex={index}
+                    categoryCount={filteredGrouped.length}
+                  />
+                ))}
+              </div>
+            </div>
           )}
 
           {/* ── Ad-hoc Items Section ── */}
@@ -3274,6 +3673,19 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       )}
 
       {/* ── Modals ── */}
+      {catalogItemModal && (
+        <CatalogItemModal
+          mode={catalogItemModal.mode}
+          item={catalogItemModal.item}
+          defaults={catalogItemModal.defaults}
+          categories={allCategories}
+          subcategories={allSubcategories}
+          onClose={() => setCatalogItemModal(null)}
+          onSave={handleSaveCatalogItem}
+          saving={catalogItemSaving}
+        />
+      )}
+
       {showAddAdhoc && (
         <AddAdhocModal
           onClose={() => setShowAddAdhoc(false)}
