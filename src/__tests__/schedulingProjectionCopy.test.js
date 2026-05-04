@@ -1,0 +1,95 @@
+import { describe, expect, it } from "vitest";
+import {
+  getProjectionFormulaLine,
+  getProjectionHeadline,
+  getProjectionMethodologySteps,
+  getProjectionSummaryLines,
+} from "../kol/pages/SchedulingPage.jsx";
+
+function makeProjectedDay() {
+  return {
+    date: "2026-05-11",
+    dayName: "Mon",
+    projection: {
+      lead_days: 7,
+      calibration: {
+        weekly_pace: {
+          factor: 0.6629,
+          raw_week_projected: 1062,
+          weekly_target: 704,
+          current_week_booked: 511,
+          prior_year_week_as_of: 345,
+          prior_year_week_final: 618,
+          recent_completed_week_yoy_factor: 0.9918,
+          sample_count: 6,
+        },
+      },
+      capacity: {
+        constraints: [
+          {
+            key: "boarding_practical",
+            label: "Practical boarding dog capacity",
+            demand: 52,
+            capacity: 103,
+            status: "within_capacity",
+          },
+        ],
+      },
+      explanations: {
+        support_total_dog_volume: {
+          lead_days: 7,
+          current_value: 27,
+          projected_value: 31,
+          raw_projected_value: 40,
+          completion_rate: 0.68,
+          exact_prior_year_as_of: 34,
+          exact_prior_year_final: 50,
+          baseline_as_of_average: 34,
+          baseline_final_average: 50,
+          weekly_pace_adjustment_factor: 0.6629,
+          fallback_mode: "weighted_comparable_blend",
+          sample_count: 7,
+          yoy_adjustment_factor: 1.18,
+          yoy_adjustment: {
+            lookback_days: 28,
+            sample_count: 28,
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("scheduling projection explanation copy", () => {
+  it("keeps the selected-day headline and formula auditable", () => {
+    expect(getProjectionHeadline(makeProjectedDay())).toBe("7 days out. On this same date last year, 34 of 50 final dogs were already booked by this point (68%).");
+    expect(getProjectionFormulaLine(makeProjectedDay())).toContain("27 currently booked / 68% historical completion = 40 raw demand");
+    expect(getProjectionFormulaLine(makeProjectedDay())).toContain("40 x 1.18x recent pickup x 0.66x full-week check = 31 demand");
+  });
+
+  it("keeps column header summaries compact and specific", () => {
+    const lines = getProjectionSummaryLines(makeProjectedDay());
+
+    expect(lines).toContain("7 days out: last year 34/50 dogs were already booked (68%).");
+    expect(lines).toContain("Also blends 7 same-season / same-weekday samples.");
+    expect(lines).toContain("Recent completed days adjust the forecast 1.18x (+18%) using 28 completed days.");
+    expect(lines).toContain("Full-week check scales 1062 raw dog-days to 704. Recent completed weeks are 0.99x vs last year.");
+  });
+
+  it("explains the selected-day methodology as traceable steps", () => {
+    const steps = getProjectionMethodologySteps(makeProjectedDay());
+    const detail = steps.map((step) => `${step.label} ${step.detail}`).join("\n");
+
+    expect(detail).toContain("GINGR reservations.created_date");
+    expect(detail).toContain("34 of 50 final dogs were booked");
+    expect(detail).toContain("different weekday");
+    expect(detail).toContain("Same-weekday samples get extra weight");
+    expect(detail).toContain("last 28 completed days");
+    expect(detail).toContain("same lead time");
+    expect(detail).toContain("prior-year completion divided by current-year completion");
+    expect(detail).toContain("511 currently booked");
+    expect(detail).toContain("345 booked by the same point last year");
+    expect(detail).toContain("visible-week target to 704 dog-days");
+    expect(detail).toContain("Practical boarding dog capacity: demand 52, cap 103");
+  });
+});
