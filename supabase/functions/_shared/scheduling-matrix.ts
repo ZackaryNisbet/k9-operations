@@ -423,6 +423,29 @@ function buildDateOverlapOrFilter(dateKeys: string[]) {
     .join(",");
 }
 
+function buildContiguousDateRanges(dateKeys: string[]) {
+  const uniqueDates = [...new Set((dateKeys || []).filter(Boolean))].sort();
+  if (!uniqueDates.length) return [];
+
+  const ranges: Array<{ from: string; to: string }> = [];
+  let rangeStart = uniqueDates[0];
+  let previous = uniqueDates[0];
+
+  for (const dateKey of uniqueDates.slice(1)) {
+    if (dateKey === addDaysStr(previous, 1)) {
+      previous = dateKey;
+      continue;
+    }
+
+    ranges.push({ from: rangeStart, to: previous });
+    rangeStart = dateKey;
+    previous = dateKey;
+  }
+
+  ranges.push({ from: rangeStart, to: previous });
+  return ranges;
+}
+
 function buildProjectionCalibrationDates(currentDate: string): string[] {
   const dates: string[] = [];
   for (let offset = PROJECTION_CALIBRATION_LOOKBACK_DAYS; offset >= 1; offset -= 1) {
@@ -502,10 +525,13 @@ function buildProjectionCapacityEnvelope({
   const largePlayDemand = Number(display?.play_yard?.large_play_dogs || 0);
   const smallPlayDemand = Number(display?.play_yard?.small_play_dogs || 0);
   const groupPlayDemand = largePlayDemand + smallPlayDemand;
-  const groupPlayCapacity = config.groupPlayCapacity
+  const practicalBoardingCapacity = capacityLimit(config.practicalBoardingDogCapacity);
+  const largeDaycareCapacity = capacityLimit(config.largeDaycareCapacity);
+  const smallDaycareCapacity = capacityLimit(config.smallDaycareCapacity);
+  const groupPlayCapacity = capacityLimit(config.groupPlayCapacity)
     ?? (
-      config.largeDaycareCapacity !== null && config.smallDaycareCapacity !== null
-        ? config.largeDaycareCapacity + config.smallDaycareCapacity
+      largeDaycareCapacity !== null && smallDaycareCapacity !== null
+        ? largeDaycareCapacity + smallDaycareCapacity
         : null
     );
 
@@ -514,19 +540,19 @@ function buildProjectionCapacityEnvelope({
       key: "boarding_practical",
       label: "Practical boarding dog capacity",
       demand: boardingDemand,
-      capacity: config.practicalBoardingDogCapacity,
+      capacity: practicalBoardingCapacity,
     },
     {
       key: "large_play",
       label: "Large play group capacity",
       demand: largePlayDemand,
-      capacity: config.largeDaycareCapacity,
+      capacity: largeDaycareCapacity,
     },
     {
       key: "small_play",
       label: "Small play group capacity",
       demand: smallPlayDemand,
-      capacity: config.smallDaycareCapacity,
+      capacity: smallDaycareCapacity,
     },
     {
       key: "group_play_total",
@@ -556,8 +582,8 @@ function buildProjectionCapacityEnvelope({
       capacity_source: config.practicalBoardingDogCapacity !== null ? "schedule_config_or_total_rooms_x_factor" : "missing",
     },
     play_yards: {
-      large_capacity: config.largeDaycareCapacity,
-      small_capacity: config.smallDaycareCapacity,
+      large_capacity: largeDaycareCapacity,
+      small_capacity: smallDaycareCapacity,
       group_play_capacity: groupPlayCapacity,
     },
     unconstrained_forecast: {
@@ -683,10 +709,32 @@ function buildCapacityConstrainedDisplay(demandDisplay: any, capacityEnvelope: a
     display.closing.small_boarding = nextClosingSmall;
   }
 
-  changed = scaleDisplaySectionToCapacity(display.opening, OPENING_BOARDING_DISPLAY_KEYS, practicalBoardingCapacity).constrained || changed;
-  changed = scaleDisplaySectionToCapacity(display.closing, CLOSING_BOARDING_DISPLAY_KEYS, practicalBoardingCapacity).constrained || changed;
+  const openingBoardingTotal = Number(display.opening?.total_boarding || 0);
+  const closingBoardingTotal = Number(display.closing?.total_boarding || 0);
+  const openingBoardingCap = practicalBoardingCapacity !== null && openingBoardingTotal > practicalBoardingCapacity ? practicalBoardingCapacity : null;
+  const closingBoardingCap = practicalBoardingCapacity !== null && closingBoardingTotal > practicalBoardingCapacity ? practicalBoardingCapacity : null;
+  changed = scaleDisplaySectionToCapacity(
+    display.opening,
+    OPENING_BOARDING_DISPLAY_KEYS,
+    openingBoardingCap,
+  ).constrained || changed;
+  changed = scaleDisplaySectionToCapacity(
+    display.closing,
+    CLOSING_BOARDING_DISPLAY_KEYS,
+    closingBoardingCap,
+  ).constrained || changed;
+  changed = openingBoardingCap !== null || closingBoardingCap !== null || changed;
   if (changed) {
     recomputeCapacityConstrainedDisplay(display);
+    if (openingBoardingCap !== null) {
+      display.opening.total_boarding = Math.min(Number(display.opening.total_boarding || 0), openingBoardingCap);
+    }
+    if (closingBoardingCap !== null) {
+      display.closing.total_boarding = Math.min(Number(display.closing.total_boarding || 0), closingBoardingCap);
+    }
+    display.support.morning_feeding_dogs = display.opening.total_boarding;
+    display.support.evening_feeding_dogs = display.closing.total_boarding;
+    display.support.total_dog_volume = display.closing.total_boarding + display.daycare.total_daycare;
   }
 
   changed = reduceDaycarePlayDemand(display, "large_daycare", largePlayCapacity) || changed;
@@ -2144,7 +2192,7 @@ export function buildProjectionForDate({
       current_value: Number(currentFlat[metricKey] || 0),
       projected_value: derivedProjectedValue,
       lead_days: leadDays,
-      completion_rate: projectedValueChanged ? null : existing.completion_rate,
+      completion_rate: existing.completion_rate ?? null,
       fallback_mode: projectedValueChanged ? "derived_from_projected_components" : existing.fallback_mode,
     };
   }
@@ -2389,16 +2437,24 @@ export async function computeSchedulingMatrixRows({
   locationId,
   dateFrom,
   dateTo,
+  projectionScopeDateFrom,
+  projectionScopeDateTo,
 }: {
   supabase: SupabaseClient;
   locationId: string;
   dateFrom: string;
   dateTo: string;
+  projectionScopeDateFrom?: string | null;
+  projectionScopeDateTo?: string | null;
 }) {
   const targetDates = enumerateDates(dateFrom, dateTo);
+  const projectionDates = enumerateDates(projectionScopeDateFrom || dateFrom, projectionScopeDateTo || dateTo);
+  const contextDates = [...new Set([...targetDates, ...projectionDates])].sort();
+  const contextDateFrom = contextDates[0] || dateFrom;
+  const contextDateTo = contextDates[contextDates.length - 1] || dateTo;
   const currentDate = dateStrET();
-  const historicalWindow = buildHistoricalWindow(targetDates);
-  const exactHistoricalOverlapFilter = buildDateOverlapOrFilter(historicalWindow?.referenceDates || []);
+  const historicalWindow = buildHistoricalWindow(contextDates);
+  const exactHistoricalReferenceRanges = buildContiguousDateRanges(historicalWindow?.referenceDates || []);
   const calibrationDates = buildProjectionCalibrationDates(currentDate);
   const weeklyCalibrationStart = addDaysStr(currentDate, -(PROJECTION_WEEKLY_LOOKBACK_WEEKS * 7));
   const calibrationStart = [calibrationDates[0], weeklyCalibrationStart].filter(Boolean).sort()[0] || null;
@@ -2406,7 +2462,17 @@ export async function computeSchedulingMatrixRows({
   const calibrationHistoricalStart = calibrationStart ? addDaysStr(shiftYearsStr(calibrationStart, -1), -21) : null;
   const calibrationHistoricalEnd = calibrationEnd ? addDaysStr(shiftYearsStr(calibrationEnd, -1), 21) : null;
 
-  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationsRes, calibrationReservationsRes, calibrationHistoricalReservationsRes, scheduleConfigRes, playgroupAssignments] = await Promise.all([
+  const buildReservationRowsQuery = () => supabase
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null);
+
+  const exactHistoricalReservationQueries = exactHistoricalReferenceRanges.map(({ from, to }) =>
+    buildDateRangeOverlapQuery(buildReservationRowsQuery(), from, to),
+  );
+
+  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationRangeResults, calibrationReservationsRes, calibrationHistoricalReservationsRes, scheduleConfigRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("gingr_id, name, is_boarding, is_daycare, single_day")
@@ -2415,8 +2481,8 @@ export async function computeSchedulingMatrixRows({
       .from("gingr_occupancy_snapshot")
       .select("snapshot_date, number_occupied, number_available, total_runs")
       .eq("location_id", locationId)
-      .gte("snapshot_date", dateFrom)
-      .lte("snapshot_date", dateTo),
+      .gte("snapshot_date", contextDateFrom)
+      .lte("snapshot_date", contextDateTo),
     supabase
       .from("gingr_runs")
       .select("gingr_run_id, id")
@@ -2425,38 +2491,19 @@ export async function computeSchedulingMatrixRows({
       .from("gingr_reservation_widget_daily")
       .select("widget_date, check_in_total, check_out_total, overnight_total, total_reservation_volume, per_type, synced_at")
       .eq("location_id", locationId)
-      .gte("widget_date", dateFrom)
-      .lte("widget_date", dateTo),
-    supabase
-      .from("gingr_reservations")
-      .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
-      .eq("location_id", locationId)
-      .is("cancelled_date", null)
-      .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
-      .gte("end_date", `${dateFrom}T00:00:00`),
-    exactHistoricalOverlapFilter
-      ? supabase
-        .from("gingr_reservations")
-        .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
-        .eq("location_id", locationId)
-        .is("cancelled_date", null)
-        .or(exactHistoricalOverlapFilter)
-      : Promise.resolve({ data: [], error: null }),
+      .gte("widget_date", contextDateFrom)
+      .lte("widget_date", contextDateTo),
+    buildReservationRowsQuery()
+      .lt("start_date", `${addDaysStr(contextDateTo, 1)}T00:00:00`)
+      .gte("end_date", `${contextDateFrom}T00:00:00`),
+    Promise.all(exactHistoricalReservationQueries),
     buildDateRangeOverlapQuery(
-      supabase
-        .from("gingr_reservations")
-        .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
-        .eq("location_id", locationId)
-        .is("cancelled_date", null),
+      buildReservationRowsQuery(),
       calibrationStart,
       calibrationEnd,
     ),
     buildDateRangeOverlapQuery(
-      supabase
-        .from("gingr_reservations")
-        .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
-        .eq("location_id", locationId)
-        .is("cancelled_date", null),
+      buildReservationRowsQuery(),
       calibrationHistoricalStart,
       calibrationHistoricalEnd,
     ),
@@ -2473,7 +2520,9 @@ export async function computeSchedulingMatrixRows({
   ]);
 
   if (reservationsRes.error) throw reservationsRes.error;
-  if (exactHistoricalReservationsRes.error) throw exactHistoricalReservationsRes.error;
+  for (const result of exactHistoricalReservationRangeResults) {
+    if (result.error) throw result.error;
+  }
   if (resTypesRes.error) throw resTypesRes.error;
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
@@ -2528,7 +2577,14 @@ export async function computeSchedulingMatrixRows({
   const baseReservations = (reservationsRes.data || []).map((row: ReservationRow) =>
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
-  const exactHistoricalReservations = (exactHistoricalReservationsRes.data || []).map((row: ReservationRow) =>
+  const exactHistoricalRowsByKey = new Map<string, ReservationRow>();
+  for (const result of exactHistoricalReservationRangeResults) {
+    for (const row of result.data || []) {
+      const key = String(row.gingr_id || `${row.animal_gingr_id || ""}:${row.reservation_type_id || ""}:${row.start_date || ""}:${row.end_date || ""}`);
+      exactHistoricalRowsByKey.set(key, row);
+    }
+  }
+  const exactHistoricalReservations = Array.from(exactHistoricalRowsByKey.values()).map((row: ReservationRow) =>
     buildReservationRecord(row, resTypeMaps, playgroupMap),
   );
   const baseCalibrationReservations = (calibrationReservationsRes.data || []).map((row: ReservationRow) =>
@@ -2539,7 +2595,7 @@ export async function computeSchedulingMatrixRows({
   );
   const baseHistoricalReservations = [...exactHistoricalReservations];
 
-  for (const targetDate of targetDates) {
+  for (const targetDate of contextDates) {
     const exactSampleDate = shiftYearsStr(targetDate, -1);
     const exactActiveRows = exactHistoricalReservations.filter((row) => row.startKey <= exactSampleDate && row.endKey >= exactSampleDate);
     const hasExactOperationalRows = exactActiveRows.some((row) => row.cls !== "tour" && row.cls !== "grooming");
@@ -2585,7 +2641,7 @@ export async function computeSchedulingMatrixRows({
   const calibrationHistoricalReservations = annotateReservationsWithOperationalHistory(baseCalibrationHistoricalReservations, earliestOperationalStartByAnimal);
 
   const preparedByDate = new Map<string, any>();
-  for (const targetDate of targetDates) {
+  for (const targetDate of contextDates) {
     const snapshot = computeDemandSnapshotForDate({
       targetDate,
       reservations,
@@ -2605,7 +2661,7 @@ export async function computeSchedulingMatrixRows({
 
   const firstPassProjectionsByDate: Record<string, any> = {};
   const currentDisplaysByDate: Record<string, any> = {};
-  for (const targetDate of targetDates) {
+  for (const targetDate of projectionDates) {
     const prepared = preparedByDate.get(targetDate);
     if (!prepared) continue;
     currentDisplaysByDate[targetDate] = prepared.display;
@@ -2623,7 +2679,7 @@ export async function computeSchedulingMatrixRows({
   }
 
   const weeklyPaceCalibration = buildWeeklyPaceCalibration({
-    targetDates,
+    targetDates: projectionDates,
     currentDate,
     currentDisplaysByDate,
     firstPassProjectionsByDate,

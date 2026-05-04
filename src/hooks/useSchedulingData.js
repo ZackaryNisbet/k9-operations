@@ -76,6 +76,10 @@ export function useSchedulingData(locationId, startDate) {
 
   const recomputeDates = useCallback(async (targetDates) => {
     const orderedDates = [...new Set((targetDates || []).filter(Boolean))].sort();
+    if (!orderedDates.length) return [];
+
+    const projectionScopeDateFrom = dates[0] || orderedDates[0];
+    const projectionScopeDateTo = dates[dates.length - 1] || orderedDates[orderedDates.length - 1];
     const failures = [];
 
     for (const date of orderedDates) {
@@ -84,6 +88,8 @@ export function useSchedulingData(locationId, startDate) {
           location_id: locationId,
           date_from: date,
           date_to: date,
+          projection_scope_date_from: projectionScopeDateFrom,
+          projection_scope_date_to: projectionScopeDateTo,
         },
       });
 
@@ -96,7 +102,7 @@ export function useSchedulingData(locationId, startDate) {
     }
 
     return failures;
-  }, [locationId]);
+  }, [locationId, dates]);
 
   const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;

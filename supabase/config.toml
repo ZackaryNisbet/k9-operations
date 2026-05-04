@@ -43,6 +43,11 @@ verify_jwt = false
 # Gateway verification can reject newer ES256 auth JWTs before function code runs.
 verify_jwt = false
 
+[functions.compute-scheduling-matrix]
+# The function validates caller/location access in-function and cron calls use the
+# Supabase vault service key, which is not always a JWT.
+verify_jwt = false
+
 [functions.ops-compute]
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.
