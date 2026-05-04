@@ -1,6 +1,6 @@
 // K9 Operations — Permission Helpers
 
-import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, LEAN_ROLES } from "./theme";
+import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX } from "./theme";
 
 const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
 // New role code map for location_roles table (7-role system)
@@ -35,32 +35,10 @@ const LEAN_PERMISSION_ALIAS_MAP = {
 };
 
 const LEAN_FULL_ACCESS_ROLES = new Set(["enterprise_admin", "owner", "developer"]);
-const ALWAYS_VISIBLE_PERMISSION_ROLE_IDS = new Set(["enterprise_admin"]);
 
 function resolveLeanRoleKey(userRole) {
   const normalized = String(userRole || "").trim();
   return LEAN_ROLE_ALIAS_MAP[normalized] || normalized || "pct";
-}
-
-function resolveActiveLeanRoles({ memberRows = [], profile = null, includeEnterpriseAdmin = true } = {}) {
-  const supportedRoleIds = new Set(LEAN_ROLES.map((role) => role.id));
-  const activeRoleIds = new Set();
-  const addRole = (roleValue) => {
-    const roleKey = resolveLeanRoleKey(roleValue);
-    if (supportedRoleIds.has(roleKey)) activeRoleIds.add(roleKey);
-  };
-
-  (memberRows || []).forEach((member) => {
-    if (member?.is_active === false) return;
-    addRole(member?.role || member?.role_id || member?.role_code);
-  });
-
-  if (profile && profile.is_active !== false) addRole(profile.role);
-  if (includeEnterpriseAdmin) {
-    ALWAYS_VISIBLE_PERMISSION_ROLE_IDS.forEach((roleId) => activeRoleIds.add(roleId));
-  }
-
-  return LEAN_ROLES.filter((role) => activeRoleIds.has(role.id));
 }
 
 function resolveLeanPermissionKeys(area) {
@@ -223,7 +201,6 @@ export {
   hasPermission,
   hasLeanPermission,
   getUserLocationIds,
-  resolveActiveLeanRoles,
   resolveLeanRoleKey,
   resolveLeanPermissionKeys,
 };
