@@ -93,25 +93,25 @@
       "updatedAt": "2026-04-22T12:32:05.741Z"
     },
     "breed-detect": {
-      "commit": "69cddbbb69db405c4bae7315644016afab6367d7",
+      "commit": "8ba2c906c5cc117c41312bc793907d136e8c8104",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Reduce Supabase storage transformation usage for photo AI",
-      "updatedAt": "2026-05-04T03:28:12.710Z"
+      "note": "Reduce Supabase storage egress for photo AI",
+      "updatedAt": "2026-05-04T03:50:38.116Z"
     },
     "breed-detect-bulk": {
-      "commit": "69cddbbb69db405c4bae7315644016afab6367d7",
+      "commit": "8ba2c906c5cc117c41312bc793907d136e8c8104",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Reduce Supabase storage transformation usage for photo AI",
-      "updatedAt": "2026-05-04T03:28:12.710Z"
+      "note": "Reduce Supabase storage egress for photo AI",
+      "updatedAt": "2026-05-04T03:50:38.116Z"
     },
     "breed-compare": {
-      "commit": "69cddbbb69db405c4bae7315644016afab6367d7",
+      "commit": "8ba2c906c5cc117c41312bc793907d136e8c8104",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Reduce Supabase storage transformation usage for photo AI",
-      "updatedAt": "2026-05-04T03:28:12.710Z"
+      "note": "Reduce Supabase storage egress for photo AI",
+      "updatedAt": "2026-05-04T03:50:38.116Z"
     }
   }
 }
