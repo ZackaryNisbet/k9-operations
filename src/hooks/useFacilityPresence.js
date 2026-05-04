@@ -156,6 +156,8 @@ export function useFacilityPresence(locationId, {
   const [error, setError] = useState(null);
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
   const disabledRef = useRef(false);
+  const realtimeRefreshTimerRef = useRef(null);
+  const lastRealtimeRefreshRef = useRef(0);
 
   const loadSnapshot = useCallback(async () => {
     if (!locationId || !enabled || disabledRef.current) return null;
@@ -178,6 +180,31 @@ export function useFacilityPresence(locationId, {
     setLastFetchedAt(new Date().toISOString());
     return parsed;
   }, [locationId, enabled]);
+
+  const scheduleSnapshotRefresh = useCallback(() => {
+    const now = Date.now();
+    const minGapMs = 2_000;
+    const elapsed = now - lastRealtimeRefreshRef.current;
+
+    const run = () => {
+      realtimeRefreshTimerRef.current = null;
+      lastRealtimeRefreshRef.current = Date.now();
+      loadSnapshot();
+    };
+
+    if (elapsed >= minGapMs) {
+      if (realtimeRefreshTimerRef.current) {
+        clearTimeout(realtimeRefreshTimerRef.current);
+        realtimeRefreshTimerRef.current = null;
+      }
+      run();
+      return;
+    }
+
+    if (!realtimeRefreshTimerRef.current) {
+      realtimeRefreshTimerRef.current = setTimeout(run, minGapMs - elapsed);
+    }
+  }, [loadSnapshot]);
 
   useEffect(() => {
     disabledRef.current = false;
@@ -225,29 +252,19 @@ export function useFacilityPresence(locationId, {
               recent_events: [payload.new, ...(current.recent_events || [])].slice(0, 50),
             };
           });
-          loadSnapshot();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "facility_presence_current", filter: `location_id=eq.${locationId}` },
-        () => {
-          loadSnapshot();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "facility_presence_sync_runs", filter: `location_id=eq.${locationId}` },
-        () => {
-          loadSnapshot();
+          scheduleSnapshotRefresh();
         }
       )
       .subscribe();
 
     return () => {
+      if (realtimeRefreshTimerRef.current) {
+        clearTimeout(realtimeRefreshTimerRef.current);
+        realtimeRefreshTimerRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
-  }, [locationId, enabled, available, loadSnapshot]);
+  }, [locationId, enabled, available, scheduleSnapshotRefresh]);
 
   const counts = useMemo(() => normalizePresenceCounts(snapshot?.counts), [snapshot]);
   const current = useMemo(() => Array.isArray(snapshot?.current) ? snapshot.current : [], [snapshot]);
