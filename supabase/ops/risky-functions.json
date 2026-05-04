@@ -39,6 +39,15 @@
     },
     "performance-review-signing": {
       "verifyJwt": false
+    },
+    "breed-detect": {
+      "verifyJwt": true
+    },
+    "breed-detect-bulk": {
+      "verifyJwt": true
+    },
+    "breed-compare": {
+      "verifyJwt": true
     }
   }
 }

@@ -14,6 +14,15 @@ const corsHeaders = {
 const SUPABASE_URL = 'https://xuzvqcpthqikyroqhypw.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+const PET_PHOTOS_BUCKET = 'pet-photos';
+
+function encodeStoragePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function publicStorageUrl(path: string): string {
+  return `${SUPABASE_URL}/storage/v1/object/public/${PET_PHOTOS_BUCKET}/${encodeStoragePath(path)}`;
+}
 
 const BREED_SYSTEM_PROMPT = `You are an expert veterinary professional specializing in dog breed identification at a pet boarding facility.
 
@@ -73,7 +82,16 @@ serve(async (req) => {
     for (const photo of pendingPhotos) {
       await supabase.from('photos').update({ breed_detection_status: 'processing' }).eq('id', photo.id);
 
-      const imageUrl = `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=4000&quality=95`;
+      // Send the stored image directly instead of using Supabase render/image.
+      // The transform API bills by origin image, so bulk detection can otherwise
+      // consume the whole monthly transformation allowance very quickly.
+      const storagePath = photo.storage_path || photo.thumbnail_path;
+      if (!storagePath) {
+        await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo.id);
+        results.push({ photo_id: photo.id, status: 'failed', breeds: [] });
+        continue;
+      }
+      const imageUrl = publicStorageUrl(storagePath);
 
       try {
         const res = await fetch('https://api.openai.com/v1/chat/completions', {

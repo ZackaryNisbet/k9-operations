@@ -14,7 +14,6 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
-import { useFacilityPresence } from "../../hooks/useFacilityPresence";
 import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
 import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
@@ -1439,10 +1438,6 @@ function DashboardContent({
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
   const isToday = range === "today";
-  const facilityPresence = useFacilityPresence(locationId, {
-    enabled: isToday && Boolean(locationId),
-    pollMs: 5_000,
-  });
 
   // ─── Live Snapshot: 10-second polling for real-time snapshot counts ───
   // Respects business hours setting — pauses outside configured window
@@ -1464,18 +1459,18 @@ function DashboardContent({
     return () => { cancelled = true; clearInterval(iv); };
   }, [isToday, locationId, bizHoursCheck]);
   const displayLiveSnap = useMemo(() => {
-    if (!facilityPresence.available) return liveSnap;
+    if (!bohStats?.canonicalPresence) return liveSnap;
     return {
       ...(liveSnap || {}),
-      expected: facilityPresence.counts.pendingArrivals,
-      in_house: facilityPresence.counts.inHouse,
-      boarding: facilityPresence.counts.boarding,
-      daycare: facilityPresence.counts.daycare,
-      going_home: facilityPresence.counts.goingHome,
-      occupancy_pct: facilityPresence.counts.occupancyPct,
+      expected: bohStats.pendingCount,
+      in_house: bohStats.total,
+      boarding: bohStats.boardingCount,
+      daycare: bohStats.daycareCount,
+      going_home: bohStats.goingHomeCount,
+      occupancy_pct: bohStats.occupancyPct,
       canonical_presence: true,
     };
-  }, [facilityPresence.available, facilityPresence.counts, liveSnap]);
+  }, [bohStats, liveSnap]);
   // Overlay today's live cash data on trailing week rows too
   const correctedTrailingWeekRows = useMemo(() => buildCashChartRows(trailingWeekRows, todayCashData), [trailingWeekRows, todayCashData]);
   const cashChartData = useMemo(() => {

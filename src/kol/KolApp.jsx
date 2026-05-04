@@ -402,7 +402,7 @@ function LeanAppInner() {
   const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
 
   // Canonical facility presence — server-owned sync, browser reads Supabase only.
-  const bohEnabled = page === "home" || page === "dashboard" || page === "checkout-tv";
+  const bohEnabled = page === "home" || page === "dashboard";
   const facilityPresence = useFacilityPresence(currentLocation, { enabled: bohEnabled, pollMs: 5000 });
   const bohStats = useMemo(() => ({
     total: facilityPresence.counts.inHouse,
@@ -413,6 +413,7 @@ function LeanAppInner() {
     pendingDaycare: null,
     pendingBoarding: null,
     goingHomeCount: facilityPresence.counts.goingHome,
+    occupancyPct: facilityPresence.counts.occupancyPct,
     fetchCount: facilityPresence.latestSync?.id ? 1 : 0,
     canonicalPresence: facilityPresence.available,
   }), [facilityPresence.available, facilityPresence.counts, facilityPresence.latestSync?.id]);
