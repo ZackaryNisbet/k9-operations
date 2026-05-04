@@ -1,7 +1,7 @@
 // K9 Operations — PhotosPage
 // Full photo management: grid display, upload (drag-and-drop + file picker),
 // filters (All/Unpaired/By Date), full-screen photo viewer with breed info and pairing,
-// bulk actions for multi-select pairing, background breed detection.
+// bulk actions for multi-select pairing, on-open breed detection.
 // HEIC→JPEG conversion on upload, thumbnail generation, multi-dog pairing.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
@@ -26,6 +26,7 @@ const photoPublicUrl = (storagePath) =>
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const THUMBNAIL_WIDTH = 300;
+const AI_IMAGE_WIDTH = 1600;
 
 const COMMON_BREEDS = [
   "Labrador Retriever", "Golden Retriever", "German Shepherd", "Bulldog", "Poodle",
@@ -55,25 +56,35 @@ async function convertHeicToJpeg(file) {
 
 // ─── Generate thumbnail via Canvas ──────────────────────────────────────────
 function generateThumbnail(file) {
+  return generateResizedJpeg(file, THUMBNAIL_WIDTH, 0.8);
+}
+
+// ─── Generate medium AI/display derivative via Canvas ───────────────────────
+function generateAiImage(file) {
+  return generateResizedJpeg(file, AI_IMAGE_WIDTH, 0.78);
+}
+
+function generateResizedJpeg(file, maxWidth, quality) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const scale = THUMBNAIL_WIDTH / img.naturalWidth;
-      const thumbH = Math.round(img.naturalHeight * scale);
+      const scale = Math.min(maxWidth / img.naturalWidth, 1);
+      const width = Math.round(img.naturalWidth * scale);
+      const height = Math.round(img.naturalHeight * scale);
       const canvas = document.createElement("canvas");
-      canvas.width = THUMBNAIL_WIDTH;
-      canvas.height = thumbH;
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, THUMBNAIL_WIDTH, thumbH);
+      ctx.drawImage(img, 0, 0, width, height);
       canvas.toBlob(
         (blob) => {
           if (blob) resolve(blob);
           else reject(new Error("Canvas toBlob failed"));
         },
         "image/jpeg",
-        0.8
+        quality
       );
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to load image")); };
@@ -332,7 +343,7 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
 
 
 // ─── Full-Screen Photo Viewer ───────────────────────────────────────────────
-function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, onUpdate }) {
+function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, onUpdate, onDetectBreeds }) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [enterRect, setEnterRect] = useState(null);
   const [animState, setAnimState] = useState("entering"); // entering | open | exiting
@@ -344,12 +355,14 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
   const touchStartRef = useRef(null);
   const swipeRef = useRef(null);
   const viewerRef = useRef(null);
+  const detectionRequestedRef = useRef(new Set());
 
   const photo = photos[currentIndex];
   if (!photo) { onClose(); return null; }
 
   const thumbUrl = photo.thumbnail_path ? photoPublicUrl(photo.thumbnail_path) : null;
   const fullUrl = photo.storage_path ? photoPublicUrl(photo.storage_path) : null;
+  const displayUrl = photo.ai_image_path ? photoPublicUrl(photo.ai_image_path) : fullUrl;
   const hasPairing = photo.paired_dog_id || (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
   const pairedNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
     ? photo.paired_dog_names
@@ -366,15 +379,29 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
     });
   }, []);
 
-  // Load full-res with crossfade
+  // Load medium display image with crossfade. Keep the original for sharing,
+  // but avoid downloading full camera originals during routine browsing.
   useEffect(() => {
     setFullResLoaded(false);
-    if (fullUrl) {
+    if (displayUrl) {
       const img = new Image();
       img.onload = () => setFullResLoaded(true);
-      img.src = fullUrl;
+      img.src = displayUrl;
     }
-  }, [fullUrl]);
+  }, [displayUrl]);
+
+  // Trigger single-photo analysis only when a user opens an unpaired pending
+  // photo. This keeps the pairing workflow intact without bulk-analyzing the
+  // entire library in the background.
+  useEffect(() => {
+    if (!onDetectBreeds || hasPairing || !photo?.id) return;
+    if (photo.breed_detection_status !== "pending") return;
+    if (detectionRequestedRef.current.has(photo.id)) return;
+    detectionRequestedRef.current.add(photo.id);
+    onDetectBreeds(photo.id).then((updatedPhoto) => {
+      if (updatedPhoto) onUpdate({ ...photo, ...updatedPhoto });
+    });
+  }, [photo, hasPairing, onDetectBreeds, onUpdate]);
 
   // Load breed suggestions
   useEffect(() => {
@@ -552,9 +579,9 @@ function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, 
             />
           )}
           {/* Full-res (crossfade in) */}
-          {fullUrl && (
+          {displayUrl && (
             <img
-              src={fullUrl}
+              src={displayUrl}
               alt={photo.original_filename || "Photo"}
               style={{
                 maxWidth: "100%", maxHeight: "calc(100vh - 280px)", objectFit: "contain",
@@ -1194,7 +1221,6 @@ function PhotosPage({ data, nav, profile }) {
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
-  const breedProcessingRef = useRef(false);
 
   // ─── Fetch photos ──────────────────────────────────────────────────────────
   const fetchPhotos = useCallback(async () => {
@@ -1211,57 +1237,6 @@ function PhotosPage({ data, nav, profile }) {
 
   useEffect(() => { fetchPhotos(); }, [fetchPhotos]);
 
-  // ─── Background breed detection (silent, fire-and-forget) ──────────────────
-  useEffect(() => {
-    if (!locationId || breedProcessingRef.current) return;
-    const pendingCount = photos.filter(p => p.breed_detection_status === "pending" && p.thumbnail_path).length;
-    if (pendingCount === 0) return;
-
-    breedProcessingRef.current = true;
-
-    const processBatch = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-
-        let hasMore = true;
-        while (hasMore) {
-          const res = await fetch(`${SUPABASE_URL}/functions/v1/breed-detect-bulk`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ location_id: locationId, batch_size: 10 }),
-          });
-
-          if (!res.ok) break;
-          const result = await res.json();
-          hasMore = result.remaining > 0 && result.processed > 0;
-
-          // Refresh photos to show newly detected breeds
-          if (result.processed > 0) {
-            const { data: rows } = await supabase
-              .from("photos")
-              .select("*")
-              .eq("location_id", locationId)
-              .order("taken_at", { ascending: false });
-            if (rows) setPhotos(rows);
-          }
-
-          // Small delay between batches
-          if (hasMore) await new Promise(r => setTimeout(r, 1000));
-        }
-      } catch (e) {
-        console.warn("Background breed detection error:", e);
-      } finally {
-        breedProcessingRef.current = false;
-      }
-    };
-
-    processBatch();
-  }, [locationId, photos.length]);
-
   // ─── Filtered photos ───────────────────────────────────────────────────────
   const filteredPhotos = useMemo(() => {
     let list = photos;
@@ -1274,10 +1249,10 @@ function PhotosPage({ data, nav, profile }) {
   }, [photos, filter, dateFilter]);
 
   // ─── Breed detection (fire-and-forget for single photo) ────────────────────
-  const detectBreeds = async (photoId) => {
+  const detectBreeds = useCallback(async (photoId) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      await fetch(`${SUPABASE_URL}/functions/v1/breed-detect`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/breed-detect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1285,10 +1260,18 @@ function PhotosPage({ data, nav, profile }) {
         },
         body: JSON.stringify({ photo_id: photoId }),
       });
+      if (!res.ok) return null;
+      const result = await res.json();
+      if (result?.photo) {
+        setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, ...result.photo } : p));
+        return result.photo;
+      }
+      return null;
     } catch (e) {
       console.warn('Breed detection failed:', e);
+      return null;
     }
-  };
+  }, []);
 
   // ─── Upload handler (with HEIC conversion + thumbnail generation) ─────────
   const handleUpload = useCallback(async (files) => {
@@ -1326,6 +1309,7 @@ function PhotosPage({ data, nav, profile }) {
       const uuid = crypto.randomUUID();
       const dateStr = todayStr();
       const storagePath = `${locationId}/${dateStr}/${uuid}.${ext}`;
+      const aiImagePath = `${locationId}/${dateStr}/${uuid}-ai.jpg`;
 
       let width = null;
       let height = null;
@@ -1343,6 +1327,17 @@ function PhotosPage({ data, nav, profile }) {
         .from(PHOTO_BUCKET)
         .upload(storagePath, file, { contentType: file.type || "image/jpeg", upsert: false });
 
+      let uploadedAiImagePath = null;
+      if (!uploadErr) {
+        try {
+          const aiBlob = await generateAiImage(file);
+          const { error: aiErr } = await supabase.storage
+            .from(PHOTO_BUCKET)
+            .upload(aiImagePath, aiBlob, { contentType: "image/jpeg", upsert: false });
+          if (!aiErr) uploadedAiImagePath = aiImagePath;
+        } catch (_) { /* AI/display image generation failed, continue with original */ }
+      }
+
       let thumbnailPath = null;
       if (!uploadErr) {
         try {
@@ -1359,6 +1354,7 @@ function PhotosPage({ data, nav, profile }) {
         const { data: insertedRows } = await supabase.from("photos").insert({
           location_id: locationId,
           storage_path: storagePath,
+          ai_image_path: uploadedAiImagePath,
           thumbnail_path: thumbnailPath,
           original_filename: file.name,
           taken_at: takenAt,
@@ -1370,9 +1366,6 @@ function PhotosPage({ data, nav, profile }) {
           sync_source: "desktop",
         }).select("id");
 
-        if (insertedRows?.[0]?.id) {
-          detectBreeds(insertedRows[0].id);
-        }
       }
 
       done++;
@@ -1586,9 +1579,11 @@ function PhotosPage({ data, nav, profile }) {
           {filteredPhotos.map((photo, idx) => {
             const thumbUrl = photo.thumbnail_path
               ? photoPublicUrl(photo.thumbnail_path)
-              : photo.storage_path
-                ? photoPublicUrl(photo.storage_path)
-                : null;
+              : photo.ai_image_path
+                ? photoPublicUrl(photo.ai_image_path)
+                : photo.storage_path
+                  ? photoPublicUrl(photo.storage_path)
+                  : null;
             const isSelected = selectedIds.has(photo.id);
 
             const dogNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
@@ -1716,6 +1711,7 @@ function PhotosPage({ data, nav, profile }) {
           locationId={locationId}
           profile={profile}
           onUpdate={handlePhotoUpdate}
+          onDetectBreeds={detectBreeds}
         />
       )}
 

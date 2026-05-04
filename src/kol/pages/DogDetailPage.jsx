@@ -642,15 +642,20 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
               <div style={{ overflowX: "auto", paddingBottom: 4 }}>
                 <div style={{ display: "flex", gap: 10, minWidth: "min-content" }}>
                   {dogPhotos.map(photo => {
-                    const imgUrl = photo.storage_path
-                      ? `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/pet-photos/${photo.storage_path}`
+                    const displayPath = photo.thumbnail_path || photo.ai_image_path || photo.storage_path;
+                    const fullPath = photo.ai_image_path || photo.storage_path;
+                    const imgUrl = displayPath
+                      ? `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/pet-photos/${displayPath}`
+                      : null;
+                    const expandedUrl = fullPath
+                      ? `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/pet-photos/${fullPath}`
                       : null;
                     return (
                       <div
                         key={photo.id}
-                        onClick={() => imgUrl && setExpandedPhotoUrl(imgUrl)}
+                        onClick={() => expandedUrl && setExpandedPhotoUrl(expandedUrl)}
                         style={{
-                          flex: "0 0 auto", width: 110, cursor: imgUrl ? "pointer" : "default",
+                          flex: "0 0 auto", width: 110, cursor: expandedUrl ? "pointer" : "default",
                           borderRadius: 10, overflow: "hidden",
                           border: `1px solid ${C.borderLight}`, transition: "transform 0.15s",
                         }}
