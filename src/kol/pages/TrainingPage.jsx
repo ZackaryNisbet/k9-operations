@@ -113,6 +113,15 @@ const normalizeLaborTab = (value) => LABOR_TAB_IDS.has(value) ? value : "home";
 const normalizeAttendanceView = (value) => value === "summary" ? "summary" : "input";
 const normalizeInterviewView = (value) => value === "config" ? "config" : "records";
 
+export function buildLaborModulePanelKey({ tab, interviewView, attendanceView } = {}) {
+  const normalizedTab = normalizeLaborTab(tab);
+  return [
+    normalizedTab,
+    normalizedTab === "interviews" ? normalizeInterviewView(interviewView) : "",
+    normalizedTab === "attendance" ? normalizeAttendanceView(attendanceView) : "",
+  ].join(":");
+}
+
 const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
@@ -728,7 +737,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [supportBundleLoading, setSupportBundleLoading] = useState(false);
   const [attendanceView, setAttendanceView] = useState(routeAttendanceView);
   const [interviewView, setInterviewView] = useState(routeInterviewView);
-  const [interviewDetailOpen, setInterviewDetailOpen] = useState(false);
+  const [interviewDetailOpen, setInterviewDetailOpen] = useState(!!routeInterviewId);
 
   // Data state
   const [templates, setTemplates] = useState([]);
@@ -6452,7 +6461,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       <div
-        key={`${tab}:${tab === "interviews" ? interviewView : ""}:${tab === "attendance" ? attendanceView : ""}:${interviewDetailOpen ? "detail" : "list"}`}
+        key={buildLaborModulePanelKey({ tab, interviewView, attendanceView })}
         className="labor-module-panel"
       >
       {!loading && tab === "home" && canUseLaborTab("home") && (
