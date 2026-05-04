@@ -33,7 +33,7 @@ const rows = raw.map((item, i) => ({
   subcategory: item.subcategory || null,
   gl_account: item.gl_account || null,
   par_level: item.par_level ?? 0,
-  min_reorder: item.min_reorder ?? 0,
+  min_reorder: null,
   unit_price: item.unit_price ?? 0,
   vendor_link: item.link || null,
   is_active: true,
