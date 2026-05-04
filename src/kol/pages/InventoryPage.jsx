@@ -7,6 +7,7 @@ import { useAuth } from "../../AuthProvider";
 import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
+import { hasLeanPermission } from "../../shared/permissions";
 import { getInventoryWorkflow } from "./inventoryStatus";
 import {
   DEFAULT_INVENTORY_SCHEDULE,
@@ -102,37 +103,7 @@ const fmtAuditTime = (ts) => {
   return `${day} ${time}`;
 };
 
-const INVENTORY_REOPEN_ROLES = new Set([
-  "supervisor",
-  "manager",
-  "location_admin",
-  "enterprise_admin",
-  "owner",
-  "role_owner",
-]);
-
-const LITE_ROLE_PRIORITY = {
-  enterprise_admin: 1,
-  location_admin: 2,
-  manager: 3,
-  supervisor: 4,
-  csr: 5,
-  pct: 6,
-};
-
-function pickHighestLiteRole(rows, locationId) {
-  const candidates = (rows || []).filter(row =>
-    row?.role === "enterprise_admin" || row?.location_id === locationId
-  );
-
-  if (candidates.length === 0) return null;
-
-  return [...candidates]
-    .sort((a, b) => (LITE_ROLE_PRIORITY[a.role] || 99) - (LITE_ROLE_PRIORITY[b.role] || 99))[0]
-    ?.role || null;
-}
-
-const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange, onKeyDown, inputRef }) {
+const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCounts, canMarkOrdered, onChange, onKeyDown, inputRef }) {
   const [hovered, setHovered] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -155,6 +126,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
     ? (parseInt(stockCount, 10) || 0) * parseFloat(item.unit_price || 0)
     : null;
   const needsOrder = toOrder !== "" && toOrder > 0;
+  const countReadOnly = isReadOnly || !canEditCounts;
+  const orderReadOnly = isReadOnly || !canMarkOrdered;
 
   return (
     <>
@@ -239,8 +212,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
           type="number"
           min="0"
           value={stockCount}
-          readOnly={isReadOnly}
-          onChange={e => !isReadOnly && onChange("stock_count", clampPositive(e.target.value))}
+          readOnly={countReadOnly}
+          onChange={e => !countReadOnly && onChange("stock_count", clampPositive(e.target.value))}
           onKeyDown={onKeyDown}
           placeholder="0"
           data-item-id={item.id}
@@ -249,18 +222,18 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             width: "100%",
             padding: "6px 8px",
             borderRadius: 8,
-            border: `2px solid ${isReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
-            background: isReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
+            border: `2px solid ${countReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
+            background: countReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
             fontSize: 13,
             fontWeight: 600,
             color: C.text,
             textAlign: "center",
             outline: "none",
-            cursor: isReadOnly ? "default" : "text",
+            cursor: countReadOnly ? "default" : "text",
             boxSizing: "border-box",
           }}
-          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = hasFilled ? C.border : "#E6C200"; }}
+          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
+          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = hasFilled ? C.border : "#E6C200"; }}
         />
       </div>
 
@@ -270,24 +243,24 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
           type="number"
           min="0"
           value={inTransit}
-          readOnly={isReadOnly}
-          onChange={e => !isReadOnly && onChange("in_transit", clampPositive(e.target.value))}
+          readOnly={countReadOnly}
+          onChange={e => !countReadOnly && onChange("in_transit", clampPositive(e.target.value))}
           placeholder="0"
           style={{
             width: "100%",
             padding: "6px 8px",
             borderRadius: 8,
             border: `1.5px solid ${C.border}`,
-            background: isReadOnly ? C.bg : C.surface,
+            background: countReadOnly ? C.bg : C.surface,
             fontSize: 13,
             color: C.text,
             textAlign: "center",
             outline: "none",
-            cursor: isReadOnly ? "default" : "text",
+            cursor: countReadOnly ? "default" : "text",
             boxSizing: "border-box",
           }}
-          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = C.border; }}
+          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
+          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = C.border; }}
         />
       </div>
 
@@ -331,7 +304,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
               >
                 SKIPPED
               </span>
-              {!isReadOnly && (
+              {!orderReadOnly && (
                 <button
                   onClick={() => onChange("skipped", false)}
                   style={{
@@ -351,17 +324,17 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
           ) : ordered ? (
             /* State 2: Ordered */
             <div title={orderedBy ? `Ordered by ${orderedBy} · ${fmtAuditTime(orderedAt)}` : ""}>
-              <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", cursor: orderReadOnly ? "default" : "pointer" }}>
                 <input
                   type="checkbox"
                   checked={true}
-                  disabled={isReadOnly}
-                  onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
+                  disabled={orderReadOnly}
+                  onChange={e => !orderReadOnly && onChange("ordered", e.target.checked)}
                   style={{
                     width: 18,
                     height: 18,
                     accentColor: C.suc,
-                    cursor: isReadOnly ? "default" : "pointer",
+                    cursor: orderReadOnly ? "default" : "pointer",
                   }}
                 />
               </label>
@@ -369,21 +342,21 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
           ) : (
             /* State 1: Needs ordering (not ordered, not skipped) */
             <>
-              <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", cursor: orderReadOnly ? "default" : "pointer" }}>
                 <input
                   type="checkbox"
                   checked={false}
-                  disabled={isReadOnly}
-                  onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
+                  disabled={orderReadOnly}
+                  onChange={e => !orderReadOnly && onChange("ordered", e.target.checked)}
                   style={{
                     width: 18,
                     height: 18,
                     accentColor: C.suc,
-                    cursor: isReadOnly ? "default" : "pointer",
+                    cursor: orderReadOnly ? "default" : "pointer",
                   }}
                 />
               </label>
-              {!isReadOnly && (
+              {!orderReadOnly && (
                 <button
                   onClick={() => onChange("skipped", true)}
                   style={{
@@ -420,8 +393,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
       <div style={{ padding: "4px 16px 8px", background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
         <textarea
           value={notes}
-          readOnly={isReadOnly}
-          onChange={e => !isReadOnly && onChange("notes", e.target.value)}
+          readOnly={countReadOnly}
+          onChange={e => !countReadOnly && onChange("notes", e.target.value)}
           placeholder="Add a note for this item..."
           rows={2}
           style={{
@@ -429,7 +402,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             padding: "8px 10px",
             borderRadius: 8,
             border: `1.5px solid ${C.border}`,
-            background: isReadOnly ? C.bg : C.surface,
+            background: countReadOnly ? C.bg : C.surface,
             fontSize: 12,
             fontFamily: "inherit",
             color: C.text,
@@ -437,8 +410,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             outline: "none",
             boxSizing: "border-box",
           }}
-          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = C.border; }}
+          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
+          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = C.border; }}
         />
       </div>
     )}
@@ -448,17 +421,19 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
 
 // ─── Adhoc Item Row ───────────────────────────────────────────────────────────
 
-function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
+function AdhocItemRow({ item, isReadOnly, canEditCounts, canMarkOrdered, onUpdate, onDelete }) {
   const hasFilled = item.stock_count != null && item.stock_count !== "";
   const stockValue = (hasFilled && item.unit_price != null)
     ? (parseInt(item.stock_count, 10) || 0) * parseFloat(item.unit_price || 0)
     : null;
+  const countReadOnly = isReadOnly || !canEditCounts;
+  const orderReadOnly = isReadOnly || !canMarkOrdered;
   const inputStyle = {
     width: "100%",
     padding: "6px 8px",
     borderRadius: 8,
-    border: `2px solid ${isReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
-    background: isReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
+    border: `2px solid ${countReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
+    background: countReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
     fontSize: 13,
     fontWeight: 600,
     textAlign: "center",
@@ -468,7 +443,7 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
     boxSizing: "border-box",
   };
   const cbStyle = {
-    width: 18, height: 18, cursor: isReadOnly ? "default" : "pointer",
+    width: 18, height: 18, cursor: orderReadOnly ? "default" : "pointer",
     accentColor: C.pri, borderRadius: 4,
   };
   return (
@@ -492,8 +467,8 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
         <input
           type="number" min="0"
           value={item.stock_count ?? ""}
-          readOnly={isReadOnly}
-          onChange={e => !isReadOnly && onUpdate(item.id, { stock_count: clampPositive(e.target.value) })}
+          readOnly={countReadOnly}
+          onChange={e => !countReadOnly && onUpdate(item.id, { stock_count: clampPositive(e.target.value) })}
           placeholder="0"
           style={inputStyle}
         />
@@ -503,8 +478,8 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
         <input
           type="number" min="0" step="0.01"
           value={item.unit_price ?? ""}
-          readOnly={isReadOnly}
-          onChange={e => !isReadOnly && onUpdate(item.id, { unit_price: e.target.value === "" ? null : e.target.value })}
+          readOnly={countReadOnly}
+          onChange={e => !countReadOnly && onUpdate(item.id, { unit_price: e.target.value === "" ? null : e.target.value })}
           placeholder="0.00"
           style={{ ...inputStyle, fontSize: 12 }}
         />
@@ -514,8 +489,8 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
         <input
           type="checkbox"
           checked={!!item.ordered}
-          disabled={isReadOnly}
-          onChange={e => !isReadOnly && onUpdate(item.id, { ordered: e.target.checked, ...(e.target.checked ? { skipped: false } : {}) })}
+          disabled={orderReadOnly}
+          onChange={e => !orderReadOnly && onUpdate(item.id, { ordered: e.target.checked, ...(e.target.checked ? { skipped: false } : {}) })}
           style={cbStyle}
           title="Mark as ordered"
         />
@@ -525,8 +500,8 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
         <input
           type="checkbox"
           checked={!!item.skipped}
-          disabled={isReadOnly}
-          onChange={e => !isReadOnly && onUpdate(item.id, { skipped: e.target.checked, ...(e.target.checked ? { ordered: false } : {}) })}
+          disabled={orderReadOnly}
+          onChange={e => !orderReadOnly && onUpdate(item.id, { skipped: e.target.checked, ...(e.target.checked ? { ordered: false } : {}) })}
           style={cbStyle}
           title="Skip this item"
         />
@@ -538,7 +513,7 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
       {/* TYPE */}
       <div style={{ fontSize: 11, color: C.textMut, textAlign: "center" }}>Ad-hoc</div>
       {/* DELETE */}
-      {!isReadOnly && (
+      {!countReadOnly && (
         <button
           onClick={() => onDelete(item.id)}
           title="Remove ad-hoc item"
@@ -843,7 +818,7 @@ function AddItemRow({ category, subcategory, onAdd }) {
 
 // ─── Category Section ─────────────────────────────────────────────────────────
 
-function CategorySection({ category, subcategories, counts, isReadOnly, onCountChange, onKeyDown, inputRefs, searchQuery,
+function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
   catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
 }) {
@@ -965,6 +940,8 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
                 item={item}
                 count={counts[item.id]}
                 isReadOnly={isReadOnly}
+                canEditCounts={canEditCounts}
+                canMarkOrdered={canMarkOrdered}
                 onChange={(field, val) => onCountChange(item.id, field, val)}
                 onKeyDown={(e) => onKeyDown(e, item.id)}
                 inputRef={el => { if (el) inputRefs.current[item.id] = el; }}
@@ -1779,7 +1756,7 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, invent
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage({ data, save, nav, profile, addGlobalToast }) {
-  const { user: authUser, profile: authProfile } = useAuth();
+  const { profile: authProfile } = useAuth();
 
   // ── Week + Day navigation ──
   const [inventorySchedule, setInventorySchedule] = useState(() => normalizeInventorySchedule(DEFAULT_INVENTORY_SCHEDULE, todayStr()));
@@ -1832,7 +1809,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
-  const [viewerLiteRole, setViewerLiteRole] = useState(null);
   const currentCycleRef = useRef(thisWeekStart);
 
   // ── Refs ──
@@ -1845,8 +1821,15 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const countedDateRef = useRef(countedDate);
   const profileRef = useRef(profile);
 
-  const locationId = profile?.location_id;
+  const viewerProfile = profile || authProfile || {};
+  const locationId = profile?.location_id || authProfile?.location_id;
   const isReadOnly = snapshot?.status === "completed";
+  const canEditCounts = !isReadOnly && hasLeanPermission(viewerProfile, "Inventory Count On Hand");
+  const canMarkOrdered = !isReadOnly && hasLeanPermission(viewerProfile, "Inventory Mark Ordered");
+  const canCompleteInventory = hasLeanPermission(viewerProfile, "Inventory Complete Count");
+  const canEditCatalog = hasLeanPermission(viewerProfile, "Inventory Edit Catalog");
+  const canManageSchedule = hasLeanPermission(viewerProfile, "Inventory Manage Schedule");
+  const canReopenInventory = hasLeanPermission(viewerProfile, "Inventory Reopen Count");
 
   // ── Dog-Days computed values ──
   const reservations = data?.reservations || [];
@@ -1894,31 +1877,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }
     currentCycleRef.current = thisWeekStart;
   }, [currentWeekStart, thisWeekStart]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!authUser?.id || !locationId) {
-      setViewerLiteRole(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    supabase
-      .from("lite_profiles")
-      .select("location_id, role")
-      .eq("user_id", authUser.id)
-      .eq("is_active", true)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setViewerLiteRole(pickHighestLiteRole(data || [], locationId));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authUser?.id, locationId]);
 
   // ── CSS injection for shimmer + animations ──
   useEffect(() => {
@@ -2175,6 +2133,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Count change handler ──
   const handleCountChange = useCallback((itemId, field, val) => {
+    if (["stock_count", "in_transit", "notes"].includes(field) && !canEditCounts) {
+      addGlobalToast?.("You do not have permission to mark inventory on hand.", "error");
+      return;
+    }
+    if (["ordered", "skipped"].includes(field) && !canMarkOrdered) {
+      addGlobalToast?.("You do not have permission to mark inventory ordering decisions.", "error");
+      return;
+    }
     const updates = { [field]: val };
     // Enforce mutual exclusivity: ordered and skipped cannot both be true
     if (field === "ordered" && val === true) {
@@ -2195,7 +2161,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       ...updates,
     };
     scheduleAutoSave();
-  }, [scheduleAutoSave]);
+  }, [addGlobalToast, canEditCounts, canMarkOrdered, scheduleAutoSave]);
 
   // ── Catalog edit: debounced save ──
   const saveCatalogField = useCallback((itemId, updates) => {
@@ -2219,11 +2185,19 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   }, []);
 
   const handleCatalogFieldChange = useCallback((itemId, field, value) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
     setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, [field]: value } : i));
     saveCatalogField(itemId, { [field]: value });
-  }, [saveCatalogField]);
+  }, [addGlobalToast, canEditCatalog, saveCatalogField]);
 
   const handleToggleCatalogActive = useCallback(async (itemId, currentActive) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
     const newActive = !currentActive;
     setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: newActive } : i));
     setCatalogSaveStatus("saving");
@@ -2241,9 +2215,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setCatalogSaveStatus("error");
       setTimeout(() => setCatalogSaveStatus("idle"), 3000);
     }
-  }, [addGlobalToast]);
+  }, [addGlobalToast, canEditCatalog]);
 
   const handleAddCatalogItem = useCallback(async (category, subcategory) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
     setCatalogSaveStatus("saving");
     try {
       const maxSort = catalogItems.reduce((max, i) => Math.max(max, i.sort_order || 0), 0);
@@ -2277,7 +2255,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setCatalogSaveStatus("error");
       setTimeout(() => setCatalogSaveStatus("idle"), 3000);
     }
-  }, [locationId, catalogItems]);
+  }, [addGlobalToast, canEditCatalog, locationId, catalogItems]);
 
   // ── Drag and drop reorder ──
   const handleDragStart = useCallback((e, itemId) => {
@@ -2293,6 +2271,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   const handleDrop = useCallback(async (e, subcatItems) => {
     e.preventDefault();
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      setDragState({ draggingId: null, overIdx: null });
+      return;
+    }
     const { draggingId, overIdx } = dragState;
     if (!draggingId || overIdx == null) { setDragState({ draggingId: null, overIdx: null }); return; }
 
@@ -2324,7 +2307,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     for (const u of updates) {
       await supabase.from("inventory_catalog").update({ sort_order: u.sort_order }).eq("id", u.id);
     }
-  }, [dragState]);
+  }, [addGlobalToast, canEditCatalog, dragState]);
 
   const handleDragEnd = useCallback(() => {
     setDragState({ draggingId: null, overIdx: null });
@@ -2348,6 +2331,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const handleSubmit = async () => {
     const snap = snapshotRef.current;
     if (!snap) return;
+    if (!canCompleteInventory) {
+      addGlobalToast?.("You do not have permission to complete inventory counts.", "error");
+      return;
+    }
 
     // Flush any pending saves first
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -2439,6 +2426,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const handleReopen = async (reason) => {
     const snap = snapshotRef.current;
     if (!snap) return;
+    if (!canReopenInventory) {
+      addGlobalToast?.("You do not have permission to reopen inventory counts.", "error");
+      return;
+    }
 
     setReopenSaving(true);
     try {
@@ -2464,6 +2455,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   const handleSaveSchedule = useCallback(async () => {
     if (!locationId) return;
+    if (!canManageSchedule) {
+      addGlobalToast?.("You do not have permission to manage the inventory schedule.", "error");
+      return;
+    }
     setScheduleSaving(true);
     try {
       const nextSchedule = normalizeInventorySchedule({
@@ -2492,12 +2487,16 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     } finally {
       setScheduleSaving(false);
     }
-  }, [addGlobalToast, locationId, scheduleDraft]);
+  }, [addGlobalToast, canManageSchedule, locationId, scheduleDraft]);
 
   // ── Add adhoc item ──
   const handleAddAdhoc = async (formData) => {
     const snap = snapshotRef.current;
     if (!snap) return;
+    if (!canEditCounts) {
+      addGlobalToast?.("You do not have permission to mark inventory on hand.", "error");
+      return;
+    }
     try {
       const { data: newItem, error } = await supabase
         .from("inventory_adhoc_items")
@@ -2524,6 +2523,16 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   // ── Update adhoc item (debounced save) ──
   const adhocTimers = useRef({});
   const updateAdhocItem = useCallback((itemId, updates) => {
+    const countFields = ["stock_count", "unit_price"];
+    const orderFields = ["ordered", "skipped"];
+    if (Object.keys(updates || {}).some((key) => countFields.includes(key)) && !canEditCounts) {
+      addGlobalToast?.("You do not have permission to mark inventory on hand.", "error");
+      return;
+    }
+    if (Object.keys(updates || {}).some((key) => orderFields.includes(key)) && !canMarkOrdered) {
+      addGlobalToast?.("You do not have permission to mark inventory ordering decisions.", "error");
+      return;
+    }
     // Optimistic UI update
     setAdhocItems(prev => prev.map(item =>
       item.id === itemId ? { ...item, ...updates } : item
@@ -2547,10 +2556,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         console.error("Adhoc update error:", err);
       }
     }, 400);
-  }, []);
+  }, [addGlobalToast, canEditCounts, canMarkOrdered]);
 
   // ── Delete adhoc item ──
   const deleteAdhocItem = useCallback(async (itemId) => {
+    if (!canEditCounts) {
+      addGlobalToast?.("You do not have permission to mark inventory on hand.", "error");
+      return;
+    }
     try {
       const { error } = await supabase.from("inventory_adhoc_items").delete().eq("id", itemId);
       if (error) throw error;
@@ -2558,7 +2571,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     } catch (err) {
       console.error("Adhoc delete error:", err);
     }
-  }, []);
+  }, [addGlobalToast, canEditCounts]);
 
   // ── Filtered + grouped catalog ──
   const filteredGrouped = useMemo(() => {
@@ -2619,8 +2632,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   }), [snapshot?.status, catalogItems, counts, adhocItems]);
 
   const canComplete = inventoryWorkflow.readyToSubmit;
-  const viewerRole = viewerLiteRole || authProfile?.role || null;
-  const canReopenSnapshot = snapshot?.status === "completed" && INVENTORY_REOPEN_ROLES.has(viewerRole);
+  const canReopenSnapshot = snapshot?.status === "completed" && canReopenInventory;
   const snapshotHistory = useMemo(() => (
     Array.isArray(snapshot?.history)
       ? [...snapshot.history].sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
@@ -2702,18 +2714,20 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           {/* Status badge + Manage Catalog */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <Btn
-              variant="secondary"
-              size="sm"
-              icon={<I.Calendar />}
-              onClick={() => {
-                setScheduleDraft(inventorySchedule);
-                setShowScheduleModal(true);
-              }}
-            >
-              Schedule
-            </Btn>
-            {!isReadOnly && (
+            {canManageSchedule && (
+              <Btn
+                variant="secondary"
+                size="sm"
+                icon={<I.Calendar />}
+                onClick={() => {
+                  setScheduleDraft(inventorySchedule);
+                  setShowScheduleModal(true);
+                }}
+              >
+                Schedule
+              </Btn>
+            )}
+            {!isReadOnly && canEditCatalog && (
               catalogEditMode ? (
                 <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
                   Done Editing
@@ -3085,6 +3099,8 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 subcategories={subcategories}
                 counts={counts}
                 isReadOnly={isReadOnly}
+                canEditCounts={canEditCounts}
+                canMarkOrdered={canMarkOrdered}
                 onCountChange={handleCountChange}
                 onKeyDown={handleKeyDown}
                 inputRefs={inputRefs}
@@ -3118,7 +3134,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     One-off items not in the standard catalog
                   </div>
                 </div>
-                {!isReadOnly && (
+                {!isReadOnly && canEditCounts && (
                   <Btn variant="accent" size="sm" icon={<I.Plus />} onClick={() => setShowAddAdhoc(true)}>
                     Add Item
                   </Btn>
@@ -3128,7 +3144,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               {adhocItems.length === 0 ? (
                 <Card style={{ padding: 20, textAlign: "center", border: `1.5px dashed ${C.border}`, background: C.bg }}>
                   <div style={{ fontSize: 13, color: C.textMut }}>No ad-hoc items for this cycle.</div>
-                  {!isReadOnly && (
+                  {!isReadOnly && canEditCounts && (
                     <div style={{ marginTop: 8 }}>
                       <button
                         onClick={() => setShowAddAdhoc(true)}
@@ -3157,7 +3173,15 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     ))}
                   </div>
                   {adhocItems.map(item => (
-                    <AdhocItemRow key={item.id} item={item} isReadOnly={isReadOnly} onUpdate={updateAdhocItem} onDelete={deleteAdhocItem} />
+                    <AdhocItemRow
+                      key={item.id}
+                      item={item}
+                      isReadOnly={isReadOnly}
+                      canEditCounts={canEditCounts}
+                      canMarkOrdered={canMarkOrdered}
+                      onUpdate={updateAdhocItem}
+                      onDelete={deleteAdhocItem}
+                    />
                   ))}
                 </div>
               )}
@@ -3222,7 +3246,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           {/* ── Submit Button ── */}
           {snapshot && !isReadOnly && (
             <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-              {!canComplete && (
+              {!canCompleteInventory && (
+                <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>
+                  You do not have permission to complete inventory counts.
+                </div>
+              )}
+              {canCompleteInventory && !canComplete && (
                 <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>
                   {!inventoryWorkflow.countingComplete
                     ? `${inventoryWorkflow.missingCountCount} item${inventoryWorkflow.missingCountCount !== 1 ? "s" : ""} still need counting`
@@ -3235,7 +3264,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 size="lg"
                 icon={<I.CheckCircle />}
                 onClick={() => setShowSubmitModal(true)}
-                disabled={!canComplete}
+                disabled={!canComplete || !canCompleteInventory}
               >
                 Complete Inventory Count
               </Btn>

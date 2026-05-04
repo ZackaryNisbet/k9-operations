@@ -8,7 +8,7 @@ import { supabase } from "../supabaseClient";
 import { C, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, NAV_ITEMS, K9_LOCATIONS, gid, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, OPERATIONS_CATALOG, OPS_TYPES, ROOM_TYPES, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, CHART_PTS, K9_LOGO_SRC, K9_LOGO_PNG, LEAN_ROLES, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, formatTime12hr, countNights, countHours, formatDogNames, fmtPhoneInput, IDB_VERSION, idbGet, idbSet } from "../shared/theme";
 import { I, Icons } from "../shared/icons";
 import { K9Logo, K9LogoMini, Btn, Tip, Badge, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields } from "../shared/ui";
-import { hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP, getUserLocationIds } from "../shared/permissions";
+import { applyLeanPermissionOverrides, hasAnyLeanPermission, hasEveryLeanPermission, hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP, getUserLocationIds } from "../shared/permissions";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../shared/opsHelpers";
 import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
@@ -319,6 +319,81 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
+const PAGE_PERMISSION_MAP = {
+  "dashboard": null,
+  "lifecycle": "Customer Lifecycle",
+  "client-detail": "Customer Lifecycle",
+  "dog-detail": null,
+  "checkout-notes": null,
+  "ops-hub": "Operations Hub",
+  "daily-ops": "Operations Hub",
+  "ops-opening": "Operations Hub",
+  "ops-fe": "Operations Hub",
+  "ops-be": "Operations Hub",
+  "ops-rooms": "Operations Hub",
+  "ops-pictures": "Operations Hub",
+  "ops-pp": "Operations Hub",
+  "ops-closing": "Operations Hub",
+  "ops-bathing": "Operations Hub",
+  "ops-belongings": "Operations Hub",
+  "ops-collars": "Operations Hub",
+  "ops-lodging-transfers": "Operations Hub",
+  "ops-pamper": "Operations Hub",
+  "ops-svc": "Operations Hub",
+  "ops-weekly-maintenance": "Operations Hub",
+  "ops-roll-call-opening": "Operations Hub",
+  "ops-roll-call-closing": "Operations Hub",
+  "role-page": "My Work",
+  "role-layout": "Checklist Templates",
+  "eod": "EOD Reports",
+  "attendance": "Attendance Tracker",
+  "mgmt-attendance": "Attendance Tracker",
+  "mgmt-audit-log": "User Management",
+  "reports": null,
+  "photos": "Photos Module",
+  "settings": null,
+  "client-management": "Customer Lifecycle",
+  "resources": null,
+  "grassroots": "Grassroots Access",
+  "inventory": "Inventory Management",
+  "inventory-report": "Inventory Management",
+  "occupancy-report": "Occupancy Reports",
+  "scheduling": "Operations Hub",
+  "cash-tips": "Financial Reporting",
+  "test-health": null,
+  "checkout-tv": "Checkout TV Access",
+  "enterprise-ops": "Enterprise View",
+  "enterprise-attendance": "Enterprise View",
+  "enterprise-users": "Enterprise View",
+};
+
+const LABOR_TAB_PERMISSION_MAP = {
+  home: "Labor Roster",
+  training: "Labor Roster",
+  "performance-reviews": "Labor Performance Reviews",
+  templates: "Labor Templates",
+  attendance: "Labor Attendance",
+  interviews: "Labor Interviews",
+  notes: "Labor Employee Notes",
+};
+
+function getPagePermissionRequirements(page, params = {}) {
+  if (page === "training") {
+    const laborTab = params?.laborTab || "home";
+    return ["Labor Management", LABOR_TAB_PERMISSION_MAP[laborTab] || "Labor Roster"];
+  }
+  const required = PAGE_PERMISSION_MAP[page];
+  return required ? [required] : [];
+}
+
+function canAccessLitePage(profile, page, params = {}) {
+  if (page === "training" && !params?.laborTab) {
+    return hasEveryLeanPermission(profile, ["Labor Management"])
+      && hasAnyLeanPermission(profile, Object.values(LABOR_TAB_PERMISSION_MAP));
+  }
+  return hasEveryLeanPermission(profile, getPagePermissionRequirements(page, params));
+}
+
 // Location list — loaded dynamically from Supabase in production.
 // Adair Forsythe is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
@@ -365,6 +440,32 @@ function LeanAppInner() {
   const [switchError, setSwitchError] = useState("");
   const [switchLoading, setSwitchLoading] = useState(false);
   const [teamAccounts, setTeamAccounts] = useState([]);
+  const [, setPermissionVersion] = useState(0);
+
+  const refreshPermissionMatrix = useCallback(async () => {
+    const { data: rows, error } = await supabase
+      .from("lite_permissions")
+      .select("role_id,permission_key,granted");
+    if (error) {
+      console.warn("[K9 Lite] Permission override load failed:", error.message || error);
+      return;
+    }
+    applyLeanPermissionOverrides(rows || []);
+    setPermissionVersion((version) => version + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!authProfile?.id && !authProfile?.user_id) return;
+    refreshPermissionMatrix();
+  }, [authProfile?.id, authProfile?.user_id, refreshPermissionMatrix]);
+
+  useEffect(() => {
+    const handler = () => {
+      setPermissionVersion((version) => version + 1);
+    };
+    window.addEventListener("k9-lite-permissions-updated", handler);
+    return () => window.removeEventListener("k9-lite-permissions-updated", handler);
+  }, []);
 
   // ── Dynamic location list from Supabase ────────────────────────────────
   const [dbLocations, setDbLocations] = useState([]);
@@ -897,35 +998,8 @@ function LeanAppInner() {
 
   // Main content area
   const renderPage = () => {
-    // Permission area mapping: page id → LEAN_PERMISSION_AREAS key
-    const PAGE_PERM_MAP = {
-      "dashboard": null,
-      "lifecycle": "Customer Lifecycle",
-      "client-detail": "Customer Lifecycle",
-      "dog-detail": null,
-      "checkout-notes": null,
-      "ops-hub": "Operations Hub",
-      "daily-ops": "Operations Hub",
-      "attendance": "Attendance Tracker",
-      "reports": null,
-      "photos": "Photos Module",
-      "settings": null, // settings handles its own per-tab permissions
-      "training": "Labor Management",
-      "client-management": "Customer Lifecycle",
-      "resources": null,
-      "grassroots": null,
-      "inventory": "Inventory Management",
-      "inventory-report": "Inventory Management",
-      "occupancy-report": "Occupancy Reports",
-      "scheduling": "Operations Hub",
-      "cash-tips": null,
-      "test-health": null,
-      "enterprise-ops": "Enterprise View",
-      "enterprise-attendance": "Enterprise View",
-      "enterprise-users": "Enterprise View",
-    };
-    const requiredPerm = PAGE_PERM_MAP[page];
-    if (requiredPerm && currentLocation !== "enterprise" && !hasLeanPermission(profile, requiredPerm)) {
+    const requiredPerms = getPagePermissionRequirements(page, params);
+    if (requiredPerms.length > 0 && !hasEveryLeanPermission(profile, requiredPerms)) {
       return <div style={{ padding: 40, textAlign: "center", color: C.dan }}><h2 style={{ margin: 0, color: C.dan }}>Access Denied</h2><p style={{ marginTop: 12, color: C.textSec }}>You don't have permission to access this area.</p></div>;
     }
 
@@ -1152,7 +1226,7 @@ function LeanAppInner() {
             if (isStaff) return STAFF_NAV_ITEMS;
             if (isManager) return MANAGER_NAV_ITEMS;
             return LEAN_NAV_ITEMS;
-          })()).map(item => {
+          })()).filter(item => canAccessLitePage(profile, item.id, {})).map(item => {
             const act = page === item.id;
             const IconComp = I[item.icon];
             return (
