@@ -8,6 +8,7 @@ import {
   resolveLeanPermissionKeys,
   resolveLeanRoleKey,
 } from "../shared/permissions";
+import { LEAN_ROLES } from "../shared/theme";
 
 describe("lean permission aliases", () => {
   it("maps newer admin-style roles onto the lean permission matrix", () => {
@@ -15,6 +16,17 @@ describe("lean permission aliases", () => {
     expect(resolveLeanRoleKey("regional")).toBe("multi_location_admin");
     expect(resolveLeanRoleKey("developer")).toBe("enterprise_admin");
     expect(resolveLeanRoleKey("staff")).toBe("csr");
+  });
+
+  it("keeps the visible Lite role set aligned with createable team roles", () => {
+    expect(LEAN_ROLES.map((role) => role.id)).toEqual([
+      "pct",
+      "csr",
+      "supervisor",
+      "manager",
+      "location_admin",
+      "enterprise_admin",
+    ]);
   });
 
   it("treats Labor Management as an alias of the legacy Training Management permission", () => {

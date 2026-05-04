@@ -52,7 +52,6 @@ const LEAN_ROLES = [
   { id: "supervisor", name: "Supervisor", shortName: "Supervisor" },
   { id: "manager", name: "Manager", shortName: "Manager" },
   { id: "location_admin", name: "Location Admin", shortName: "Location Admin" },
-  { id: "multi_location_admin", name: "Multi-Location Admin", shortName: "Multi-Loc Admin" },
   { id: "enterprise_admin", name: "Enterprise Admin", shortName: "Enterprise Admin" },
 ];
 

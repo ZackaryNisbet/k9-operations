@@ -52,7 +52,6 @@ function PermissionsTab() {
     supervisor: { bg: "#FEF3C7", text: "#D97706" },
     manager: { bg: "#DBEAFE", text: "#2563EB" },
     location_admin: { bg: "#E0E7FF", text: "#4F46E5" },
-    multi_location_admin: { bg: "#FCE7F3", text: "#DB2777" },
     enterprise_admin: { bg: "#F5F3FF", text: "#7C3AED" },
   };
 
@@ -133,7 +132,7 @@ function PermissionsTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Roles & Permissions</div>
-          <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Configure permissions for every supported role. Team Management only shows people who are currently active.</div>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Configure permissions for each createable Lite role. Enterprise Admin always has full access.</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {saved && <span style={{ fontSize: 12, fontWeight: 600, color: C.suc }}>✓ Saved</span>}
@@ -185,7 +184,7 @@ function PermissionsTab() {
                       const catAllOn = cat.permissions.every(p => permMatrix[role.id]?.[p.key]);
                       const catSomeOn = cat.permissions.some(p => permMatrix[role.id]?.[p.key]);
                       return (
-                        <td key={role.id} style={{ padding: "10px 8px", textAlign: "center", borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}`, borderRight: `1px solid ${C.borderLight}`, background: isEnt ? "#F5F3FF30" : "transparent" }}>
+                        <td key={role.id} style={{ width: colW, minWidth: colW, padding: "10px 8px", textAlign: "center", borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}`, borderRight: `1px solid ${C.borderLight}`, background: isEnt ? "#F5F3FF30" : "transparent" }}>
                           <button onClick={() => !isEnt && toggleCatForRole(role.id, cat.key)} title={isEnt ? "Enterprise Admin: always full access" : `${catAllOn ? "Deselect" : "Select"} all ${cat.label} for ${role.name}`}
                             style={{ width: 24, height: 24, borderRadius: 6, border: `1.5px solid ${isEnt ? "#7C3AED40" : catAllOn ? C.suc : catSomeOn ? C.pri + "60" : C.border}`, background: isEnt ? "#7C3AED20" : catAllOn ? C.suc : catSomeOn ? C.pri + "20" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: isEnt ? "not-allowed" : "pointer", fontSize: 11, color: isEnt ? "#7C3AED" : catAllOn ? "#fff" : C.textMut, fontWeight: 800, opacity: isEnt ? 0.5 : 1, lineHeight: 1 }}>
                             {(catAllOn || isEnt) ? "✓" : catSomeOn ? "•" : ""}
