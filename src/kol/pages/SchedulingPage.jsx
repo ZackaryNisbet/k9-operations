@@ -251,11 +251,28 @@ function humanizeFallbackMode(mode) {
       return "same date from 2-4 years back";
     case "same_weekday_prior_years_2_to_4":
       return "same weekday from 2-4 years back";
+    case "weighted_comparable_blend":
+      return "weighted same-season and same-weekday comparables";
     case "carry_forward_no_history":
       return "carry current bookings";
+    case "derived_from_projected_components":
+      return "derived from projected components";
     default:
       return null;
   }
+}
+
+function formatProjectionFactor(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return `${numeric.toFixed(2)}x`;
+}
+
+function formatSignedPctFromFactor(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 1) return null;
+  const pct = Math.round((numeric - 1) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
 }
 
 function getProjectionSummaryLines(day) {
@@ -272,6 +289,21 @@ function getProjectionSummaryLines(day) {
   }
   if (explanation.fallback_mode && explanation.fallback_mode !== "exact_prior_year" && explanation.fallback_mode !== "carry_forward_no_history") {
     lines.push(`Fallback: using ${humanizeFallbackMode(explanation.fallback_mode)} (${explanation.sample_count || 0} sample${explanation.sample_count === 1 ? "" : "s"}).`);
+  }
+  if (explanation.yoy_adjustment_factor && Number(explanation.yoy_adjustment_factor) !== 1) {
+    const adjustment = formatSignedPctFromFactor(explanation.yoy_adjustment_factor);
+    const sampleCount = explanation.yoy_adjustment?.sample_count || 0;
+    lines.push(`Recent pickup calibration: ${formatProjectionFactor(explanation.yoy_adjustment_factor)}${adjustment ? ` (${adjustment})` : ""} from ${sampleCount} completed day${sampleCount === 1 ? "" : "s"}.`);
+  }
+  const weeklyPace = explanation.weekly_pace || projection.calibration?.weekly_pace;
+  if (weeklyPace?.factor && Number(weeklyPace.factor) !== 1) {
+    const recent = weeklyPace.recent_completed_week_yoy_factor
+      ? ` Recent completed weeks are ${formatProjectionFactor(weeklyPace.recent_completed_week_yoy_factor)} vs last year.`
+      : "";
+    lines.push(`Week-level calibration: visible range raw projection ${Math.round(weeklyPace.raw_week_projected || 0)} → ${Math.round(weeklyPace.weekly_target || 0)}.${recent}`);
+  }
+  if (projection.capacity?.has_capacity_constrained_projection) {
+    lines.push("Capacity constraint applied: projected mode shows the achievable/bookable forecast while preserving unconstrained demand in the tooltip.");
   }
   if (!lines.length) {
     lines.push(`${explanation.lead_days} days out. Projected demand uses historical GINGR booking pace for this same date.`);
@@ -306,6 +338,39 @@ function getProjectionTooltip({ explanation, currentValue, projectedValue }) {
   if (explanation.sample_count) {
     lines.push(`Sample count: ${explanation.sample_count}`);
   }
+  if (explanation.yoy_adjustment_factor && Number(explanation.yoy_adjustment_factor) !== 1) {
+    lines.push(`YOY pickup calibration: ${formatProjectionFactor(explanation.yoy_adjustment_factor)} based on ${explanation.yoy_adjustment?.sample_count || 0} completed days`);
+  }
+  if (explanation.weekly_pace_adjustment_factor && Number(explanation.weekly_pace_adjustment_factor) !== 1) {
+    const weekly = explanation.weekly_pace;
+    lines.push(`Weekly pace calibration: ${formatProjectionFactor(explanation.weekly_pace_adjustment_factor)}`);
+    if (weekly?.raw_week_projected && weekly?.weekly_target) {
+      lines.push(`Visible range raw projection: ${Math.round(weekly.raw_week_projected)} -> ${Math.round(weekly.weekly_target)}`);
+    }
+    if (weekly?.prior_year_week_final) {
+      lines.push(`Prior-year week final: ${Math.round(weekly.prior_year_week_final)}; current booked: ${Math.round(weekly.current_week_booked || 0)}`);
+    }
+  }
+  const unconstrainedProjected = explanation.unconstrained_projected_value ?? explanation.projected_value;
+  if (explanation.raw_projected_value !== null && explanation.raw_projected_value !== undefined && explanation.raw_projected_value !== unconstrainedProjected) {
+    lines.push(`Raw projection before calibration: ${explanation.raw_projected_value}`);
+  }
+  if (explanation.capacity_constraint?.constrained) {
+    const demand = explanation.capacity_constraint.demand_value;
+    const achievable = explanation.capacity_constraint.achievable_value;
+    lines.push(`Unconstrained demand forecast: ${demand}`);
+    lines.push(`Capacity-constrained achievable forecast: ${achievable}`);
+    const constraintLabels = (explanation.capacity_constraint.constrained_by || [])
+      .map((constraint) => {
+        const capacity = Number(constraint.capacity);
+        const overflow = Number(constraint.overflow || 0);
+        return `${constraint.label}${Number.isFinite(capacity) ? ` ${capacity}` : ""}${overflow > 0 ? ` (${Math.round(overflow)} over)` : ""}`;
+      })
+      .filter(Boolean);
+    if (constraintLabels.length) {
+      lines.push(`Capacity bound: ${constraintLabels.join("; ")}`);
+    }
+  }
 
   return lines.join("\n");
 }
@@ -327,6 +392,7 @@ function renderMatrixCellValue({ row, day, mode }) {
 
   if (mode === "projected" && projection?.lead_days > 0) {
     const explanation = projection?.explanations?.[row.key.replaceAll(".", "_")] || null;
+    const capacityConstrained = !!explanation?.capacity_constraint?.constrained;
     const currentText = currentValue ?? "—";
     const projectedText = projectedValue ?? currentValue ?? "—";
     const title = getProjectionTooltip({
@@ -341,7 +407,8 @@ function renderMatrixCellValue({ row, day, mode }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentText}</span>
           <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
-          <span style={{ fontSize: 16, fontWeight: row.total ? 800 : 700, color: C.text }}>{projectedText}</span>
+          <span style={{ fontSize: 16, fontWeight: row.total ? 800 : 700, color: capacityConstrained ? C.dan : C.text }}>{projectedText}</span>
+          {capacityConstrained && <span style={{ fontSize: 9, fontWeight: 800, color: C.dan, textTransform: "uppercase" }}>cap</span>}
         </div>
       ),
       missingValue,
@@ -353,6 +420,135 @@ function renderMatrixCellValue({ row, day, mode }) {
     content: missingValue ? "—" : currentValue,
     missingValue,
   };
+}
+
+function getProjectionMetricValue(display, fallback = null) {
+  const value = Number(display?.support?.total_dog_volume);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function getProjectionHistoryPoints(day) {
+  const projection = getDayProjection(day);
+  const synthetic = projection ? [{
+    target_date: day?.date,
+    as_of_date: projection.as_of_date,
+    lead_days: projection.lead_days,
+    current_display: getDayCurrentDisplay(day),
+    projected_display: projection.display,
+    actual_display: projection.state === "actual" ? getDayCurrentDisplay(day) : null,
+    projection_json: projection,
+  }] : [];
+
+  const history = Array.isArray(day?.projectionHistory) && day.projectionHistory.length
+    ? day.projectionHistory
+    : synthetic;
+
+  return history
+    .map((snapshot) => {
+      const projected = getProjectionMetricValue(snapshot.projected_display, null);
+      const booked = getProjectionMetricValue(snapshot.current_display, null);
+      const actual = getProjectionMetricValue(snapshot.actual_display, null);
+      const leadDays = Number(snapshot.lead_days ?? snapshot.projection_json?.lead_days);
+      if (!Number.isFinite(leadDays) || projected === null) return null;
+      return {
+        asOfDate: snapshot.as_of_date || snapshot.projection_json?.as_of_date,
+        leadDays,
+        projected,
+        booked,
+        actual,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.leadDays - a.leadDays);
+}
+
+function getCapacityRiskLines(day) {
+  const projection = getDayProjection(day);
+  const constraints = projection?.capacity?.constraints || [];
+  return constraints
+    .filter((constraint) => constraint?.status === "over_capacity")
+    .map((constraint) => {
+      const demand = Math.round(Number(constraint.demand || 0));
+      const capacity = Number(constraint.capacity);
+      const overflow = Math.round(Number(constraint.overflow || 0));
+      return `${constraint.label}: ${demand} projected vs ${Number.isFinite(capacity) ? capacity : "—"} capacity${overflow > 0 ? ` (${overflow} over)` : ""}`;
+    });
+}
+
+function ProjectionAccuracyPanel({ day }) {
+  if (!day) return null;
+  const points = getProjectionHistoryPoints(day);
+  const capacityLines = getCapacityRiskLines(day);
+  const values = points.flatMap((point) => [point.projected, point.booked, point.actual]).filter((value) => Number.isFinite(value));
+  const maxValue = Math.max(10, ...values) + 4;
+  const minLead = Math.min(...points.map((point) => point.leadDays), 0);
+  const maxLead = Math.max(...points.map((point) => point.leadDays), 1);
+  const width = 640;
+  const height = 190;
+  const pad = { left: 42, right: 18, top: 20, bottom: 34 };
+  const xFor = (leadDays) => {
+    if (maxLead === minLead) return width / 2;
+    return pad.left + ((maxLead - leadDays) / (maxLead - minLead)) * (width - pad.left - pad.right);
+  };
+  const yFor = (value) => pad.top + (1 - (Number(value || 0) / maxValue)) * (height - pad.top - pad.bottom);
+  const pathFor = (key) => points
+    .filter((point) => Number.isFinite(point[key]))
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(point.leadDays).toFixed(1)} ${yFor(point[key]).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.borderLight}`, display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(240px, 0.8fr)", gap: 18 }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>Projection Accuracy</div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Achievable total dog volume by days out for {day.dayName} {formatMatrixDate(day.date)}</div>
+          </div>
+          <div style={{ display: "flex", gap: 10, fontSize: 10, fontWeight: 700, color: C.textMut, flexWrap: "wrap" }}>
+            <span><span style={{ color: C.pri }}>●</span> Achievable</span>
+            <span><span style={{ color: C.textMut }}>●</span> Booked</span>
+            <span><span style={{ color: C.suc }}>●</span> Actual</span>
+          </div>
+        </div>
+        {points.length ? (
+          <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Projection accuracy by days out" style={{ width: "100%", height: 210, display: "block" }}>
+            <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke={C.border} />
+            <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke={C.border} />
+            <text x={pad.left - 8} y={yFor(maxValue - 4) + 4} textAnchor="end" fontSize="10" fill={C.textMut}>{Math.round(maxValue - 4)}</text>
+            <text x={pad.left - 8} y={height - pad.bottom + 4} textAnchor="end" fontSize="10" fill={C.textMut}>0</text>
+            <text x={pad.left} y={height - 8} fontSize="10" fill={C.textMut}>{maxLead} days out</text>
+            <text x={width - pad.right} y={height - 8} textAnchor="end" fontSize="10" fill={C.textMut}>{minLead} days out</text>
+            <path d={pathFor("projected")} fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            <path d={pathFor("booked")} fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 5" />
+            <path d={pathFor("actual")} fill="none" stroke={C.suc} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            {points.map((point) => (
+              <g key={`${point.asOfDate}-${point.leadDays}`}>
+                <circle cx={xFor(point.leadDays)} cy={yFor(point.projected)} r="4" fill={C.pri} />
+                {Number.isFinite(point.booked) && <circle cx={xFor(point.leadDays)} cy={yFor(point.booked)} r="3" fill="#94A3B8" />}
+                {Number.isFinite(point.actual) && <circle cx={xFor(point.leadDays)} cy={yFor(point.actual)} r="4" fill={C.suc} />}
+              </g>
+            ))}
+          </svg>
+        ) : (
+          <div style={{ padding: "20px 0", fontSize: 12, color: C.textMut }}>Projection history will appear after the next daily compute snapshot.</div>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.text, marginBottom: 8 }}>Capacity Check</div>
+        {capacityLines.length ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {capacityLines.map((line) => (
+              <div key={line} style={{ fontSize: 11, color: C.dan, lineHeight: 1.45, fontWeight: 700 }}>{line}</div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
+            No projected capacity breach for configured boarding or play-yard limits.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Staff Shift Input ────────────────────────────────────────────────────
@@ -897,7 +1093,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
         </div>
         <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
           Expand GINGR Source Counts to audit Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
-          {matrixMode === "projected" && " Projected mode shows currently booked values moving to a statistically projected final count based on historical pickup pace from Gingr reservation created dates."}
+          {matrixMode === "projected" && " Projected mode shows currently booked values moving to a calibrated forecast using same-season booking curves, same-weekday comparables, and recent YOY pickup."}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
@@ -1097,6 +1293,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             Weekly totals shown in the workbook are dog-days, not unique reservations.
           </span>
         </div>
+        <ProjectionAccuracyPanel day={selectedDay} />
       </SectionCard>
 
       {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}
@@ -1506,6 +1703,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
             {[
               { group: "Daycare Ratios", items: [{ l: "Large DC ratio", v: `${config.daycare_ratio_large}:1` }, { l: "Small DC ratio", v: `${config.daycare_ratio_small}:1` }] },
+              { group: "Capacity", items: [
+                { l: "Boarding multi-dog factor", v: config.boarding_multi_dog_factor },
+                { l: "Practical boarding cap", v: config.boarding_practical_dog_capacity ?? "rooms x factor" },
+                { l: "Large DC cap", v: config.large_daycare_capacity ?? "Not set" },
+                { l: "Small DC cap", v: config.small_daycare_capacity ?? "Not set" },
+              ] },
               { group: "Transport & Room", items: [{ l: "Group transport (each way)", v: `${config.group_transport_minutes_each_way} min` }, { l: "Morning room clean", v: `${config.morning_room_clean_minutes} min` }] },
               { group: "Private Play", items: [{ l: "PP move (each way)", v: `${config.private_play_move_minutes_each_way} min` }, { l: "PP box dwell", v: `${config.private_play_box_dwell_minutes} min` }, { l: "PP rounds/day", v: config.private_play_rounds_per_day }] },
               { group: "Baths", items: [{ l: "Bath active", v: `${config.bath_active_minutes} min` }, { l: "Passive dry", v: `${config.bath_passive_dry_minutes} min` }, { l: "Dryer capacity", v: config.dryer_capacity }] },

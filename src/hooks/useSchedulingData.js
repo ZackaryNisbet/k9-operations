@@ -55,6 +55,7 @@ async function extractEdgeFunctionError(fnError) {
 export function useSchedulingData(locationId, startDate) {
   const [matrixRows, setMatrixRows] = useState([]);
   const [staffPlans, setStaffPlans] = useState([]);
+  const [projectionSnapshots, setProjectionSnapshots] = useState([]);
   const [config, setConfig] = useState(SCHEDULE_CONFIG_DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -110,7 +111,7 @@ export function useSchedulingData(locationId, startDate) {
       }
 
       // Fetch all canonical data sources in parallel
-      let [matrixRes, staffRes, configRes] = await Promise.all([
+      let [matrixRes, staffRes, configRes, projectionSnapshotsRes] = await Promise.all([
         supabase
           .from("scheduling_matrix_daily")
           .select("*")
@@ -135,6 +136,15 @@ export function useSchedulingData(locationId, startDate) {
           .eq("location_id", locationId)
           .eq("setting_key", "schedule_config")
           .maybeSingle(),
+
+        supabase
+          .from("scheduling_projection_snapshots")
+          .select("*")
+          .eq("location_id", locationId)
+          .gte("target_date", startDate)
+          .lte("target_date", endDate)
+          .order("target_date", { ascending: true })
+          .order("lead_days", { ascending: false }),
       ]);
 
       const matrixCoverage = (matrixRes.data || []).length;
@@ -144,7 +154,7 @@ export function useSchedulingData(locationId, startDate) {
         const computeFailures = await recomputeDates(missingDates);
 
         if (!computeFailures.length) {
-          [matrixRes, staffRes, configRes] = await Promise.all([
+          [matrixRes, staffRes, configRes, projectionSnapshotsRes] = await Promise.all([
             supabase
               .from("scheduling_matrix_daily")
               .select("*")
@@ -165,6 +175,14 @@ export function useSchedulingData(locationId, startDate) {
               .eq("location_id", locationId)
               .eq("setting_key", "schedule_config")
               .maybeSingle(),
+            supabase
+              .from("scheduling_projection_snapshots")
+              .select("*")
+              .eq("location_id", locationId)
+              .gte("target_date", startDate)
+              .lte("target_date", endDate)
+              .order("target_date", { ascending: true })
+              .order("lead_days", { ascending: false }),
           ]);
         } else {
           console.warn("compute-scheduling-matrix missing-day refresh failures:", computeFailures);
@@ -176,10 +194,12 @@ export function useSchedulingData(locationId, startDate) {
       // Handle table-not-found gracefully (tables may not be deployed yet)
       const matrix = matrixRes.error && matrixRes.error.code === "42P01" ? [] : (matrixRes.data || []);
       const plans = staffRes.error && staffRes.error.code === "42P01" ? [] : (staffRes.data || []);
+      const projectionHistory = projectionSnapshotsRes.error && projectionSnapshotsRes.error.code === "42P01" ? [] : (projectionSnapshotsRes.data || []);
       const configVal = configRes.data?.setting_value || {};
 
       setMatrixRows(matrix);
       setStaffPlans(plans);
+      setProjectionSnapshots(projectionHistory);
       setConfig({ ...SCHEDULE_CONFIG_DEFAULTS, ...configVal });
       setError(null);
     } catch (err) {
@@ -231,6 +251,7 @@ export function useSchedulingData(locationId, startDate) {
         isWeekend: isWeekend(date),
         matrix,
         staffPlan: staffPlan || null,
+        projectionHistory: projectionSnapshots.filter((snapshot) => snapshot.target_date === date),
         required,
         trust,
         matrixTrustState,
@@ -245,7 +266,7 @@ export function useSchedulingData(locationId, startDate) {
         hasNoData: !matrixRow,
       };
     });
-  }, [dates, matrixRows, staffPlans, config]);
+  }, [dates, matrixRows, staffPlans, projectionSnapshots, config]);
 
   // Upsert a staff plan
   const upsertStaffPlan = useCallback(async (plan) => {

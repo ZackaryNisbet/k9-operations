@@ -1,14 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   annotateReservationsWithOperationalHistory,
   applyGingrWidgetSourceCountsToDisplay,
   buildBlockerDetails,
   buildGingrWidgetSourceCountsByDate,
   buildProjectionForDate,
+  buildWeeklyPaceCalibration,
   buildReservationTypeMaps,
   buildTrustPayload,
   computeDemandSnapshotForDate,
   normalizeGingrReservationWidgetPayload,
+  upsertSchedulingProjectionSnapshots,
 } from "../../supabase/functions/_shared/scheduling-matrix.ts";
 
 function makeReservation(overrides: Record<string, unknown> = {}) {
@@ -31,6 +33,37 @@ function makeReservation(overrides: Record<string, unknown> = {}) {
     services: Array.isArray(overrides.services) ? overrides.services : [],
     isFirstEverDaycareVisit: Boolean(overrides.isFirstEverDaycareVisit || false),
   };
+}
+
+function makeReservationsForDate({
+  prefix,
+  date,
+  count,
+  bookedDateKey,
+  cls = "daycare",
+}: {
+  prefix: string;
+  date: string;
+  count: number;
+  bookedDateKey: string;
+  cls?: string;
+}) {
+  return Array.from({ length: count }, (_, index) =>
+    makeReservation({
+      gingr_id: `${prefix}-${date}-${index}`,
+      animalId: `${prefix}-dog-${date}-${index}`,
+      animal_gingr_id: `${prefix}-dog-${date}-${index}`,
+      cls,
+      startKey: date,
+      endKey: date,
+      playgroup: "large",
+      bookedDateKey,
+    }),
+  );
+}
+
+function fromSupabaseMock(from: any) {
+  return { from } as any;
 }
 
 describe("scheduling matrix logic", () => {
@@ -289,6 +322,525 @@ describe("scheduling matrix logic", () => {
     expect(projection.explanations.support_total_dog_volume.exact_prior_year_as_of).toBe(5);
     expect(projection.explanations.support_total_dog_volume.exact_prior_year_final).toBe(10);
     expect(projection.explanations.support_total_dog_volume.fallback_mode).toBe("exact_prior_year");
+  });
+
+  it("blends exact prior-year date with same-weekday comparables when weekdays differ", () => {
+    const currentReservations = Array.from({ length: 10 }, (_, index) =>
+      makeReservation({
+        gingr_id: `current-dow-${index}`,
+        animalId: `current-dow-dog-${index}`,
+        animal_gingr_id: `current-dow-dog-${index}`,
+        cls: "daycare",
+        startKey: "2026-05-13",
+        endKey: "2026-05-13",
+        playgroup: "large",
+        bookedDateKey: "2026-05-01",
+      }),
+    );
+    const currentSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-13",
+      reservations: currentReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    const historicalReservations = [
+      ...Array.from({ length: 5 }, (_, index) =>
+        makeReservation({
+          gingr_id: `exact-early-${index}`,
+          animalId: `exact-early-dog-${index}`,
+          animal_gingr_id: `exact-early-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-13",
+          endKey: "2025-05-13",
+          playgroup: "large",
+          bookedDateKey: "2025-05-05",
+        }),
+      ),
+      ...Array.from({ length: 15 }, (_, index) =>
+        makeReservation({
+          gingr_id: `exact-late-${index}`,
+          animalId: `exact-late-dog-${index}`,
+          animal_gingr_id: `exact-late-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-13",
+          endKey: "2025-05-13",
+          playgroup: "large",
+          bookedDateKey: "2025-05-09",
+        }),
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        makeReservation({
+          gingr_id: `weekday-early-${index}`,
+          animalId: `weekday-early-dog-${index}`,
+          animal_gingr_id: `weekday-early-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-14",
+          endKey: "2025-05-14",
+          playgroup: "large",
+          bookedDateKey: "2025-05-06",
+        }),
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        makeReservation({
+          gingr_id: `weekday-late-${index}`,
+          animalId: `weekday-late-dog-${index}`,
+          animal_gingr_id: `weekday-late-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-05-14",
+          endKey: "2025-05-14",
+          playgroup: "large",
+          bookedDateKey: "2025-05-10",
+        }),
+      ),
+    ];
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-05-13",
+      currentDate: "2026-05-05",
+      currentSnapshot,
+      historicalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(projection.explanations.support_total_dog_volume.fallback_mode).toBe("weighted_comparable_blend");
+    expect(projection.display.support.total_dog_volume).toBeGreaterThan(20);
+    expect(projection.display.support.total_dog_volume).toBeLessThan(30);
+    expect(projection.explanations.support_total_dog_volume.sample_modes.same_weekday_prior_year).toBe(1);
+  });
+
+  it("applies recent YOY pickup calibration when completed days are picking up slower than last year", () => {
+    const currentReservations = Array.from({ length: 20 }, (_, index) =>
+      makeReservation({
+        gingr_id: `target-current-${index}`,
+        animalId: `target-current-dog-${index}`,
+        animal_gingr_id: `target-current-dog-${index}`,
+        cls: "daycare",
+        startKey: "2026-06-10",
+        endKey: "2026-06-10",
+        playgroup: "large",
+        bookedDateKey: "2026-06-01",
+      }),
+    );
+    const currentSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-06-10",
+      reservations: currentReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    const historicalReservations = [
+      ...Array.from({ length: 20 }, (_, index) =>
+        makeReservation({
+          gingr_id: `target-hist-early-${index}`,
+          animalId: `target-hist-early-dog-${index}`,
+          animal_gingr_id: `target-hist-early-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-06-10",
+          endKey: "2025-06-10",
+          playgroup: "large",
+          bookedDateKey: "2025-06-02",
+        }),
+      ),
+      ...Array.from({ length: 20 }, (_, index) =>
+        makeReservation({
+          gingr_id: `target-hist-late-${index}`,
+          animalId: `target-hist-late-dog-${index}`,
+          animal_gingr_id: `target-hist-late-dog-${index}`,
+          cls: "daycare",
+          startKey: "2025-06-10",
+          endKey: "2025-06-10",
+          playgroup: "large",
+          bookedDateKey: "2025-06-06",
+        }),
+      ),
+    ];
+    const sampleDates = ["2026-05-28", "2026-05-29", "2026-05-30"];
+    const calibrationReservations = sampleDates.flatMap((sampleDate, sampleIndex) => [
+      ...Array.from({ length: 30 }, (_, index) =>
+        makeReservation({
+          gingr_id: `cal-current-early-${sampleIndex}-${index}`,
+          animalId: `cal-current-early-dog-${sampleIndex}-${index}`,
+          animal_gingr_id: `cal-current-early-dog-${sampleIndex}-${index}`,
+          cls: "daycare",
+          startKey: sampleDate,
+          endKey: sampleDate,
+          playgroup: "large",
+          bookedDateKey: "2026-05-20",
+        }),
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        makeReservation({
+          gingr_id: `cal-current-late-${sampleIndex}-${index}`,
+          animalId: `cal-current-late-dog-${sampleIndex}-${index}`,
+          animal_gingr_id: `cal-current-late-dog-${sampleIndex}-${index}`,
+          cls: "daycare",
+          startKey: sampleDate,
+          endKey: sampleDate,
+          playgroup: "large",
+          bookedDateKey: "2026-05-25",
+        }),
+      ),
+    ]);
+    const calibrationHistoricalReservations = sampleDates.flatMap((sampleDate, sampleIndex) => {
+      const priorDate = sampleDate.replace("2026", "2025");
+      return [
+        ...Array.from({ length: 20 }, (_, index) =>
+          makeReservation({
+            gingr_id: `cal-hist-early-${sampleIndex}-${index}`,
+            animalId: `cal-hist-early-dog-${sampleIndex}-${index}`,
+            animal_gingr_id: `cal-hist-early-dog-${sampleIndex}-${index}`,
+            cls: "daycare",
+            startKey: priorDate,
+            endKey: priorDate,
+            playgroup: "large",
+            bookedDateKey: "2025-05-20",
+          }),
+        ),
+        ...Array.from({ length: 20 }, (_, index) =>
+          makeReservation({
+            gingr_id: `cal-hist-late-${sampleIndex}-${index}`,
+            animalId: `cal-hist-late-dog-${sampleIndex}-${index}`,
+            animal_gingr_id: `cal-hist-late-dog-${sampleIndex}-${index}`,
+            cls: "daycare",
+            startKey: priorDate,
+            endKey: priorDate,
+            playgroup: "large",
+            bookedDateKey: "2025-05-25",
+          }),
+        ),
+      ];
+    });
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-06-10",
+      currentDate: "2026-06-02",
+      currentSnapshot,
+      historicalReservations,
+      calibrationReservations,
+      calibrationHistoricalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(projection.explanations.support_total_dog_volume.raw_projected_value).toBe(40);
+    expect(projection.explanations.support_total_dog_volume.yoy_adjustment_factor).toBe(0.75);
+    expect(projection.display.support.total_dog_volume).toBe(30);
+    expect(projection.calibration.yoy_pickup.sample_count).toBe(3);
+  });
+
+  it("calibrates a visible week projection against last-year week volume and recent completed week pace", () => {
+    const targetDates = [
+      "2026-05-11",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-05-17",
+    ];
+    const priorDates = targetDates.map((date) => date.replace("2026", "2025"));
+    const priorFinalCounts = [80, 88, 90, 92, 91, 88, 89];
+    const priorAsOfCounts = [50, 55, 58, 60, 60, 58, 59];
+    const rawProjectionCounts = [120, 125, 128, 130, 132, 132, 132];
+
+    const historicalReservations = priorDates.flatMap((date, dateIndex) => [
+      ...makeReservationsForDate({
+        prefix: "prior-early",
+        date,
+        count: priorAsOfCounts[dateIndex],
+        bookedDateKey: "2025-05-01",
+      }),
+      ...makeReservationsForDate({
+        prefix: "prior-late",
+        date,
+        count: priorFinalCounts[dateIndex] - priorAsOfCounts[dateIndex],
+        bookedDateKey: "2025-05-09",
+      }),
+    ]);
+    const currentDisplaysByDate = Object.fromEntries(targetDates.map((date, index) => [
+      date,
+      { support: { total_dog_volume: priorAsOfCounts[index] } },
+    ]));
+    const firstPassProjectionsByDate = Object.fromEntries(targetDates.map((date, index) => [
+      date,
+      { demand_display: { support: { total_dog_volume: rawProjectionCounts[index] } } },
+    ]));
+
+    const completedWeekDates = [
+      "2026-04-27",
+      "2026-04-28",
+      "2026-04-29",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-04-20",
+      "2026-04-21",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-24",
+      "2026-04-25",
+      "2026-04-26",
+      "2026-04-13",
+      "2026-04-14",
+      "2026-04-15",
+      "2026-04-16",
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+    ];
+    const calibrationReservations = completedWeekDates.flatMap((date) =>
+      makeReservationsForDate({
+        prefix: "cal-current",
+        date,
+        count: 10,
+        bookedDateKey: "2026-04-01",
+      }),
+    );
+    const calibrationHistoricalReservations = completedWeekDates.flatMap((date) =>
+      makeReservationsForDate({
+        prefix: "cal-prior",
+        date: date.replace("2026", "2025"),
+        count: 10,
+        bookedDateKey: "2025-04-01",
+      }),
+    );
+
+    const calibration = buildWeeklyPaceCalibration({
+      targetDates,
+      currentDate: "2026-05-04",
+      currentDisplaysByDate,
+      firstPassProjectionsByDate,
+      historicalReservations,
+      calibrationReservations,
+      calibrationHistoricalReservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(calibration.raw_week_projected).toBe(899);
+    expect(calibration.prior_year_week_final).toBe(618);
+    expect(calibration.prior_year_week_as_of).toBe(400);
+    expect(calibration.current_week_booked).toBe(400);
+    expect(calibration.recent_completed_week_yoy_factor).toBe(1);
+    expect(calibration.weekly_target).toBe(618);
+    expect(calibration.factor).toBeCloseTo(618 / 899, 4);
+    expect(calibration.confidence).toBe("high");
+  });
+
+  it("exposes practical boarding and play-yard capacity risk without hiding demand", () => {
+    const reservations = Array.from({ length: 90 }, (_, index) =>
+      makeReservation({
+        gingr_id: `capacity-boarder-${index}`,
+        animalId: `capacity-boarder-dog-${index}`,
+        animal_gingr_id: `capacity-boarder-dog-${index}`,
+        cls: "boarding",
+        startKey: "2026-07-01",
+        endKey: "2026-07-02",
+        playgroup: "large",
+        bookedDateKey: "2026-06-20",
+      }),
+    );
+    const snapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-07-01",
+      reservations,
+      roomByDate: {},
+      totalRooms: 70,
+    });
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-07-01",
+      currentDate: "2026-07-01",
+      currentSnapshot: snapshot,
+      historicalReservations: [],
+      roomByDate: {},
+      totalRooms: 70,
+      capacityConfig: {
+        multiDogFactor: 1.25,
+        practicalBoardingDogCapacity: 87.5,
+        theoreticalBoardingDogCapacity: 171,
+        largeDaycareCapacity: 50,
+        smallDaycareCapacity: 36,
+        groupPlayCapacity: 86,
+      },
+    });
+
+    expect(projection.capacity.has_capacity_risk).toBe(true);
+    expect(projection.capacity.overnight_rooms.practical_dog_capacity).toBe(87.5);
+    expect(projection.capacity.unconstrained_forecast.boarding_dogs).toBe(90);
+    expect(projection.capacity.constraints.find((c: any) => c.key === "large_play").overflow).toBe(40);
+    expect(projection.display.support.total_dog_volume).toBe(90);
+  });
+
+  it("applies capacity constraints to future achievable projections while preserving unconstrained demand", () => {
+    const currentReservations = Array.from({ length: 60 }, (_, index) =>
+      makeReservation({
+        gingr_id: `future-capacity-current-${index}`,
+        animalId: `future-capacity-current-dog-${index}`,
+        animal_gingr_id: `future-capacity-current-dog-${index}`,
+        cls: "boarding",
+        startKey: "2026-07-10",
+        endKey: "2026-07-11",
+        playgroup: "large",
+        bookedDateKey: "2026-07-01",
+      }),
+    );
+    const currentSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-07-10",
+      reservations: currentReservations,
+      roomByDate: {},
+      totalRooms: 70,
+    });
+
+    const historicalReservations = [
+      ...Array.from({ length: 60 }, (_, index) =>
+        makeReservation({
+          gingr_id: `future-capacity-hist-early-${index}`,
+          animalId: `future-capacity-hist-early-dog-${index}`,
+          animal_gingr_id: `future-capacity-hist-early-dog-${index}`,
+          cls: "boarding",
+          startKey: "2025-07-10",
+          endKey: "2025-07-11",
+          playgroup: "large",
+          bookedDateKey: "2025-07-01",
+        }),
+      ),
+      ...Array.from({ length: 30 }, (_, index) =>
+        makeReservation({
+          gingr_id: `future-capacity-hist-late-${index}`,
+          animalId: `future-capacity-hist-late-dog-${index}`,
+          animal_gingr_id: `future-capacity-hist-late-dog-${index}`,
+          cls: "boarding",
+          startKey: "2025-07-10",
+          endKey: "2025-07-11",
+          playgroup: "large",
+          bookedDateKey: "2025-07-06",
+        }),
+      ),
+    ];
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-07-10",
+      currentDate: "2026-07-03",
+      currentSnapshot,
+      historicalReservations,
+      roomByDate: {},
+      totalRooms: 70,
+      capacityConfig: {
+        multiDogFactor: 1.25,
+        practicalBoardingDogCapacity: 87.5,
+        theoreticalBoardingDogCapacity: 171,
+        largeDaycareCapacity: 50,
+        smallDaycareCapacity: 36,
+        groupPlayCapacity: 86,
+      },
+    });
+
+    expect(projection.demand_display.support.total_dog_volume).toBe(90);
+    expect(projection.display.support.total_dog_volume).toBe(50);
+    expect(projection.display.play_yard.large_play_dogs).toBe(50);
+    expect(projection.capacity.has_capacity_constrained_projection).toBe(true);
+    expect(projection.capacity.demand_forecast.boarding_dogs).toBe(90);
+    expect(projection.capacity.achievable_forecast.boarding_dogs).toBe(50);
+    expect(projection.explanations.support_total_dog_volume.unconstrained_projected_value).toBe(90);
+    expect(projection.explanations.support_total_dog_volume.capacity_constrained_value).toBe(50);
+  });
+
+  it("stores projection snapshots and actualizes prior target-date history", async () => {
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const updateEq = vi.fn();
+    let updateEqCount = 0;
+    const updateChain = {
+      eq: updateEq,
+    };
+    updateEq.mockImplementation(() => {
+      updateEqCount += 1;
+      return updateEqCount >= 2 ? Promise.resolve({ error: null }) : updateChain;
+    });
+    const update = vi.fn(() => updateChain);
+    const from = vi.fn(() => ({ upsert, update }));
+
+    const projectedDisplay = {
+      opening: { total_boarding: 8 },
+      closing: { total_boarding: 10 },
+      play_yard: { large_play_dogs: 12, small_play_dogs: 4 },
+      support: { total_dog_volume: 25 },
+    };
+    const actualDisplay = {
+      opening: { total_boarding: 9 },
+      closing: { total_boarding: 11 },
+      play_yard: { large_play_dogs: 13, small_play_dogs: 5 },
+      support: { total_dog_volume: 28 },
+    };
+
+    const result = await upsertSchedulingProjectionSnapshots(fromSupabaseMock(from), [
+      {
+        location_id: "cherry-hill",
+        matrix_date: "2026-07-10",
+        computed_at: "2026-07-03T12:00:00.000Z",
+        detail_json: {
+          display: {
+            opening: { total_boarding: 6 },
+            closing: { total_boarding: 6 },
+            play_yard: { large_play_dogs: 7, small_play_dogs: 2 },
+            support: { total_dog_volume: 14 },
+          },
+          projection: {
+            as_of_date: "2026-07-03",
+            lead_days: 7,
+            state: "projected",
+            model_version: "booking_curve_v2_dow_yoy_capacity",
+            display: projectedDisplay,
+            capacity: { has_capacity_risk: false },
+          },
+        },
+      },
+      {
+        location_id: "cherry-hill",
+        matrix_date: "2026-07-10",
+        computed_at: "2026-07-10T12:00:00.000Z",
+        detail_json: {
+          display: actualDisplay,
+          projection: {
+            as_of_date: "2026-07-10",
+            lead_days: 0,
+            state: "actual",
+            model_version: "booking_curve_v2_dow_yoy_capacity",
+            display: actualDisplay,
+            capacity: { has_capacity_risk: true },
+          },
+        },
+      },
+    ]);
+
+    expect(result.count).toBe(2);
+    expect(from).toHaveBeenCalledWith("scheduling_projection_snapshots");
+    expect(upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location_id: "cherry-hill",
+          target_date: "2026-07-10",
+          as_of_date: "2026-07-03",
+          lead_days: 7,
+          projected_display: projectedDisplay,
+          capacity_json: { has_capacity_risk: false },
+        }),
+        expect.objectContaining({
+          location_id: "cherry-hill",
+          target_date: "2026-07-10",
+          as_of_date: "2026-07-10",
+          lead_days: 0,
+          actual_display: actualDisplay,
+          capacity_json: { has_capacity_risk: true },
+        }),
+      ]),
+      { onConflict: "location_id,target_date,as_of_date,model_version" },
+    );
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ actual_display: actualDisplay }));
+    expect(updateEq).toHaveBeenCalledWith("location_id", "cherry-hill");
+    expect(updateEq).toHaveBeenCalledWith("target_date", "2026-07-10");
   });
 
   it("projects source-backed top-line counts as current divided by total dog completion rate", () => {

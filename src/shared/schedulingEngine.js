@@ -13,6 +13,12 @@ export const SCHEDULE_CONFIG_DEFAULTS = {
   daycare_ratio_large: 25,
   daycare_ratio_small: 25,
   small_daycare_practical_ratio: 35,
+  boarding_multi_dog_factor: 1.25,
+  boarding_practical_dog_capacity: null,
+  boarding_theoretical_dog_capacity: null,
+  large_daycare_capacity: null,
+  small_daycare_capacity: null,
+  group_play_capacity: null,
   group_transport_minutes_each_way: 2,
   morning_room_clean_minutes: 2.5,
   private_play_move_minutes_each_way: 1.5,
@@ -505,7 +511,8 @@ export function getMatrixDisplay(matrix) {
 }
 
 export function getMatrixProjectedDisplay(matrix) {
-  const projected = matrix?.detail_json?.projection?.display;
+  const projected = matrix?.detail_json?.projection?.achievable_display
+    || matrix?.detail_json?.projection?.display;
   if (!projected) {
     return getMatrixDisplay(matrix);
   }
