@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSchedulingNarrative,
+  buildSchedulingNarrativeHtml,
   getProjectionFormulaLine,
   getProjectionHeadline,
   getProjectionMethodologySteps,
@@ -60,6 +62,25 @@ function makeProjectedDay() {
   };
 }
 
+function makeNarrativeDay(date, dayName, current, projected) {
+  return {
+    date,
+    dayName,
+    currentDisplay: {
+      opening: { total_boarding: current.opening },
+      support: { departure_baths: current.baths },
+      closing: { total_boarding: current.closing },
+      daycare: { total_daycare: current.daycare },
+    },
+    projectedDisplay: {
+      opening: { total_boarding: projected.opening },
+      support: { departure_baths: projected.baths },
+      closing: { total_boarding: projected.closing },
+      daycare: { total_daycare: projected.daycare },
+    },
+  };
+}
+
 describe("scheduling projection explanation copy", () => {
   it("keeps the selected-day headline and formula auditable", () => {
     expect(getProjectionHeadline(makeProjectedDay())).toBe("7 days out. On this same date last year, 34 of 50 final dogs were already booked by this point (68%).");
@@ -91,5 +112,52 @@ describe("scheduling projection explanation copy", () => {
     expect(detail).toContain("345 booked by the same point last year");
     expect(detail).toContain("visible-week target to 704 dog-days");
     expect(detail).toContain("Practical boarding dog capacity: demand 52, cap 103");
+  });
+
+  it("builds a plain-text weekly scheduling narrative", () => {
+    const text = buildSchedulingNarrative([
+      makeNarrativeDay(
+        "2026-05-11",
+        "Mon",
+        { opening: 41, baths: 14, closing: 28, daycare: 16 },
+        { opening: 52, baths: 18, closing: 35, daycare: 20 },
+      ),
+      makeNarrativeDay(
+        "2026-05-12",
+        "Tue",
+        { opening: 28, baths: 5, closing: 33, daycare: 16 },
+        { opening: 42, baths: 8, closing: 50, daycare: 24 },
+      ),
+    ]);
+
+    expect(text).toBe([
+      "Monday, 5/11",
+      "• Total opening boarding dogs: 41 current → 52 projected",
+      "• Total departure baths: 14 current → 18 projected",
+      "• Total closing boarding dogs: 28 current → 35 projected",
+      "• Total daycare dogs: 16 current → 20 projected",
+      "",
+      "Tuesday, 5/12",
+      "• Total opening boarding dogs: 28 current → 42 projected",
+      "• Total departure baths: 5 current → 8 projected",
+      "• Total closing boarding dogs: 33 current → 50 projected",
+      "• Total daycare dogs: 16 current → 24 projected",
+    ].join("\n"));
+  });
+
+  it("builds rich clipboard HTML with bold day headers and list items", () => {
+    const html = buildSchedulingNarrativeHtml([
+      makeNarrativeDay(
+        "2026-05-11",
+        "Mon",
+        { opening: 41, baths: 14, closing: 28, daycare: 16 },
+        { opening: 52, baths: 18, closing: 35, daycare: 20 },
+      ),
+    ]);
+
+    expect(html).toContain("<strong>Monday, 5/11</strong>");
+    expect(html).toContain("<ul");
+    expect(html).toContain("<li");
+    expect(html).toContain("Total opening boarding dogs: 41 current → 52 projected");
   });
 });
