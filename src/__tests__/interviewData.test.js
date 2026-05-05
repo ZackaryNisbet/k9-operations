@@ -250,6 +250,7 @@ describe("interview template snapshots", () => {
       status: "published",
       pdf_verification_status: "verified_fields",
       pdf_field_manifest: [{ name: "candidate_name", type: "text" }],
+      metadata: { pay_rates: { min_rate: "18", max_rate: "20", notes: "DOE" } },
     };
     const questions = [
       { id: "q1", question_key: "availability", category: "Availability", prompt: "Are you available weekends?", sequence_order: 10 },
@@ -261,6 +262,7 @@ describe("interview template snapshots", () => {
 
     expect(snapshot.questions[0].prompt).toBe("Are you available weekends?");
     expect(snapshot.version.pdf_field_manifest).toHaveLength(1);
+    expect(snapshot.version.metadata.pay_rates).toEqual({ min_rate: "18", max_rate: "20", notes: "DOE" });
   });
 });
 
