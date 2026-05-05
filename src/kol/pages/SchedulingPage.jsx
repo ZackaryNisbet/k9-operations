@@ -188,6 +188,13 @@ const MATRIX_GROUP_TEMPLATES = [
   },
 ];
 
+const SCHEDULING_NARRATIVE_ROWS = [
+  { key: "opening.total_boarding", label: "Total opening boarding dogs" },
+  { key: "support.departure_baths", label: "Total departure baths" },
+  { key: "closing.total_boarding", label: "Total closing boarding dogs" },
+  { key: "daycare.total_daycare", label: "Total daycare dogs" },
+];
+
 function getNestedValue(obj, key) {
   return key.split(".").reduce((acc, part) => acc?.[part], obj);
 }
@@ -239,6 +246,187 @@ function buildMatrixRowGroups(days) {
 function formatMatrixDate(date) {
   const dt = new Date(`${date}T12:00:00`);
   return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
+}
+
+function formatNarrativeDate(date) {
+  const dt = new Date(`${date}T12:00:00`);
+  return dt.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+}
+
+function formatNarrativeDay(date, fallbackDayName) {
+  if (date) {
+    const dt = new Date(`${date}T12:00:00`);
+    return dt.toLocaleDateString("en-US", { weekday: "long" });
+  }
+
+  const map = {
+    Mon: "Monday",
+    Tue: "Tuesday",
+    Wed: "Wednesday",
+    Thu: "Thursday",
+    Fri: "Friday",
+    Sat: "Saturday",
+    Sun: "Sunday",
+  };
+  return map[fallbackDayName] || fallbackDayName || "Day";
+}
+
+function formatNarrativeNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "—";
+  return String(Math.round(numeric));
+}
+
+function getSchedulingNarrativeDay(day) {
+  const heading = `${formatNarrativeDay(day?.date, day?.dayName)}, ${formatNarrativeDate(day?.date || todayStr())}`;
+  const items = SCHEDULING_NARRATIVE_ROWS.map((row) => {
+    const currentValue = getDayMatrixValue(day, row, "current");
+    const projectedValue = getDayMatrixValue(day, row, "projected");
+    return `${row.label}: ${formatNarrativeNumber(currentValue)} current → ${formatNarrativeNumber(projectedValue ?? currentValue)} projected`;
+  });
+  return { heading, items };
+}
+
+export function buildSchedulingNarrative(days) {
+  return (days || [])
+    .map((day) => {
+      const { heading, items } = getSchedulingNarrativeDay(day);
+      return [heading, ...items.map((item) => `• ${item}`)].join("\n");
+    })
+    .join("\n\n");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export function buildSchedulingNarrativeHtml(days) {
+  return (days || [])
+    .map((day) => {
+      const { heading, items } = getSchedulingNarrativeDay(day);
+      return [
+        '<div style="margin:0 0 24px 0;">',
+        `<p style="margin:0 0 8px 0;"><strong>${escapeHtml(heading)}</strong></p>`,
+        '<ul style="margin:0 0 0 22px; padding:0;">',
+        ...items.map((item) => `<li style="margin:0 0 4px 0;">${escapeHtml(item)}</li>`),
+        "</ul>",
+        "</div>",
+      ].join("");
+    })
+    .join("");
+}
+
+function copyWithClipboardEvent({ text, html }) {
+  if (typeof document === "undefined" || typeof window === "undefined") return false;
+
+  let eventHandled = false;
+  const handleCopy = (event) => {
+    if (!event.clipboardData) return;
+    event.clipboardData.setData("text/plain", text);
+    if (html) {
+      event.clipboardData.setData("text/html", html);
+    }
+    event.preventDefault();
+    eventHandled = true;
+  };
+
+  const selection = window.getSelection?.();
+  const previousRanges = [];
+  if (selection) {
+    for (let index = 0; index < selection.rangeCount; index += 1) {
+      previousRanges.push(selection.getRangeAt(index).cloneRange());
+    }
+  }
+
+  const marker = document.createElement("span");
+  marker.textContent = "copy";
+  marker.style.position = "fixed";
+  marker.style.left = "-9999px";
+  marker.style.top = "0";
+  document.body.appendChild(marker);
+  document.addEventListener("copy", handleCopy);
+
+  try {
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(marker);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    return document.execCommand("copy") && eventHandled;
+  } finally {
+    document.removeEventListener("copy", handleCopy);
+    document.body.removeChild(marker);
+    if (selection) {
+      selection.removeAllRanges();
+      previousRanges.forEach((range) => selection.addRange(range));
+    }
+  }
+}
+
+function copyWithTextarea(text) {
+  if (typeof document === "undefined") return false;
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return copied;
+}
+
+async function copySchedulingNarrativeToClipboard({ text, html }) {
+  let lastError = null;
+
+  if (
+    typeof navigator !== "undefined"
+    && navigator.clipboard?.write
+    && typeof ClipboardItem !== "undefined"
+    && typeof Blob !== "undefined"
+    && html
+  ) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        }),
+      ]);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (copyWithClipboardEvent({ text, html })) {
+    return;
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (copyWithTextarea(text)) {
+    return;
+  }
+
+  throw lastError || new Error("Clipboard copy failed");
 }
 
 function formatWeekRange(startDate) {
@@ -942,6 +1130,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [scheduleView, setScheduleView] = useState("optimal");
   const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
+  const [copyNarrativeStatus, setCopyNarrativeStatus] = useState("idle");
 
   // Version & override state
   const [savedVersions, setSavedVersions] = useState([]);
@@ -967,6 +1156,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     })),
     [weekData]
   );
+  const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(workbookDays), [workbookDays]);
+  const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(workbookDays), [workbookDays]);
   const matrixRowGroups = useMemo(() => buildMatrixRowGroups(workbookDays), [workbookDays]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
   const toggleMatrixGroup = useCallback((section) => {
@@ -1046,6 +1237,46 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   React.useEffect(() => {
     setSelectedDayIdx(viewStartDate === getMondayStart(today) ? getDayIndexFromMonday(today) : 0);
   }, [viewStartDate, today]);
+
+  const copyNarrativeTimerRef = React.useRef(null);
+  React.useEffect(() => () => {
+    if (copyNarrativeTimerRef.current) {
+      window.clearTimeout(copyNarrativeTimerRef.current);
+    }
+  }, []);
+
+  const handleCopySchedulingNarrative = useCallback(async () => {
+    if (!schedulingNarrativeText) {
+      addGlobalToast?.("No week narrative available yet", "info");
+      return;
+    }
+
+    try {
+      await copySchedulingNarrativeToClipboard({
+        text: schedulingNarrativeText,
+        html: schedulingNarrativeHtml,
+      });
+      setCopyNarrativeStatus("copied");
+      addGlobalToast?.("Scheduling narrative copied", "success");
+      if (copyNarrativeTimerRef.current) {
+        window.clearTimeout(copyNarrativeTimerRef.current);
+      }
+      copyNarrativeTimerRef.current = window.setTimeout(() => {
+        setCopyNarrativeStatus("idle");
+        copyNarrativeTimerRef.current = null;
+      }, 1600);
+    } catch (err) {
+      setCopyNarrativeStatus("error");
+      addGlobalToast?.("Copy failed: " + (err.message || "clipboard unavailable"), "error");
+      if (copyNarrativeTimerRef.current) {
+        window.clearTimeout(copyNarrativeTimerRef.current);
+      }
+      copyNarrativeTimerRef.current = window.setTimeout(() => {
+        setCopyNarrativeStatus("idle");
+        copyNarrativeTimerRef.current = null;
+      }, 1800);
+    }
+  }, [schedulingNarrativeText, schedulingNarrativeHtml, addGlobalToast]);
 
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
@@ -1253,6 +1484,58 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading week…</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <button
+              onClick={handleCopySchedulingNarrative}
+              disabled={!schedulingNarrativeText || loading}
+              title="Copy week narrative"
+              style={{
+                position: "relative",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: `1px solid ${copyNarrativeStatus === "copied" ? C.suc : copyNarrativeStatus === "error" ? C.dan : C.border}`,
+                background: copyNarrativeStatus === "copied" ? C.sucLt : copyNarrativeStatus === "error" ? C.danLt : C.surface,
+                color: copyNarrativeStatus === "copied" ? C.suc : copyNarrativeStatus === "error" ? C.dan : C.text,
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: !schedulingNarrativeText || loading ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+                opacity: !schedulingNarrativeText || loading ? 0.55 : 1,
+                transform: copyNarrativeStatus === "copied" ? "translateY(-1px) scale(1.04)" : "translateY(0) scale(1)",
+                boxShadow: copyNarrativeStatus === "copied"
+                  ? "0 0 0 4px rgba(34, 197, 94, 0.16), 0 12px 24px rgba(15, 23, 42, 0.14)"
+                  : "0 0 0 0 rgba(34, 197, 94, 0)",
+                transition: "transform 0.18s ease, box-shadow 0.22s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease",
+              }}
+            >
+              <span style={{ display: "flex", transition: "transform 0.18s ease", transform: copyNarrativeStatus === "copied" ? "rotate(-8deg) scale(1.15)" : "none" }}>
+                {copyNarrativeStatus === "copied" ? <I.Check /> : <I.Clipboard />}
+              </span>
+              {copyNarrativeStatus === "copied" ? "Copied" : copyNarrativeStatus === "error" ? "Copy Failed" : "Copy Narrative"}
+              {copyNarrativeStatus === "copied" && (
+                <span
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: -28,
+                    transform: "translateX(-50%)",
+                    whiteSpace: "nowrap",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: C.text,
+                    color: "#FFFFFF",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.18)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  Copied to clipboard
+                </span>
+              )}
+            </button>
             <button
               onClick={toggleAllMatrixGroups}
               style={{
