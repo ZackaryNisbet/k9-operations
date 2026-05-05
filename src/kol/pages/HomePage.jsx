@@ -7,6 +7,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr } from "../../shared/theme";
 import { I } from "../../shared/icons";
+import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
+import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import { DEFAULT_INVENTORY_SCHEDULE, getInventoryCycleStart, getInventoryOverdueInfo, normalizeInventorySchedule } from "./inventorySchedule";
 
 const STAFF_ROLES = new Set(["pct", "csr"]);
@@ -784,7 +786,7 @@ function useHomeDashboardSnapshot(locationId, userRole) {
   return snapshot;
 }
 
-function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healthButton }) {
+function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healthButton, enrichmentEvents, enrichmentLoading }) {
   const td = todayStr();
   const now = new Date();
   const hour = now.getHours();
@@ -905,8 +907,13 @@ function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healt
         </button>
       </div>
 
+      <div style={{ marginBottom: 24 }}>
+        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
         <QuickCard label="My Work" desc="View and complete today's tasks" icon="Clipboard" onClick={() => nav("role-page")} accent={C.pri} />
+        <QuickCard label="Enrichments" desc="Daily event, SOP, and calendar" icon="Sparkle" onClick={() => nav("enrichments")} accent="#F97316" />
         <QuickCard label="Bathing" desc="Bath schedule and progress" icon="Droplet" onClick={() => nav("ops-bathing")} accent="#3B82F6" />
         <QuickCard label="Room Cleaning" desc="Room status and assignments" icon="Home" onClick={() => nav("ops-rooms")} accent="#8B5CF6" />
       </div>
@@ -916,7 +923,7 @@ function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healt
   );
 }
 
-function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, healthButton }) {
+function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, healthButton, enrichmentEvents, enrichmentLoading }) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Manager";
   const live = snapshot.liveSnapshot || {};
   const metrics = snapshot.metrics || {};
@@ -948,8 +955,13 @@ function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, hea
         />
       </div>
 
+      <div style={{ marginBottom: 28 }}>
+        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14, marginBottom: 28 }}>
         <QuickCard label="My Work" desc="Your personal task list" icon="Clipboard" onClick={() => nav("role-page")} accent="#3B82F6" />
+        <QuickCard label="Enrichments" desc="Calendar, SOP, and product prep" icon="Sparkle" onClick={() => nav("enrichments")} accent="#F97316" />
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
         <QuickCard label="Today's Notes" desc="Owner and dog notes from Gingr" icon="Clipboard" onClick={() => nav("checkout-notes")} accent="#0EA5E9" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
@@ -965,7 +977,7 @@ function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, hea
   );
 }
 
-function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, healthButton }) {
+function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, healthButton, enrichmentEvents, enrichmentLoading }) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Admin";
   const live = snapshot.liveSnapshot || {};
   const metrics = snapshot.metrics || {};
@@ -997,6 +1009,10 @@ function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, he
         />
       </div>
 
+      <div style={{ marginBottom: 28 }}>
+        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+      </div>
+
       <div
         style={{
           fontSize: 12,
@@ -1010,6 +1026,7 @@ function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, he
         Quick Access
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 28 }}>
+        <QuickCard label="Enrichments" desc="Calendar, SOP, and product prep" icon="Sparkle" onClick={() => nav("enrichments")} accent="#F97316" />
         <QuickCard label="Inventory" desc={inventorySummary.desc} badge={inventorySummary.badge} icon="Package" onClick={() => nav("inventory")} accent="#8B5CF6" />
         <QuickCard label="Today's Notes" desc="Owner and dog notes from Gingr" icon="Clipboard" onClick={() => nav("checkout-notes")} accent="#0EA5E9" />
         <QuickCard label="Checkout TV" desc="Lobby departures and pickups" icon="Monitor" onClick={() => nav("checkout-tv")} accent="#EC4899" />
@@ -1040,6 +1057,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
   const today = todayStr();
   const locationId = profile?.location_id || currentLocation;
   const snapshot = useHomeDashboardSnapshot(locationId, roleCode);
+  const { events: enrichmentEvents, loading: enrichmentLoading } = useEnrichmentEvents(locationId, today);
   const { health: platformHealth, loading: platformHealthLoading } = usePlatformHealth(locationId, today);
   const [showPlatformHealth, setShowPlatformHealth] = useState(false);
   const [inventorySummary, setInventorySummary] = useState({
@@ -1101,6 +1119,8 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         locationId={locationId}
         workflowProgress={snapshot.workflowProgress}
         healthButton={healthButton}
+        enrichmentEvents={enrichmentEvents}
+        enrichmentLoading={enrichmentLoading}
       />
     );
   } else if (tier === "manager") {
@@ -1112,6 +1132,8 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         locationId={locationId}
         snapshot={snapshot}
         healthButton={healthButton}
+        enrichmentEvents={enrichmentEvents}
+        enrichmentLoading={enrichmentLoading}
       />
     );
   } else {
@@ -1123,6 +1145,8 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         inventorySummary={inventorySummary}
         snapshot={snapshot}
         healthButton={healthButton}
+        enrichmentEvents={enrichmentEvents}
+        enrichmentLoading={enrichmentLoading}
       />
     );
   }

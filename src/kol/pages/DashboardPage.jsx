@@ -15,6 +15,7 @@ import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
 import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
+import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
 import { mergeGingrLive } from "../../shared/gingrLive";
@@ -22,6 +23,7 @@ import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 import { getRoomCleaningBreakdown, getWeeklyMaintenanceStats } from "../../shared/opsHelpers";
 import { getInventoryWorkflow } from "./inventoryStatus";
+import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CSS — injected once
@@ -1051,6 +1053,7 @@ function DashboardContent({
   const [platformHealth, setPlatformHealth] = useState(null);
   const [showPlatformHealthModal, setShowPlatformHealthModal] = useState(false);
   const today = todayStr();
+  const { events: enrichmentEvents, loading: enrichmentLoading } = useEnrichmentEvents(locationId || profile?.location_id || "demo", today);
 
   /* ─── Stable nav callbacks ─── */
   const navTo = useMemo(() => {
@@ -1058,7 +1061,7 @@ function DashboardContent({
     const pages = ["checkout-tv", "ops-bathing", "settings", "lifecycle", "funnel",
       "ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing",
       "ops-pamper", "ops-pp", "ops-svc", "eod", "photos", "cash-tips",
-      "checkout-notes", "inventory", "test-health", "reports",
+      "checkout-notes", "enrichments", "inventory", "test-health", "reports",
       "enterprise-ops", "occupancy-report"];
     const map = {};
     pages.forEach(p => { map[p] = () => nav(p); });
@@ -2084,6 +2087,11 @@ function DashboardContent({
           </div>
         </div>
 
+        <div>
+          <div className="ops-section-header">Today's Enrichment</div>
+          <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} compact />
+        </div>
+
         {/* ── Section 2: Operations Progress (Three-Column) ── */}
         <div>
           <div className="ops-section-header">Daily Operations</div>
@@ -2179,6 +2187,7 @@ function DashboardContent({
               { label: "Photos", icon: <I.Camera />, click: navTo["photos"] },
               { label: "Cash Tips", icon: <I.DollarSign />, click: navTo["cash-tips"] },
               { label: "Today's Notes", icon: <I.Clipboard />, click: navTo["checkout-notes"] },
+              { label: "Enrichments", icon: <I.Sparkle />, click: navTo["enrichments"] },
               { label: "Operations Hub", icon: <I.ClipboardCheck />, click: navTo["ops-opening"] },
             ].map((item) => (
               <div key={item.label} className="ops-quick-action" onClick={item.click}>

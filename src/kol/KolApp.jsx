@@ -56,6 +56,7 @@ import SchedulingPage from "./pages/SchedulingPage";
 import ClientManagementPage from "./pages/ClientManagementPage";
 import ResourcesPage from "./pages/ResourcesPage";
 import GrassrootsPage from "./pages/GrassrootsPage";
+import EnrichmentsPage from "./pages/EnrichmentsPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 import { BrandedErrorBoundary } from "../shared/AppCrashScreen";
@@ -114,6 +115,7 @@ const LITE_PAGE_SLUGS = {
   "training": "labor",
   "client-management": "incidents",
   "scheduling": "scheduling",
+  "enrichments": "enrichments",
   "resources": "resources",
   "grassroots": "grassroots",
 };
@@ -254,6 +256,7 @@ function parseLiteUrl(pathname, dataRef) {
 const STAFF_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
+  { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
@@ -264,6 +267,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
+  { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
@@ -277,6 +281,7 @@ const MANAGER_NAV_ITEMS = [
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
+  { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
@@ -295,6 +300,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
+  { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
@@ -353,6 +359,7 @@ const PAGE_PERMISSION_MAP = {
   "photos": "Photos Module",
   "settings": null,
   "client-management": "Customer Lifecycle",
+  "enrichments": null,
   "resources": null,
   "grassroots": "Grassroots Access",
   "inventory": "Inventory Management",
@@ -849,7 +856,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -867,6 +874,7 @@ function LeanAppInner() {
       case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
       case "client-management": return "Incidents";
+      case "enrichments": return "Enrichments";
       case "resources": return "Resources";
       case "grassroots": return "Grassroots Tracking";
       case "funnel": return "Lead Funnel";
@@ -1140,6 +1148,10 @@ function LeanAppInner() {
         return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationName={currentLocationName} params={params} />;
       case "client-management":
         return <ClientManagementPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "enrichments":
+        return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Enrichments not available on Enterprise view</div> : (
+          <EnrichmentsPage data={data} save={save} nav={nav} profile={profile} params={params} addGlobalToast={addGlobalToast} currentLocation={currentLocation} />
+        );
       case "resources":
         return <ResourcesPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "grassroots":
