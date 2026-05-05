@@ -320,6 +320,21 @@ function InterviewStyles() {
         0% { opacity: 0; transform: translateY(14px) scale(0.992); filter: blur(3px); }
         100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
       }
+      @keyframes interviewDetailEnter {
+        0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(0.988); filter: blur(7px); }
+        64% { opacity: 1; transform: translate3d(0, -1px, 0) scale(1.001); filter: blur(0); }
+        100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+      }
+      @keyframes interviewRowEnter {
+        0% { opacity: 0; transform: translate3d(0, 10px, 0); }
+        100% { opacity: 1; transform: translate3d(0, 0, 0); }
+      }
+      @keyframes interviewCardSheen {
+        0% { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+        26% { opacity: 0.48; }
+        60% { opacity: 0.16; }
+        100% { transform: translateX(140%) skewX(-18deg); opacity: 0; }
+      }
       @keyframes interviewModalEnter {
         0% { opacity: 0; transform: translateY(18px) scale(0.985); filter: blur(5px); }
         100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
@@ -346,7 +361,94 @@ function InterviewStyles() {
         from { opacity: 0; }
         to { opacity: 1; }
       }
-      .interview-row:hover { background: #f8fafc; }
+      .interview-roster-shell {
+        display: grid;
+        gap: 14px;
+        animation: interviewPanelEnter 300ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .interview-roster-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .interview-table-shell {
+        border: 1px solid rgba(226, 232, 240, 0.98);
+        border-radius: 8px;
+        overflow-x: auto;
+        background: #fff;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.055);
+      }
+      .interview-roster-header {
+        background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+      }
+      .interview-row {
+        position: relative;
+        overflow: hidden;
+        transition: transform 230ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease, box-shadow 230ms ease;
+        animation: interviewRowEnter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .interview-row::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 3px;
+        background: linear-gradient(180deg, #84cc16, #14532d);
+        opacity: 0;
+        transition: opacity 200ms ease;
+      }
+      .interview-row:hover {
+        background: linear-gradient(90deg, rgba(240,253,244,0.94), #ffffff 46%);
+        transform: translateY(-1px);
+        box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+      }
+      .interview-row:hover::before { opacity: 1; }
+      .interview-open-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 58px;
+        height: 30px;
+        border-radius: 999px;
+        color: #14532d;
+        background: rgba(220, 252, 231, 0.72);
+        transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease, color 220ms ease;
+      }
+      .interview-row:hover .interview-open-pill {
+        transform: translateX(3px);
+        color: #fff;
+        background: #14532d;
+      }
+      .interview-detail-shell {
+        display: grid;
+        gap: 16px;
+        animation: interviewDetailEnter 360ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .interview-detail-card {
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.055);
+        transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 240ms ease, border-color 240ms ease;
+      }
+      .interview-detail-card::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 34%;
+        pointer-events: none;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+        transform: translateX(-140%) skewX(-18deg);
+        opacity: 0;
+      }
+      .interview-detail-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.075);
+        border-color: rgba(20, 83, 45, 0.22) !important;
+      }
+      .interview-detail-card:hover::after { animation: interviewCardSheen 900ms cubic-bezier(0.22, 1, 0.36, 1); }
       .interview-action-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08); }
       .interview-audio-stage:hover .interview-audio-overlay {
         opacity: 1;
@@ -366,8 +468,11 @@ function InterviewStyles() {
       }
       .interview-modal-backdrop {
         position: fixed;
-        inset: 0;
-        z-index: 9998;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 86px;
+        z-index: 30000;
         background: rgba(15, 23, 42, 0.54);
         backdrop-filter: blur(14px);
         display: flex;
@@ -513,7 +618,20 @@ function InterviewStyles() {
       }
       .interview-ai-dot:nth-child(2) { animation-delay: 140ms; }
       .interview-ai-dot:nth-child(3) { animation-delay: 280ms; }
+      @media (prefers-reduced-motion: reduce) {
+        .interview-row,
+        .interview-roster-shell,
+        .interview-detail-shell,
+        .interview-detail-card:hover::after,
+        .interview-new-dialog,
+        .interview-immersive-shell,
+        .interview-modal-backdrop { animation: none !important; }
+        .interview-row,
+        .interview-detail-card,
+        .interview-open-pill { transition: none !important; }
+      }
       @media (max-width: 920px) {
+        .interview-modal-backdrop { left: 0; }
         .interview-immersive-shell { width: 96vw; height: 94vh; }
         .interview-new-dialog { width: 96vw; max-height: 94vh; }
         .interview-new-grid,
@@ -1847,7 +1965,7 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
 function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
   if (records.length === 0) {
     return (
-      <div style={{ display: "grid", gap: 12, animation: "interviewPanelEnter 240ms ease-out" }}>
+      <div className="interview-roster-shell">
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
         </div>
@@ -1856,24 +1974,24 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
     );
   }
   return (
-    <div style={{ display: "grid", gap: 12, animation: "interviewPanelEnter 240ms ease-out" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+    <div className="interview-roster-shell">
+      <div className="interview-roster-toolbar">
         <div>
           <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interviews</div>
           <div style={{ marginTop: 3, fontSize: 13, color: C.textMut }}>{records.length} total interview{records.length === 1 ? "" : "s"}</div>
         </div>
         <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
       </div>
-      <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflowX: "auto", background: "#fff" }}>
+      <div className="interview-table-shell">
       <div className="interview-roster-table" style={{ minWidth: 900 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "12px 16px", background: C.surfaceHover, borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "12px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
           <div>Candidate</div>
           <div>Position</div>
           <div>Date Interviewed</div>
           <div>Next Step</div>
           <div />
         </div>
-        {records.map((record) => (
+        {records.map((record, index) => (
           <button
             type="button"
             key={record.id}
@@ -1892,6 +2010,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
               textAlign: "left",
               cursor: "pointer",
               fontFamily: "inherit",
+              animationDelay: `${Math.min(index, 10) * 24}ms`,
             }}
           >
             <div style={{ minWidth: 0 }}>
@@ -1901,7 +2020,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
             <div style={{ fontSize: 13, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
             <div style={{ fontSize: 13, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
             <div><RecommendationBadge value={getInterviewRecommendation(record)} /></div>
-            <div style={{ color: C.pri, fontSize: 13, fontWeight: 900, textAlign: "right" }}>Open</div>
+            <div style={{ color: C.pri, fontSize: 13, fontWeight: 900, textAlign: "right" }}><span className="interview-open-pill">Open</span></div>
           </button>
         ))}
       </div>
@@ -1913,7 +2032,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
 function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving, canManage = true }) {
   const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: 18, borderBottom: `1px solid ${C.borderLight}`, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
           <IconButton label="Back to interviews" onClick={onBack}>{"<"}</IconButton>
@@ -1954,7 +2073,7 @@ function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick
   const sizeLabel = formatFileSize(metadata.size_bytes);
   const hasResume = !!resumeArtifact?.storage_path;
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 16, display: "grid", gap: 12 }}>
+    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 16, display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2527,6 +2646,7 @@ function AudioUploadPanel({
 
   return (
     <div
+      className="interview-detail-card"
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleDrop}
       style={{
@@ -6370,7 +6490,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {view === "records" && selectedRecord && (
-        <div style={{ display: "grid", gap: 16, animation: "interviewPanelEnter 260ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
+        <div className="interview-detail-shell">
           <CandidateHeader
             record={selectedRecord}
             recommendation={getInterviewRecommendation(selectedRecord)}
@@ -6404,7 +6524,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             canUpload={canManage}
           />
 
-          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
+          <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 950, color: C.text }}>Attached Guides</div>
@@ -6503,7 +6623,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             canUpload={canManage}
           />
 
-          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 16 }}>
+          <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Active Interview Workspace</div>
