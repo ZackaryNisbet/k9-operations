@@ -79,6 +79,7 @@ type TranscriptTurn = {
 
 type SttResult = {
   text?: string;
+  transcript?: string;
   language?: string;
   duration?: number;
   words?: SttWord[];
@@ -87,7 +88,7 @@ type SttResult = {
   transcript_segments?: Array<Record<string, unknown>>;
   speech_segments?: Array<Record<string, unknown>>;
   turns?: Array<Record<string, unknown>>;
-  channels?: Array<{ index?: number; text?: string; words?: SttWord[] }>;
+  channels?: Array<{ index?: number; text?: string; transcript?: string; words?: SttWord[] }>;
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -146,6 +147,18 @@ function normalizeProviderWords(result: SttResult) {
     .sort((a, b) => Number(a.start ?? 0) - Number(b.start ?? 0));
 }
 
+function providerPlainTranscriptText(result: SttResult) {
+  const topLevelText = cleanTranscriptText(result.text || result.transcript || "");
+  if (topLevelText) return topLevelText;
+  return Array.isArray(result.channels)
+    ? result.channels
+        .map((channel) => cleanTranscriptText(channel.text || channel.transcript || ""))
+        .filter(Boolean)
+        .join("\n\n")
+        .trim()
+    : "";
+}
+
 function speakerLabel(value: unknown) {
   const speaker = value == null || value === "" ? null : value;
   if (speaker == null) return "Person";
@@ -186,7 +199,9 @@ function normalizeAudioMimeType(fileName: string, mimeType: string) {
 function turnFromSegment(segment: Record<string, unknown>, index: number): TranscriptTurn | null {
   const rawWords = Array.isArray(segment.words) ? segment.words as SttWord[] : [];
   const words = rawWords.map((word) => normalizeSttWord(word)).filter(Boolean) as SttWord[];
-  const text = String(segment.text || cleanJoinedWords(words) || "").trim();
+  const text = cleanTranscriptText(
+    segment.text || segment.transcript || segment.transcript_text || segment.content || segment.value || cleanJoinedWords(words) || "",
+  );
   if (!text) return null;
   const start = numberOrNull(segment.start ?? segment.start_seconds ?? segment.start_time ?? words[0]?.start);
   const end = numberOrNull(segment.end ?? segment.end_seconds ?? segment.end_time ?? words[words.length - 1]?.end);
@@ -199,6 +214,20 @@ function turnFromSegment(segment: Record<string, unknown>, index: number): Trans
     end,
     text,
     words,
+  };
+}
+
+function turnFromPlainTranscriptText(result: SttResult): TranscriptTurn | null {
+  const text = providerPlainTranscriptText(result);
+  if (!text) return null;
+  return {
+    id: "xai-text-fallback-0",
+    speaker: "Transcript",
+    speaker_id: null,
+    start: null,
+    end: null,
+    text,
+    words: [],
   };
 }
 
@@ -272,15 +301,19 @@ function buildProviderTranscriptTurns(result: SttResult) {
     .filter(Boolean) as TranscriptTurn[];
   if (wordTurns.length) return { turns: wordTurns, source: "xai_word_segments" };
 
+  const textTurn = turnFromPlainTranscriptText(result);
+  if (textTurn) return { turns: [textTurn], source: "xai_text_fallback" };
+
   return { turns: [], source: "xai_missing_turns" };
 }
 
 function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[], source = "") {
-  if (source === "xai_word_segments" && cleanTranscriptText(result.text)) {
-    return cleanTranscriptText(result.text);
+  const plainTranscript = providerPlainTranscriptText(result);
+  if (["xai_word_segments", "xai_text_fallback"].includes(source) && plainTranscript) {
+    return plainTranscript;
   }
   if (!turns.length) {
-    return cleanTranscriptText(result.text);
+    return plainTranscript;
   }
 
   return turns
@@ -291,6 +324,10 @@ function buildSpeakerTranscript(result: SttResult, turns: TranscriptTurn[], sour
     .filter(Boolean)
     .join("\n\n")
     .trim();
+}
+
+function hasProviderDiarization(turns: TranscriptTurn[]) {
+  return turns.some((turn) => turn.speaker_id != null && turn.speaker_id !== "");
 }
 
 function parseProviderErrorBody(rawBody: string) {
@@ -497,13 +534,13 @@ serve(async (req) => {
       const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
       const providerTurns = buildProviderTranscriptTurns(stt);
       if (!providerTurns.turns.length) {
-        console.error("xAI Grok STT returned no structured transcript turns", {
+        console.error("xAI Grok STT returned no usable transcript text", {
           responseKeys: Object.keys(stt || {}),
-          hasText: !!String(stt.text || "").trim(),
+          hasText: !!providerPlainTranscriptText(stt),
           wordCount: normalizeProviderWords(stt).length,
         });
         throw new InterviewFunctionError(
-          "xAI Grok STT did not return provider transcript segments. The interview module will not infer turns locally.",
+          "xAI Grok STT returned no usable transcript text for this audio.",
           502,
         );
       }
@@ -515,6 +552,7 @@ serve(async (req) => {
 
       const generatedAt = new Date().toISOString();
       const wordCount = normalizeProviderWords(stt).length || null;
+      const diarizationEnabled = hasProviderDiarization(providerTurns.turns);
       const result = {
         ok: true,
         provider: "xai",
@@ -548,7 +586,7 @@ serve(async (req) => {
               language: stt.language || null,
               duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
               word_count: wordCount,
-              diarization_enabled: true,
+              diarization_enabled: diarizationEnabled,
               segmentation_source: providerTurns.source,
               transcript_turns: providerTurns.turns,
               source_audio: {
