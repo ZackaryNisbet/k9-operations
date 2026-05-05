@@ -5451,11 +5451,14 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       : "Timed out waiting for interview transcription.");
   };
 
+  const isEmptyChunkTranscriptionMessage = (message) => /no usable transcript text|empty transcript|no transcript text/i.test(String(message || ""));
+
   const transcribeInterviewAudioChunks = async ({ interviewId, chunks, originalAudio }) => {
     const safeChunks = Array.isArray(chunks) ? chunks.filter((chunk) => chunk?.audio_file_path) : [];
     if (!safeChunks.length) return null;
     const startedAt = new Date().toISOString();
     const chunkResults = [];
+    const skippedChunks = [];
     for (let index = 0; index < safeChunks.length; index += 1) {
       const chunk = safeChunks[index];
       showToast(`Transcribing audio ${index + 1}/${safeChunks.length}`);
@@ -5471,10 +5474,31 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           original_audio_mime_type: originalAudio?.original_audio_mime_type,
           original_audio_size_bytes: originalAudio?.original_audio_size_bytes,
           save_transcript: false,
+          allow_empty_transcript: true,
         },
       });
-      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to transcribe audio"));
-      if (!data?.transcript_text) throw new Error(`AI returned no transcript text for audio ${index + 1}.`);
+      if (error) {
+        const message = await readEdgeFunctionError(error, "Failed to transcribe audio");
+        if (isEmptyChunkTranscriptionMessage(message)) {
+          skippedChunks.push({
+            chunk_index: index,
+            file_name: chunk.audio_file_name,
+            size_bytes: chunk.audio_size_bytes || null,
+            reason: "empty_transcript",
+          });
+          continue;
+        }
+        throw new Error(message);
+      }
+      if (!String(data?.transcript_text || "").trim()) {
+        skippedChunks.push({
+          chunk_index: index,
+          file_name: chunk.audio_file_name,
+          size_bytes: chunk.audio_size_bytes || null,
+          reason: data?.empty_transcript ? "empty_transcript" : "missing_transcript_text",
+        });
+        continue;
+      }
       chunkResults.push({ ...data, chunk });
     }
 
@@ -5483,7 +5507,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       .filter(Boolean)
       .join("\n\n")
       .trim();
-    if (!transcriptText) throw new Error("AI returned no transcript text.");
+    if (!transcriptText) throw new Error("AI found no usable speech in this audio.");
 
     const generatedAt = new Date().toISOString();
     const transcriptTurns = chunkResults.flatMap((result, resultIndex) => {
@@ -5523,6 +5547,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           segmentation_sources: segmentationSources,
           transcript_turns: transcriptTurns,
           chunk_count: safeChunks.length,
+          transcribed_chunk_count: chunkResults.length,
+          skipped_chunk_count: skippedChunks.length,
+          skipped_chunks: skippedChunks,
           source_audio: {
             bucket: originalAudio?.original_audio_file_bucket || originalAudio?.audio_file_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
             path: originalAudio?.original_audio_file_path || originalAudio?.audio_file_path || safeChunks[0]?.audio_file_path,
