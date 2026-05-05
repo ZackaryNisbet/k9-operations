@@ -464,6 +464,7 @@ serve(async (req) => {
     const audioNormalizedForStt = Boolean(body?.audio_normalized_for_stt);
     const saveTranscript = body?.save_transcript !== false;
     const runInBackground = body?.async === true || body?.async_transcription === true;
+    const allowEmptyTranscript = body?.allow_empty_transcript === true;
 
     if (!interviewId) return jsonResponse({ error: "Missing interview_id." }, 400);
     if (!audioPath) return jsonResponse({ error: "Missing audio_file_path." }, 400);
@@ -534,11 +535,32 @@ serve(async (req) => {
       const stt = await transcribeWithGrok(audioBlob, audioFileName, audioMimeType);
       const providerTurns = buildProviderTranscriptTurns(stt);
       if (!providerTurns.turns.length) {
-        console.error("xAI Grok STT returned no usable transcript text", {
+        const wordCount = normalizeProviderWords(stt).length || null;
+        console.warn("xAI Grok STT returned no usable transcript text", {
           responseKeys: Object.keys(stt || {}),
           hasText: !!providerPlainTranscriptText(stt),
-          wordCount: normalizeProviderWords(stt).length,
+          wordCount,
+          allowEmptyTranscript,
+          saveTranscript,
+          fileName: audioFileName,
+          sizeBytes: audioBlob.size,
         });
+        if (allowEmptyTranscript && !saveTranscript) {
+          return {
+            ok: true,
+            provider: "xai",
+            model: XAI_STT_MODEL,
+            transcript_text: "",
+            language: stt.language || null,
+            duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
+            word_count: wordCount,
+            turn_count: 0,
+            segmentation_source: providerTurns.source,
+            transcript_turns: [],
+            saved: false,
+            empty_transcript: true,
+          };
+        }
         throw new InterviewFunctionError(
           "xAI Grok STT returned no usable transcript text for this audio.",
           502,
@@ -547,6 +569,22 @@ serve(async (req) => {
 
       const transcript = buildSpeakerTranscript(stt, providerTurns.turns, providerTurns.source);
       if (!transcript) {
+        if (allowEmptyTranscript && !saveTranscript) {
+          return {
+            ok: true,
+            provider: "xai",
+            model: XAI_STT_MODEL,
+            transcript_text: "",
+            language: stt.language || null,
+            duration_seconds: typeof stt.duration === "number" ? stt.duration : null,
+            word_count: normalizeProviderWords(stt).length || null,
+            turn_count: providerTurns.turns.length,
+            segmentation_source: providerTurns.source,
+            transcript_turns: providerTurns.turns,
+            saved: false,
+            empty_transcript: true,
+          };
+        }
         throw new InterviewFunctionError("xAI Grok STT returned an empty transcript.", 502);
       }
 
