@@ -406,6 +406,93 @@ function InterviewStyles() {
         scrollbar-width: thin;
         scrollbar-color: rgba(190, 242, 100, 0.34) rgba(255,255,255,0.04);
       }
+      .interview-new-dialog {
+        width: min(1120px, 94vw);
+        height: min(540px, calc(100vh - 64px));
+        max-height: calc(100vh - 64px);
+        background: #ffffff;
+        border: 1px solid rgba(226, 232, 240, 0.92);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 26px 80px rgba(2, 6, 23, 0.28);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        animation: interviewModalEnter 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .interview-new-body {
+        min-height: 0;
+        overflow: auto;
+        padding: 18px;
+        background: linear-gradient(180deg, #f8fafc 0%, #ffffff 46%);
+      }
+      .interview-new-grid {
+        display: grid;
+        grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .interview-field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .interview-template-option:hover,
+      .interview-workspace-tile:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+      }
+      .interview-resume-frame {
+        width: 100%;
+        height: min(62vh, 720px);
+        border: 0;
+        background: #ffffff;
+      }
+      .interview-resume-shell {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 16px;
+        padding: 18px;
+        background: #f8fafc;
+        overflow: auto;
+      }
+      .interview-config-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .interview-config-row {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(280px, 0.95fr) minmax(380px, 1.35fr) auto;
+        gap: 16px;
+        align-items: center;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: #fff;
+        padding: 14px;
+      }
+      .interview-config-role,
+      .interview-pay-editor {
+        min-width: 0;
+      }
+      .interview-pay-editor {
+        display: grid;
+        gap: 8px;
+      }
+      .interview-pay-fields {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(84px, 120px) minmax(84px, 120px) minmax(180px, 1fr);
+        gap: 10px;
+        align-items: end;
+      }
+      .interview-config-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
       .interview-guide-ai-panel {
         animation: interviewAiAssistantEnter 220ms cubic-bezier(0.22, 1, 0.36, 1);
       }
@@ -428,6 +515,15 @@ function InterviewStyles() {
       .interview-ai-dot:nth-child(3) { animation-delay: 280ms; }
       @media (max-width: 920px) {
         .interview-immersive-shell { width: 96vw; height: 94vh; }
+        .interview-new-dialog { width: 96vw; max-height: 94vh; }
+        .interview-new-grid,
+        .interview-resume-shell { grid-template-columns: 1fr; }
+        .interview-config-row { grid-template-columns: 1fr; align-items: stretch; }
+        .interview-pay-fields { grid-template-columns: 1fr 1fr; }
+        .interview-pay-fields > label:last-child { grid-column: 1 / -1; }
+        .interview-config-actions { justify-content: flex-start; }
+        .interview-field-grid { grid-template-columns: 1fr; }
+        .interview-resume-frame { height: 62vh; }
         .interview-guide-grid { grid-template-columns: 1fr !important; overflow-y: auto; }
         .interview-guide-pdf { min-height: 520px; }
         .interview-roster-table { min-width: 780px; }
@@ -798,7 +894,7 @@ async function normalizeInterviewAudioForSttOnServer(payload) {
   });
 
   if (!response.ok) {
-    throw new Error(await readJsonApiError(response, "Failed to convert interview audio"));
+    throw new Error(await readJsonApiError(response, `Failed to convert interview audio (${response.status})`));
   }
   return response.json();
 }
@@ -1846,6 +1942,12 @@ function CandidateHeader({ record, recommendation, payRateSummary, onRecommendat
   );
 }
 
+function isPdfResumeArtifact(artifact) {
+  const mime = String(artifact?.mime_type || "").toLowerCase();
+  const fileName = String(artifact?.file_name || artifact?.metadata?.original_file_name || "").toLowerCase();
+  return mime.includes("pdf") || fileName.endsWith(".pdf");
+}
+
 function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload, canUpload = true }) {
   const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
   const uploadedAt = resumeArtifact?.created_at ? new Date(resumeArtifact.created_at).toLocaleDateString() : "";
@@ -1886,6 +1988,266 @@ function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function NewInterviewModal({
+  draft,
+  templateOptions,
+  selectedTemplate,
+  selectedTemplateVersion,
+  resumeFile,
+  resumeInputRef,
+  saving,
+  onDraftChange,
+  onTemplateChange,
+  onResumeChange,
+  onResumeRemove,
+  onCreate,
+  onClose,
+}) {
+  const payRates = payRatesFromVersion(selectedTemplateVersion || {});
+  const payRateSummary = formatInterviewPayRateSummary(payRates);
+  const hasTemplate = !!selectedTemplateVersion;
+  const resumeSize = resumeFile ? formatFileSize(resumeFile.size) : "";
+
+  useEffect(() => {
+    const handleKey = (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose?.();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div className="interview-modal-backdrop" onClick={onClose} style={{ alignItems: "flex-start", overflowY: "auto", paddingTop: 32, paddingBottom: 32 }}>
+      <div className="interview-new-dialog" onClick={(event) => event.stopPropagation()}>
+        <div style={{ padding: "18px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 22, fontWeight: 950, color: C.text, lineHeight: 1.1 }}>New Interview</div>
+            <div style={{ marginTop: 5, fontSize: 12, color: C.textMut, fontWeight: 750 }}>
+              Candidate intake for the interview workspace.
+            </div>
+          </div>
+          <IconButton label="Close new interview" onClick={onClose}>{"x"}</IconButton>
+        </div>
+
+        <div className="interview-new-body">
+          {templateOptions.length === 0 ? (
+            <EmptyState title="No Published Templates" body="No role templates are ready for interview creation." />
+          ) : (
+            <div className="interview-new-grid">
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+                  <div style={{ padding: 14, borderBottom: `1px solid ${C.borderLight}` }}>
+                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Role Template</div>
+                    <div style={{ marginTop: 5, fontSize: 18, color: C.text, fontWeight: 950, lineHeight: 1.15 }}>
+                      {selectedTemplate?.role_label || "Select a role"}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", maxHeight: 340, overflowY: "auto" }}>
+                    {templateOptions.map((option) => {
+                      const selected = option.value === draft.template_version_id;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className="interview-template-option"
+                          onClick={() => onTemplateChange(option.value)}
+                          style={{
+                            border: "none",
+                            borderBottom: `1px solid ${C.borderLight}`,
+                            background: selected ? "#ecfdf5" : "#fff",
+                            color: selected ? C.pri : C.text,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            textAlign: "left",
+                            padding: "12px 14px",
+                            transition: "transform 160ms ease, box-shadow 160ms ease, background 160ms ease",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                            <span style={{ fontSize: 13, fontWeight: 950, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{option.label}</span>
+                            {selected && <Badge color="success">Selected</Badge>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ border: `1px solid ${payRateSummary ? "#bbf7d0" : C.border}`, borderRadius: 8, background: payRateSummary ? "#f0fdf4" : "#fff", padding: 14, display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Pay Rate</div>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: payRateSummary ? C.pri : C.text }}>{payRateSummary || "Not configured"}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.4 }}>Selected position configuration.</div>
+                </div>
+              </div>
+
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+                <div style={{ padding: 16, borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 950, color: C.text }}>Candidate Setup</div>
+                    <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>Candidate profile and interview logistics.</div>
+                  </div>
+                  <Badge color={hasTemplate ? "success" : "warning"}>{hasTemplate ? "Template ready" : "Template required"}</Badge>
+                </div>
+
+                <div style={{ padding: 16, display: "grid", gap: 16 }}>
+                  <div className="interview-field-grid">
+                    <Inp label="Candidate Name" required value={draft.candidate_full_name} onChange={(value) => onDraftChange({ candidate_full_name: value })} autoFocus />
+                    <Inp label="Position" value={draft.candidate_position} onChange={(value) => onDraftChange({ candidate_position: value })} />
+                    <Inp label="Email" value={draft.candidate_email} onChange={(value) => onDraftChange({ candidate_email: value })} />
+                    <Inp label="Phone" value={draft.candidate_phone} onChange={(value) => onDraftChange({ candidate_phone: value })} />
+                    <Inp label="Interview Date" type="date" value={draft.interview_date} onChange={(value) => onDraftChange({ interview_date: value })} />
+                    <Inp label="Interview Time" type="time" value={draft.interview_time} onChange={(value) => onDraftChange({ interview_time: value })} />
+                    <Inp label="Zoom Passcode" value={draft.zoom_passcode} onChange={(value) => onDraftChange({ zoom_passcode: value })} />
+                    <Inp label="Interviewer" value={draft.interviewer_name} onChange={(value) => onDraftChange({ interviewer_name: value })} />
+                  </div>
+
+                  <Inp label="Zoom Recording Link" value={draft.zoom_recording_url} onChange={(value) => onDraftChange({ zoom_recording_url: value })} />
+
+                  <div style={{ border: `1px solid ${resumeFile ? "#bbf7d0" : C.border}`, borderRadius: 8, background: resumeFile ? "#f0fdf4" : C.surfaceHover, padding: 14, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      ref={resumeInputRef}
+                      type="file"
+                      accept={INTERVIEW_RESUME_ACCEPT}
+                      style={{ display: "none" }}
+                      onChange={(event) => {
+                        onResumeChange(event.target.files?.[0] || null);
+                        event.target.value = "";
+                      }}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Resume</div>
+                      <div style={{ marginTop: 5, fontSize: 14, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {resumeFile?.name || "No resume attached"}
+                      </div>
+                      {resumeSize && <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{resumeSize}</div>}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {resumeFile && <Btn variant="ghost" size="sm" onClick={onResumeRemove}>Remove</Btn>}
+                      <Btn variant={resumeFile ? "secondary" : "primary"} size="sm" onClick={() => resumeInputRef.current?.click()}>
+                        {resumeFile ? "Replace Resume" : "Attach Resume"}
+                      </Btn>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 18px", borderTop: `1px solid ${C.border}`, background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 800 }}>{resumeFile ? "Resume selected" : "No resume selected"}</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+            <Btn variant="primary" onClick={onCreate} disabled={saving || templateOptions.length === 0}>{saving ? "Creating..." : "Create Interview"}</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResumeWorkspaceModal({
+  record,
+  resumeArtifact,
+  resumePreviewUrl,
+  resumeCount = 0,
+  uploading,
+  onUploadClick,
+  onOpen,
+  onDownload,
+  workspaceTabs,
+  activePane,
+  onPaneChange,
+  payRateSummary,
+  onClose,
+  canUpload = true,
+}) {
+  const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
+  const hasResume = !!resumeArtifact?.storage_path;
+  const isPdf = isPdfResumeArtifact(resumeArtifact);
+  const sizeLabel = formatFileSize(metadata.size_bytes);
+  const uploadedAt = resumeArtifact?.created_at ? new Date(resumeArtifact.created_at).toLocaleString() : "";
+
+  return (
+    <div className="interview-modal-backdrop" onClick={onClose}>
+      <div className="interview-immersive-shell" onClick={(event) => event.stopPropagation()} style={{ width: "min(1280px, 94vw)" }}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0, display: "grid", gap: 9 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Active Interview</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>
+                {record.candidate_full_name} - Resume{payRateSummary ? ` - Pay ${payRateSummary}` : ""}
+              </div>
+            </div>
+            <InterviewWorkspaceTabs tabs={workspaceTabs} active={activePane} onChange={onPaneChange} />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {canUpload && (
+              <Btn variant={hasResume ? "secondary" : "primary"} size="sm" onClick={onUploadClick} disabled={uploading}>
+                {uploading ? "Uploading..." : hasResume ? "Replace Resume" : "Upload Resume"}
+              </Btn>
+            )}
+            {hasResume && <Btn variant="secondary" size="sm" onClick={() => onDownload?.(resumeArtifact)}>Download</Btn>}
+            <IconButton label="Close resume" onClick={onClose}>{"x"}</IconButton>
+          </div>
+        </div>
+
+        <div className="interview-resume-shell">
+          <div style={{ minHeight: 0, border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
+            <div style={{ padding: "13px 15px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {resumeArtifact?.file_name || metadata.original_file_name || "Candidate Resume"}
+                </div>
+                <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{hasResume ? [sizeLabel, uploadedAt].filter(Boolean).join(" - ") : "No resume attached"}</div>
+              </div>
+              {hasResume && <Badge color={isPdf ? "success" : "info"}>{isPdf ? "Embedded PDF" : "File attached"}</Badge>}
+            </div>
+            {!hasResume ? (
+              <div style={{ padding: 24, display: "grid", placeItems: "center" }}>
+                <EmptyState title="No Resume Attached" body="Accepted formats: PDF, DOC, and DOCX." />
+              </div>
+            ) : isPdf && resumePreviewUrl ? (
+              <iframe className="interview-resume-frame" title={`${record.candidate_full_name || "Candidate"} resume`} src={`${resumePreviewUrl}#toolbar=1&navpanes=0`} />
+            ) : (
+              <div style={{ padding: 28, display: "grid", placeItems: "center", background: C.surfaceHover }}>
+                <div style={{ width: "min(520px, 100%)", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 14, textAlign: "center" }}>
+                  <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Resume File Attached</div>
+                  <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.45 }}>{resumeArtifact.file_name || metadata.original_file_name || "Resume"}</div>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+                    <Btn variant="primary" onClick={() => onOpen?.(resumeArtifact)}>Open</Btn>
+                    <Btn variant="secondary" onClick={() => onDownload?.(resumeArtifact)}>Download</Btn>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Candidate</div>
+              <div style={{ fontSize: 18, color: C.text, fontWeight: 950, lineHeight: 1.2 }}>{record.candidate_full_name}</div>
+              <div style={{ fontSize: 13, color: C.textSec, fontWeight: 800 }}>{record.candidate_position || "Interview"}</div>
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Pay Reference</div>
+              <div style={{ fontSize: 16, color: C.text, fontWeight: 950 }}>{payRateSummary || "Not configured"}</div>
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, color: C.textMut, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.05em" }}>Resume History</div>
+              <div style={{ fontSize: 22, color: C.text, fontWeight: 950 }}>{resumeCount}</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Attached file{resumeCount === 1 ? "" : "s"} on this interview record.</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3741,6 +4103,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [newPositionDraft, setNewPositionDraft] = useState(() => buildNewPositionDraft());
   const [dragQuestionId, setDragQuestionId] = useState("");
   const [newInterviewDraft, setNewInterviewDraft] = useState(() => buildNewInterviewDraft());
+  const [newInterviewResumeFile, setNewInterviewResumeFile] = useState(null);
   const [savingNewInterview, setSavingNewInterview] = useState(false);
   const [recordSaving, setRecordSaving] = useState(false);
   const [responseDrafts, setResponseDrafts] = useState({});
@@ -3753,6 +4116,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const [newQuestionDrafts, setNewQuestionDrafts] = useState({});
   const [templateActionId, setTemplateActionId] = useState("");
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
+  const [resumePreviewUrl, setResumePreviewUrl] = useState("");
   const [audioFileName, setAudioFileName] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [audioSources, setAudioSources] = useState([]);
@@ -3770,6 +4134,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const pdfInputRefs = useRef({});
   const audioInputRef = useRef(null);
   const resumeInputRef = useRef(null);
+  const newInterviewResumeInputRef = useRef(null);
   const transcriptInputRef = useRef(null);
   const audioPlayerRef = useRef(null);
   const pendingAudioPlaybackRef = useRef(null);
@@ -3890,9 +4255,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return selectedQuestions.filter((question) => isInterviewResponseReviewed(responsesByTarget[responseKeyForQuestion(question)] || {})).length;
   }, [responsesByTarget, selectedQuestions]);
   const workspaceTabs = useMemo(() => [
+    { id: "resume", label: "Resume", detail: selectedResumeArtifact ? "Attached" : "Missing" },
     { id: "guide", label: "Interview Guide", detail: `${selectedGuideReviewedCount}/${selectedGuideReviewItems.length} items` },
     { id: "questions", label: "Custom Questions", detail: `${selectedQuestionReviewedCount}/${selectedQuestions.length} reviewed` },
-  ], [selectedGuideReviewedCount, selectedGuideReviewItems.length, selectedQuestionReviewedCount, selectedQuestions.length]);
+  ], [selectedGuideReviewedCount, selectedGuideReviewItems.length, selectedQuestionReviewedCount, selectedQuestions.length, selectedResumeArtifact]);
 
   const showToast = useCallback((message, type = "success") => {
     addGlobalToast?.(message, type);
@@ -4162,6 +4528,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [selectedPdfSourceBucket, selectedPdfSourcePath]);
 
   useEffect(() => {
+    if (!selectedResumeArtifact?.storage_path) {
+      setResumePreviewUrl("");
+      return;
+    }
+    let active = true;
+    supabase.storage
+      .from(selectedResumeArtifact.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET)
+      .createSignedUrl(selectedResumeArtifact.storage_path, 60 * 30)
+      .then(({ data: signed, error }) => {
+        if (!active) return;
+        setResumePreviewUrl(error ? "" : signed?.signedUrl || "");
+      });
+    return () => { active = false; };
+  }, [selectedResumeArtifact?.storage_bucket, selectedResumeArtifact?.storage_path]);
+
+  useEffect(() => {
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
     const candidates = getInterviewAudioPlaybackCandidates(sourceAudio);
     if (!candidates.length) {
@@ -4364,6 +4746,13 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       showToast("Candidate name and a published role template are required.", "error");
       return;
     }
+    if (newInterviewResumeFile) {
+      const resumeValidation = validateInterviewResumeFile(newInterviewResumeFile);
+      if (!resumeValidation.ok) {
+        showToast(resumeValidation.error, "error");
+        return;
+      }
+    }
     const versionQuestions = questionsByVersion[selectedTemplateVersion.id] || [];
     const snapshot = buildInterviewTemplateSnapshot({
       template: selectedTemplate,
@@ -4411,12 +4800,22 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         .select("*")
         .single();
       if (guideError) throw guideError;
+      let resumeArtifact = null;
+      if (newInterviewResumeFile) {
+        try {
+          resumeArtifact = await createResumeArtifact(created.id, newInterviewResumeFile, "new_interview_creation");
+        } catch (resumeError) {
+          showToast(safeUiError(resumeError, "Interview created, but the resume failed to upload."), "error");
+        }
+      }
       setRecords((prev) => [created, ...prev]);
       setGuides((prev) => [guide, ...prev]);
+      setArtifacts(resumeArtifact ? [resumeArtifact] : []);
       setSelectedRecordId(created.id);
       setActiveGuideId(guide.id);
       setShowNewInterview(false);
       setNewInterviewDraft(buildNewInterviewDraft());
+      setNewInterviewResumeFile(null);
       showToast("Interview created");
     } catch (error) {
       showToast(error?.message || "Failed to create interview", "error");
@@ -5335,40 +5734,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       showToast("You do not have permission to manage interviews", "error");
       return;
     }
-    const validation = validateInterviewResumeFile(file);
-    if (!validation.ok) {
-      showToast(validation.error, "error");
-      return;
-    }
     setResumeUploading(true);
     try {
-      const path = buildInterviewResumePath({ locationId, interviewId: selectedRecord.id, fileName: file.name });
-      const contentType = validation.contentType || file.type || "application/octet-stream";
-      const { error: uploadError } = await supabase.storage
-        .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
-        .upload(path, file, { upsert: true, contentType });
-      if (uploadError) throw uploadError;
-      const { data: artifact, error: artifactError } = await supabase
-        .from("labor_interview_artifacts")
-        .insert({
-          interview_id: selectedRecord.id,
-          interview_guide_id: null,
-          artifact_type: "resume",
-          file_name: sanitizeInterviewFileName(file.name || "resume"),
-          storage_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
-          storage_path: path,
-          mime_type: contentType,
-          metadata: {
-            original_file_name: file.name || "resume",
-            size_bytes: Number(file.size || 0) || null,
-            source: "active_interview_workspace",
-          },
-          created_by_user_id: actorUserId,
-          created_by_name: actorName,
-        })
-        .select("*")
-        .single();
-      if (artifactError) throw artifactError;
+      const artifact = await createResumeArtifact(selectedRecord.id, file, "active_interview_workspace");
       setArtifacts((prev) => [artifact, ...prev]);
       showToast("Resume uploaded");
     } catch (error) {
@@ -5376,6 +5744,40 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     } finally {
       setResumeUploading(false);
     }
+  };
+
+  const createResumeArtifact = async (interviewId, file, source = "active_interview_workspace") => {
+    if (!interviewId || !locationId || !file) return null;
+    const validation = validateInterviewResumeFile(file);
+    if (!validation.ok) throw new Error(validation.error);
+    const path = buildInterviewResumePath({ locationId, interviewId, fileName: file.name });
+    const contentType = validation.contentType || file.type || "application/octet-stream";
+    const { error: uploadError } = await supabase.storage
+      .from(LABOR_INTERVIEW_DOCUMENT_BUCKET)
+      .upload(path, file, { upsert: true, contentType });
+    if (uploadError) throw uploadError;
+    const { data: artifact, error: artifactError } = await supabase
+      .from("labor_interview_artifacts")
+      .insert({
+        interview_id: interviewId,
+        interview_guide_id: null,
+        artifact_type: "resume",
+        file_name: sanitizeInterviewFileName(file.name || "resume"),
+        storage_bucket: LABOR_INTERVIEW_DOCUMENT_BUCKET,
+        storage_path: path,
+        mime_type: contentType,
+        metadata: {
+          original_file_name: file.name || "resume",
+          size_bytes: Number(file.size || 0) || null,
+          source,
+        },
+        created_by_user_id: actorUserId,
+        created_by_name: actorName,
+      })
+      .select("*")
+      .single();
+    if (artifactError) throw artifactError;
+    return artifact;
   };
 
   const getPdfFieldValue = (field) => {
@@ -6107,7 +6509,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               <Btn
                 variant="primary"
                 onClick={() => {
-                  setActiveInterviewPane(selectedPdfFields.length ? "guide" : "questions");
+                  setActiveInterviewPane(selectedPdfFields.length ? "guide" : selectedResumeArtifact ? "resume" : "questions");
                   setShowActiveInterview(true);
                 }}
               >
@@ -6117,8 +6519,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
               <button
                 type="button"
-                onClick={() => selectedResumeArtifact ? openArtifact(selectedResumeArtifact) : resumeInputRef.current?.click()}
-                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+                className="interview-workspace-tile"
+                onClick={() => {
+                  setActiveInterviewPane("resume");
+                  setShowActiveInterview(true);
+                }}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit", transition: "transform 160ms ease, box-shadow 160ms ease" }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                   <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Resume</div>
@@ -6130,11 +6536,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </button>
               <button
                 type="button"
+                className="interview-workspace-tile"
                 onClick={() => {
                   setActiveInterviewPane("guide");
                   setShowActiveInterview(true);
                 }}
-                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit", transition: "transform 160ms ease, box-shadow 160ms ease" }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                   <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Interview Guide</div>
@@ -6144,11 +6551,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </button>
               <button
                 type="button"
+                className="interview-workspace-tile"
                 onClick={() => {
                   setActiveInterviewPane("questions");
                   setShowActiveInterview(true);
                 }}
-                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit" }}
+                style={{ textAlign: "left", border: `1px solid ${C.borderLight}`, background: C.surfaceHover, borderRadius: 8, padding: 14, cursor: "pointer", fontFamily: "inherit", transition: "transform 160ms ease, box-shadow 160ms ease" }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                   <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Custom Questions</div>
@@ -6169,7 +6577,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       {view === "config" && canManage && (
         <div style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <SectionHeading title="Interview Configuration" />
+            <SectionHeading title="Interview Configuration" detail="Role templates, position pay rates, and shared custom questions." />
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn variant="secondary" onClick={() => setShowConfigSettings((prev) => !prev)}>Settings</Btn>
               <Btn variant="primary" onClick={() => setShowNewPosition(true)}>Create Position Type</Btn>
@@ -6205,7 +6613,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+          <div className="interview-config-grid">
             {templates.map((template) => {
               const templateVersions = versionsByTemplate[template.id] || [];
               const current = templateVersions.find((version) => version.is_current);
@@ -6215,36 +6623,25 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               const editable = editableVersion?.status === "draft";
               const payRateDraft = editableVersion ? (payRateDrafts[editableVersion.id] || payRatesFromVersion(editableVersion)) : {};
               const payRateSummary = formatInterviewPayRateSummary(payRateDraft);
+              const versionLabel = editableVersion
+                ? `${LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS[editableVersion.status] || editableVersion.status} v${editableVersion.version_no}`
+                : "No template version";
               return (
-                <div key={template.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 14, display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 17, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.role_label}</div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>{current ? `Published v${current.version_no}` : "No published version"}</div>
+                <div key={template.id} className="interview-config-row">
+                  <div className="interview-config-role">
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0, flexWrap: "wrap" }}>
+                      <div style={{ minWidth: 0, fontSize: 18, fontWeight: 950, color: C.text, lineHeight: 1.18 }}>{template.role_label}</div>
+                      <Badge color={editableVersion?.pdf_verification_status === "verified_fields" ? "success" : "warning"}>{pdfFields.length} fields</Badge>
                     </div>
-                    <Badge color={editableVersion?.pdf_verification_status === "verified_fields" ? "success" : "warning"}>{pdfFields.length} fields</Badge>
-                  </div>
-                  <div style={{ display: "grid", gap: 5, fontSize: 12, color: C.textSec }}>
-                    <div>{editableVersion?.source_pdf_file_name || "No PDF uploaded"}</div>
-                    <div>{editableVersion ? `${LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS[editableVersion.status] || editableVersion.status} v${editableVersion.version_no}` : "No template version"}</div>
+                    <div style={{ marginTop: 5, fontSize: 12, color: C.textMut, fontWeight: 800 }}>{versionLabel}</div>
                   </div>
                   {editableVersion && (
-                    <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "grid", gap: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                        <div>
-                          <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>Pay Rates</div>
-                          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{payRateSummary || "No pay range configured"}</div>
-                        </div>
-                        <Btn
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => saveTemplatePayRates(editableVersion)}
-                          disabled={!editable || templateActionId === `pay-${editableVersion.id}`}
-                        >
-                          {templateActionId === `pay-${editableVersion.id}` ? "Saving..." : "Save"}
-                        </Btn>
+                    <div className="interview-pay-editor">
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 950 }}>Pay Rates</div>
+                        <div style={{ minWidth: 0, fontSize: 11, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{payRateSummary || "No pay range configured"}</div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div className="interview-pay-fields">
                         <Inp
                           label="Min"
                           value={payRateDraft.min_rate || ""}
@@ -6265,21 +6662,31 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
                             [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), max_rate: value },
                           }))}
                         />
+                        <Inp
+                          label="Notes"
+                          value={payRateDraft.notes || ""}
+                          disabled={!editable}
+                          placeholder="Optional notes"
+                          onChange={(value) => setPayRateDrafts((prev) => ({
+                            ...prev,
+                            [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), notes: value },
+                          }))}
+                        />
                       </div>
-                      <Inp
-                        label="Notes"
-                        value={payRateDraft.notes || ""}
-                        disabled={!editable}
-                        placeholder="DOE, shift differential, training rate"
-                        onChange={(value) => setPayRateDrafts((prev) => ({
-                          ...prev,
-                          [editableVersion.id]: { ...(prev[editableVersion.id] || payRatesFromVersion(editableVersion)), notes: value },
-                        }))}
-                      />
                       {!editable && <div style={{ fontSize: 11, color: C.textMut }}>Create a draft version to edit pay rates.</div>}
                     </div>
                   )}
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div className="interview-config-actions">
+                    {editableVersion && (
+                      <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => saveTemplatePayRates(editableVersion)}
+                        disabled={!editable || templateActionId === `pay-${editableVersion.id}`}
+                      >
+                        {templateActionId === `pay-${editableVersion.id}` ? "Saving..." : "Save"}
+                      </Btn>
+                    )}
                     {editableVersion && (
                       <input
                         ref={(node) => { if (node) pdfInputRefs.current[editableVersion.id] = node; }}
@@ -6395,51 +6802,40 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {canManage && showNewInterview && (
-        <Modal title="Add New Interview" onClose={() => setShowNewInterview(false)} wide>
-          {templateOptions.length === 0 ? (
-            <EmptyState title="No Published Templates" body="Upload Acrobat-prepared PDFs, verify fields, and publish a role template before creating interview records." />
-          ) : (
-            <div style={{ display: "grid", gap: 14 }}>
-              <CustomSelect
-                value={newInterviewDraft.template_version_id}
-                onChange={(value) => {
-                  const version = versions.find((row) => row.id === value);
-                  const template = templates.find((row) => row.id === version?.template_id);
-                  setNewInterviewDraft((prev) => ({
-                    ...prev,
-                    template_version_id: value,
-                    candidate_position: template?.role_label || prev.candidate_position,
-                  }));
-                }}
-                options={templateOptions}
-                placeholder="Select published role template"
-              />
-              {selectedTemplateVersion && (
-                <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Pay Reference</div>
-                    <div style={{ marginTop: 4, fontSize: 15, color: C.text, fontWeight: 950 }}>{formatInterviewPayRateSummary(payRatesFromVersion(selectedTemplateVersion)) || "Not configured"}</div>
-                  </div>
-                  <Badge color={formatInterviewPayRateRange(payRatesFromVersion(selectedTemplateVersion)) ? "success" : "default"}>{selectedTemplate?.role_label || "Template"}</Badge>
-                </div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Inp label="Candidate Name" required value={newInterviewDraft.candidate_full_name} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_full_name: value }))} autoFocus />
-                <Inp label="Position" value={newInterviewDraft.candidate_position} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_position: value }))} />
-                <Inp label="Email" value={newInterviewDraft.candidate_email} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_email: value }))} />
-                <Inp label="Phone" value={newInterviewDraft.candidate_phone} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, candidate_phone: value }))} />
-                <Inp label="Interview Date" type="date" value={newInterviewDraft.interview_date} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, interview_date: value }))} />
-                <Inp label="Interview Time" type="time" value={newInterviewDraft.interview_time} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, interview_time: value }))} />
-                <Inp label="Zoom Passcode" value={newInterviewDraft.zoom_passcode} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, zoom_passcode: value }))} />
-              </div>
-              <Inp label="Zoom Recording Link" value={newInterviewDraft.zoom_recording_url} onChange={(value) => setNewInterviewDraft((prev) => ({ ...prev, zoom_recording_url: value }))} />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-                <Btn variant="secondary" onClick={() => setShowNewInterview(false)}>Cancel</Btn>
-                <Btn variant="primary" onClick={createNewInterview} disabled={savingNewInterview}>{savingNewInterview ? "Creating..." : "Create Interview"}</Btn>
-              </div>
-            </div>
-          )}
-        </Modal>
+        <NewInterviewModal
+          draft={newInterviewDraft}
+          templateOptions={templateOptions}
+          selectedTemplate={selectedTemplate}
+          selectedTemplateVersion={selectedTemplateVersion}
+          resumeFile={newInterviewResumeFile}
+          resumeInputRef={newInterviewResumeInputRef}
+          saving={savingNewInterview}
+          onDraftChange={(patch) => setNewInterviewDraft((prev) => ({ ...prev, ...patch }))}
+          onTemplateChange={(value) => {
+            const version = versions.find((row) => row.id === value);
+            const template = templates.find((row) => row.id === version?.template_id);
+            setNewInterviewDraft((prev) => ({
+              ...prev,
+              template_version_id: value,
+              candidate_position: template?.role_label || prev.candidate_position,
+            }));
+          }}
+          onResumeChange={(file) => {
+            if (!file) {
+              setNewInterviewResumeFile(null);
+              return;
+            }
+            const validation = validateInterviewResumeFile(file);
+            if (!validation.ok) {
+              showToast(validation.error, "error");
+              return;
+            }
+            setNewInterviewResumeFile(file);
+          }}
+          onResumeRemove={() => setNewInterviewResumeFile(null)}
+          onCreate={createNewInterview}
+          onClose={() => setShowNewInterview(false)}
+        />
       )}
 
       {canManage && showCandidateEdit && selectedRecord && (
@@ -6509,6 +6905,25 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           currentTime={audioCurrentTime}
           segmentationSource={selectedRecord?.metadata?.audio_transcription?.segmentation_source || ""}
           onClose={() => setShowTranscriptModal(false)}
+        />
+      )}
+
+      {showActiveInterview && activeInterviewPane === "resume" && selectedRecord && (
+        <ResumeWorkspaceModal
+          record={selectedRecord}
+          resumeArtifact={selectedResumeArtifact}
+          resumePreviewUrl={resumePreviewUrl}
+          resumeCount={resumeArtifacts.length}
+          uploading={resumeUploading}
+          onUploadClick={() => resumeInputRef.current?.click()}
+          onOpen={openArtifact}
+          onDownload={downloadArtifact}
+          workspaceTabs={workspaceTabs}
+          activePane={activeInterviewPane}
+          onPaneChange={setActiveInterviewPane}
+          payRateSummary={selectedPayRateSummary}
+          onClose={() => setShowActiveInterview(false)}
+          canUpload={canManage}
         />
       )}
 
