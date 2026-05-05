@@ -179,7 +179,7 @@ CREATE POLICY enrichment_events_insert ON public.enrichment_events
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_events.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -199,7 +199,7 @@ CREATE POLICY enrichment_events_update ON public.enrichment_events
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_events.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -215,7 +215,7 @@ CREATE POLICY enrichment_events_update ON public.enrichment_events
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_events.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -366,7 +366,7 @@ CREATE POLICY enrichment_calendar_graphics_insert ON public.enrichment_calendar_
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_calendar_graphics.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -386,7 +386,7 @@ CREATE POLICY enrichment_calendar_graphics_update ON public.enrichment_calendar_
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_calendar_graphics.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -402,7 +402,7 @@ CREATE POLICY enrichment_calendar_graphics_update ON public.enrichment_calendar_
       WHERE lp.user_id = (select auth.uid())
         AND lp.is_active = true
         AND (lp.location_id = enrichment_calendar_graphics.location_id OR lp.role = 'enterprise_admin')
-        AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+        AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
     )
     OR EXISTS (
       SELECT 1
@@ -472,7 +472,7 @@ CREATE POLICY enrichment_calendar_graphics_storage_insert
         WHERE lp.user_id = (select auth.uid())
           AND lp.is_active = true
           AND ((storage.foldername(name))[1] = lp.location_id OR lp.role = 'enterprise_admin')
-          AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+          AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
       )
       OR EXISTS (
         SELECT 1
@@ -498,7 +498,7 @@ CREATE POLICY enrichment_calendar_graphics_storage_update
         WHERE lp.user_id = (select auth.uid())
           AND lp.is_active = true
           AND ((storage.foldername(name))[1] = lp.location_id OR lp.role = 'enterprise_admin')
-          AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+          AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
       )
       OR EXISTS (
         SELECT 1
@@ -518,7 +518,7 @@ CREATE POLICY enrichment_calendar_graphics_storage_update
         WHERE lp.user_id = (select auth.uid())
           AND lp.is_active = true
           AND ((storage.foldername(name))[1] = lp.location_id OR lp.role = 'enterprise_admin')
-          AND lp.role IN ('supervisor', 'manager', 'mod', 'location_admin', 'enterprise_admin')
+          AND lp.role IN ('supervisor', 'manager', 'location_admin', 'enterprise_admin')
       )
       OR EXISTS (
         SELECT 1
