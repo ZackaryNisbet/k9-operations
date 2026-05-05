@@ -5376,6 +5376,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         chunk_index: resultIndex,
       }));
     });
+    const segmentationSources = [...new Set(chunkResults
+      .map((result) => String(result.segmentation_source || "").trim())
+      .filter(Boolean))];
+    const hasDiarization = transcriptTurns.some((turn) => turn?.speaker_id != null && turn.speaker_id !== "");
     const wordCount = chunkResults.reduce((sum, result) => sum + (Number(result.word_count) || 0), 0) || null;
     const durationSeconds = chunkResults.reduce((sum, result) => sum + (Number(result.duration_seconds) || 0), 0) || null;
     const updated = await saveRecordPatch({
@@ -5394,8 +5398,9 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
           language: chunkResults.find((result) => result.language)?.language || null,
           duration_seconds: durationSeconds,
           word_count: wordCount,
-          diarization_enabled: true,
-          segmentation_source: chunkResults[0]?.segmentation_source || "provider",
+          diarization_enabled: hasDiarization,
+          segmentation_source: segmentationSources.length === 1 ? segmentationSources[0] : "mixed_chunks",
+          segmentation_sources: segmentationSources,
           transcript_turns: transcriptTurns,
           chunk_count: safeChunks.length,
           source_audio: {
