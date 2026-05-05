@@ -58,11 +58,11 @@
       "updatedAt": "2026-04-28T12:22:53.782Z"
     },
     "interview-transcribe-audio": {
-      "commit": "7586916c42ea4c5f71933f0411912285fb1c6d00",
+      "commit": "154815f03a4f6aa8feaa8836a61b313cea903667",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Background resilient interview audio transcription",
-      "updatedAt": "2026-04-28T03:08:10.021Z"
+      "note": "Allow interview STT text fallback",
+      "updatedAt": "2026-05-05T18:12:50.278Z"
     },
     "performance-review-signing": {
       "commit": "2b1702064d6c5f7582e0d28f3256f785dd075063",
