@@ -122,6 +122,37 @@ export function buildLaborModulePanelKey({ tab, interviewView, attendanceView } 
   ].join(":");
 }
 
+function LaborViewSwitcher({ options = [], value, onChange }) {
+  const visibleOptions = options.filter(Boolean);
+  const activeIndex = Math.max(0, visibleOptions.findIndex((option) => option.id === value));
+  if (!visibleOptions.length) return null;
+  return (
+    <div
+      className="labor-view-switcher"
+      style={{
+        "--labor-view-count": visibleOptions.length,
+        "--labor-view-active-index": activeIndex,
+      }}
+    >
+      <div className="labor-view-switcher-indicator" aria-hidden="true" />
+      {visibleOptions.map((option) => {
+        const active = option.id === value;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={`labor-view-option${active ? " is-active" : ""}`}
+            onClick={() => onChange(option.id)}
+          >
+            <span>{option.label}</span>
+            <small>{option.subtitle}</small>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
@@ -6383,9 +6414,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     return null;
   })();
+  const activeLaborTabIndex = Math.max(0, visibleTabs.findIndex((item) => item.id === tab));
 
   return (
-    <div style={{ maxWidth: 1340, margin: "0 auto", padding: "20px 10px" }}>
+    <div className="labor-page-shell">
       <PerformanceReviewStyles />
 	      <style>{`
         html { scrollbar-gutter: stable; }
@@ -6413,45 +6445,247 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
         @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
         @keyframes laborModuleEnter {
-          from { opacity: 0; transform: translate3d(0, 10px, 0); filter: blur(2px); }
-          to { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+          0% { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.992); filter: blur(5px); }
+          68% { opacity: 1; transform: translate3d(0, -1px, 0) scale(1.001); filter: blur(0); }
+          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+        }
+        @keyframes laborTabLightSweep {
+          0% { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
+          24% { opacity: 0.42; }
+          58% { opacity: 0.18; }
+          100% { transform: translateX(160%) skewX(-18deg); opacity: 0; }
+        }
+        @keyframes laborControlSettle {
+          0% { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.99); }
+          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+        .labor-page-shell {
+          max-width: 1340px;
+          margin: 0 auto;
+          padding: 20px 10px 34px;
+          min-height: calc(100vh - 40px);
+          box-sizing: border-box;
+        }
+        .labor-module-header {
+          min-height: 52px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 18px;
+          margin-bottom: 18px;
+        }
+        .labor-module-title {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .labor-module-title span {
+          font-size: 22px;
+          font-weight: 900;
+          color: ${C.text};
+          letter-spacing: 0;
+          line-height: 1.1;
+        }
+        .labor-header-action-slot {
+          min-width: 178px;
+          min-height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          flex-shrink: 0;
         }
         .labor-module-tabs {
-          min-height: 43px;
+          --labor-tab-count: 1;
+          --labor-active-index: 0;
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(var(--labor-tab-count), minmax(0, 1fr));
+          align-items: center;
+          min-height: 50px;
+          margin-bottom: 22px;
+          padding: 5px;
+          border: 1px solid rgba(226, 232, 240, 0.95);
+          border-radius: 16px;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92)),
+            #fff;
+          box-shadow: 0 16px 44px rgba(15, 23, 42, 0.055);
           overflow-x: auto;
+          overflow-y: hidden;
           scrollbar-width: none;
+          isolation: isolate;
         }
         .labor-module-tabs::-webkit-scrollbar { display: none; }
+        .labor-tab-indicator {
+          position: absolute;
+          top: 5px;
+          bottom: 5px;
+          left: 5px;
+          z-index: 0;
+          width: calc((100% - 10px) / var(--labor-tab-count));
+          border-radius: 12px;
+          background: linear-gradient(135deg, #14532d 0%, #166534 56%, #3f6212 100%);
+          box-shadow: 0 14px 34px rgba(20, 83, 45, 0.22), inset 0 1px 0 rgba(255,255,255,0.18);
+          transform: translateX(calc(var(--labor-active-index) * 100%));
+          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+          overflow: hidden;
+        }
+        .labor-tab-indicator::after {
+          content: "";
+          position: absolute;
+          inset: -30% auto -30% 0;
+          width: 46%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+          animation: laborTabLightSweep 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-tab-button {
+          position: relative;
+          z-index: 1;
+          height: 40px;
+          border: none;
+          border-radius: 12px;
+          background: transparent;
+          color: ${C.textSec};
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 850;
+          letter-spacing: 0;
+          white-space: nowrap;
+          transition: color 220ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease;
+        }
+        .labor-tab-button:hover {
+          color: ${C.pri};
+          background: rgba(20, 83, 45, 0.055);
+        }
+        .labor-tab-button.is-active {
+          color: #fff;
+          transform: translateY(-1px);
+        }
+        .labor-view-switcher {
+          --labor-view-count: 1;
+          --labor-view-active-index: 0;
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(var(--labor-view-count), minmax(0, 1fr));
+          gap: 0;
+          min-height: 82px;
+          margin-bottom: 18px;
+          padding: 6px;
+          border: 1px solid rgba(226, 232, 240, 0.95);
+          border-radius: 16px;
+          background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.9));
+          box-shadow: 0 14px 36px rgba(15, 23, 42, 0.05);
+          overflow: hidden;
+          animation: laborControlSettle 260ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-view-switcher-indicator {
+          position: absolute;
+          top: 6px;
+          bottom: 6px;
+          left: 6px;
+          width: calc((100% - 12px) / var(--labor-view-count));
+          border-radius: 12px;
+          background:
+            radial-gradient(circle at 18% 18%, rgba(132,204,22,0.18), transparent 34%),
+            linear-gradient(135deg, rgba(240,253,244,0.96), rgba(236,253,245,0.92));
+          border: 1px solid rgba(20, 83, 45, 0.55);
+          box-shadow: 0 16px 38px rgba(20, 83, 45, 0.12);
+          transform: translateX(calc(var(--labor-view-active-index) * 100%));
+          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+          z-index: 0;
+        }
+        .labor-view-option {
+          position: relative;
+          z-index: 1;
+          min-width: 0;
+          border: none;
+          border-radius: 12px;
+          background: transparent;
+          color: ${C.textSec};
+          text-align: left;
+          cursor: pointer;
+          font-family: inherit;
+          padding: 14px 16px;
+          display: grid;
+          gap: 4px;
+          align-content: center;
+          transition: color 200ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease;
+        }
+        .labor-view-option:hover {
+          background: rgba(20, 83, 45, 0.045);
+          transform: translateY(-1px);
+        }
+        .labor-view-option.is-active {
+          color: ${C.pri};
+        }
+        .labor-view-option span {
+          font-size: 14px;
+          font-weight: 950;
+          letter-spacing: 0;
+        }
+        .labor-view-option small {
+          font-size: 12px;
+          color: ${C.textMut};
+          line-height: 1.35;
+          font-weight: 650;
+        }
         .labor-module-panel {
           min-height: 560px;
-          animation: laborModuleEnter 220ms cubic-bezier(0.22, 1, 0.36, 1);
-          will-change: opacity, transform;
-        }
-        .labor-module-switcher {
-          min-height: 74px;
+          animation: laborModuleEnter 360ms cubic-bezier(0.22, 1, 0.36, 1);
+          will-change: opacity;
         }
         @media (prefers-reduced-motion: reduce) {
-          .labor-module-panel { animation: none; }
+          .labor-module-panel,
+          .labor-view-switcher,
+          .labor-tab-indicator::after { animation: none; }
+          .labor-tab-indicator,
+          .labor-view-switcher-indicator,
+          .labor-tab-button,
+          .labor-view-option { transition: none; }
+        }
+        @media (max-width: 880px) {
+          .labor-page-shell { padding: 14px 8px 28px; }
+          .labor-module-header { align-items: flex-start; flex-direction: column; }
+          .labor-header-action-slot { width: 100%; justify-content: flex-start; }
+          .labor-module-tabs { grid-template-columns: repeat(var(--labor-tab-count), minmax(104px, 1fr)); }
+          .labor-view-switcher {
+            grid-template-columns: 1fr;
+            min-height: 0;
+          }
+          .labor-view-switcher-indicator { display: none; }
         }
       `}</style>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div className="labor-module-header">
+        <div className="labor-module-title">
           <I.GraduationCap />
-          <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>Labor Management</span>
+          <span>Labor Management</span>
         </div>
-        {headerAction}
+        <div className="labor-header-action-slot">{headerAction}</div>
       </div>
 
-      <div className="labor-module-tabs" style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}` }}>
-        {visibleTabs.map(t => (
-          <button key={t.id} onClick={() => changeLaborTab(t.id)} style={{
-            padding: "10px 18px", fontSize: 13, fontWeight: tab === t.id ? 700 : 500,
-            color: tab === t.id ? C.pri : C.textMut, background: "none", border: "none",
-            borderBottom: tab === t.id ? `2px solid ${C.pri}` : "2px solid transparent",
-            cursor: "pointer", fontFamily: "inherit", marginBottom: -2, transition: "color 0.15s",
-          }}>{t.label}</button>
-        ))}
-      </div>
+      {visibleTabs.length > 0 && (
+        <div
+          className="labor-module-tabs"
+          style={{
+            "--labor-tab-count": visibleTabs.length,
+            "--labor-active-index": activeLaborTabIndex,
+          }}
+        >
+          <div className="labor-tab-indicator" aria-hidden="true" />
+          {visibleTabs.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => changeLaborTab(t.id)}
+              className={`labor-tab-button${tab === t.id ? " is-active" : ""}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading && <div style={{ textAlign: "center", padding: 60, color: C.textMut }}>Loading labor data...</div>}
       {!loading && visibleTabs.length === 0 && (
@@ -7117,33 +7351,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
-          <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-            {[
+          <LaborViewSwitcher
+            value={attendanceView}
+            onChange={changeAttendanceView}
+            options={[
               { id: "input", label: "Attendance Input", subtitle: "Attendance marks and policy actions" },
               { id: "summary", label: "Attendance Summary", subtitle: "Summary, history, and reference guidance" },
-            ].map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => changeAttendanceView(option.id)}
-                style={{
-                  flex: "1 1 260px",
-                  minWidth: 220,
-                  padding: "14px 16px",
-                  borderRadius: 14,
-                  border: `1.5px solid ${attendanceView === option.id ? C.pri : C.border}`,
-                  background: attendanceView === option.id ? C.priLt : C.surface,
-                  color: attendanceView === option.id ? C.pri : C.text,
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
-                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
-              </button>
-            ))}
-          </div>
+            ]}
+          />
 
           <AttendanceTrackerPage
             data={data}
@@ -7162,33 +7377,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "interviews" && canUseLaborTab("interviews") && (
         <div>
           {!interviewDetailOpen && (
-            <div className="labor-module-switcher" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-              {[
+            <LaborViewSwitcher
+              value={interviewView}
+              onChange={changeInterviewView}
+              options={[
                 { id: "records", label: "Interviews", subtitle: "Candidate records and interview review" },
                 canManageInterviews ? { id: "config", label: "Configuration", subtitle: "Position guides, PDFs, and questions" } : null,
-              ].filter(Boolean).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => changeInterviewView(option.id)}
-                  style={{
-                    flex: "1 1 260px",
-                    minWidth: 220,
-                    padding: "14px 16px",
-                    borderRadius: 14,
-                    border: `1.5px solid ${interviewView === option.id ? C.pri : C.border}`,
-                    background: interviewView === option.id ? C.priLt : C.surface,
-                    color: interviewView === option.id ? C.pri : C.text,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <div style={{ fontSize: 14, fontWeight: 800 }}>{option.label}</div>
-                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{option.subtitle}</div>
-                </button>
-              ))}
-            </div>
+              ]}
+            />
           )}
           <LaborInterviewsPage
             data={data}
