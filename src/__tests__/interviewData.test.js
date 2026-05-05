@@ -454,4 +454,32 @@ describe("interview transcript display helpers", () => {
     expect(turns[0]).toMatchObject({ speaker: "Person 1", text: "Hello there" });
     expect(turns[1]).toMatchObject({ speaker: "Person 2", text: "Hi" });
   });
+
+  it("renders non-diarized provider text fallback turns", () => {
+    const turns = getInterviewTranscriptTurns({
+      transcript_text: "The candidate can work weekends and has prior kennel experience.",
+      metadata: {
+        audio_transcription: {
+          segmentation_source: "xai_text_fallback",
+          transcript_turns: [
+            {
+              id: "xai-text-fallback-0",
+              speaker: "Transcript",
+              start: null,
+              end: null,
+              text: "The candidate can work weekends and has prior kennel experience.",
+              words: [],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      speaker: "Transcript",
+      text: "The candidate can work weekends and has prior kennel experience.",
+      providerSegment: true,
+    });
+  });
 });
