@@ -208,28 +208,18 @@ async function fetchReservationsForDate(
   targetDate: string,
   roomLookup?: RoomOccupancyLookup | null,
 ): Promise<Record<string, any>> {
-  const nextDay = addDays(targetDate, 1);
   const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services, room_assignment";
 
-  const [{ data: activeRes }, { data: pendingRes }, { data: completedRes }] = await Promise.all([
-    supabase.from("gingr_reservations").select(resSelect)
-      .eq("location_id", locationId)
-      .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
-      .lte("start_date", `${targetDate}T23:59:59`).gte("end_date", `${targetDate}T00:00:00`),
-    supabase.from("gingr_reservations").select(resSelect)
-      .eq("location_id", locationId)
-      .is("check_in_date", null).is("check_out_date", null).is("cancelled_date", null)
-      .gte("start_date", `${targetDate}T00:00:00`).lt("start_date", nextDay + "T00:00:00"),
-    // Completed reservations (checked in AND checked out) that started on target date
-    supabase.from("gingr_reservations").select(resSelect)
-      .eq("location_id", locationId)
-      .not("check_in_date", "is", null).not("check_out_date", "is", null).is("cancelled_date", null)
-      .gte("start_date", `${targetDate}T00:00:00`).lte("start_date", `${targetDate}T23:59:59`),
-  ]);
+  const { data: reservationRows } = await supabase.from("gingr_reservations")
+    .select(resSelect)
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${targetDate}T23:59:59`)
+    .gte("end_date", `${targetDate}T00:00:00`);
 
   const seen = new Set<string>();
   const result: Record<string, any> = {};
-  for (const r of [...(activeRes || []), ...(pendingRes || []), ...(completedRes || [])]) {
+  for (const r of (reservationRows || [])) {
     const id = String(r.gingr_id);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -263,6 +253,7 @@ async function fetchReservationsForDate(
       ),
       animalGingrId: animalId,
       startDate: r.start_date || "",
+      endDate: r.end_date || "",
       checkInDate: r.check_in_date || null,
     };
   }
@@ -1248,6 +1239,28 @@ async function computeEnrichmentReport(
     if (!normalized) return true;
     return ["scheduled", "confirmed", "checked-in", "completed"].includes(normalized);
   };
+  const extractServiceScheduledDate = (service: any): string | null => {
+    const candidates = [
+      service?.scheduled_at,
+      service?.scheduled_date,
+      service?.scheduledAt,
+      service?.date,
+      service?.service_date,
+      service?.start_date,
+    ];
+    for (const value of candidates) {
+      const match = String(value || "").match(/\d{4}-\d{2}-\d{2}/);
+      if (match) return match[0];
+    }
+    return null;
+  };
+  const reservationSpansDate = (res: any): boolean => {
+    const start = String(res.startDate || res.start_date || "").slice(0, 10);
+    const end = String(res.endDate || res.end_date || "").slice(0, 10);
+    if (start && start > targetDate) return false;
+    if (end && end < targetDate) return false;
+    return true;
+  };
 
   // 1) First try local reservations (from Supabase — currently checked-in dogs)
   for (const res of Object.values(localReservations)) {
@@ -1262,16 +1275,24 @@ async function computeEnrichmentReport(
       (s.name || s.service_name || "").toLowerCase().includes("enrichment"),
     );
     if (enrichmentServices.length === 0) continue;
+
+    const scheduledServices = enrichmentServices.filter((s: any) =>
+      extractServiceScheduledDate(s) === targetDate
+    );
+    const undatedServices = enrichmentServices.filter((s: any) =>
+      extractServiceScheduledDate(s) === null
+    );
+    const shouldSuggest = scheduledServices.length === 0 &&
+      undatedServices.length > 0 &&
+      reservationSpansDate(res);
+
+    if (scheduledServices.length === 0 && !shouldSuggest) continue;
     seen.add(animalId);
 
     const ownerFirst = res.owner?.first_name || "";
     const ownerLast = res.owner?.last_name || "";
     const resType = res.reservation_type?.type || "";
-
-    const scheduledForToday = enrichmentServices.some((s: any) => {
-      const schedAt = s.scheduled_at || s.scheduled_date || "";
-      return schedAt.includes(targetDate);
-    });
+    const serviceRows = scheduledServices.length > 0 ? scheduledServices : undatedServices;
 
     const dog = {
       animalId,
@@ -1288,16 +1309,17 @@ async function computeEnrichmentReport(
         },
         res.roomLabel || res.room?.name || "",
       ),
-      services: enrichmentServices.map((s: any) => s.name || s.service_name || "enrichment"),
-      status: scheduledForToday ? "scheduled" : "suggested",
+      services: serviceRows.map((s: any) => s.name || s.service_name || "enrichment"),
+      status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
       reservationType: resType,
-      summary: enrichmentServices.map((s: any) => s.name || "enrichment").join(", "),
+      summary: serviceRows.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
     };
 
-    if (scheduledForToday) {
+    if (scheduledServices.length > 0) {
       scheduled.push(dog);
     } else {
-      suggested.push({ ...dog, isSuggested: true, reason: `Enrichment on reservation but not scheduled for ${targetDate}` });
+      const serviceDates = enrichmentServices.map((s: any) => extractServiceScheduledDate(s) || "missing").join(", ");
+      suggested.push({ ...dog, isSuggested: true, reason: `Enrichment service needs a scheduled date for ${targetDate}. Current service dates: ${serviceDates}` });
     }
   }
 

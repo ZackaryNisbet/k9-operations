@@ -74,6 +74,8 @@ export const ENRICHMENT_RESOURCE_LINKS = [
   { label: "Enrichment Round 2 Flyers", url: "https://drive.google.com/file/d/1qSubrBMDKOK4T52__HykANvj4RmxhCi3/view?usp=share_link" },
 ];
 
+export const ENRICHMENT_PROGRAM_CONFIG_SETTING_KEY = "enrichment_program_config_v1";
+
 export const ENRICHMENT_PROGRAM_SOP_SECTIONS = [
   {
     title: "Program Rules",
@@ -145,6 +147,71 @@ export const ENRICHMENT_PROGRAM_SOP_SECTIONS = [
     ],
   },
 ];
+
+function cloneResourceLinks(links = ENRICHMENT_RESOURCE_LINKS) {
+  return links.map((link) => ({ label: link.label, url: link.url }));
+}
+
+function cloneSopSections(sections = ENRICHMENT_PROGRAM_SOP_SECTIONS) {
+  return sections.map((section) => ({
+    title: section.title,
+    items: [...(section.items || [])],
+  }));
+}
+
+function normalizeLinkUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  if (/^(www\.)?[\w.-]+\.[a-z]{2,}([/?#].*)?$/i.test(url)) return `https://${url}`;
+  return url;
+}
+
+export function normalizeEnrichmentProgramResourceLinks(links) {
+  const source = Array.isArray(links) ? links : ENRICHMENT_RESOURCE_LINKS;
+  return source
+    .map((link) => ({
+      label: String(link?.label || "").trim(),
+      url: normalizeLinkUrl(link?.url),
+    }))
+    .filter((link) => link.label && link.url);
+}
+
+export function normalizeEnrichmentProgramSopSections(sections) {
+  const source = Array.isArray(sections) ? sections : ENRICHMENT_PROGRAM_SOP_SECTIONS;
+  return source
+    .map((section) => {
+      const items = (Array.isArray(section?.items) ? section.items : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      const title = String(section?.title || "").trim() || (items.length ? "Untitled Section" : "");
+      return { title, items };
+    })
+    .filter((section) => section.title || section.items.length);
+}
+
+export function normalizeEnrichmentProgramConfig(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    resourceLinks: normalizeEnrichmentProgramResourceLinks(
+      Array.isArray(source.resourceLinks) ? source.resourceLinks : cloneResourceLinks()
+    ),
+    programSopSections: normalizeEnrichmentProgramSopSections(
+      Array.isArray(source.programSopSections) ? source.programSopSections : cloneSopSections()
+    ),
+    updatedAt: source.updatedAt || source.updated_at || null,
+    updatedBy: source.updatedBy || source.updated_by || "",
+  };
+}
+
+export function prepareEnrichmentProgramConfigPayload(config, actorName = "") {
+  const normalized = normalizeEnrichmentProgramConfig(config);
+  return {
+    ...normalized,
+    updatedAt: new Date().toISOString(),
+    updatedBy: String(actorName || "").trim() || "Enterprise Admin",
+  };
+}
 
 export const ENRICHMENT_CSR_GUIDE_SECTIONS = [
   {
@@ -647,7 +714,7 @@ function sopEvent(idSuffix, date, key) {
   });
 }
 
-function wednesdayEvent(idSuffix, date, key, customerVisible = true, priceCents = 0) {
+function wednesdayEvent(idSuffix, date, key, customerVisible = true, priceCents = DEFAULT_PRICE_CENTS) {
   const event = WEDNESDAY_EVENTS[key];
   return makeEvent({
     id: `seed-${date}-${idSuffix}`,
