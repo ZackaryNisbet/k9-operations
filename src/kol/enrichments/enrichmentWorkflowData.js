@@ -1,5 +1,6 @@
 export const ENRICHMENT_WORKFLOW_REFRESH_MS = 60_000;
 export const ENRICHMENT_WORKFLOW_STALE_MS = 10 * 60_000;
+export const ENRICHMENT_DISPLAY_TIME_ZONE = "America/New_York";
 export const WORKFLOW_PLAYGROUP_BADGE_ORDER = ["large", "small", "private_play", "evaluation"];
 
 export function buildEnrichmentOpsRowId(date) {
@@ -201,8 +202,16 @@ function formatReservationDatePart(value) {
   const hasClock = /T\d{2}:\d{2}/.test(raw);
   const parsed = hasClock ? new Date(raw) : new Date(`${match[0]}T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return null;
-  const date = parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const time = hasClock ? parsed.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  const date = parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: ENRICHMENT_DISPLAY_TIME_ZONE,
+  });
+  const time = hasClock ? parsed.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: ENRICHMENT_DISPLAY_TIME_ZONE,
+  }) : "";
   return {
     date,
     time,
@@ -294,7 +303,11 @@ export function formatHealthAge(value, nowMs = Date.now()) {
 export function formatHealthTime(value) {
   if (!value) return "pending";
   try {
-    return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    return new Date(value).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: ENRICHMENT_DISPLAY_TIME_ZONE,
+    });
   } catch {
     return "unknown";
   }
@@ -370,5 +383,10 @@ function formatWorkflowDateLabel(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
   const parsed = new Date(`${value}T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return parsed.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: ENRICHMENT_DISPLAY_TIME_ZONE,
+  });
 }
