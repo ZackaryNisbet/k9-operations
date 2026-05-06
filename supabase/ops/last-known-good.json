@@ -23,11 +23,11 @@
       "updatedAt": "2026-05-06T11:10:44.054Z"
     },
     "ops-compute-ondemand": {
-      "commit": "a45ee7d50ddd9f68f78d3481d2f8126ae060ae1d",
+      "commit": "8f0ef76066c2e96b1472875461a01f435ea98cf0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "enrichment on-demand review counts",
-      "updatedAt": "2026-05-06T11:16:13.362Z"
+      "note": "enrichment workflow UI and review reason logic",
+      "updatedAt": "2026-05-06T13:13:58.000Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
