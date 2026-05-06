@@ -5,10 +5,14 @@ import {
   buildLaborEmployeeContactCardFile,
   buildLaborEmployeeContactCardFilename,
   buildLaborDashboardMetrics,
+  buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
+  getLaborEmploymentCommitmentLabel,
+  getLaborRosterPositionGroup,
   buildUpdateLaborEmployeeRpcArgs,
   buildTrainingTemplateScopeClause,
   groupLaborEmployeeNotes,
+  normalizeLaborEmploymentCommitment,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
 } from "../kol/trainingData";
@@ -86,6 +90,7 @@ describe("trainingData helpers", () => {
         fullName: "  Skylerary Brooks  ",
         positionTitle: "  Director of Resorts ",
         startDate: "2026-02-16",
+        employmentCommitment: "full-time",
         actorUserId: "mock-user",
         actorName: "  Skyler  ",
       })
@@ -95,6 +100,7 @@ describe("trainingData helpers", () => {
       p_position_title: "Director of Resorts",
       p_start_date: "2026-02-16",
       p_end_date: null,
+      p_employment_commitment: "full_time",
       p_linked_user_id: null,
       p_actor_user_id: null,
       p_actor_name: "Skyler",
@@ -109,6 +115,7 @@ describe("trainingData helpers", () => {
         positionTitle: "  CSR ",
         startDate: "2026-02-16",
         endDate: null,
+        employmentCommitment: "pt",
         actorUserId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       })
     ).toEqual({
@@ -118,9 +125,30 @@ describe("trainingData helpers", () => {
       p_start_date: "2026-02-16",
       p_end_date: null,
       p_end_date_provided: true,
+      p_employment_commitment: "part_time",
+      p_employment_commitment_provided: true,
       p_linked_user_id: null,
       p_actor_user_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
+  });
+
+  it("normalizes labor employment commitment labels", () => {
+    expect(normalizeLaborEmploymentCommitment("Full-Time")).toBe("full_time");
+    expect(normalizeLaborEmploymentCommitment("part time")).toBe("part_time");
+    expect(normalizeLaborEmploymentCommitment("contractor")).toBeNull();
+    expect(getLaborEmploymentCommitmentLabel("full_time")).toBe("Full-Time");
+    expect(getLaborEmploymentCommitmentLabel("part_time", { short: true })).toBe("PT");
+    expect(getLaborEmploymentCommitmentLabel(null)).toBe("Unassigned");
+  });
+
+  it("groups leadership, supervisor, CSR, PCT, and other roster positions", () => {
+    expect(getLaborRosterPositionGroup("Director of Resorts")).toBe("manager");
+    expect(getLaborRosterPositionGroup("General Manager")).toBe("manager");
+    expect(getLaborRosterPositionGroup("Assistant Manager")).toBe("manager");
+    expect(getLaborRosterPositionGroup("Supervisor")).toBe("supervisor");
+    expect(getLaborRosterPositionGroup("Customer Service Representative")).toBe("csr");
+    expect(getLaborRosterPositionGroup("Pet Care Technician")).toBe("pct");
+    expect(getLaborRosterPositionGroup("Groomer")).toBe("other");
   });
 
   it("returns UUID location refs unchanged", async () => {
@@ -256,6 +284,8 @@ describe("trainingData helpers", () => {
       rosterSnapshot: [
         {
           labor_employee_id: "e1",
+          position_title: "General Manager",
+          employment_commitment: "full_time",
           start_date: "2026-04-01",
           end_date: null,
           open_training_record_count: 0,
@@ -263,6 +293,8 @@ describe("trainingData helpers", () => {
         },
         {
           labor_employee_id: "e2",
+          position_title: "Pet Care Technician",
+          employment_commitment: "part_time",
           start_date: "2026-03-01",
           end_date: null,
           open_training_record_count: 1,
@@ -270,6 +302,8 @@ describe("trainingData helpers", () => {
         },
         {
           labor_employee_id: "e3",
+          position_title: "Supervisor",
+          employment_commitment: "full_time",
           start_date: "2026-01-01",
           end_date: "2026-04-10",
           open_training_record_count: 0,
@@ -295,5 +329,40 @@ describe("trainingData helpers", () => {
     expect(metrics.trainingComplianceNumerator).toBe(1);
     expect(metrics.trainingComplianceDenominator).toBe(2);
     expect(metrics.trainingComplianceScore).toBe(50);
+    expect(metrics.managerCount).toBe(1);
+    expect(metrics.pctCount).toBe(1);
+    expect(metrics.fullTimeCount).toBe(1);
+    expect(metrics.partTimeCount).toBe(1);
+    expect(metrics.unassignedCommitmentCount).toBe(0);
+    expect(metrics.staffingMatrix.find((row) => row.key === "manager")).toMatchObject({ fullTime: 1, partTime: 0, total: 1 });
+  });
+
+  it("builds active-only staffing matrix with leadership as managers and unassigned commitments", () => {
+    const summary = buildLaborRosterStaffingSummary([
+      { id: "e1", position_title: "Director of Resorts", employment_commitment: "full_time", is_active: true },
+      { id: "e2", position_title: "Assistant Manager", employment_commitment: "full_time", is_active: true },
+      { id: "e3", position_title: "Supervisor", employment_commitment: "part_time", is_active: true },
+      { id: "e4", position_title: "Customer Service Representative", employment_commitment: "part_time", is_active: true },
+      { id: "e5", position_title: "Pet Care Technician", employment_commitment: null, is_active: true },
+      { id: "e6", position_title: "Groomer", employment_commitment: "full_time", is_active: true },
+      { id: "e7", position_title: "Pet Care Technician", employment_commitment: "part_time", is_active: false },
+    ]);
+
+    expect(summary.activeEmployeeCount).toBe(6);
+    expect(summary.managerCount).toBe(2);
+    expect(summary.supervisorCount).toBe(1);
+    expect(summary.csrCount).toBe(1);
+    expect(summary.pctCount).toBe(1);
+    expect(summary.otherPositionCount).toBe(1);
+    expect(summary.fullTimeCount).toBe(3);
+    expect(summary.partTimeCount).toBe(2);
+    expect(summary.unassignedCommitmentCount).toBe(1);
+    expect(summary.staffingMatrix).toEqual([
+      { key: "manager", label: "Managers", fullTime: 2, partTime: 0, unassigned: 0, total: 2 },
+      { key: "supervisor", label: "Supervisors", fullTime: 0, partTime: 1, unassigned: 0, total: 1 },
+      { key: "csr", label: "CSRs", fullTime: 0, partTime: 1, unassigned: 0, total: 1 },
+      { key: "pct", label: "PCTs", fullTime: 0, partTime: 0, unassigned: 1, total: 1 },
+      { key: "other", label: "Other", fullTime: 1, partTime: 0, unassigned: 0, total: 1 },
+    ]);
   });
 });
