@@ -16,7 +16,7 @@ function priceLabel(event) {
   return `$${Math.round(cents / 100)} add-on`;
 }
 
-export default function TodayEnrichmentCard({ events = [], date = new Date(), nav, compact = false, loading = false }) {
+export default function TodayEnrichmentCard({ events = [], date = new Date(), nav, compact = false, loading = false, labelOverride = "" }) {
   const day = normalizeDate(date);
   const todaysEvents = useMemo(() => getEventsForDate(events, day, "staff"), [events, day]);
   const nextEvent = useMemo(() => getNextEnrichmentEvent(events, day, "staff"), [events, day]);
@@ -53,7 +53,7 @@ export default function TodayEnrichmentCard({ events = [], date = new Date(), na
       onClick={() => nav?.("enrichments", { selectedDate: primary.event_date, selectedEventId: primary.id })}
       style={buttonReset(cardStyle(compact, theme.soft, `${theme.color}42`))}
     >
-      <CardHeader theme={theme} label={isToday ? "Today's Enrichment" : "Next Enrichment"} status={priceLabel(primary)} />
+      <CardHeader theme={theme} label={labelOverride || (isToday ? "Today's Enrichment" : "Next Enrichment")} status={priceLabel(primary)} />
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, marginTop: 12 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: compact ? 16 : 18, fontWeight: 700, color: C.text, lineHeight: compact ? "24px" : "26px" }}>

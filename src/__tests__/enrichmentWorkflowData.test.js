@@ -3,11 +3,14 @@ import {
   buildEnrichmentCompletionKey,
   buildEnrichmentOpsRowId,
   deriveWorkflowHealth,
+  formatEnrichmentReservationKind,
+  formatEnrichmentReservationWindow,
   formatWorkflowReviewReason,
   getEnrichmentWorkflowStatus,
   getWorkflowPlaygroupTags,
   getWorkflowRefreshState,
   normalizeEnrichmentWorkflow,
+  normalizeWorkflowServiceDates,
 } from "../kol/enrichments/enrichmentWorkflowData";
 
 describe("enrichment workflow helpers", () => {
@@ -64,6 +67,22 @@ describe("enrichment workflow helpers", () => {
     expect(workflow.dogs[0].playgroupAssignment.has_private_play).toBe(true);
   });
 
+  it("hydrates reservation context for enrichment dog rows", () => {
+    const workflow = normalizeEnrichmentWorkflow({
+      dogs: [{ animalId: "8071", animalName: "Buddy", status: "scheduled" }],
+    }, {}, {}, {}, {
+      8071: {
+        reservationType: "Boarding | Luxury Suite",
+        startDate: "2026-05-06T08:00:00-04:00",
+        endDate: "2026-05-08T12:00:00-04:00",
+      },
+    });
+
+    expect(workflow.dogs[0].reservationLabel).toBe("Boarding");
+    expect(workflow.dogs[0].reservationCategory).toBe("boarding");
+    expect(workflow.dogs[0].reservationWindow).toBe("May 6, 8:00 AM to May 8, 12:00 PM");
+  });
+
   it("expands both-daycare assignment into large and small badges", () => {
     expect(getWorkflowPlaygroupTags({
       animal_gingr_id: "8071",
@@ -92,12 +111,46 @@ describe("enrichment workflow helpers", () => {
     expect(state.seconds).toBe(18);
   });
 
+  it("formats concise reservation kind and same-day windows", () => {
+    expect(formatEnrichmentReservationKind("Full Day Daycare")).toBe("Daycare");
+    expect(formatEnrichmentReservationWindow("2026-05-06T07:00:00-04:00", "2026-05-06T18:00:00-04:00")).toBe("May 6, 7:00 AM to 6:00 PM");
+  });
+
   it("formats needs-review service dates without raw ISO timestamps", () => {
     const reason = formatWorkflowReviewReason(
       "Enrichment service needs a scheduled date for 2026-05-06. Current service dates: 2026-05-05T09:00:00-04:00, missing",
       "2026-05-06"
     );
 
-    expect(reason).toBe("Missing service date for Wed, May 6. Service dates: Tue, May 5, missing");
+    expect(reason).toBe("Reservation is active Wed, May 6, but Enrichment is dated Tue, May 5 instead of Wed, May 6 and one Enrichment service has no service date. Confirm whether staff should run it today.");
+  });
+
+  it("builds needs-review context from hydrated service dates", () => {
+    const workflow = normalizeEnrichmentWorkflow({
+      dogs: [{
+        animalId: "8071",
+        animalName: "Buddy",
+        status: "needs_review",
+        reason: "Enrichment service needs review for 2026-05-06.",
+        reportDate: "2026-05-06",
+      }],
+    }, {}, {}, {}, {
+      8071: {
+        reservationType: "Boarding",
+        startDate: "2026-05-03T09:00:00-04:00",
+        endDate: "2026-05-10T11:00:00-04:00",
+        serviceDates: ["2026-05-05T09:00:00-04:00"],
+      },
+    });
+
+    expect(workflow.dogs[0].reason).toBe("Dog is here May 3, 9:00 AM to May 10, 11:00 AM, but Enrichment is dated Tue, May 5 instead of Wed, May 6. Confirm whether staff should run it today.");
+  });
+
+  it("normalizes mixed enrichment service date values", () => {
+    expect(normalizeWorkflowServiceDates([
+      { scheduled_at: "2026-05-05T09:00:00-04:00" },
+      "missing",
+      "2026-05-05",
+    ])).toEqual(["2026-05-05", "missing"]);
   });
 });
