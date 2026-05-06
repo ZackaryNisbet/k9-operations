@@ -12,8 +12,8 @@ import {
 
 function priceLabel(event) {
   const cents = Number(event?.price_cents || 0);
-  if (!cents) return "Free";
-  return `$${Math.round(cents / 100)}`;
+  if (!cents) return "$15 add-on";
+  return `$${Math.round(cents / 100)} add-on`;
 }
 
 export default function TodayEnrichmentCard({ events = [], date = new Date(), nav, compact = false, loading = false }) {
@@ -86,7 +86,6 @@ export default function TodayEnrichmentCard({ events = [], date = new Date(), na
       ) : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 12 }}>
         <Chip label={`${primary.products?.length || 0} products`} />
-        <Chip label={`${primary.checklist?.length || 0} setup steps`} />
         {primary.customer_visible ? <Chip label="Customer graphic" /> : <Chip label="Staff only" />}
         {remainingCount ? <Chip label={`+${remainingCount} more today`} /> : null}
       </div>
@@ -139,10 +138,10 @@ function cardStyle(compact, background, border) {
     width: "100%",
     minHeight: compact ? 150 : 182,
     padding: compact ? "16px 18px" : "20px 22px",
-    borderRadius: compact ? 8 : 12,
+    borderRadius: 8,
     background,
     border: `1px solid ${border}`,
-    boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+    boxShadow: "0 10px 30px rgba(15,23,42,0.07)",
     textAlign: "left",
   };
 }

@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { C, todayStr } from "../../shared/theme";
+import { C, gid, todayStr } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { supabase } from "../../supabaseClient";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
+import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
+import { useEnrichmentProgramConfig } from "../../hooks/useEnrichmentProgramConfig";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import {
   DEFAULT_ENRICHMENT_GUIDELINES,
@@ -10,8 +12,6 @@ import {
   ENRICHMENT_AUDIENCES,
   ENRICHMENT_CSR_GUIDE_SECTIONS,
   ENRICHMENT_FOCUS_LABELS,
-  ENRICHMENT_PROGRAM_SOP_SECTIONS,
-  ENRICHMENT_RESOURCE_LINKS,
   ENRICHMENT_TEXT_SCRIPTS,
   ENRICHMENT_VISUAL_THEMES,
   addMonths,
@@ -21,6 +21,7 @@ import {
   formatEventDate,
   getEventsForDate,
   getMonthLabel,
+  getMonthStart,
   getThemeConfig,
   normalizeDate,
   parseLines,
@@ -29,6 +30,16 @@ import {
   serializeLines,
   serializeProducts,
 } from "../enrichments/enrichmentData";
+import {
+  ENRICHMENT_WORKFLOW_REFRESH_MS,
+  formatHealthAge,
+  getEnrichmentWorkflowStatus,
+} from "../enrichments/enrichmentWorkflowData";
+import {
+  buildGraphicStoragePath,
+  getGraphicContentType,
+  isAllowedGraphicFile,
+} from "../enrichments/enrichmentGraphicUploads";
 
 const MANAGE_ROLES = new Set(["manager", "mod", "supervisor", "location_admin", "multi_location_admin", "enterprise_admin", "owner", "developer"]);
 const BRAND = {
@@ -108,16 +119,21 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [selectedEventId, setSelectedEventId] = useState(params?.selectedEventId || null);
   const [audience, setAudience] = useState("staff");
-  const [activeTab, setActiveTab] = useState("calendar");
+  const [activeTab, setActiveTab] = useState("workflow");
   const [draftMode, setDraftMode] = useState("existing");
   const [saving, setSaving] = useState(false);
   const [calendarGraphics, setCalendarGraphics] = useState({});
   const [graphicUrls, setGraphicUrls] = useState({});
   const [graphicsLoading, setGraphicsLoading] = useState(false);
   const [uploadingGraphic, setUploadingGraphic] = useState("");
+  const [healthOpen, setHealthOpen] = useState(false);
 
   const canManage = MANAGE_ROLES.has(profile?.role);
   const { events, visibleMonthEvents, loading, error, storageMode, saveEvent, deleteEvent } = useEnrichmentEvents(locationId, monthDate);
+  const actorName = profile?.full_name || profile?.name || profile?.email || "Staff";
+  const workflowState = useEnrichmentWorkflow(locationId, selectedDate, { actorName });
+  const programConfigState = useEnrichmentProgramConfig(locationId, actorName);
+  const canEditProgramConfig = profile?.role === "enterprise_admin";
 
   const selectedDateEvents = useMemo(() => getEventsForDate(events, selectedDate, "staff"), [events, selectedDate]);
   const selectedEvent = useMemo(() => {
@@ -315,13 +331,14 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
 
     const monthStart = getMonthStart(monthDate);
     const storagePath = buildGraphicStoragePath(locationId, monthStart, graphicAudience, file);
+    const contentType = getGraphicContentType(file);
     setUploadingGraphic(graphicAudience);
     try {
       const { error: uploadError } = await supabase
         .storage
         .from(GRAPHIC_BUCKET)
         .upload(storagePath, file, {
-          contentType: file.type || "application/octet-stream",
+          contentType,
           upsert: true,
         });
       if (uploadError) throw uploadError;
@@ -333,7 +350,7 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
         storage_bucket: GRAPHIC_BUCKET,
         storage_path: storagePath,
         file_name: file.name,
-        content_type: file.type || "application/octet-stream",
+        content_type: contentType,
         file_size_bytes: file.size,
       };
       const { data, error: saveError } = await supabase
@@ -361,7 +378,7 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   }
 
   return (
-    <div style={{ minHeight: "100%", background: BRAND.slate50, padding: "24px 32px", overflow: "auto" }}>
+    <div style={{ minHeight: "100vh", background: BRAND.slate50, padding: "24px 32px", overflow: "auto", fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif", boxShadow: `0 0 0 100vmax ${BRAND.slate50}`, clipPath: "inset(0 -100vmax)" }}>
       <style>{PAGE_CSS}</style>
       <div style={{ maxWidth: 1280, margin: "0 auto" }}>
         <Header
@@ -370,6 +387,9 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
           nav={nav}
           loading={loading}
           storageMode={storageMode}
+          workflowHealth={workflowState.health}
+          workflowRefreshState={workflowState.refreshState}
+          onOpenHealth={() => setHealthOpen(true)}
           canManage={canManage}
           onNew={() => handleNewEvent(selectedDate)}
         />
@@ -383,8 +403,9 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
               <Metric label="Staff Events" value={visibleMonthEvents.length} />
               <Metric label="Customer Events" value={customerEvents.length} />
               <Metric label="Products" value={countProducts(visibleMonthEvents)} />
-              <Metric label="Setup Steps" value={countChecklist(visibleMonthEvents)} />
+              <Metric label="Scheduled Dogs" value={workflowState.workflow.scheduledCount} />
             </div>
+            <WorkflowMiniStatus workflow={workflowState.workflow} health={workflowState.health} refreshState={workflowState.refreshState} refreshing={workflowState.refreshing} />
             <div className="focus-row">
               {Object.entries(focusCounts).slice(0, 5).map(([key, value]) => (
                 <span key={key}>{ENRICHMENT_FOCUS_LABELS[key] || key}: {value}</span>
@@ -396,6 +417,7 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
 
         <div className="tab-row">
           {[
+            ["workflow", "Daily Workflow"],
             ["calendar", "Calendar"],
             ["sop", "SOP Details"],
             ["builder", "Create / Edit"],
@@ -406,6 +428,19 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
             </button>
           ))}
         </div>
+
+        {activeTab === "workflow" ? (
+          <WorkflowView
+            date={selectedDate}
+            monthDate={monthDate}
+            setMonthDate={setMonthDate}
+            setSelectedDate={setSelectedDate}
+            selectedDateEvents={selectedDateEvents}
+            workflowState={workflowState}
+            onSelectCalendar={() => setActiveTab("calendar")}
+            onOpenHealth={() => setHealthOpen(true)}
+          />
+        ) : null}
 
         {activeTab === "calendar" ? (
           <div className="main-grid">
@@ -427,7 +462,13 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
         ) : null}
 
         {activeTab === "sop" ? (
-          <SopView event={selectedEvent} monthEvents={visibleMonthEvents} />
+          <SopView
+            event={selectedEvent}
+            monthEvents={visibleMonthEvents}
+            programConfigState={programConfigState}
+            canEditProgramConfig={canEditProgramConfig}
+            onNotify={notify}
+          />
         ) : null}
 
         {activeTab === "builder" ? (
@@ -460,11 +501,17 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
           />
         ) : null}
       </div>
+      {healthOpen ? (
+        <EnrichmentHealthModal
+          workflowState={workflowState}
+          onClose={() => setHealthOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function Header({ monthDate, setMonthDate, nav, loading, storageMode, canManage, onNew }) {
+function Header({ monthDate, setMonthDate, nav, workflowHealth, workflowRefreshState, onOpenHealth, canManage, onNew }) {
   return (
     <div className="page-header">
       <div>
@@ -482,7 +529,7 @@ function Header({ monthDate, setMonthDate, nav, loading, storageMode, canManage,
           <button type="button" onClick={() => setMonthDate(addMonths(monthDate, 1))}><I.ChevronRight /></button>
         </div>
         {canManage ? <button type="button" className="primary-btn" onClick={onNew}><I.Plus /> New Event</button> : null}
-        <span className={`storage-pill ${storageMode}`}>{loading ? "Loading" : storageMode === "tables" ? "Supabase Tables" : storageMode === "settings" ? "Settings Fallback" : "Seed Preview"}</span>
+        <WorkflowHealthButton health={workflowHealth} refreshState={workflowRefreshState} onClick={onOpenHealth} compact />
       </div>
     </div>
   );
@@ -495,6 +542,352 @@ function Metric({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function healthTone(status) {
+  if (status === "healthy") return { label: "Healthy", color: "#22C55E", bg: "rgba(34,197,94,0.13)" };
+  if (status === "stale") return { label: "Watch", color: "#EAB308", bg: "rgba(234,179,8,0.14)" };
+  if (status === "critical") return { label: "Down", color: "#EF4444", bg: "rgba(239,68,68,0.14)" };
+  return { label: "Waiting", color: "#64748B", bg: "rgba(100,116,139,0.1)" };
+}
+
+function WorkflowHealthButton({ health, refreshState, onClick, compact = false }) {
+  const tone = healthTone(health?.status);
+  const progressPct = `${Math.round((refreshState?.progress || 0) * 100)}%`;
+  return (
+    <button
+      type="button"
+      className="workflow-health-btn"
+      title="Open Enrichment health"
+      onClick={onClick}
+      style={{ borderColor: tone.color, color: tone.color, background: tone.bg }}
+    >
+      <span className="workflow-health-sweep" style={{ background: `linear-gradient(90deg, transparent, ${tone.color}22, transparent)`, animation: refreshState?.isRefreshing ? "enrichmentHealthSweep 1.1s ease-in-out infinite" : "none" }} />
+      <span className="workflow-health-progressbar" style={{ width: progressPct, background: tone.color, opacity: refreshState?.isRefreshing ? 0.95 : 0.65 }} />
+      <span className="workflow-health-dot" style={{ background: tone.color, boxShadow: `0 0 18px ${tone.color}99`, animation: refreshState?.isRefreshing ? "enrichmentHealthPulse .9s ease-in-out infinite" : "none" }} />
+      <span className={compact ? "workflow-health-copy compact" : "workflow-health-copy"}>
+        <span>{tone.label}</span>
+        <small>{refreshState?.label || "Waiting"}</small>
+      </span>
+    </button>
+  );
+}
+
+function WorkflowMiniStatus({ workflow, health, refreshState, refreshing }) {
+  const tone = healthTone(health?.status);
+  const progress = workflow.total > 0 ? Math.round((workflow.completedCount / workflow.total) * 100) : 0;
+  return (
+    <div className="workflow-mini-status">
+      <div>
+        <span className="section-title">Live Enrichment Workflow</span>
+        <strong>{workflow.completedCount}/{workflow.total} complete</strong>
+        <p>{workflow.scheduledCount} scheduled from Gingr service dates{workflow.needsReviewCount ? ` · ${workflow.needsReviewCount} needs review` : ""}</p>
+      </div>
+      <div className="workflow-mini-health" style={{ color: tone.color }}>
+        <span className="workflow-health-dot" style={{ background: tone.color, animation: refreshing ? "enrichmentHealthPulse .9s ease-in-out infinite" : "none" }} />
+        <span>{tone.label}</span>
+        <small>{refreshState?.label || "Waiting"}</small>
+      </div>
+      <div className="workflow-mini-bar"><span style={{ width: `${progress}%` }} /></div>
+    </div>
+  );
+}
+
+function WorkflowView({ date, monthDate, setMonthDate, setSelectedDate, selectedDateEvents, workflowState, onSelectCalendar, onOpenHealth }) {
+  const { workflow, completions, loading, health, refreshState, toggleDog } = workflowState;
+  const status = getEnrichmentWorkflowStatus(workflow);
+  const tone = healthTone(health?.status);
+
+  function shiftDate(delta) {
+    const next = new Date(`${date}T12:00:00`);
+    next.setDate(next.getDate() + delta);
+    const nextDate = normalizeDate(next);
+    setSelectedDate(nextDate);
+    const nextMonth = getMonthStart(nextDate);
+    if (nextMonth !== getMonthStart(monthDate)) setMonthDate(nextMonth);
+  }
+
+  return (
+    <div className="workflow-grid">
+      <section className="workflow-command">
+        <div className="workflow-command-head">
+          <div>
+            <div className="section-title">Daily Run Queue</div>
+            <h2>{formatEventDate(date, { weekday: "long", year: true })}</h2>
+            <p>Scheduled dogs come from Gingr Enrichment services whose service date matches this report date.</p>
+          </div>
+          <div className="workflow-date-nav">
+            <button type="button" onClick={() => shiftDate(-1)}><I.Back /></button>
+            <button type="button" onClick={() => shiftDate(1)}><I.ChevronRight /></button>
+            <button type="button" className="secondary-btn" onClick={onSelectCalendar}><I.Calendar /> Calendar</button>
+          </div>
+        </div>
+
+        <div className="workflow-stat-grid">
+          <Metric label="Scheduled" value={workflow.scheduledCount} />
+          <Metric label="Complete" value={`${workflow.completedCount}/${workflow.total}`} />
+          <Metric label="Needs Review" value={workflow.needsReviewCount} />
+          <Metric label="Status" value={status === "needs_review" ? "Review" : status === "in_progress" ? "Active" : status === "complete" ? "Done" : workflow.rowCount ? "Ready" : "Empty"} />
+        </div>
+
+        <div className="workflow-health-card">
+          <div>
+            <div className="section-title">Data Health</div>
+            <strong style={{ color: tone.color }}>{tone.label}</strong>
+            <p>Canonical Gingr Enrichment pull for this date.</p>
+          </div>
+          <div className="workflow-health-facts">
+            <span>Read cadence: {Math.round(ENRICHMENT_WORKFLOW_REFRESH_MS / 1000)}s</span>
+            <span>Last sync: {formatHealthAge(workflowState.lastSuccessAt)}</span>
+          </div>
+          <WorkflowHealthButton health={health} refreshState={refreshState} onClick={onOpenHealth} />
+        </div>
+
+        <div className="workflow-table-card">
+          {loading && !workflow.rowCount ? (
+            <div className="workflow-loading">
+              <div className="workflow-loading-orbit" />
+              <span>Loading Enrichment workflow...</span>
+            </div>
+          ) : workflow.rowCount === 0 ? (
+            <div className="empty-state compact">
+              <I.Sparkle />
+              <h2>No scheduled enrichments</h2>
+              <p>No Gingr Enrichment services are scheduled for this date.</p>
+            </div>
+          ) : (
+            <div className="workflow-table-wrap">
+              <div className="workflow-table-toolbar">
+                <span className="section-title">Dog Queue</span>
+                <WorkflowPlaygroupLegend />
+              </div>
+              <table className="workflow-table">
+                <thead>
+                  <tr>
+                    <th>Dog</th>
+                    <th>Room</th>
+                    <th>Owner</th>
+                    <th>Status</th>
+                    <th>Completed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workflow.dogs.map((dog) => {
+                    const completion = completions[dog.id];
+                    return (
+                      <tr key={dog.id} className={completion ? "complete" : dog.status === "needs_review" ? "review" : ""}>
+                        <td>
+                          <div className="workflow-dog-cell">
+                            <WorkflowDogAvatar dog={dog} />
+                            <div>
+                              <div className="workflow-dog-name-line">
+                                <strong>{dog.animalName}</strong>
+                                <WorkflowPlaygroupBadges tags={dog.playgroupTags} />
+                              </div>
+                              <span>{dog.services.length ? dog.services.join(", ") : "Enrichment"}</span>
+                              {dog.reason ? <small>{dog.reason}</small> : null}
+                            </div>
+                          </div>
+                        </td>
+                        <td>{dog.roomLabel || "-"}</td>
+                        <td>{dog.ownerName}</td>
+                        <td><span className={`workflow-status ${dog.status}`}>{dog.status === "needs_review" ? "Needs review" : "Scheduled"}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            className={completion ? "workflow-check complete" : "workflow-check"}
+                            onClick={() => {
+                              Promise.resolve(toggleDog(dog)).catch((err) => console.error("[enrichment workflow] completion save failed:", err));
+                            }}
+                          >
+                            {completion ? <I.Check /> : null}
+                          </button>
+                          {completion ? <small>{completion.by || "Staff"} · {formatHealthAge(completion.at)}</small> : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <aside className="workflow-side">
+        <div className="workflow-today-events">
+          <div className="section-title">Event SOP For This Date</div>
+          {selectedDateEvents.length ? selectedDateEvents.map((event) => {
+            const theme = getThemeConfig(event.visual_theme);
+            return (
+              <article key={event.id} style={{ borderColor: theme.color, background: theme.soft }}>
+                <strong style={{ color: theme.color }}>{event.title}</strong>
+                <span>{event.summary || event.sop_details || "No summary added."}</span>
+              </article>
+            );
+          }) : <p>No SOP calendar event is attached to this date.</p>}
+        </div>
+        <div className="workflow-reconcile-card">
+          <div className="section-title">Gingr Reconciliation</div>
+          <strong>{workflow.scheduledCount} scheduled dogs</strong>
+          <p>Matches the Services By Date expectation when Gingr has one Enrichment service scheduled per dog for the selected date.</p>
+          {workflow.needsReviewCount ? <div className="inline-warning">Review dogs with Enrichment services missing service-level scheduled dates.</div> : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function WorkflowDogAvatar({ dog }) {
+  const [failed, setFailed] = useState(false);
+  const initial = (dog?.animalName || "?").trim().charAt(0).toUpperCase() || "?";
+  if (dog?.imageUrl && !failed) {
+    return (
+      <img
+        className="workflow-dog-avatar"
+        src={dog.imageUrl}
+        alt={dog.animalName}
+        loading="eager"
+        decoding="async"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <span className="workflow-dog-avatar fallback">{initial}</span>;
+}
+
+const WORKFLOW_PLAYGROUP_BADGE_META = {
+  large: { label: "LG", title: "Large daycare", bg: "#DCFCE7", color: "#166534" },
+  small: { label: "SM", title: "Small daycare", bg: "#DBEAFE", color: "#1D4ED8" },
+  private_play: { label: "PP", title: "Private play", bg: "#FEE2E2", color: "#DC2626" },
+  evaluation: { label: "EV", title: "Evaluation", bg: "#FEF9C3", color: "#CA8A04" },
+};
+const WORKFLOW_PLAYGROUP_LEGEND_ORDER = ["large", "small", "private_play", "evaluation"];
+
+function WorkflowPlaygroupBadges({ tags = [] }) {
+  const visibleTags = Array.isArray(tags) ? tags.filter((tag) => WORKFLOW_PLAYGROUP_BADGE_META[tag]) : [];
+  if (!visibleTags.length) return null;
+  return (
+    <span className="workflow-playgroup-badges" aria-label={visibleTags.map((tag) => WORKFLOW_PLAYGROUP_BADGE_META[tag].title).join(", ")}>
+      {visibleTags.map((tag) => <WorkflowPlaygroupBadge key={tag} tag={tag} />)}
+    </span>
+  );
+}
+
+function WorkflowPlaygroupLegend() {
+  return (
+    <div className="workflow-playgroup-legend" aria-label="Playgroup key">
+      {WORKFLOW_PLAYGROUP_LEGEND_ORDER.map((tag) => {
+        const badge = WORKFLOW_PLAYGROUP_BADGE_META[tag];
+        return (
+          <span key={tag} className="workflow-playgroup-legend-item" title={badge.title}>
+            <WorkflowPlaygroupBadge tag={tag} />
+            <span>{badge.title}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function WorkflowPlaygroupBadge({ tag }) {
+  const badge = WORKFLOW_PLAYGROUP_BADGE_META[tag];
+  if (!badge) return null;
+  return (
+    <span
+      className="workflow-playgroup-badge"
+      title={badge.title}
+      style={{ background: badge.bg, color: badge.color }}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
+function EnrichmentHealthModal({ workflowState, onClose }) {
+  const { workflow, health, refreshState, lastSuccessAt, lastStartedAt, refreshing, auditLog, refresh } = workflowState;
+  const tone = healthTone(health?.status);
+  return (
+    <div className="enrichment-health-modal" role="dialog" aria-modal="true" aria-label={`Enrichment Health: ${tone.label}`}>
+      <div className="enrichment-health-shell">
+        <div className="enrichment-health-head">
+          <div>
+            <h2>Enrichment Health: {tone.label}</h2>
+            <p>Gingr Enrichment service-date pull, workflow counts, manual refresh history, and recent run evidence.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>x</button>
+        </div>
+        <div className="enrichment-health-body">
+          <div className="enrichment-health-section">
+            <div className="enrichment-health-section-title">
+              <span style={{ background: tone.color, boxShadow: `0 0 14px ${tone.color}88` }} />
+              <strong>Gingr Enrichment Pull</strong>
+            </div>
+            <div className="enrichment-health-fact-grid">
+              <HealthFact label="Status" value={tone.label} color={tone.color} />
+              <HealthFact label="Frequency" value={`Every ${Math.round(ENRICHMENT_WORKFLOW_REFRESH_MS / 1000)}s`} />
+              <HealthFact label="Last Sync" value={formatHealthAge(lastSuccessAt)} />
+              <HealthFact label="Next Sync" value={refreshState?.label || "Waiting"} />
+              <HealthFact label="Scheduled" value={workflow.scheduledCount} />
+              <HealthFact label="Needs Review" value={workflow.needsReviewCount} />
+              <HealthFact label="Rows" value={workflow.rowCount} />
+              <HealthFact label="Started" value={lastStartedAt ? formatHealthAge(lastStartedAt) : "None"} />
+            </div>
+            <button
+              type="button"
+              className="enrichment-health-refresh"
+              disabled={refreshing}
+              onClick={() => {
+                Promise.resolve(refresh()).catch((err) => console.error("[enrichment workflow] modal refresh failed:", err));
+              }}
+            >
+              <I.RefreshCw /> {refreshing ? "Refreshing..." : "Force Refresh Gingr Pull"}
+            </button>
+          </div>
+          <div className="enrichment-health-section">
+            <div className="enrichment-health-section-title">
+              <span style={{ background: "#38BDF8", boxShadow: "0 0 14px rgba(56,189,248,.55)" }} />
+              <strong>Recent Runs</strong>
+            </div>
+            <div className="enrichment-audit-list">
+              {auditLog?.length ? auditLog.map((run) => (
+                <div key={run.id} className="enrichment-audit-row">
+                  <div>
+                    <strong>{run.status === "error" ? "Error" : "Success"}</strong>
+                    <span>{run.source || "refresh"} · {run.completedAt ? formatHealthAge(run.completedAt) : "running"}</span>
+                    {run.error ? <small>{run.error}</small> : null}
+                  </div>
+                  <div className="enrichment-audit-metrics">
+                    <HealthFact label="Scheduled" value={run.scheduledCount ?? "-"} />
+                    <HealthFact label="Review" value={run.needsReviewCount ?? "-"} />
+                    <HealthFact label="Rows" value={run.rowCount ?? "-"} />
+                    <HealthFact label="Duration" value={formatHealthDuration(run.durationMs)} />
+                  </div>
+                </div>
+              )) : <p>No refresh runs in this session yet. Force refresh to write the first audit entry.</p>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HealthFact({ label, value, color }) {
+  return (
+    <div className="enrichment-health-fact">
+      <span>{label}</span>
+      <strong style={{ color }}>{value == null || value === "" ? "-" : value}</strong>
+    </div>
+  );
+}
+
+function formatHealthDuration(ms) {
+  if (ms == null) return "-";
+  const value = Number(ms);
+  if (!Number.isFinite(value)) return "-";
+  if (value < 1000) return `${Math.round(value)}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 function CalendarBoard({ monthDate, events, selectedDate, selectedEventId, onSelectDate, onSelectEvent, onNew }) {
@@ -561,7 +954,7 @@ function EventDetail({ event, dayEvents, onSelectEvent, onEdit, onDuplicate, can
         <div className="empty-state">
           <I.Calendar />
           <h2>No enrichment selected</h2>
-          <p>Select a calendar day to inspect the event SOP, products, and setup checklist.</p>
+          <p>Select a calendar day to inspect the event SOP, products, and prep notes.</p>
         </div>
       </aside>
     );
@@ -573,7 +966,7 @@ function EventDetail({ event, dayEvents, onSelectEvent, onEdit, onDuplicate, can
       <div className="detail-hero" style={{ background: `linear-gradient(135deg, ${theme.soft}, #FFFFFF)` }}>
         <div className="detail-topline">
           <span style={{ color: theme.color }}>{event.category}</span>
-          <strong>{event.price_cents ? `$${Math.round(event.price_cents / 100)}` : "Free"}</strong>
+          <strong>{formatEnrichmentPrice(event)}</strong>
         </div>
         <h2>{event.title}</h2>
         <div className="detail-date">{formatEventDate(event.event_date, { weekday: "long", year: true })}</div>
@@ -719,6 +1112,129 @@ function SopSectionList({ sections = [] }) {
   );
 }
 
+function ResourceLinksEditor({ links = [], onChange }) {
+  function updateLink(id, field, value) {
+    onChange(links.map((link) => (link.id === id ? { ...link, [field]: value } : link)));
+  }
+
+  function removeLink(id) {
+    onChange(links.filter((link) => link.id !== id));
+  }
+
+  return (
+    <div className="resource-editor">
+      {links.map((link, index) => (
+        <div key={link.id} className="resource-editor-row">
+          <input
+            aria-label={`Resource ${index + 1} label`}
+            value={link.label}
+            onChange={(event) => updateLink(link.id, "label", event.target.value)}
+            placeholder="Resource name"
+          />
+          <input
+            aria-label={`Resource ${index + 1} URL`}
+            value={link.url}
+            onChange={(event) => updateLink(link.id, "url", event.target.value)}
+            placeholder="https://..."
+          />
+          <button type="button" aria-label={`Remove ${link.label || "resource"}`} onClick={() => removeLink(link.id)}>
+            <I.Trash />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="secondary-btn wide"
+        onClick={() => onChange([...links, { id: gid("resource"), label: "", url: "" }])}
+      >
+        <I.Plus /> Add Resource
+      </button>
+    </div>
+  );
+}
+
+function ProgramSopEditor({ sections = [], onChange }) {
+  function updateSection(id, patch) {
+    onChange(sections.map((section) => (section.id === id ? { ...section, ...patch } : section)));
+  }
+
+  function removeSection(id) {
+    onChange(sections.filter((section) => section.id !== id));
+  }
+
+  function updateItem(sectionId, itemId, text) {
+    onChange(sections.map((section) => {
+      if (section.id !== sectionId) return section;
+      return {
+        ...section,
+        items: section.items.map((item) => (item.id === itemId ? { ...item, text } : item)),
+      };
+    }));
+  }
+
+  function addItem(sectionId) {
+    onChange(sections.map((section) => (
+      section.id === sectionId
+        ? { ...section, items: [...section.items, { id: gid("item"), text: "" }] }
+        : section
+    )));
+  }
+
+  function removeItem(sectionId, itemId) {
+    onChange(sections.map((section) => (
+      section.id === sectionId
+        ? { ...section, items: section.items.filter((item) => item.id !== itemId) }
+        : section
+    )));
+  }
+
+  return (
+    <div className="program-sop-editor">
+      {sections.map((section, sectionIndex) => (
+        <section key={section.id} className="program-sop-editor-section">
+          <div className="program-sop-editor-head">
+            <input
+              aria-label={`SOP section ${sectionIndex + 1} title`}
+              value={section.title}
+              onChange={(event) => updateSection(section.id, { title: event.target.value })}
+              placeholder="Section title"
+            />
+            <button type="button" aria-label={`Remove ${section.title || "section"}`} onClick={() => removeSection(section.id)}>
+              <I.Trash />
+            </button>
+          </div>
+          <div className="program-sop-editor-items">
+            {section.items.map((item, itemIndex) => (
+              <div key={item.id} className="program-sop-editor-item">
+                <textarea
+                  aria-label={`${section.title || "SOP section"} item ${itemIndex + 1}`}
+                  value={item.text}
+                  onChange={(event) => updateItem(section.id, item.id, event.target.value)}
+                  placeholder="SOP bullet"
+                  rows={2}
+                />
+                <button type="button" aria-label="Remove SOP bullet" onClick={() => removeItem(section.id, item.id)}>
+                  <I.Trash />
+                </button>
+              </div>
+            ))}
+            <button type="button" className="secondary-btn" onClick={() => addItem(section.id)}>
+              <I.Plus /> Add SOP Line
+            </button>
+          </div>
+        </section>
+      ))}
+      <button
+        type="button"
+        className="secondary-btn wide"
+        onClick={() => onChange([...sections, { id: gid("section"), title: "", items: [{ id: gid("item"), text: "" }] }])}
+      >
+        <I.Plus /> Add SOP Section
+      </button>
+    </div>
+  );
+}
+
 function ScriptList({ scripts = [] }) {
   return (
     <div className="script-list">
@@ -744,10 +1260,100 @@ function getLinkedProducts(events = []) {
     });
 }
 
-function SopView({ event, monthEvents }) {
+function buildProgramConfigDraft(config = {}) {
+  return {
+    resourceLinks: (config.resourceLinks || []).map((link) => ({
+      id: link.id || gid("resource"),
+      label: link.label || "",
+      url: link.url || "",
+    })),
+    programSopSections: (config.programSopSections || []).map((section) => ({
+      id: section.id || gid("section"),
+      title: section.title || "",
+      items: (section.items || []).map((item) => ({ id: gid("item"), text: item || "" })),
+    })),
+  };
+}
+
+function stripProgramConfigDraft(draft = {}) {
+  return {
+    resourceLinks: (draft.resourceLinks || [])
+      .map((link) => ({ label: String(link.label || "").trim(), url: String(link.url || "").trim() }))
+      .filter((link) => link.label || link.url),
+    programSopSections: (draft.programSopSections || [])
+      .map((section) => ({
+        title: String(section.title || "").trim(),
+        items: (section.items || []).map((item) => String(item.text || "").trim()).filter(Boolean),
+      }))
+      .filter((section) => section.title || section.items.length),
+  };
+}
+
+function SopView({ event, monthEvents, programConfigState, canEditProgramConfig, onNotify }) {
   const upcoming = monthEvents.slice(0, 8);
+  const { config, loading, saving, error, saveConfig } = programConfigState;
+  const [editingProgramConfig, setEditingProgramConfig] = useState(false);
+  const [draft, setDraft] = useState(() => buildProgramConfigDraft(config));
+
+  useEffect(() => {
+    if (!editingProgramConfig) setDraft(buildProgramConfigDraft(config));
+  }, [config, editingProgramConfig]);
+
+  async function handleSaveProgramConfig() {
+    const payload = stripProgramConfigDraft(draft);
+    if (!payload.programSopSections.length) {
+      onNotify?.("Program SOP needs at least one section before saving.", "warning");
+      return;
+    }
+    try {
+      await saveConfig(payload);
+      setEditingProgramConfig(false);
+      onNotify?.("Enrichment Program SOP updated.", "success");
+    } catch (saveError) {
+      console.error("[enrichment program config] save failed:", saveError);
+      onNotify?.(saveError.message || "Unable to save Enrichment Program SOP.", "error");
+    }
+  }
+
+  function startEditingProgramConfig() {
+    setDraft(buildProgramConfigDraft(config));
+    setEditingProgramConfig(true);
+  }
+
+  function cancelEditingProgramConfig() {
+    setDraft(buildProgramConfigDraft(config));
+    setEditingProgramConfig(false);
+  }
+
   return (
     <div className="sop-grid">
+      <div className="sop-admin-card span-two">
+        <div>
+          <div className="section-title">Enterprise SOP Controls</div>
+          <p>
+            Brand-level Enrichment SOP and linked resource controls.
+          </p>
+          {error ? <small>Loaded defaults because the saved Program SOP setting returned: {error.message}</small> : null}
+        </div>
+        {canEditProgramConfig ? (
+          <div className="sop-admin-actions">
+            {editingProgramConfig ? (
+              <>
+                <button type="button" className="secondary-btn" onClick={cancelEditingProgramConfig} disabled={saving}>Cancel</button>
+                <button type="button" className="primary-btn" onClick={handleSaveProgramConfig} disabled={saving}>
+                  {saving ? "Saving..." : "Save SOP"}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="primary-btn" onClick={startEditingProgramConfig} disabled={loading}>
+                <I.Edit /> Edit Program SOP
+              </button>
+            )}
+          </div>
+        ) : (
+          <span className="enterprise-lock-pill">Enterprise admin only</span>
+        )}
+      </div>
       <div className="sop-card">
         <div className="section-title">Global Guidelines</div>
         <ChecklistList items={DEFAULT_ENRICHMENT_GUIDELINES} />
@@ -780,11 +1386,25 @@ function SopView({ event, monthEvents }) {
       <div className="sop-card">
         <div className="section-title">Linked Resources</div>
         <p>Original SOP lesson libraries, calendar source files, and flyer references stay accessible from the operating portal.</p>
-        <ResourceLinks links={ENRICHMENT_RESOURCE_LINKS} />
+        {editingProgramConfig ? (
+          <ResourceLinksEditor
+            links={draft.resourceLinks}
+            onChange={(resourceLinks) => setDraft((current) => ({ ...current, resourceLinks }))}
+          />
+        ) : (
+          <ResourceLinks links={config.resourceLinks} />
+        )}
       </div>
       <div className="sop-card span-two">
         <div className="section-title">Program SOP</div>
-        <SopSectionList sections={ENRICHMENT_PROGRAM_SOP_SECTIONS} />
+        {editingProgramConfig ? (
+          <ProgramSopEditor
+            sections={draft.programSopSections}
+            onChange={(programSopSections) => setDraft((current) => ({ ...current, programSopSections }))}
+          />
+        ) : (
+          <SopSectionList sections={config.programSopSections} />
+        )}
       </div>
       <div className="sop-card span-two">
         <div className="section-title">CSR Guide</div>
@@ -990,7 +1610,9 @@ function GraphicUploadCard({ audience, graphic, signedUrl, loading, uploading, c
             onChange={(event) => {
               const file = event.target.files?.[0] || null;
               event.target.value = "";
-              onUpload(audience.id, file);
+              Promise.resolve(onUpload(audience.id, file)).catch((uploadError) => {
+                console.error("Enrichment graphic upload action failed:", uploadError);
+              });
             }}
           />
         </label>
@@ -1003,8 +1625,10 @@ function countProducts(events) {
   return events.reduce((sum, event) => sum + (event.products?.length || 0), 0);
 }
 
-function countChecklist(events) {
-  return events.reduce((sum, event) => sum + (event.checklist?.length || 0), 0);
+function formatEnrichmentPrice(event) {
+  const cents = Number(event?.price_cents || 0);
+  if (!cents) return "$15 add-on";
+  return `$${Math.round(cents / 100)} add-on`;
 }
 
 function addMonthsPreserveDay(date, delta) {
@@ -1073,26 +1697,6 @@ function downloadTextFile({ content, type, filename }) {
   URL.revokeObjectURL(url);
 }
 
-function isAllowedGraphicFile(file) {
-  return ["image/png", "image/jpeg", "image/webp", "application/pdf"].includes(file?.type);
-}
-
-function buildGraphicStoragePath(locationId, monthStart, audience, file) {
-  const safeLocationId = String(locationId || "unknown").replace(/\//g, "_");
-  const extension = getGraphicExtension(file);
-  return `${safeLocationId}/${monthStart}/${audience}.${extension}`;
-}
-
-function getGraphicExtension(file) {
-  const fromName = String(file?.name || "").split(".").pop()?.toLowerCase();
-  if (["png", "jpg", "jpeg", "webp", "pdf"].includes(fromName)) return fromName === "jpeg" ? "jpg" : fromName;
-  if (file?.type === "image/png") return "png";
-  if (file?.type === "image/jpeg") return "jpg";
-  if (file?.type === "image/webp") return "webp";
-  if (file?.type === "application/pdf") return "pdf";
-  return "bin";
-}
-
 function formatFileSize(bytes) {
   const value = Number(bytes || 0);
   if (!value) return "Unknown size";
@@ -1106,35 +1710,43 @@ function isMissingSupabaseResource(error) {
 }
 
 const PAGE_CSS = `
-.page-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:24px}
+@keyframes enrichmentPanelIn{from{opacity:0;transform:translateY(16px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes enrichmentFloatIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes enrichmentHealthPulse{0%,100%{transform:scale(1);box-shadow:0 0 12px currentColor}50%{transform:scale(1.32);box-shadow:0 0 24px currentColor}}
+@keyframes enrichmentHealthSweep{0%{transform:translateX(-100%);opacity:.16}45%{opacity:.75}100%{transform:translateX(100%);opacity:.16}}
+@keyframes enrichmentOrbit{to{transform:rotate(360deg)}}
+.page-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:24px;font-family:'Outfit',-apple-system,BlinkMacSystemFont,sans-serif}
 .back-link{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:${C.textMut};font:600 14px/20px inherit;cursor:pointer;margin-bottom:12px}
-.eyebrow,.panel-eyebrow{font-size:10px;line-height:14px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:${C.pri}}
-.page-header h1{font-size:32px;line-height:40px;font-weight:800;margin:4px 0;color:${C.text};letter-spacing:0}
+.eyebrow,.panel-eyebrow{font-size:10px;line-height:14px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:${C.pri}}
+.page-header h1{font-size:34px;line-height:40px;font-weight:850;margin:4px 0;color:${C.text};letter-spacing:0}
 .page-header p{font-size:14px;line-height:22px;font-weight:400;color:${C.textSec};max-width:680px;margin:0}
 .header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .month-control{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid ${C.border};border-radius:6px;padding:6px}
 .month-control button{width:36px;height:36px;border-radius:6px;border:0;background:${C.surfaceHover};color:${C.text};display:flex;align-items:center;justify-content:center;cursor:pointer}
 .month-control span{font-size:14px;line-height:20px;font-weight:600;color:${C.text};min-width:132px;text-align:center}
-.primary-btn,.secondary-btn,.danger-btn{border-radius:6px;padding:10px 14px;font:600 14px/20px inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px}
-.primary-btn{border:1px solid ${C.pri};background:${C.pri};color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
-.secondary-btn{background:#fff;color:${C.pri};border:1px solid ${C.pri};box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.primary-btn,.secondary-btn,.danger-btn{border-radius:6px;padding:10px 14px;font:900 14px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
+.primary-btn:hover,.secondary-btn:hover,.danger-btn:hover{transform:translateY(-1px)}
+.primary-btn{border:1px solid ${C.pri};background:${C.pri};color:#fff;box-shadow:0 10px 24px rgba(20,83,45,.18)}
+.secondary-btn{background:#fff;color:${C.pri};border:1px solid rgba(20,83,45,.22);box-shadow:0 8px 18px rgba(15,23,42,.06)}
 .danger-btn{background:${C.dan};color:#fff;border:1px solid ${C.dan};box-shadow:0 1px 2px rgba(0,0,0,.05)}
 .wide{width:100%}
 .storage-pill{font-size:10px;line-height:14px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:6px 9px;background:#fff;color:${C.textMut};border:1px solid ${C.border}}
 .storage-pill.settings{color:${C.warn};background:${C.warnLt}}.storage-pill.seed{color:${C.textMut};background:${C.surfaceHover}}
 .enrichment-hero-grid{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:16px;margin-bottom:16px}
-.enrichment-command-panel,.calendar-shell,.detail-panel,.sop-card,.builder-form,.builder-preview,.handoff-controls,.handoff-main,.graphic-upload-card{background:#fff;border:1px solid ${C.border};border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
-.enrichment-command-panel{padding:20px}
-.panel-title{font-size:24px;line-height:32px;font-weight:700;color:${C.text};margin-top:4px}
+.enrichment-command-panel,.calendar-shell,.detail-panel,.sop-card,.sop-admin-card,.builder-form,.builder-preview,.handoff-controls,.handoff-main,.graphic-upload-card,.workflow-command,.workflow-side>div{background:#fff;border:1px solid rgba(148,163,184,.24);border-radius:8px;box-shadow:0 14px 36px rgba(15,23,42,.08);animation:enrichmentPanelIn .42s cubic-bezier(.16,1,.3,1) both}
+.enrichment-command-panel{padding:20px;position:relative;overflow:hidden}
+.enrichment-command-panel:before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,${C.pri},${C.acc},${C.info});opacity:.86}
+.panel-title{font-size:24px;line-height:32px;font-weight:800;color:${C.text};margin-top:4px}
 .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:12px;margin-top:16px}
-.metric-tile{border:1px solid ${C.border};background:${C.surfaceHover};border-radius:6px;padding:12px}
-.metric-tile div{font-size:11px;line-height:16px;font-weight:500;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
-.metric-tile strong{display:block;font-size:24px;line-height:32px;font-weight:700;color:${C.text};margin-top:4px}
+.metric-tile{border:1px solid rgba(148,163,184,.24);background:linear-gradient(180deg,#fff,${C.surfaceHover});border-radius:6px;padding:12px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.metric-tile:hover{transform:translateY(-2px);border-color:rgba(20,83,45,.22);box-shadow:0 10px 22px rgba(15,23,42,.08)}
+.metric-tile div{font-size:11px;line-height:16px;font-weight:700;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
+.metric-tile strong{display:block;font-size:24px;line-height:32px;font-weight:850;color:${C.text};margin-top:4px}
 .focus-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .focus-row span,.pill-list span{font-size:10px;line-height:14px;font-weight:600;border-radius:999px;background:${C.priLt};color:${C.pri};padding:5px 8px}
 .inline-warning{margin-top:12px;border:1px solid rgba(217,119,6,.28);background:${C.warnLt};color:#92400E;border-radius:6px;padding:10px 12px;font-size:12px;line-height:16px;font-weight:500}
 .tab-row{display:flex;gap:8px;margin:8px 0 16px;flex-wrap:wrap}
-.tab{border:1px solid ${C.border};background:#fff;color:${C.textSec};border-radius:999px;padding:9px 14px;font:600 14px/20px inherit;cursor:pointer}
+.tab{border:1px solid ${C.border};background:#fff;color:${C.textSec};border-radius:999px;padding:9px 14px;font:900 14px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer}
 .tab.active{background:${C.pri};color:#fff;border-color:${C.pri}}
 .main-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}
 .calendar-shell{padding:14px}
@@ -1161,7 +1773,7 @@ const PAGE_CSS = `
 .detail-chips,.pill-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
 .detail-chips span{font-size:10px;line-height:14px;font-weight:600;border-radius:999px;background:#fff;color:${C.textSec};padding:5px 8px;border:1px solid ${C.border}}
 .same-day-list,.detail-section{padding:14px 2px;border-bottom:1px solid ${C.border}}
-.section-title{font-size:11px;line-height:16px;font-weight:500;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px}
+.section-title{font-size:11px;line-height:16px;font-weight:900;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px}
 .same-day{border:1px solid ${C.border};background:#fff;border-radius:6px;padding:8px 10px;margin:0 6px 6px 0;font:600 12px/16px inherit;color:${C.textSec};cursor:pointer}
 .same-day.active{background:${C.pri};color:#fff}
 .product-list{display:flex;flex-direction:column;gap:8px}
@@ -1182,13 +1794,32 @@ const PAGE_CSS = `
 .empty-state h2{font-size:18px;line-height:26px;font-weight:700;color:${C.text};margin:14px 0 6px}
 .detail-actions{display:flex;flex-direction:column;gap:8px;margin-top:14px}
 .sop-grid{display:grid;grid-template-columns:1.1fr 1fr .9fr;gap:16px;align-items:start}
+.sop-admin-card{grid-column:1/-1;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(135deg,#fff,${C.priLt})}
+.sop-admin-card p{font-size:13px;line-height:20px;color:${C.textSec};margin:0;max-width:760px}
+.sop-admin-card small{display:block;margin-top:5px;font-size:11px;line-height:15px;color:${C.warn}}
+.sop-admin-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.enterprise-lock-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(20,83,45,.18);background:#fff;color:${C.textMut};padding:7px 10px;font:900 10px/14px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
 .sop-card{padding:18px}.sop-card h2{font-size:24px;line-height:32px;font-weight:700;color:${C.text};margin:0 0 8px}
 .sop-card.span-two{grid-column:span 2}
 .resource-link-list{display:flex;flex-direction:column;gap:9px;margin-top:14px}
 .resource-link-list a{border:1px solid ${C.border};background:${C.surfaceHover};border-radius:6px;padding:10px 12px}
+.resource-editor{display:grid;gap:9px;margin-top:14px}
+.resource-editor-row{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:8px;align-items:center}
+.resource-editor-row input:first-child{grid-column:1/-1}
+.resource-editor-row input,.program-sop-editor input,.program-sop-editor textarea{width:100%;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};font:700 13px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;padding:10px 11px;transition:border-color .16s ease,box-shadow .16s ease}
+.program-sop-editor textarea{resize:vertical;font-weight:600;line-height:19px;min-height:58px}
+.resource-editor-row input:focus,.program-sop-editor input:focus,.program-sop-editor textarea:focus{outline:0;border-color:${C.pri};box-shadow:0 0 0 3px rgba(20,83,45,.09)}
+.resource-editor-row>button,.program-sop-editor-head>button,.program-sop-editor-item>button{width:36px;height:36px;border-radius:8px;border:1px solid rgba(220,38,38,.18);background:#FEF2F2;color:${C.dan};display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.resource-editor-row>button svg,.program-sop-editor-head>button svg,.program-sop-editor-item>button svg{width:16px;height:16px;stroke-width:1.8}
 .sop-section-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .sop-section-list section{border-top:1px solid ${C.border};padding-top:12px}
 .sop-section-list h3{font-size:15px;line-height:22px;font-weight:700;color:${C.text};margin:0 0 8px}
+.program-sop-editor{display:grid;gap:12px}
+.program-sop-editor-section{border:1px solid ${C.border};border-radius:8px;background:${C.surfaceHover};padding:12px}
+.program-sop-editor-head{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:8px;align-items:center;margin-bottom:10px}
+.program-sop-editor-head input{font-size:15px;line-height:22px;font-weight:900}
+.program-sop-editor-items{display:grid;gap:8px}
+.program-sop-editor-item{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:8px;align-items:start}
 .script-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
 .script-block{border:1px solid ${C.border};border-radius:6px;background:${C.surfaceHover};padding:12px}
 .script-block strong{display:block;font-size:13px;line-height:18px;font-weight:700;color:${C.text};margin-bottom:4px}
@@ -1235,7 +1866,92 @@ const PAGE_CSS = `
 .handoff-event p{margin-top:4px}
 .handoff-event-meta{display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0}
 .handoff-event-meta span{font-size:10px;line-height:14px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;background:#fff;border:1px solid ${C.border};color:${C.textSec};padding:5px 8px;white-space:nowrap}
-@media(max-width:1100px){.page-header,.enrichment-hero-grid,.main-grid,.sop-grid,.builder-grid,.handoff-grid{grid-template-columns:1fr;display:grid}.sop-card.span-two{grid-column:auto}.sop-section-list,.graphic-upload-grid{grid-template-columns:1fr}.detail-panel,.handoff-controls{position:static}.metric-grid{grid-template-columns:repeat(2,1fr)}}
+.workflow-health-btn{position:relative;overflow:hidden;border:2px solid;border-radius:12px;padding:0 16px;font:900 14px/15px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;min-height:64px;min-width:154px;transition:filter .2s ease,transform .2s ease}
+.workflow-health-btn:hover{filter:brightness(1.12)}
+.workflow-health-sweep{position:absolute;inset:0;width:60%;pointer-events:none}
+.workflow-health-progressbar{position:absolute;left:0;bottom:0;height:3px;transition:width .35s ease;pointer-events:none}
+.workflow-health-dot{width:10px;height:10px;border-radius:999px;display:inline-block;flex-shrink:0;position:relative;z-index:1}
+.workflow-health-copy{display:grid;gap:2px;min-width:0;line-height:1.05;position:relative;z-index:1;text-align:left}
+.workflow-health-copy>span{white-space:nowrap}
+.workflow-health-copy small{font-size:10px;line-height:12px;color:${C.textMut};font-weight:850;font-variant-numeric:tabular-nums;white-space:nowrap}
+.workflow-mini-status{position:relative;margin-top:16px;border:1px solid rgba(20,83,45,.14);background:linear-gradient(135deg,#fff,${C.priLt});border-radius:8px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:12px;overflow:hidden}
+.workflow-mini-status strong{display:block;font-size:20px;line-height:26px;font-weight:850;color:${C.text};margin-top:3px}
+.workflow-mini-status p{font-size:12px;line-height:18px;color:${C.textSec};margin:3px 0 0}
+.workflow-mini-health{display:flex;align-items:center;gap:8px;font:900 12px/16px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;white-space:nowrap}
+.workflow-mini-health small{display:block;color:${C.textMut};font-size:10px;font-weight:700;margin-left:2px}
+.workflow-mini-bar{grid-column:1/-1;height:6px;border-radius:999px;background:rgba(20,83,45,.1);overflow:hidden}
+.workflow-mini-bar span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,${C.pri},${C.acc});transition:width .45s cubic-bezier(.16,1,.3,1)}
+.workflow-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
+.workflow-command{padding:20px}
+.workflow-command-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
+.workflow-command-head h2{font-size:28px;line-height:36px;font-weight:850;color:${C.text};margin:0 0 4px}
+.workflow-command-head p,.workflow-reconcile-card p,.workflow-today-events p,.workflow-health-card p{font-size:14px;line-height:22px;color:${C.textSec};margin:0}
+.workflow-date-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.workflow-date-nav>button:not(.secondary-btn){width:38px;height:38px;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;font-weight:900;transition:transform .18s ease,box-shadow .18s ease}
+.workflow-date-nav>button:not(.secondary-btn):hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.08)}
+.workflow-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.workflow-health-card{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:16px;align-items:center;border:1px solid rgba(148,163,184,.24);background:${C.surfaceHover};border-radius:8px;padding:14px;margin-bottom:14px}
+.workflow-health-card strong{display:block;font-size:18px;line-height:24px;font-weight:850}
+.workflow-health-facts{display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:16px;font-weight:700;color:${C.textMut};white-space:nowrap}
+.workflow-table-card{border:1px solid rgba(148,163,184,.24);border-radius:8px;overflow:hidden;background:#fff}
+.workflow-table-wrap{overflow:auto}
+.workflow-table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid ${C.borderLight};background:#fff}
+.workflow-table{width:100%;border-collapse:collapse;font-size:13px}
+.workflow-table th{background:${C.surfaceHover};border-bottom:1px solid ${C.border};text-align:left;padding:11px 14px;font-size:11px;line-height:16px;font-weight:850;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
+.workflow-table td{padding:13px 14px;border-bottom:1px solid ${C.borderLight};vertical-align:middle;color:${C.textSec}}
+.workflow-table tr{transition:background .2s ease}
+.workflow-table tr.complete{background:${C.sucLt}}
+.workflow-table tr.review{background:${C.warnLt}}
+.workflow-dog-cell{display:flex;align-items:flex-start;gap:10px;min-width:220px}
+.workflow-dog-avatar{width:40px;height:40px;border-radius:999px;object-fit:cover;flex-shrink:0}
+.workflow-dog-avatar.fallback{display:inline-flex;align-items:center;justify-content:center;background:#DCFCE7;color:#374151;font-size:16px;line-height:1;font-weight:900}
+.workflow-dog-name-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.workflow-dog-cell strong{display:block;font-size:15px;line-height:20px;font-weight:900;color:${C.text}}
+.workflow-dog-cell span,.workflow-dog-cell small,.workflow-table td:last-child small{display:block;font-size:11px;line-height:16px;color:${C.textMut};margin-top:2px}
+.workflow-playgroup-badges{display:inline-flex!important;align-items:center;gap:4px;margin-top:0!important}
+.workflow-playgroup-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:22px;height:18px;border-radius:999px;padding:0 6px;font:900 9px/18px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;text-transform:uppercase;letter-spacing:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.42)}
+.workflow-playgroup-legend{display:flex;align-items:center;justify-content:flex-end;gap:8px 10px;flex-wrap:wrap}
+.workflow-playgroup-legend-item{display:inline-flex;align-items:center;gap:5px;font:850 10px/14px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;color:${C.textMut};white-space:nowrap}
+.workflow-playgroup-legend-item .workflow-playgroup-badge{height:17px;min-width:21px;font-size:8px;line-height:17px}
+.workflow-status{display:inline-flex;border-radius:999px;padding:5px 8px;font-size:10px;line-height:14px;font-weight:850;text-transform:uppercase;letter-spacing:.04em;border:1px solid ${C.border};color:${C.pri};background:${C.priLt};white-space:nowrap}
+.workflow-status.needs_review{color:${C.warn};background:${C.warnLt};border-color:rgba(217,119,6,.22)}
+.workflow-check{width:32px;height:32px;border-radius:8px;border:2px solid ${C.border};background:#fff;color:transparent;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease}
+.workflow-check:hover{transform:scale(1.06);border-color:${C.pri};box-shadow:0 0 0 3px rgba(20,83,45,.08)}
+.workflow-check.complete{background:${C.suc};border-color:${C.suc};color:#fff}
+.workflow-loading{min-height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:${C.textMut};font-size:13px;font-weight:800}
+.workflow-loading-orbit{width:40px;height:40px;border-radius:999px;border:3px solid ${C.border};border-top-color:${C.pri};animation:enrichmentOrbit .9s linear infinite}
+.workflow-side{display:flex;flex-direction:column;gap:16px;position:sticky;top:12px}
+.workflow-side>div{padding:16px}
+.workflow-today-events{display:flex;flex-direction:column;gap:10px}
+.workflow-today-events article{border:1px solid;border-radius:8px;padding:12px;animation:enrichmentFloatIn .28s ease both}
+.workflow-today-events article strong{display:block;font-size:14px;line-height:20px;font-weight:850}
+.workflow-today-events article span{display:block;font-size:12px;line-height:18px;color:${C.textSec};margin-top:5px}
+.workflow-reconcile-card strong{display:block;font-size:22px;line-height:28px;font-weight:850;color:${C.text};margin-bottom:6px}
+.enrichment-health-modal{position:fixed;inset:0;z-index:500;background:rgba(0,10,26,.72);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:24px}
+.enrichment-health-shell{width:min(980px,100%);max-height:calc(100vh - 48px);overflow:auto;border-radius:18px;background:linear-gradient(180deg,rgba(7,27,51,.98),rgba(2,15,32,.98));border:1px solid rgba(255,255,255,.12);box-shadow:0 28px 80px rgba(0,0,0,.45);animation:enrichmentPanelIn .18s ease-out both}
+.enrichment-health-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:24px 26px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.enrichment-health-head h2{font-size:24px;line-height:30px;font-weight:900;color:#fff;margin:0}
+.enrichment-health-head p{margin:4px 0 0;font-size:13px;line-height:19px;color:rgba(255,255,255,.5)}
+.enrichment-health-head button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:rgba(255,255,255,.8);cursor:pointer;font:900 20px/1 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif}
+.enrichment-health-body{padding:26px;display:grid;gap:14px}
+.enrichment-health-section{padding:18px;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.045);display:grid;gap:14px}
+.enrichment-health-section-title{display:flex;align-items:center;gap:10px}
+.enrichment-health-section-title span{width:10px;height:10px;border-radius:99px}
+.enrichment-health-section-title strong{font-size:17px;line-height:22px;font-weight:900;color:#fff}
+.enrichment-health-fact-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.enrichment-health-fact{min-width:0;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);padding:9px 10px}
+.enrichment-health-fact span{display:block;font-size:9px;line-height:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.35)}
+.enrichment-health-fact strong{display:block;margin-top:3px;font-size:13px;line-height:18px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.enrichment-health-refresh{justify-self:start;border:1px solid rgba(132,204,22,.42);background:rgba(132,204,22,.14);color:#84CC16;border-radius:10px;padding:11px 14px;font:900 13px/18px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.enrichment-health-refresh:disabled{opacity:.65;cursor:wait}
+.enrichment-audit-list{display:grid;gap:8px;max-height:320px;overflow:auto}
+.enrichment-audit-list>p{font-size:12px;line-height:18px;color:rgba(255,255,255,.42);margin:0}
+.enrichment-audit-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.8fr);gap:12px;align-items:start;padding:10px 11px;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06)}
+.enrichment-audit-row strong{display:block;font-size:13px;line-height:18px;font-weight:900;color:#fff}
+.enrichment-audit-row span,.enrichment-audit-row small{display:block;margin-top:3px;font-size:11px;line-height:15px;color:rgba(255,255,255,.48)}
+.enrichment-audit-row small{color:#FCA5A5}
+.enrichment-audit-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+@media(max-width:1100px){.page-header,.enrichment-hero-grid,.main-grid,.sop-grid,.builder-grid,.handoff-grid,.workflow-grid{grid-template-columns:1fr;display:grid}.sop-card.span-two{grid-column:auto}.sop-admin-card{align-items:flex-start;flex-direction:column}.sop-section-list,.graphic-upload-grid{grid-template-columns:1fr}.detail-panel,.handoff-controls,.workflow-side{position:static}.metric-grid,.workflow-stat-grid{grid-template-columns:repeat(2,1fr)}.workflow-health-card{grid-template-columns:1fr}.workflow-command-head{flex-direction:column}.workflow-date-nav{justify-content:flex-start}.workflow-mini-status{grid-template-columns:1fr}.workflow-table-toolbar{align-items:flex-start;flex-direction:column}.workflow-playgroup-legend{justify-content:flex-start}}
 `;
 
 export default EnrichmentsPage;
