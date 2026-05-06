@@ -1333,15 +1333,25 @@ async function computeEnrichmentReport(
   for (const snap of (snapshots || [])) {
     if (!snap.animal_id || seen.has(snap.animal_id)) continue;
     seen.add(snap.animal_id);
-    scheduled.push({
+    const snapshotStatus = String(snap.status || "scheduled").trim().toLowerCase();
+    const dog = {
       animalId: snap.animal_id,
       animalName: snap.animal_name || "",
       ownerName: snap.owner_name || "",
       services: Array.isArray(snap.services) ? snap.services : ["enrichment"],
-      status: snap.status || "scheduled",
+      status: snapshotStatus === "suggested" ? "needs_review" : "scheduled",
       reservationType: snap.reservation_type || "",
       summary: Array.isArray(snap.services) ? snap.services.join(", ") : "enrichment",
-    });
+    };
+    if (snapshotStatus === "suggested" || snapshotStatus === "needs_review") {
+      suggested.push({
+        ...dog,
+        isSuggested: true,
+        reason: `Enrichment service needs review for ${targetDate}.`,
+      });
+    } else {
+      scheduled.push(dog);
+    }
   }
 
   // 3) If we still have very few results, fall back to the synced reservations table
