@@ -14,6 +14,7 @@ import {
   LABOR_EMPLOYEE_ATTACHMENT_ACCEPT,
   LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
   LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES,
+  LABOR_EMPLOYMENT_COMMITMENT_OPTIONS,
   LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
   LABOR_TRAINING_REQUIREMENT_SLUGS,
   buildEmployeeHistoryTimeline,
@@ -26,12 +27,14 @@ import {
   buildLaborEmployeeAttachmentPath,
   buildLaborEmployeeRequirementEvidencePath,
   buildLaborDashboardMetrics,
+  buildLaborRosterStaffingSummary,
   buildUpdateLaborEmployeeRpcArgs,
   buildUpdateTrainingRecordConfigArgs,
   buildTrainingTemplateScopeClause,
   formatLaborAttachmentFileSize,
   formatTrainingTimeRange,
   formatTrainingTimestamp,
+  getLaborEmploymentCommitmentLabel,
   getLaborAttachmentPreviewKind,
   groupLaborEmployeeDocumentsByNote,
   groupLaborEmployeeNotes,
@@ -42,6 +45,7 @@ import {
   isLaborEmployeeDocumentDeleted,
   isLaborEmployeeActive,
   normalizeOptionalUuid,
+  readLaborEmploymentCommitment,
   readLaborEmployeeContactValue,
   resolveTrainingLocationId,
   summarizeEmployeeTrainingRequirementCompliance,
@@ -49,6 +53,7 @@ import {
   validateLaborTrainingRequirementEvidenceFile,
 } from "../trainingData";
 import { getAttendanceIncidentLabel } from "../attendanceData";
+import { buildLaborRosterPdfBytes } from "../laborRosterPdf";
 import {
   buildDocuSealPerformanceReviewFields,
   buildPerformanceReviewDraftFromInstance,
@@ -158,6 +163,15 @@ const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
 const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
+const LABOR_COMMITMENT_SELECT_OPTIONS = [
+  { value: "", label: "Unassigned" },
+  ...LABOR_EMPLOYMENT_COMMITMENT_OPTIONS,
+];
+const LABOR_ROSTER_PRINT_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+});
 const EMPTY_REVIEW_PDF_DRAFT = {
   rating: "",
   managerNotes: "",
@@ -207,6 +221,7 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "email", label: "Email", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
   { section: "Employee Info", key: "phone", label: "Phone", type: "text", ops: ["contains", "equals", "empty", "notEmpty"] },
   { section: "Employment", key: "position", label: "Position", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+  { section: "Employment", key: "commitment", label: "Commitment", type: "select", ops: ["is", "isNot"], options: ["Full-Time", "Part-Time", "Unassigned"] },
   { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
   { section: "Employment", key: "start_date", label: "Start Date", type: "date", ops: ["after", "before", "inLastDays"] },
   { section: "Compliance", key: "training", label: "Training", type: "select", ops: ["is", "isNot"], options: ["Compliant", "In Progress", "Non-Compliant"] },
@@ -237,6 +252,69 @@ function getDefaultPositionWeight(value = "") {
   if (/(customer service representative|\bcsr\b)/.test(title)) return 40;
   if (/(pet care technician|\bpct\b|technician)/.test(title)) return 30;
   return 0;
+}
+
+function formatRosterLocationName(value = "") {
+  const cleanName = String(value || "").trim().replace(/\s+/g, " ");
+  if (!cleanName) return "K9 Resorts";
+  if (/^k9 resorts\b/i.test(cleanName)) return cleanName;
+  if (/^k9 operations\b/i.test(cleanName)) return cleanName;
+  return `K9 Resorts of ${cleanName}`;
+}
+
+function formatRosterLocationTitle(value = "") {
+  return `${formatRosterLocationName(value)} - Team Roster`;
+}
+
+function formatRosterPrintDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return LABOR_ROSTER_PRINT_DATE_FORMATTER.format(new Date());
+  return LABOR_ROSTER_PRINT_DATE_FORMATTER.format(date);
+}
+
+function formatRosterPdfDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const month = String(safeDate.getMonth() + 1).padStart(2, "0");
+  const day = String(safeDate.getDate()).padStart(2, "0");
+  const year = String(safeDate.getFullYear()).slice(-2);
+  return `${month}/${day}/${year}`;
+}
+
+function formatRosterPdfFilename(locationName = "", value = new Date()) {
+  return `${formatRosterLocationName(locationName)} Roster - ${formatRosterPdfDate(value)}.pdf`;
+}
+
+function getCommitmentBadgeTone(value) {
+  const normalized = readLaborEmploymentCommitment({ employment_commitment: value });
+  if (normalized === "full_time") return { bg: "#ECFDF5", text: "#047857", border: "#A7F3D0" };
+  if (normalized === "part_time") return { bg: "#EFF6FF", text: "#1D4ED8", border: "#BFDBFE" };
+  return { bg: "#FFF7ED", text: "#C2410C", border: "#FED7AA" };
+}
+
+function LaborCommitmentBadge({ value, compact = false }) {
+  const tone = getCommitmentBadgeTone(value);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: compact ? 34 : 74,
+        padding: compact ? "4px 8px" : "5px 10px",
+        borderRadius: 999,
+        border: `1px solid ${tone.border}`,
+        background: tone.bg,
+        color: tone.text,
+        fontSize: compact ? 10.5 : 11,
+        fontWeight: 900,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {getLaborEmploymentCommitmentLabel(value, { short: compact })}
+    </span>
+  );
 }
 
 function formatLaborDate(value) {
@@ -531,6 +609,18 @@ function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-
   window.URL.revokeObjectURL(url);
 }
 
+function downloadBinaryFile(filename, bytes, mimeType = "application/octet-stream") {
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -708,6 +798,12 @@ export function applyLaborRosterFilters(rows, filters) {
     if (key === "email") return matchText(row.contact_email, op, val);
     if (key === "phone") return matchText(row.contact_phone, op, val, { digitsOnly: true });
     if (key === "position") return matchText(row.position_title, op, val);
+    if (key === "commitment") {
+      const label = getLaborEmploymentCommitmentLabel(row.employment_commitment);
+      if (op === "is") return label === val;
+      if (op === "isNot") return label !== val;
+      return true;
+    }
     if (key === "employment_status") {
       const explicitStatus = String(row.employment_status || "").toLowerCase();
       const status = explicitStatus || (row.is_active === false ? "inactive" : "active");
@@ -942,6 +1038,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborEmployeePhone, setLaborEmployeePhone] = useState("");
   const [laborEmployeeEmail, setLaborEmployeeEmail] = useState("");
   const [laborEmployeeRole, setLaborEmployeeRole] = useState("");
+  const [laborEmployeeCommitment, setLaborEmployeeCommitment] = useState("");
   const [laborEmployeeReviewTemplateRole, setLaborEmployeeReviewTemplateRole] = useState("");
   const [laborEmployeeStartDate, setLaborEmployeeStartDate] = useState("");
   const [laborEmployeeEndDate, setLaborEmployeeEndDate] = useState("");
@@ -953,6 +1050,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [newRosterEmployeePhone, setNewRosterEmployeePhone] = useState("");
   const [newRosterEmployeeEmail, setNewRosterEmployeeEmail] = useState("");
   const [newRosterEmployeeRole, setNewRosterEmployeeRole] = useState("");
+  const [newRosterEmployeeCommitment, setNewRosterEmployeeCommitment] = useState("");
   const [newRosterEmployeeStartDate, setNewRosterEmployeeStartDate] = useState(todayStr());
   const [newRosterEmployeeEndDate, setNewRosterEmployeeEndDate] = useState("");
   const [savingInlineLaborEmployee, setSavingInlineLaborEmployee] = useState(false);
@@ -1022,6 +1120,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [configuringRosterKey, setConfiguringRosterKey] = useState(null);
   const [showSaveRosterView, setShowSaveRosterView] = useState(false);
   const [rosterViewName, setRosterViewName] = useState("");
+  const [rosterPrintMode, setRosterPrintMode] = useState(false);
+  const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
   const firstRosterNameInputRef = useRef(null);
   const prevRosterFilterOpen = useRef(false);
   const pendingEmployeeRecordTabRef = useRef("");
@@ -1300,10 +1400,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
       let employeeRowsForBundle = toObjectRows(employeeSource);
       if (employeeRowsForBundle.length === 0) {
-        const { data: fallbackEmployees, error: fallbackEmployeeError } = await supabase
-          .from("labor_employees")
-          .select("id, full_name, position_title, start_date, end_date, employment_status, metadata")
-          .eq("location_id", locationIdForBundle)
+	        const { data: fallbackEmployees, error: fallbackEmployeeError } = await supabase
+	          .from("labor_employees")
+	          .select("*")
+	          .eq("location_id", locationIdForBundle)
           .order("full_name", { ascending: true });
         if (fallbackEmployeeError) throw fallbackEmployeeError;
         employeeRowsForBundle = toObjectRows(fallbackEmployees);
@@ -1485,8 +1585,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [laborAttendanceIncidents, laborEmployeeNotes, rosterSnapshot]);
   const dashboardMetrics = useMemo(() => {
     if (serverDashboardMetrics) {
+      const serverStaffingMatrix = Array.isArray(serverDashboardMetrics.staffing_matrix)
+        ? serverDashboardMetrics.staffing_matrix.map((row) => ({
+          key: row.position_group || row.key || "other",
+          label: row.label || row.position_group_label || row.position_label || "Other",
+          fullTime: Number(row.full_time_count ?? row.fullTime ?? 0),
+          partTime: Number(row.part_time_count ?? row.partTime ?? 0),
+          unassigned: Number(row.unassigned_count ?? row.unassignedCommitmentCount ?? row.unassigned ?? 0),
+          total: Number(row.total_count ?? row.total ?? 0),
+        }))
+        : fallbackDashboardMetrics.staffingMatrix;
       return {
         activeEmployeeCount: Number(serverDashboardMetrics.active_employee_count ?? fallbackDashboardMetrics.activeEmployeeCount),
+        managerCount: Number(serverDashboardMetrics.manager_count ?? fallbackDashboardMetrics.managerCount),
+        supervisorCount: Number(serverDashboardMetrics.supervisor_count ?? fallbackDashboardMetrics.supervisorCount),
+        csrCount: Number(serverDashboardMetrics.csr_count ?? fallbackDashboardMetrics.csrCount),
+        pctCount: Number(serverDashboardMetrics.pct_count ?? fallbackDashboardMetrics.pctCount),
+        otherPositionCount: Number(serverDashboardMetrics.other_position_count ?? fallbackDashboardMetrics.otherPositionCount),
+        fullTimeCount: Number(serverDashboardMetrics.full_time_count ?? fallbackDashboardMetrics.fullTimeCount),
+        partTimeCount: Number(serverDashboardMetrics.part_time_count ?? fallbackDashboardMetrics.partTimeCount),
+        unassignedCommitmentCount: Number(serverDashboardMetrics.unassigned_commitment_count ?? fallbackDashboardMetrics.unassignedCommitmentCount),
+        staffingMatrix: serverStaffingMatrix,
         employeeNoteCount30d: Number(
           serverDashboardMetrics.employee_note_count_30d
             ?? serverDashboardMetrics.employee_note_count_7d
@@ -1560,9 +1679,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ...(selectedLaborEmployee || {}),
       id: employeeId,
       labor_employee_id: employeeId,
-      full_name: selectedLaborEmployee?.full_name || selectedLaborEmployeeSnapshot?.full_name || selectedLaborEmployeeSeed?.full_name || selectedRecord?.employee_full_name || "",
-      position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || selectedLaborEmployeeSeed?.position_title || "",
-      start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || selectedLaborEmployeeSeed?.start_date || null,
+	      full_name: selectedLaborEmployee?.full_name || selectedLaborEmployeeSnapshot?.full_name || selectedLaborEmployeeSeed?.full_name || selectedRecord?.employee_full_name || "",
+	      position_title: selectedLaborEmployee?.position_title || selectedLaborEmployeeSnapshot?.position_title || selectedLaborEmployeeSeed?.position_title || "",
+	      employment_commitment: readLaborEmploymentCommitment(selectedLaborEmployee) || readLaborEmploymentCommitment(selectedLaborEmployeeSnapshot) || readLaborEmploymentCommitment(selectedLaborEmployeeSeed) || null,
+	      start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || selectedLaborEmployeeSeed?.start_date || null,
       end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || selectedLaborEmployeeSeed?.end_date || null,
       contact_email: selectedLaborEmployeeSnapshot?.contact_email || selectedLaborEmployeeSeed?.contact_email || "",
       contact_phone: selectedLaborEmployeeSnapshot?.contact_phone || selectedLaborEmployeeSeed?.contact_phone || "",
@@ -2627,6 +2747,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeePhone("");
     setLaborEmployeeEmail("");
     setLaborEmployeeRole("");
+    setLaborEmployeeCommitment("");
     setLaborEmployeeReviewTemplateRole("");
     setLaborEmployeeStartDate("");
     setLaborEmployeeEndDate("");
@@ -2638,6 +2759,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setNewRosterEmployeePhone("");
     setNewRosterEmployeeEmail("");
     setNewRosterEmployeeRole("");
+    setNewRosterEmployeeCommitment("");
     setNewRosterEmployeeStartDate(todayStr());
     setNewRosterEmployeeEndDate("");
   }, []);
@@ -2682,6 +2804,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeePhone(readLaborEmployeeContact(employee, "contact_phone"));
     setLaborEmployeeEmail(readLaborEmployeeContact(employee, "contact_email"));
     setLaborEmployeeRole(employee.position_title || "");
+    setLaborEmployeeCommitment(readLaborEmploymentCommitment(employee) || "");
     setLaborEmployeeReviewTemplateRole(getPerformanceReviewTemplateOverrideKey(employee));
     setLaborEmployeeStartDate(employee.start_date || "");
     setLaborEmployeeEndDate(employee.end_date || "");
@@ -2751,6 +2874,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         positionTitle: laborEmployeeRole,
         startDate: laborEmployeeStartDate,
         endDate: laborEmployeeEndDate,
+        employmentCommitment: laborEmployeeCommitment,
         actorUserId,
       }));
       if (error) {
@@ -2776,6 +2900,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         positionTitle: laborEmployeeRole,
         startDate: laborEmployeeStartDate,
         endDate: laborEmployeeEndDate,
+        employmentCommitment: laborEmployeeCommitment,
         actorUserId,
         actorName,
       }));
@@ -2804,7 +2929,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setSavingLaborEmployee(false);
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
-  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeCommitment, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
 
   const handleCreateLaborEmployeeInline = useCallback(async () => {
     if (!canEditRoster) {
@@ -2825,6 +2950,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       positionTitle: newRosterEmployeeRole,
       startDate: newRosterEmployeeStartDate,
       endDate: newRosterEmployeeEndDate,
+      employmentCommitment: newRosterEmployeeCommitment,
       actorUserId,
       actorName,
     }));
@@ -2863,6 +2989,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     newRosterEmployeeEndDate,
     newRosterEmployeeEmail,
     newRosterEmployeeFirstName,
+    newRosterEmployeeCommitment,
     newRosterEmployeeLastName,
     newRosterEmployeePhone,
     newRosterEmployeeRole,
@@ -4115,6 +4242,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       labor_employee_id: employee.id,
       full_name: employee.full_name,
       position_title: employee.position_title,
+      employment_commitment: employee.employment_commitment || null,
+      position_group: employee.position_group || null,
       employment_status: employee.end_date ? "inactive" : "active",
       is_active: !employee.end_date,
       start_date: employee.start_date,
@@ -4149,6 +4278,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         labor_employee_id: employeeId,
         full_name: fullName,
         position_title: row.position_title || contactEmployee?.position_title || "",
+        employment_commitment: readLaborEmploymentCommitment(row) || readLaborEmploymentCommitment(contactEmployee) || null,
       };
       const requirementRows = buildEmployeeTrainingRequirementRows({
         employee: mergedEmployee,
@@ -4171,6 +4301,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         labor_employee_id: employeeId,
         full_name: fullName,
         position_title: row.position_title || contactEmployee?.position_title || "",
+        employment_commitment: readLaborEmploymentCommitment(row) || readLaborEmploymentCommitment(contactEmployee) || null,
+        position_group: row.position_group || contactEmployee?.position_group || null,
         metadata: contactEmployee?.metadata || row.metadata || {},
         start_date: row.start_date || contactEmployee?.start_date || null,
         end_date: endDate,
@@ -4205,6 +4337,95 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       trainingComplianceScore: denominator > 0 ? Math.round((numerator / denominator) * 100) : 0,
     };
   }, [dashboardMetrics, preparedRosterRows]);
+  const rosterStaffingMatrix = useMemo(() => {
+    if (Array.isArray(displayedDashboardMetrics.staffingMatrix) && displayedDashboardMetrics.staffingMatrix.length > 0) {
+      return displayedDashboardMetrics.staffingMatrix;
+    }
+    return buildLaborRosterStaffingSummary(preparedRosterRows).staffingMatrix;
+  }, [displayedDashboardMetrics.staffingMatrix, preparedRosterRows]);
+  const rosterPrintRows = useMemo(() => {
+    return preparedRosterRows
+      .filter((row) => isLaborEmployeeActive(row))
+      .sort((a, b) => {
+        const lastNameCompare = String(a.last_name || a.full_name || "").localeCompare(String(b.last_name || b.full_name || ""), undefined, { sensitivity: "base", numeric: true });
+        if (lastNameCompare !== 0) return lastNameCompare;
+        return String(a.first_name || "").localeCompare(String(b.first_name || ""), undefined, { sensitivity: "base", numeric: true });
+      });
+  }, [preparedRosterRows]);
+  const rosterPrintTitle = useMemo(() => formatRosterLocationTitle(laborContactLocationName), [laborContactLocationName]);
+  const rosterPrintDateLabel = useMemo(() => formatRosterPrintDate(), [rosterPrintMode]);
+  const rosterPdfFilename = useMemo(() => formatRosterPdfFilename(laborContactLocationName), [laborContactLocationName, rosterPrintMode]);
+  const showRosterPrintUnassigned = Number(displayedDashboardMetrics.unassignedCommitmentCount || 0) > 0;
+  const handlePrintRoster = useCallback(async () => {
+    if (generatingRosterPdf) return;
+    setGeneratingRosterPdf(true);
+    try {
+      const generatedAt = new Date();
+      const pdfPrintDateLabel = formatRosterPrintDate(generatedAt);
+      const pdfFilename = formatRosterPdfFilename(laborContactLocationName, generatedAt);
+      const pdfBytes = await buildLaborRosterPdfBytes({
+        title: rosterPrintTitle,
+        filename: pdfFilename,
+        printDate: pdfPrintDateLabel,
+        totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
+        showUnassigned: showRosterPrintUnassigned,
+        matrix: rosterStaffingMatrix,
+        stats: [
+          { label: "Managers", value: displayedDashboardMetrics.managerCount },
+          { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
+          { label: "CSRs", value: displayedDashboardMetrics.csrCount },
+          { label: "PCTs", value: displayedDashboardMetrics.pctCount },
+          { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
+          { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
+        ],
+        rows: rosterPrintRows.map((row) => ({
+          name: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee",
+          position: row.position_title || "Not listed",
+          commitment: getLaborEmploymentCommitmentLabel(row.employment_commitment),
+          phone: row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed",
+          email: row.contact_email || "Not listed",
+        })),
+      });
+      downloadBinaryFile(pdfFilename, pdfBytes, "application/pdf");
+    } catch (error) {
+      addGlobalToast(error?.message || "Failed to generate roster PDF", "error");
+    } finally {
+      setGeneratingRosterPdf(false);
+    }
+  }, [
+    addGlobalToast,
+    displayedDashboardMetrics.activeEmployeeCount,
+    displayedDashboardMetrics.csrCount,
+    displayedDashboardMetrics.fullTimeCount,
+    displayedDashboardMetrics.managerCount,
+    displayedDashboardMetrics.partTimeCount,
+    displayedDashboardMetrics.pctCount,
+    displayedDashboardMetrics.supervisorCount,
+    generatingRosterPdf,
+    laborContactLocationName,
+    rosterPrintRows,
+    rosterPrintTitle,
+    rosterStaffingMatrix,
+    showRosterPrintUnassigned,
+  ]);
+  useEffect(() => {
+    if (!rosterPrintMode) return undefined;
+    const previousDocumentTitle = document.title;
+    document.title = rosterPdfFilename;
+    const closePrintMode = () => {
+      document.title = previousDocumentTitle;
+      setRosterPrintMode(false);
+    };
+    const printTimer = window.setTimeout(() => {
+      window.print();
+    }, 120);
+    window.addEventListener("afterprint", closePrintMode);
+    return () => {
+      window.clearTimeout(printTimer);
+      window.removeEventListener("afterprint", closePrintMode);
+      document.title = previousDocumentTitle;
+    };
+  }, [rosterPdfFilename, rosterPrintMode]);
   const filteredRosterRows = useMemo(() => {
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
@@ -4267,10 +4488,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const direction = rosterSort.direction === "desc" ? -1 : 1;
     const getSortValue = (row) => {
       switch (rosterSort.key) {
-        case "hierarchy":
-          return positionHierarchyIndex[normalizePositionTitle(row.position_title)] ?? Number.MAX_SAFE_INTEGER;
-        case "first_name":
-          return String(row.first_name || "");
+	        case "hierarchy":
+	          return positionHierarchyIndex[normalizePositionTitle(row.position_title)] ?? Number.MAX_SAFE_INTEGER;
+	        case "name":
+	          return `${String(row.last_name || row.full_name || "")} ${String(row.first_name || "")}`;
+	        case "first_name":
+	          return String(row.first_name || "");
         case "last_name":
           return String(row.last_name || row.full_name || "");
         case "start_date":
@@ -4279,8 +4502,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return String(row.contact_email || "");
         case "phone":
           return String(row.contact_phone || "");
-        case "position":
-          return String(row.position_title || "");
+	        case "position":
+	          return String(row.position_title || "");
+	        case "commitment":
+	          return getLaborEmploymentCommitmentLabel(row.employment_commitment);
         case "training":
           return String(row.training_compliance?.label || "");
         case "performance_reviews":
@@ -4474,10 +4699,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setContactCardDownloadKey("");
     addGlobalToast(`${activeContactCardEmployees.length} active contact card${activeContactCardEmployees.length === 1 ? "" : "s"} downloaded`, "success");
   }, [activeContactCardEmployees, addGlobalToast, laborContactLocationName, recordLaborContactCardDownload]);
-  const hasRosterEmployeesInGraceWindow = useMemo(() => {
-    return visibleRosterRows.some((row) => row.training_compliance?.inProgress);
-  }, [visibleRosterRows]);
-  const globalNoteEmployeeOptions = useMemo(() => {
+	  const globalNoteEmployeeOptions = useMemo(() => {
     const source = toObjectRows(rosterSnapshot).length > 0 ? rosterSnapshot : laborEmployees;
     return toObjectRows(source)
       .map((employee) => {
@@ -4807,8 +5029,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             onChange={setLaborEmployeeEmail}
           />
         </div>
-        <Inp label="Position Title" value={laborEmployeeRole} onChange={setLaborEmployeeRole} required />
-        <label style={{ display: "block" }}>
+	        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.8fr", gap: 12 }}>
+	          <Inp label="Position Title" value={laborEmployeeRole} onChange={setLaborEmployeeRole} required />
+	          <label style={{ display: "block" }}>
+	            <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Commitment</span>
+	            <CustomSelect
+	              value={laborEmployeeCommitment}
+	              onChange={setLaborEmployeeCommitment}
+	              options={LABOR_COMMITMENT_SELECT_OPTIONS}
+	              placeholder="Unassigned"
+	            />
+	          </label>
+	        </div>
+	        <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Performance Review PDF Template</span>
           <CustomSelect
             value={laborEmployeeReviewTemplateRole}
@@ -5555,10 +5788,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <div style={{ fontSize: 28, lineHeight: 1.1, fontWeight: 900, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
               <div style={{ fontSize: 15, color: C.textSec, fontWeight: 700, marginBottom: 10 }}>{selectedLaborEmployeeView.position_title || "Employee"}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-                <Badge color={selectedLaborEmployeeIsActive ? "success" : "warning"}>
-                  {selectedLaborEmployeeIsActive ? "Active Employee" : "Inactive Employee"}
-                </Badge>
-                {selectedLaborEmployeeSnapshot?.active_training_status && (
+	                <Badge color={selectedLaborEmployeeIsActive ? "success" : "warning"}>
+	                  {selectedLaborEmployeeIsActive ? "Active Employee" : "Inactive Employee"}
+	                </Badge>
+	                <LaborCommitmentBadge value={selectedLaborEmployeeView.employment_commitment} />
+	                {selectedLaborEmployeeSnapshot?.active_training_status && (
                   <Badge color="info">Training {String(selectedLaborEmployeeSnapshot.active_training_status).replace(/_/g, " ")}</Badge>
                 )}
               </div>
@@ -6251,9 +6485,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // LIST VIEWS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const MetricCard = ({ label, value, helper, color = C.pri }) => (
-    <Card style={{ padding: 16 }}>
-      <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+	  const MetricCard = ({ label, value, helper, color = C.pri }) => (
+	    <Card style={{ padding: 16 }}>
+	      <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>
         {label}
       </div>
       <div style={{ fontSize: 28, fontWeight: 800, color }}>{value}</div>
@@ -6286,7 +6520,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </tr>
   );
 
-	  const tableHeaderStyle = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
+		  const tableHeaderStyle = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
 	  const rosterCellStyle = { padding: "12px 10px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "middle" };
 	  const rosterSecondaryCellStyle = { ...rosterCellStyle, color: C.textSec, fontWeight: 650 };
   const rosterUsedKeys = Object.keys(rosterDraftFilters);
@@ -6385,11 +6619,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const configuringRosterValue = configuringRosterKey ? rosterDraftFilters[configuringRosterKey] : null;
   const headerAction = (() => {
     if (tab === "home") {
-      if (!canEditRoster) return null;
-      return showInlineLaborEmployeeComposer ? (
-        <Btn variant="secondary" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
-      ) : (
-        <Btn variant="primary" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Btn variant="secondary" icon={<I.Download />} onClick={handlePrintRoster} disabled={generatingRosterPdf}>
+            {generatingRosterPdf ? "Generating PDF..." : "Download Roster PDF"}
+          </Btn>
+          {canEditRoster && (showInlineLaborEmployeeComposer ? (
+            <Btn variant="secondary" onClick={() => closeInlineLaborEmployeeComposer()}>Cancel Add</Btn>
+          ) : (
+            <Btn variant="primary" onClick={openInlineLaborEmployeeComposer}>Add Employee</Btn>
+          ))}
+        </div>
       );
     }
     if (tab === "training") {
@@ -6417,7 +6657,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const activeLaborTabIndex = Math.max(0, visibleTabs.findIndex((item) => item.id === tab));
 
   return (
-    <div className="labor-page-shell">
+	    <div className={`labor-page-shell${rosterPrintMode ? " is-printing-roster" : ""}`}>
       <PerformanceReviewStyles />
 	      <style>{`
         html { scrollbar-gutter: stable; }
@@ -6459,13 +6699,261 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           0% { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.99); }
           100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
         }
-        .labor-page-shell {
-          max-width: 1340px;
-          margin: 0 auto;
-          padding: 20px 10px 34px;
-          min-height: calc(100vh - 40px);
-          box-sizing: border-box;
-        }
+	        .labor-page-shell {
+	          max-width: 1340px;
+	          margin: 0 auto;
+	          padding: 20px 10px 34px;
+	          min-height: calc(100vh - 40px);
+	          box-sizing: border-box;
+	        }
+	        .labor-roster-print-document {
+	          display: none;
+	        }
+	        .labor-roster-print-document,
+	        .labor-roster-print-document * {
+	          print-color-adjust: exact;
+	          -webkit-print-color-adjust: exact;
+	        }
+	        .labor-roster-print-masthead {
+	          overflow: hidden;
+	          margin-bottom: 13px;
+	          border: 1px solid #d6e3d1;
+	          border-radius: 18px;
+	          background:
+	            linear-gradient(135deg, rgba(255,255,255,0.98), rgba(246,250,244,0.95)),
+	            #ffffff;
+	          box-shadow: 0 16px 42px rgba(13, 63, 42, 0.08);
+	          page-break-inside: avoid;
+	        }
+	        .labor-roster-print-band {
+	          display: flex;
+	          justify-content: space-between;
+	          align-items: center;
+	          gap: 18px;
+	          min-height: 24px;
+	          padding: 0 18px;
+	          background: linear-gradient(90deg, #0b3d2e 0%, #14532d 52%, #6b5a1d 100%);
+	          color: rgba(255,255,255,0.88);
+	          font-size: 7.5px;
+	          font-weight: 900;
+	          letter-spacing: 0.16em;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-header {
+	          display: grid;
+	          grid-template-columns: auto minmax(0, 1fr) auto;
+	          align-items: center;
+	          gap: 14px;
+	          padding: 17px 18px 15px;
+	        }
+	        .labor-roster-print-mark {
+	          width: 45px;
+	          height: 45px;
+	          border-radius: 14px;
+	          display: grid;
+	          place-items: center;
+	          background: #0d3f2a;
+	          color: #ffffff;
+	          font-size: 17px;
+	          font-weight: 950;
+	          letter-spacing: 0;
+	          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
+	        }
+	        .labor-roster-print-eyebrow {
+	          margin: 0 0 4px;
+	          color: #52685b;
+	          font-size: 8px;
+	          font-weight: 950;
+	          letter-spacing: 0.14em;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-header h1 {
+	          margin: 0;
+	          color: #142219;
+	          font-size: 25px;
+	          line-height: 1.08;
+	          font-weight: 950;
+	          letter-spacing: 0;
+	        }
+	        .labor-roster-print-header p {
+	          margin: 6px 0 0;
+	          color: #5f7167;
+	          font-size: 10px;
+	          line-height: 1.35;
+	          font-weight: 750;
+	        }
+	        .labor-roster-print-meta {
+	          display: grid;
+	          grid-template-columns: 1fr;
+	          gap: 6px;
+	          min-width: 136px;
+	        }
+	        .labor-roster-print-meta-item {
+	          border: 1px solid #d8e4d4;
+	          border-radius: 12px;
+	          background: rgba(255,255,255,0.82);
+	          padding: 7px 10px;
+	          text-align: right;
+	        }
+	        .labor-roster-print-meta-item span,
+	        .labor-roster-print-stat span {
+	          display: block;
+	          color: #65756a;
+	          font-size: 7.5px;
+	          font-weight: 950;
+	          letter-spacing: 0.1em;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-meta-item strong {
+	          display: block;
+	          margin-top: 3px;
+	          color: #0d3f2a;
+	          font-size: 14px;
+	          line-height: 1;
+	          font-weight: 950;
+	        }
+	        .labor-roster-print-stat-strip {
+	          display: grid;
+	          grid-template-columns: repeat(6, minmax(0, 1fr));
+	          gap: 8px;
+	          padding: 0 18px 17px;
+	        }
+	        .labor-roster-print-stat {
+	          border: 1px solid #d8e4d4;
+	          border-left: 4px solid #0d3f2a;
+	          border-radius: 12px;
+	          background: rgba(255,255,255,0.84);
+	          padding: 8px 10px;
+	        }
+	        .labor-roster-print-stat strong {
+	          display: block;
+	          margin-top: 3px;
+	          color: #142219;
+	          font-size: 16px;
+	          line-height: 1;
+	          font-weight: 950;
+	        }
+	        .labor-roster-print-section {
+	          margin-bottom: 11px;
+	          page-break-inside: avoid;
+	        }
+	        .labor-roster-print-section-heading {
+	          display: flex;
+	          justify-content: space-between;
+	          align-items: baseline;
+	          gap: 12px;
+	          margin: 0 0 6px;
+	          color: #142219;
+	        }
+	        .labor-roster-print-section-heading h2 {
+	          margin: 0;
+	          font-size: 12px;
+	          line-height: 1;
+	          font-weight: 950;
+	          letter-spacing: 0.04em;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-section-heading span {
+	          color: #637569;
+	          font-size: 9px;
+	          font-weight: 800;
+	        }
+	        .labor-roster-print-matrix-grid {
+	          display: grid;
+	          grid-template-columns: minmax(160px, 1.55fr) repeat(var(--roster-matrix-columns), minmax(68px, 0.72fr));
+	          overflow: hidden;
+	          border: 1px solid #d8e4d4;
+	          border-radius: 13px;
+	          background: #ffffff;
+	        }
+	        .labor-roster-print-matrix-cell {
+	          min-height: 30px;
+	          padding: 7px 10px;
+	          border-left: 1px solid #d8e4d4;
+	          border-top: 1px solid #e7eee4;
+	          color: #142219;
+	          font-size: 10px;
+	          line-height: 1.2;
+	          font-weight: 800;
+	          box-sizing: border-box;
+	        }
+	        .labor-roster-print-matrix-cell.is-first {
+	          border-left: none;
+	        }
+	        .labor-roster-print-matrix-cell.is-header {
+	          min-height: 28px;
+	          border-top: none;
+	          background: #edf5eb;
+	          color: #385544;
+	          font-size: 8px;
+	          font-weight: 950;
+	          letter-spacing: 0.1em;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-matrix-cell.is-number {
+	          text-align: center;
+	          font-weight: 950;
+	        }
+	        .labor-roster-print-matrix-cell.is-total {
+	          color: #0d3f2a;
+	          background: #f7fbf5;
+	        }
+	        .labor-roster-print-note {
+	          margin: 6px 0 0;
+	          color: #9a4d13;
+	          font-size: 8.5px;
+	          font-weight: 850;
+	        }
+	        .labor-roster-print-table {
+	          width: 100%;
+	          border-collapse: separate;
+	          border-spacing: 0 5px;
+	        }
+	        .labor-roster-print-table th {
+	          border: none;
+	          padding: 7px 10px;
+	          background: #edf5eb;
+	          color: #385544;
+	          font-size: 8px;
+	          font-weight: 950;
+	          letter-spacing: 0.1em;
+	          text-align: left;
+	          text-transform: uppercase;
+	        }
+	        .labor-roster-print-table th:first-child {
+	          border-radius: 10px 0 0 10px;
+	        }
+	        .labor-roster-print-table th:last-child {
+	          border-radius: 0 10px 10px 0;
+	        }
+	        .labor-roster-print-table td {
+	          border-top: 1px solid #d8e4d4;
+	          border-bottom: 1px solid #d8e4d4;
+	          padding: 7px 10px;
+	          background: #ffffff;
+	          color: #142219;
+	          font-size: 9.5px;
+	          line-height: 1.25;
+	          font-weight: 760;
+	          vertical-align: middle;
+	        }
+	        .labor-roster-print-table tbody tr:nth-child(even) td {
+	          background: #f5faf3;
+	        }
+	        .labor-roster-print-table td:first-child {
+	          border-left: 1px solid #d8e4d4;
+	          border-radius: 10px 0 0 10px;
+	          font-weight: 950;
+	        }
+	        .labor-roster-print-table td:last-child {
+	          border-right: 1px solid #d8e4d4;
+	          border-radius: 0 10px 10px 0;
+	        }
+	        .labor-roster-print-table td:nth-child(3) {
+	          text-align: center;
+	          color: #385544;
+	          font-weight: 950;
+	        }
         .labor-module-header {
           min-height: 52px;
           display: flex;
@@ -6636,17 +7124,76 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           animation: laborModuleEnter 360ms cubic-bezier(0.22, 1, 0.36, 1);
           will-change: opacity;
         }
-        @media (prefers-reduced-motion: reduce) {
-          .labor-module-panel,
-          .labor-view-switcher,
-          .labor-tab-indicator::after { animation: none; }
-          .labor-tab-indicator,
-          .labor-view-switcher-indicator,
-          .labor-tab-button,
-          .labor-view-option { transition: none; }
-        }
-        @media (max-width: 880px) {
-          .labor-page-shell { padding: 14px 8px 28px; }
+	        @media (prefers-reduced-motion: reduce) {
+	          .labor-module-panel,
+	          .labor-view-switcher,
+	          .labor-tab-indicator::after { animation: none; }
+	          .labor-tab-indicator,
+	          .labor-view-switcher-indicator,
+	          .labor-tab-button,
+	          .labor-view-option { transition: none; }
+	        }
+	        @media print {
+	          @page {
+	            size: letter landscape;
+	            margin: 0.35in;
+	          }
+	          html,
+	          body {
+	            height: auto !important;
+	            min-height: 0 !important;
+	            background: #ffffff !important;
+	            overflow: visible !important;
+	            scrollbar-width: auto !important;
+	          }
+	          #root,
+	          #root > div,
+	          #root > div > div {
+	            height: auto !important;
+	            min-height: 0 !important;
+	            max-height: none !important;
+	            overflow: visible !important;
+	          }
+	          body * {
+	            visibility: hidden !important;
+	          }
+	          .labor-page-shell.is-printing-roster {
+	            display: block !important;
+	            max-width: none !important;
+	            min-height: auto !important;
+	            margin: 0 !important;
+	            padding: 0 !important;
+	            background: #ffffff !important;
+	          }
+	          .labor-page-shell.is-printing-roster > :not(.labor-roster-print-document) {
+	            display: none !important;
+	          }
+	          .labor-page-shell.is-printing-roster .labor-roster-print-document,
+	          .labor-page-shell.is-printing-roster .labor-roster-print-document * {
+	            visibility: visible !important;
+	          }
+	          .labor-page-shell.is-printing-roster .labor-roster-print-document {
+	            display: block !important;
+	            position: absolute;
+	            top: 0;
+	            left: 0;
+	            width: 100%;
+	            color: #0f172a !important;
+	            background: #ffffff !important;
+	            font-family: Arial, Helvetica, sans-serif !important;
+	          }
+	          .labor-page-shell.is-printing-roster .labor-roster-print-masthead,
+	          .labor-page-shell.is-printing-roster .labor-roster-print-section {
+	            break-inside: avoid;
+	            page-break-inside: avoid;
+	          }
+	          .labor-page-shell.is-printing-roster .labor-roster-print-table tr {
+	            break-inside: avoid;
+	            page-break-inside: avoid;
+	          }
+	        }
+	        @media (max-width: 880px) {
+	          .labor-page-shell { padding: 14px 8px 28px; }
           .labor-module-header { align-items: flex-start; flex-direction: column; }
           .labor-header-action-slot { width: 100%; justify-content: flex-start; }
           .labor-module-tabs { grid-template-columns: repeat(var(--labor-tab-count), minmax(104px, 1fr)); }
@@ -6655,9 +7202,106 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             min-height: 0;
           }
           .labor-view-switcher-indicator { display: none; }
-        }
-      `}</style>
-      <div className="labor-module-header">
+	        }
+	      `}</style>
+	      <div className="labor-roster-print-document" aria-hidden={!rosterPrintMode}>
+	        <div className="labor-roster-print-masthead">
+	          <div className="labor-roster-print-band">
+	            <span>K9 Operations</span>
+	            <span>Employee Directory</span>
+	          </div>
+	          <div className="labor-roster-print-header">
+	            <div className="labor-roster-print-mark">K9</div>
+	            <div>
+	              <div className="labor-roster-print-eyebrow">Labor Management</div>
+	              <h1>{rosterPrintTitle}</h1>
+	              <p>Team contact roster - active employees only</p>
+	            </div>
+	            <div className="labor-roster-print-meta">
+	              <div className="labor-roster-print-meta-item">
+	                <span>Printed</span>
+	                <strong>{rosterPrintDateLabel}</strong>
+	              </div>
+	              <div className="labor-roster-print-meta-item">
+	                <span>Total Active</span>
+	                <strong>{displayedDashboardMetrics.activeEmployeeCount}</strong>
+	              </div>
+	            </div>
+	          </div>
+	          <div className="labor-roster-print-stat-strip">
+	            {[
+	              { label: "Managers", value: displayedDashboardMetrics.managerCount },
+	              { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
+	              { label: "CSRs", value: displayedDashboardMetrics.csrCount },
+	              { label: "PCTs", value: displayedDashboardMetrics.pctCount },
+	              { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
+	              { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
+	            ].map((item) => (
+	              <div className="labor-roster-print-stat" key={item.label}>
+	                <span>{item.label}</span>
+	                <strong>{Number(item.value || 0)}</strong>
+	              </div>
+	            ))}
+	          </div>
+	        </div>
+
+	        <div className="labor-roster-print-section">
+	          <div className="labor-roster-print-section-heading">
+	            <h2>Staffing Matrix</h2>
+	            <span>Role group by commitment</span>
+	          </div>
+	          <div
+	            className="labor-roster-print-matrix-grid"
+	            style={{ "--roster-matrix-columns": showRosterPrintUnassigned ? 4 : 3 }}
+	          >
+	            {["Position Group", "Full-Time", "Part-Time", ...(showRosterPrintUnassigned ? ["Unassigned"] : []), "Total"].map((label, index) => (
+	              <div key={label} className={`labor-roster-print-matrix-cell is-header${index === 0 ? " is-first" : ""}`}>
+	                {label}
+	              </div>
+	            ))}
+	            {rosterStaffingMatrix.map((row) => (
+	              <React.Fragment key={row.key || row.label}>
+	                <div className="labor-roster-print-matrix-cell is-first">{row.label}</div>
+	                <div className="labor-roster-print-matrix-cell is-number">{Number(row.fullTime || 0)}</div>
+	                <div className="labor-roster-print-matrix-cell is-number">{Number(row.partTime || 0)}</div>
+	                {showRosterPrintUnassigned && (
+	                  <div className="labor-roster-print-matrix-cell is-number">{Number(row.unassigned || 0)}</div>
+	                )}
+	                <div className="labor-roster-print-matrix-cell is-number is-total">{Number(row.total || 0)}</div>
+	              </React.Fragment>
+	            ))}
+	          </div>
+	          {showRosterPrintUnassigned && (
+	            <p className="labor-roster-print-note">
+	              Unassigned means the employee still needs a Full-Time or Part-Time classification in Labor Management.
+	            </p>
+	          )}
+	        </div>
+
+	        <table className="labor-roster-print-table">
+	          <thead>
+	            <tr>
+	              <th>Name</th>
+	              <th>Position</th>
+	              <th>Commitment</th>
+	              <th>Phone Number</th>
+	              <th>Email</th>
+	            </tr>
+	          </thead>
+	          <tbody>
+	            {rosterPrintRows.map((row) => (
+	              <tr key={getLaborEmployeeRowId(row) || row.full_name || row.contact_email}>
+	                <td>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee"}</td>
+	                <td>{row.position_title || "Not listed"}</td>
+	                <td>{getLaborEmploymentCommitmentLabel(row.employment_commitment)}</td>
+	                <td>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed"}</td>
+	                <td>{row.contact_email || "Not listed"}</td>
+	              </tr>
+	            ))}
+	          </tbody>
+	        </table>
+	      </div>
+	      <div className="labor-module-header">
         <div className="labor-module-title">
           <I.GraduationCap />
           <span>Labor Management</span>
@@ -6700,20 +7344,58 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       >
       {!loading && tab === "home" && canUseLaborTab("home") && (
         <div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
-            <MetricCard label="Active Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.pri} />
-            <MetricCard label="Notes In 30 Days" value={displayedDashboardMetrics.employeeNoteCount30d} color={C.acc} />
-            <MetricCard label="New Hires In 30 Days" value={displayedDashboardMetrics.newHireCount30d} color={C.suc} />
-            <MetricCard label="Terminations In 30 Days" value={displayedDashboardMetrics.terminationCount30d} color={C.dan} />
-            <MetricCard label="Active Trainees" value={displayedDashboardMetrics.activeTraineeCount} color={C.warn} />
-            <MetricCard label="Attendance Marks In 30 Days" value={displayedDashboardMetrics.attendanceMarkCount30d} color={C.text} />
-            <MetricCard
-              label="Training Compliance"
-              value={`${displayedDashboardMetrics.trainingComplianceScore}%`}
-              helper={`${displayedDashboardMetrics.trainingComplianceNumerator}/${displayedDashboardMetrics.trainingComplianceDenominator || 0} active employees compliant`}
-              color={displayedDashboardMetrics.trainingComplianceScore === 100 ? C.suc : C.warn}
-            />
-          </div>
+	          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(156px, 1fr))", gap: 12, marginBottom: 16 }}>
+	            <MetricCard label="Managers" value={displayedDashboardMetrics.managerCount} color={C.pri} />
+	            <MetricCard label="Supervisors" value={displayedDashboardMetrics.supervisorCount} color="#2563EB" />
+	            <MetricCard label="CSRs" value={displayedDashboardMetrics.csrCount} color="#7C3AED" />
+	            <MetricCard label="PCTs" value={displayedDashboardMetrics.pctCount} color="#0891B2" />
+	            <MetricCard label="Total Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.text} />
+	            <MetricCard label="Full-Time" value={displayedDashboardMetrics.fullTimeCount} color={C.suc} />
+	            <MetricCard
+	              label="Part-Time"
+	              value={displayedDashboardMetrics.partTimeCount}
+	              helper={displayedDashboardMetrics.unassignedCommitmentCount ? `${displayedDashboardMetrics.unassignedCommitmentCount} unassigned` : ""}
+	              color="#D97706"
+	            />
+	          </div>
+
+	          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18, border: `1px solid ${displayedDashboardMetrics.unassignedCommitmentCount ? "#FED7AA" : C.border}` }}>
+	            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 16px", borderBottom: `1px solid ${C.borderLight}`, background: "#fff" }}>
+	              <div>
+	                <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>Staffing Matrix</div>
+	                <div style={{ fontSize: 12, color: C.textMut, marginTop: 3 }}>Active employees by role group and commitment.</div>
+	              </div>
+	              {displayedDashboardMetrics.unassignedCommitmentCount ? (
+	                <div style={{ padding: "6px 10px", borderRadius: 999, background: "#FFF7ED", color: "#C2410C", fontSize: 11, fontWeight: 900 }}>
+	                  {displayedDashboardMetrics.unassignedCommitmentCount} commitment unassigned
+	                </div>
+	              ) : null}
+	            </div>
+	            <div style={{ overflowX: "auto" }}>
+	              <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse" }}>
+	                <thead>
+	                  <tr>
+	                    {["Position Group", "Full-Time", "Part-Time", ...(displayedDashboardMetrics.unassignedCommitmentCount ? ["Unassigned"] : []), "Total"].map((label) => (
+	                      <th key={label} style={{ ...tableHeaderStyle, textAlign: label === "Position Group" ? "left" : "center" }}>{label}</th>
+	                    ))}
+	                  </tr>
+	                </thead>
+	                <tbody>
+	                  {rosterStaffingMatrix.map((row) => (
+	                    <tr key={row.key || row.label} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+	                      <td style={{ ...rosterCellStyle, fontSize: 13 }}>{row.label}</td>
+	                      <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900 }}>{Number(row.fullTime || 0)}</td>
+	                      <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900 }}>{Number(row.partTime || 0)}</td>
+	                      {displayedDashboardMetrics.unassignedCommitmentCount ? (
+	                        <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900, color: Number(row.unassigned || 0) ? "#C2410C" : C.textSec }}>{Number(row.unassigned || 0)}</td>
+	                      ) : null}
+	                      <td style={{ ...rosterCellStyle, textAlign: "center", fontWeight: 950 }}>{Number(row.total || 0)}</td>
+	                    </tr>
+	                  ))}
+	                </tbody>
+	              </table>
+	            </div>
+	          </Card>
 
           {savedRosterViews.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, marginBottom: 12, flexWrap: "wrap", animation: "filterSlideIn 0.2s ease-out" }}>
@@ -7034,31 +7716,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               ))}
             </div>
           </SectionHeader>
-          {hasRosterEmployeesInGraceWindow && (
-            <Card style={{ padding: "12px 14px", marginBottom: 12, background: C.warnLt, border: `1px solid ${C.warn}33` }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.warn, marginBottom: 4 }}>Training grace period active</div>
-              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55 }}>
-                Employees hired within the last {TRAINING_GRACE_PERIOD_DAYS} days show as <strong>In Progress</strong> while training requirements are being completed.
-              </div>
-            </Card>
-          )}
-          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
+	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
-            <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
-              <table style={{ width: "100%", minWidth: 1240, borderCollapse: "collapse" }}>
-                <thead><tr>
-	                  {[
-	                    { key: "first_name", label: "First Name" },
-	                    { key: "last_name", label: "Last Name" },
-	                    { key: "phone", label: "Phone" },
-	                    { key: "email", label: "Email" },
-	                    { key: "position", label: "Position" },
-	                    { key: "start_date", label: "Start Date" },
-	                    { key: "performance_reviews", label: "Performance Reviews" },
-	                    { key: "training", label: "Training" },
-	                    { key: "notes", label: "Notes" },
-	                  ].map((column) => (
+	            <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
+	              <table style={{ width: "100%", minWidth: 860, borderCollapse: "collapse" }}>
+	                <thead><tr>
+		                  {[
+		                    { key: "name", label: "Name" },
+		                    { key: "position", label: "Position" },
+		                    { key: "commitment", label: "Commitment" },
+		                    { key: "phone", label: "Phone" },
+		                    { key: "email", label: "Email" },
+		                  ].map((column) => (
                     <th key={column.key} style={tableHeaderStyle}>
                       <button
                         type="button"
@@ -7091,7 +7761,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <tbody>
                   {canEditRoster && showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={9} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
+	                      <td colSpan={5} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
                         <form
                           onSubmit={(event) => {
                             event.preventDefault();
@@ -7141,7 +7811,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             </div>
                             <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
                           </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "minmax(132px, 1fr) minmax(132px, 1fr) minmax(148px, 1fr) minmax(210px, 1.4fr) minmax(190px, 1.25fr) minmax(168px, 1fr) minmax(168px, 1fr) auto", gap: 10, alignItems: "end" }}>
+	                          <div style={{ display: "grid", gridTemplateColumns: "minmax(132px, 1fr) minmax(132px, 1fr) minmax(148px, 1fr) minmax(210px, 1.3fr) minmax(190px, 1.15fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto", gap: 10, alignItems: "end" }}>
                             <label style={{ display: "grid", gap: 6 }}>
                               <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Name</span>
                               <input
@@ -7189,8 +7859,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Position Title</span>
+	                            <label style={{ display: "grid", gap: 6 }}>
+	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Position Title</span>
                               <input
                                 value={newRosterEmployeeRole}
                                 onChange={(event) => setNewRosterEmployeeRole(event.target.value)}
@@ -7198,10 +7868,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
                                 onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Start Date</span>
+	                              />
+	                            </label>
+	                            <label style={{ display: "grid", gap: 6 }}>
+	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Commitment</span>
+	                              <select
+	                                value={newRosterEmployeeCommitment}
+	                                onChange={(event) => setNewRosterEmployeeCommitment(event.target.value)}
+	                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
+	                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
+	                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
+	                              >
+	                                {LABOR_COMMITMENT_SELECT_OPTIONS.map((option) => (
+	                                  <option key={option.value || "unassigned"} value={option.value}>{option.label}</option>
+	                                ))}
+	                              </select>
+	                            </label>
+	                            <label style={{ display: "grid", gap: 6 }}>
+	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Start Date</span>
                               <input
                                 type="date"
                                 value={newRosterEmployeeStartDate}
@@ -7300,44 +7984,31 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                          transition: "background 0.15s ease",
 	                        }}
 	                      >
-	                        <td style={rosterCellStyle}>{row.first_name || "—"}</td>
-	                        <td style={rosterCellStyle}>{row.last_name || "—"}</td>
-	                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap", minWidth: 118, color: row.contact_phone ? C.textSec : C.textMut }}>
-	                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
-	                        </td>
+		                        <td style={{ ...rosterCellStyle, minWidth: 170 }}>
+		                          <div style={{ fontWeight: 950 }}>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "—"}</div>
+		                          {!row.is_active && row.end_date ? (
+		                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap", fontWeight: 700 }}>Inactive since {formatLaborDate(row.end_date)}</div>
+		                          ) : null}
+		                        </td>
+		                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
+		                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 116 }}>
+		                          <LaborCommitmentBadge value={row.employment_commitment} />
+		                        </td>
+		                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap", minWidth: 118, color: row.contact_phone ? C.textSec : C.textMut }}>
+		                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
+		                        </td>
                         <td
                           title={row.contact_email || ""}
                           style={{ ...rosterSecondaryCellStyle, color: row.contact_email ? C.textSec : C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 220 }}
                         >
                           {row.contact_email || "—"}
                         </td>
-	                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 152 }}>{row.position_title || "—"}</td>
-	                        <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>
-	                          {formatLaborDate(row.start_date)}
-	                          {!row.is_active && row.end_date ? (
-	                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap", fontWeight: 700 }}>Inactive since {formatLaborDate(row.end_date)}</div>
-	                          ) : null}
-	                        </td>
-	                        <td style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10, minWidth: 170 }}>
-	                          <Badge color={row.performance_review_compliance?.color || "default"}>
-	                            {row.performance_review_compliance?.label || "Needs setup"}
-	                          </Badge>
-	                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 5, fontWeight: 700 }}>
-	                            {row.performance_review_compliance?.detail || "No review schedule"}
-	                          </div>
-	                        </td>
-	                        <td style={{ ...rosterCellStyle, paddingTop: 10, paddingBottom: 10 }}>
-	                          <Badge color={row.training_compliance.color}>{row.training_compliance.label}</Badge>
-	                        </td>
-	                        <td style={{ ...rosterCellStyle, color: C.text, textAlign: "center", fontWeight: 900 }}>
-	                          {Number(row.employee_note_count || 0)}
-	                        </td>
-	                      </tr>
+		                      </tr>
                     );
                   })}
                   {sortedRosterRows.length === 0 && showInlineLaborEmployeeComposer && (
                     <tr>
-                      <td colSpan={9} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
+	                      <td colSpan={5} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
                         Your first employee will land directly in the roster the moment you save this row.
                       </td>
                     </tr>
