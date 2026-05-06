@@ -918,6 +918,63 @@ function seededWaveBars(seed = "", count = 72) {
   });
 }
 
+const INTERVIEW_WAVEFORM_BAR_COUNT = 72;
+const INTERVIEW_WAVEFORM_DECODE_MAX_SECONDS = 8 * 60;
+const INTERVIEW_WAVEFORM_DECODE_MAX_BYTES = 8 * 1024 * 1024;
+
+function shouldDecodeAudioWaveform({ durationSeconds = 0, fileSizeBytes = 0 } = {}) {
+  const duration = Number(durationSeconds || 0);
+  const size = Number(fileSizeBytes || 0);
+  if (Number.isFinite(duration) && duration > INTERVIEW_WAVEFORM_DECODE_MAX_SECONDS) return false;
+  if (Number.isFinite(size) && size > INTERVIEW_WAVEFORM_DECODE_MAX_BYTES) return false;
+  return true;
+}
+
+function buildTranscriptTimelineWaveBars(turns = [], durationSeconds = 0, count = INTERVIEW_WAVEFORM_BAR_COUNT) {
+  const duration = Number(durationSeconds || 0);
+  if (!Number.isFinite(duration) || duration <= 0 || !Array.isArray(turns) || !turns.length) return [];
+
+  const bucketSeconds = duration / count;
+  const buckets = Array.from({ length: count }, () => ({ activeSeconds: 0, weightedWords: 0 }));
+  turns.forEach((turn) => {
+    const rawStart = Number(turn?.startSeconds);
+    const rawEnd = Number(turn?.endSeconds);
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || rawEnd <= rawStart) return;
+    const start = Math.max(0, Math.min(duration, rawStart));
+    const end = Math.max(0, Math.min(duration, rawEnd));
+    if (end <= start) return;
+
+    const wordCount = Array.isArray(turn?.words) && turn.words.length
+      ? turn.words.length
+      : String(turn?.text || "").split(/\s+/).filter(Boolean).length;
+    const turnSeconds = Math.max(1, end - start);
+    const firstBucket = Math.max(0, Math.floor(start / bucketSeconds));
+    const lastBucket = Math.min(count - 1, Math.floor(Math.max(0, end - 0.001) / bucketSeconds));
+    for (let index = firstBucket; index <= lastBucket; index += 1) {
+      const bucketStart = index * bucketSeconds;
+      const bucketEnd = bucketStart + bucketSeconds;
+      const overlap = Math.max(0, Math.min(end, bucketEnd) - Math.max(start, bucketStart));
+      if (!overlap) continue;
+      buckets[index].activeSeconds += overlap;
+      buckets[index].weightedWords += wordCount * (overlap / turnSeconds);
+    }
+  });
+
+  const maxWeightedWords = Math.max(1, ...buckets.map((bucket) => bucket.weightedWords));
+  return buckets.map((bucket, index) => {
+    const occupancy = Math.min(1, bucket.activeSeconds / bucketSeconds);
+    const wordDensity = Math.min(1, bucket.weightedWords / maxWeightedWords);
+    const normalized = Math.max(0.08, occupancy * 0.72 + wordDensity * 0.28);
+    return {
+      height: 16 + Math.round(Math.pow(normalized, 0.74) * 92),
+      delay: -(index * 0.035).toFixed(2),
+      duration: (0.78 + (index % 9) * 0.08).toFixed(2),
+      opacity: 0.44 + Math.min(0.48, normalized * 0.64),
+      timeline: true,
+    };
+  });
+}
+
 async function extractAudioWaveformBars(audioUrl, { count = 72, signal } = {}) {
   if (!audioUrl || typeof window === "undefined") return [];
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2584,48 +2641,78 @@ function AudioUploadPanel({
   const fileName = audioFileName || sourceAudio.original_file_name || sourceAudio.file_name || "";
   const durationSeconds = Number(transcription.duration_seconds || audioDuration || 0);
   const duration = formatDuration(durationSeconds);
-  const fileSize = formatFileSize(sourceAudio.original_size_bytes || sourceAudio.size_bytes);
+  const sourceAudioSizeBytes = Number(sourceAudio.original_size_bytes || sourceAudio.size_bytes || 0);
+  const fileSize = formatFileSize(sourceAudioSizeBytes);
   const complete = !!record?.transcript_text && !transcribing && !drafting;
-  const fallbackBars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}`, 72), [record?.id, fileName]);
+  const fallbackBars = useMemo(() => seededWaveBars(`${record?.id || ""}:${fileName}`, INTERVIEW_WAVEFORM_BAR_COUNT), [record?.id, fileName]);
   const [audioWaveformBars, setAudioWaveformBars] = useState([]);
   const [audioWaveformStatus, setAudioWaveformStatus] = useState("idle");
-  const bars = audioWaveformBars.length ? audioWaveformBars : fallbackBars;
   const safeTranscriptTurns = Array.isArray(transcriptTurns) ? transcriptTurns : [];
+  const transcriptTimelineBars = useMemo(
+    () => buildTranscriptTimelineWaveBars(safeTranscriptTurns, durationSeconds, INTERVIEW_WAVEFORM_BAR_COUNT),
+    [durationSeconds, safeTranscriptTurns]
+  );
+  const canDecodeWaveform = shouldDecodeAudioWaveform({ durationSeconds, fileSizeBytes: sourceAudioSizeBytes });
+  const bars = audioWaveformBars.length ? audioWaveformBars : transcriptTimelineBars.length ? transcriptTimelineBars : fallbackBars;
   const hasProviderTurns = safeTranscriptTurns.length > 0;
   const segmentationSource = String(transcription.segmentation_source || "");
   const wordSegmentMode = segmentationSource === "xai_word_segments" && safeTranscriptTurns.length > 40 && !safeTranscriptTurns.some((turn) => /^(Speaker|Person)\s+\d+/i.test(turn.speaker || ""));
   const providerTurnLabel = wordSegmentMode ? "timeline row" : "speaker turn";
-  const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTranscriptTurns) : [];
+  const providerWords = useMemo(() => wordSegmentMode ? wordsFromProviderSegments(safeTranscriptTurns) : [], [safeTranscriptTurns, wordSegmentMode]);
 
   useEffect(() => {
     setAudioWaveformBars([]);
+    const fallbackStatus = transcriptTimelineBars.length ? "timeline" : "fallback";
     if (!audioUrl) {
-      setAudioWaveformStatus("idle");
+      setAudioWaveformStatus(transcriptTimelineBars.length ? "timeline" : "idle");
+      return undefined;
+    }
+    if (!canDecodeWaveform) {
+      setAudioWaveformStatus(fallbackStatus);
       return undefined;
     }
 
     const controller = new AbortController();
     let cancelled = false;
-    setAudioWaveformStatus("loading");
-    extractAudioWaveformBars(audioUrl, { count: 72, signal: controller.signal })
-      .then((nextBars) => {
-        if (cancelled || controller.signal.aborted) return;
-        if (nextBars?.length) {
-          setAudioWaveformBars(nextBars);
-          setAudioWaveformStatus("ready");
-        } else {
-          setAudioWaveformStatus("fallback");
-        }
-      })
-      .catch(() => {
-        if (!cancelled && !controller.signal.aborted) setAudioWaveformStatus("fallback");
-      });
+    let idleHandle = null;
+    let timeoutHandle = null;
+    setAudioWaveformStatus(transcriptTimelineBars.length ? "timeline" : "idle");
+
+    const startWaveformAnalysis = () => {
+      if (cancelled || controller.signal.aborted) return;
+      setAudioWaveformStatus("loading");
+      extractAudioWaveformBars(audioUrl, { count: INTERVIEW_WAVEFORM_BAR_COUNT, signal: controller.signal })
+        .then((nextBars) => {
+          if (cancelled || controller.signal.aborted) return;
+          if (nextBars?.length) {
+            setAudioWaveformBars(nextBars);
+            setAudioWaveformStatus("ready");
+          } else {
+            setAudioWaveformStatus(fallbackStatus);
+          }
+        })
+        .catch(() => {
+          if (!cancelled && !controller.signal.aborted) setAudioWaveformStatus(fallbackStatus);
+        });
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      idleHandle = window.requestIdleCallback(startWaveformAnalysis, { timeout: 2500 });
+    } else {
+      timeoutHandle = window.setTimeout(startWaveformAnalysis, 350);
+    }
 
     return () => {
       cancelled = true;
       controller.abort();
+      if (idleHandle != null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null && typeof window !== "undefined") {
+        window.clearTimeout(timeoutHandle);
+      }
     };
-  }, [audioUrl]);
+  }, [audioUrl, canDecodeWaveform, transcriptTimelineBars.length]);
 
   const handleDrop = (event) => {
     event.preventDefault();
@@ -2692,6 +2779,7 @@ function AudioUploadPanel({
             {fileSize && <span>{fileSize}</span>}
             {audioWaveformStatus === "loading" && <span>Analyzing waveform</span>}
             {audioWaveformStatus === "ready" && <span>Audio-derived waveform</span>}
+            {audioWaveformStatus === "timeline" && <span>Transcript timeline</span>}
             {record?.transcript_text && <span>{hasProviderTurns ? (wordSegmentMode ? "Timestamped transcript" : `${safeTranscriptTurns.length} ${providerTurnLabel}${safeTranscriptTurns.length === 1 ? "" : "s"}`) : "turn data required"}</span>}
           </div>
         </div>
@@ -2769,7 +2857,7 @@ function AudioUploadPanel({
         {(transcribing || drafting) && <div style={{ position: "absolute", top: 0, bottom: 0, width: "34%", background: "linear-gradient(90deg, transparent, rgba(20,83,45,0.12), transparent)", animation: "interviewScan 2.4s linear infinite" }} />}
         {complete && <div style={{ position: "absolute", right: 16, top: 16, width: 12, height: 12, borderRadius: 99, background: C.suc, animation: "interviewCompletePulse 1.8s ease-out infinite" }} />}
         <div style={{ position: "absolute", left: 24, top: 18, zIndex: 1, color: "rgba(255,255,255,0.66)", fontSize: 10, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>
-          {audioWaveformStatus === "ready" ? "Audio Fingerprint" : audioWaveformStatus === "loading" ? "Analyzing Audio" : "Interview Audio"}
+          {audioWaveformStatus === "ready" ? "Audio Fingerprint" : audioWaveformStatus === "loading" ? "Analyzing Audio" : audioWaveformStatus === "timeline" ? "Transcript Timeline" : "Interview Audio"}
         </div>
         <div style={{ position: "absolute", right: 24, bottom: 18, zIndex: 1, color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: 850 }}>
           {formatPlaybackTime(currentTime)} / {formatPlaybackTime(durationSeconds || audioDuration)}
