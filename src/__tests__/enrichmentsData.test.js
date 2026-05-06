@@ -10,6 +10,8 @@ import {
   getMonthEnd,
   getMonthStart,
   mergeEnrichmentEvents,
+  normalizeEnrichmentProgramConfig,
+  prepareEnrichmentProgramConfigPayload,
   normalizeDate,
   serializeProducts,
 } from "../kol/enrichments/enrichmentData";
@@ -75,5 +77,31 @@ describe("enrichment calendar helpers", () => {
     expect(ENRICHMENT_RESOURCE_LINKS.map((link) => link.label)).toContain("Round 2 Enrichment Lessons");
     expect(ENRICHMENT_TEXT_SCRIPTS.some((script) => script.label === "Initial Outreach")).toBe(true);
     expect(ENRICHMENT_CSR_GUIDE_SECTIONS.some((section) => section.items.some((item) => item.includes("SMS should be the last resort")))).toBe(true);
+  });
+
+  it("normalizes editable Program SOP config with resource renames and section text", () => {
+    const config = normalizeEnrichmentProgramConfig({
+      resourceLinks: [
+        { label: " Updated Drive ", url: "drive.google.com/file/example" },
+        { label: "Missing URL", url: "" },
+      ],
+      programSopSections: [
+        { title: " Program Rules ", items: [" Keep it enrichment only. ", "", "No training promises."] },
+      ],
+    });
+    expect(config.resourceLinks).toEqual([{ label: "Updated Drive", url: "https://drive.google.com/file/example" }]);
+    expect(config.programSopSections).toEqual([
+      { title: "Program Rules", items: ["Keep it enrichment only.", "No training promises."] },
+    ]);
+  });
+
+  it("prepares editable Program SOP config with audit metadata", () => {
+    const payload = prepareEnrichmentProgramConfigPayload({
+      resourceLinks: [{ label: "Lessons", url: "https://example.com/lessons" }],
+      programSopSections: [{ title: "Rules", items: ["One lesson per service."] }],
+    }, "Skyler");
+    expect(payload.updatedBy).toBe("Skyler");
+    expect(payload.updatedAt).toMatch(/T/);
+    expect(payload.resourceLinks[0].label).toBe("Lessons");
   });
 });
