@@ -13,6 +13,7 @@ import {
   normalizeEnrichmentProgramConfig,
   prepareEnrichmentProgramConfigPayload,
   normalizeDate,
+  parseProducts,
   serializeProducts,
 } from "../kol/enrichments/enrichmentData";
 
@@ -61,6 +62,12 @@ describe("enrichment calendar helpers", () => {
     const cinco = SEED_ENRICHMENT_EVENTS.find((event) => event.title === "Cinco de Mayo Fiesta");
     expect(cinco.products.some((product) => product.url?.startsWith("https://"))).toBe(true);
     expect(serializeProducts(cinco.products)).toContain("https://www.amazon.com/");
+  });
+
+  it("keeps two-part product rows as clean product links", () => {
+    expect(parseProducts("Bubble gun | https://example.com/bubbles")).toEqual([
+      { name: "Bubble gun", quantity: "", url: "https://example.com/bubbles", status: "reference" },
+    ]);
   });
 
   it("preserves K9 Enrichment SOP product links on brain boost lessons", () => {

@@ -992,8 +992,14 @@ export function parseProducts(value) {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [name, quantity = "", url = ""] = line.split("|").map((part) => part.trim());
-      return { name, quantity, url, status: "reference" };
+      const [name, quantityOrUrl = "", explicitUrl = ""] = line.split("|").map((part) => part.trim());
+      const quantityLooksLikeUrl = !explicitUrl && /^(https?:\/\/|www\.)/i.test(quantityOrUrl);
+      return {
+        name,
+        quantity: quantityLooksLikeUrl ? "" : quantityOrUrl,
+        url: quantityLooksLikeUrl ? quantityOrUrl : explicitUrl,
+        status: "reference",
+      };
     });
 }
 

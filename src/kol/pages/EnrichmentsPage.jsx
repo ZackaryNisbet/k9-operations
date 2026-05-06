@@ -5,7 +5,6 @@ import { supabase } from "../../supabaseClient";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
 import { useEnrichmentProgramConfig } from "../../hooks/useEnrichmentProgramConfig";
-import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import {
   DEFAULT_ENRICHMENT_GUIDELINES,
   DEFAULT_ENRICHMENT_NOTES,
@@ -22,6 +21,7 @@ import {
   getEventsForDate,
   getMonthLabel,
   getMonthStart,
+  getNextEnrichmentEvent,
   getThemeConfig,
   normalizeDate,
   parseLines,
@@ -33,7 +33,6 @@ import {
 import {
   ENRICHMENT_WORKFLOW_REFRESH_MS,
   formatHealthAge,
-  getEnrichmentWorkflowStatus,
 } from "../enrichments/enrichmentWorkflowData";
 import {
   buildGraphicStoragePath,
@@ -57,6 +56,7 @@ const BRAND = {
   rose: "#EC4899",
 };
 const GRAPHIC_BUCKET = "enrichment-calendar-graphics";
+const K9_FONT_STACK = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const GRAPHIC_AUDIENCES = [
   { id: "customer", label: "Customer Graphic", description: "Client-facing K9 Resorts calendar created by marketing." },
   { id: "employee", label: "Employee Graphic", description: "Internal staff calendar graphic created by marketing." },
@@ -152,15 +152,6 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   }, [draftMode, selectedEvent, selectedDate, locationId]);
 
   const customerEvents = useMemo(() => filterEventsForMonth(events, monthDate, "customer"), [events, monthDate]);
-  const focusCounts = useMemo(() => {
-    return visibleMonthEvents.reduce((acc, event) => {
-      const key = event.focus_area || "brainwork";
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-  }, [visibleMonthEvents]);
-
-  const todayEvents = useMemo(() => getEventsForDate(events, todayStr(), "staff"), [events]);
   const handoffEvents = audience === "customer" ? customerEvents : filterEventsForMonth(events, monthDate, audience);
 
   useEffect(() => {
@@ -378,7 +369,7 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: BRAND.slate50, padding: "24px 32px", overflow: "auto", fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif", boxShadow: `0 0 0 100vmax ${BRAND.slate50}`, clipPath: "inset(0 -100vmax)" }}>
+    <div style={{ minHeight: "100vh", background: BRAND.slate50, padding: "24px 32px", overflow: "auto", fontFamily: K9_FONT_STACK, boxShadow: `0 0 0 100vmax ${BRAND.slate50}`, clipPath: "inset(0 -100vmax)" }}>
       <style>{PAGE_CSS}</style>
       <div style={{ maxWidth: 1280, margin: "0 auto" }}>
         <Header
@@ -387,33 +378,26 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
           nav={nav}
           loading={loading}
           storageMode={storageMode}
-          workflowHealth={workflowState.health}
-          workflowRefreshState={workflowState.refreshState}
-          onOpenHealth={() => setHealthOpen(true)}
           canManage={canManage}
           onNew={() => handleNewEvent(selectedDate)}
         />
 
-        <div className="enrichment-hero-grid">
-          <TodayEnrichmentCard events={events} nav={nav} loading={loading} />
-          <div className="enrichment-command-panel">
-            <div className="panel-eyebrow">Month Command Center</div>
-            <div className="panel-title">{getMonthLabel(monthDate)}</div>
-            <div className="metric-grid">
-              <Metric label="Staff Events" value={visibleMonthEvents.length} />
-              <Metric label="Customer Events" value={customerEvents.length} />
-              <Metric label="Products" value={countProducts(visibleMonthEvents)} />
-              <Metric label="Scheduled Dogs" value={workflowState.workflow.scheduledCount} />
-            </div>
-            <WorkflowMiniStatus workflow={workflowState.workflow} health={workflowState.health} refreshState={workflowState.refreshState} refreshing={workflowState.refreshing} />
-            <div className="focus-row">
-              {Object.entries(focusCounts).slice(0, 5).map(([key, value]) => (
-                <span key={key}>{ENRICHMENT_FOCUS_LABELS[key] || key}: {value}</span>
-              ))}
-            </div>
-            {error ? <div className="inline-warning">Calendar loaded with fallback data because Supabase returned: {error.message}</div> : null}
-          </div>
-        </div>
+        <DailyCommandSurface
+          events={events}
+          nav={nav}
+          loading={loading}
+          date={selectedDate}
+          monthDate={monthDate}
+          setMonthDate={setMonthDate}
+          setSelectedDate={setSelectedDate}
+          selectedDateEvents={selectedDateEvents}
+          workflowState={workflowState}
+          onSelectCalendar={() => setActiveTab("calendar")}
+          onOpenHealth={() => setHealthOpen(true)}
+          canManage={canManage}
+          onNew={() => handleNewEvent(selectedDate)}
+        />
+        {error ? <div className="inline-warning top-warning">Calendar loaded with fallback data because Supabase returned: {error.message}</div> : null}
 
         <div className="tab-row">
           {[
@@ -511,16 +495,175 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   );
 }
 
-function Header({ monthDate, setMonthDate, nav, workflowHealth, workflowRefreshState, onOpenHealth, canManage, onNew }) {
+function DailyCommandSurface({
+  events,
+  nav,
+  loading,
+  date,
+  monthDate,
+  setMonthDate,
+  setSelectedDate,
+  selectedDateEvents,
+  workflowState,
+  onSelectCalendar,
+  onOpenHealth,
+  canManage,
+  onNew,
+}) {
+  const { workflow, health, refreshState } = workflowState;
+  const progress = workflow.total > 0 ? Math.round((workflow.completedCount / workflow.total) * 100) : 0;
+  const hasReview = workflow.needsReviewCount > 0;
+
+  function shiftDate(delta) {
+    const next = new Date(`${date}T12:00:00`);
+    next.setDate(next.getDate() + delta);
+    const nextDate = normalizeDate(next);
+    setSelectedDate(nextDate);
+    const nextMonth = getMonthStart(nextDate);
+    if (nextMonth !== getMonthStart(monthDate)) setMonthDate(nextMonth);
+  }
+
+  return (
+    <div className="enrichment-daily-surface">
+      <EventPlanCard
+        events={events}
+        date={date}
+        selectedDateEvents={selectedDateEvents}
+        nav={nav}
+        loading={loading}
+      />
+
+      <section className={hasReview ? "daily-module-card queue-card has-review" : "daily-module-card queue-card"}>
+        <div className="daily-module-head">
+          <div>
+            <div className="section-title">Enrichment Queue</div>
+            <h2>{formatEventDate(date, { weekday: "short" })}</h2>
+          </div>
+          <div className="workflow-date-nav">
+            <button type="button" aria-label="Previous day" onClick={() => shiftDate(-1)}><I.Back /></button>
+            <button type="button" aria-label="Next day" onClick={() => shiftDate(1)}><I.ChevronRight /></button>
+            <button type="button" className="secondary-btn" onClick={onSelectCalendar}><I.Calendar /> Calendar</button>
+          </div>
+        </div>
+
+        <div className="daily-module-main queue-main">
+          <div className="daily-run-completion">
+            <span>Complete</span>
+            <strong>{workflow.completedCount}/{workflow.total}</strong>
+          </div>
+          {hasReview ? (
+            <span className="daily-run-review">
+              <I.AlertTriangle /> {workflow.needsReviewCount} needs review
+            </span>
+          ) : null}
+        </div>
+
+        <div className="daily-run-progress">
+          <span style={{ width: `${progress}%` }} />
+        </div>
+
+        <div className="daily-module-foot">
+          <WorkflowHealthButton health={health} refreshState={refreshState} onClick={onOpenHealth} compact />
+        </div>
+      </section>
+
+      <section className="daily-module-card sop-snapshot-card">
+        <div className="daily-module-head">
+          <div>
+            <div className="section-title">SOP Snapshot</div>
+            <h3>{selectedDateEvents.length ? `${selectedDateEvents.length} event${selectedDateEvents.length === 1 ? "" : "s"} for this date` : "No event attached"}</h3>
+          </div>
+          {canManage ? <button type="button" className="secondary-btn" onClick={onNew}><I.Plus /> Add</button> : null}
+        </div>
+        <div className="daily-sop-list">
+          {selectedDateEvents.length ? selectedDateEvents.slice(0, 2).map((event) => {
+            const theme = getThemeConfig(event.visual_theme);
+            return (
+              <article key={event.id} style={{ borderColor: theme.color, background: theme.soft }}>
+                <strong style={{ color: theme.color }}>{event.title}</strong>
+                <span>{event.summary || event.sop_details || "No summary added."}</span>
+              </article>
+            );
+          }) : <p>Add a calendar event when the daily enrichment needs a staff SOP, product list, or marketing handoff.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function EventPlanCard({ events, date, selectedDateEvents = [], nav, loading }) {
+  const primary = selectedDateEvents[0] || getNextEnrichmentEvent(events, date, "staff");
+  const theme = getThemeConfig(primary?.visual_theme || "neutral");
+  const focusLabel = ENRICHMENT_FOCUS_LABELS[primary?.focus_area] || primary?.focus_area || "Activity";
+  const remainingCount = primary?.event_date === normalizeDate(date)
+    ? Math.max(0, selectedDateEvents.length - 1)
+    : 0;
+
+  if (loading && !primary) {
+    return (
+      <section className="daily-module-card event-plan-card loading">
+        <div className="module-skeleton short" />
+        <div className="module-skeleton title" />
+        <div className="module-skeleton body" />
+      </section>
+    );
+  }
+
+  if (!primary) {
+    return (
+      <button type="button" className="daily-module-card event-plan-card empty" onClick={() => nav?.("enrichments")}>
+        <div className="daily-module-head">
+          <div>
+            <div className="section-title">Event Plan</div>
+            <h3>No event loaded</h3>
+          </div>
+        </div>
+        <p>Open the calendar to attach the next staff activity.</p>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="daily-module-card event-plan-card"
+      onClick={() => nav?.("enrichments", { selectedDate: primary.event_date, selectedEventId: primary.id })}
+      style={{ "--event-color": theme.color, "--event-soft": theme.soft }}
+    >
+      <div className="daily-module-head">
+        <div>
+          <div className="section-title">Event Plan</div>
+          <h3>{primary.title}</h3>
+        </div>
+        <span className="module-price">{formatPriceLabel(primary)}</span>
+      </div>
+      <div className="event-plan-meta">{formatEventDate(primary.event_date, { weekday: "long" })} - {focusLabel}</div>
+      {primary.summary ? <p>{primary.summary}</p> : null}
+      <div className="event-plan-chip-row">
+        <span>{primary.products?.length || 0} products</span>
+        <span>{primary.customer_visible ? "Customer graphic" : "Staff only"}</span>
+        {remainingCount ? <span>+{remainingCount} more today</span> : null}
+      </div>
+    </button>
+  );
+}
+
+function formatPriceLabel(event) {
+  const cents = Number(event?.price_cents || 0);
+  if (!cents) return "$15 add-on";
+  return `$${Math.round(cents / 100)} add-on`;
+}
+
+function Header({ monthDate, setMonthDate, nav, canManage, onNew }) {
   return (
     <div className="page-header">
       <div>
         <button type="button" className="back-link" onClick={() => nav?.("home")}>
-          <I.Back /> Home
+          <I.Back /> <span>Home</span>
         </button>
         <div className="eyebrow">K9 Operations Enrichment Portal</div>
-        <h1>Enrichment Calendar</h1>
-        <p>Plan events, prep products, run the staff SOP, and attach the customer or employee calendar graphics created by marketing.</p>
+        <h1>Enrichment</h1>
+        <p>Run today’s dog queue, check the event SOP, and keep calendar planning one click away.</p>
       </div>
       <div className="header-actions">
         <div className="month-control">
@@ -529,17 +672,7 @@ function Header({ monthDate, setMonthDate, nav, workflowHealth, workflowRefreshS
           <button type="button" onClick={() => setMonthDate(addMonths(monthDate, 1))}><I.ChevronRight /></button>
         </div>
         {canManage ? <button type="button" className="primary-btn" onClick={onNew}><I.Plus /> New Event</button> : null}
-        <WorkflowHealthButton health={workflowHealth} refreshState={workflowRefreshState} onClick={onOpenHealth} compact />
       </div>
-    </div>
-  );
-}
-
-function Metric({ label, value }) {
-  return (
-    <div className="metric-tile">
-      <div>{label}</div>
-      <strong>{value}</strong>
     </div>
   );
 }
@@ -573,167 +706,110 @@ function WorkflowHealthButton({ health, refreshState, onClick, compact = false }
   );
 }
 
-function WorkflowMiniStatus({ workflow, health, refreshState, refreshing }) {
-  const tone = healthTone(health?.status);
-  const progress = workflow.total > 0 ? Math.round((workflow.completedCount / workflow.total) * 100) : 0;
+function WorkflowView({ workflowState }) {
+  const { workflow, completions, loading, toggleDog } = workflowState;
   return (
-    <div className="workflow-mini-status">
-      <div>
-        <span className="section-title">Live Enrichment Workflow</span>
-        <strong>{workflow.completedCount}/{workflow.total} complete</strong>
-        <p>{workflow.scheduledCount} scheduled from Gingr service dates{workflow.needsReviewCount ? ` · ${workflow.needsReviewCount} needs review` : ""}</p>
+    <section className="workflow-command workflow-command-tight">
+      <div className="workflow-table-card">
+        <div className="workflow-table-toolbar">
+          <div>
+            <span className="section-title">Dogs for This Date</span>
+          </div>
+          <WorkflowPlaygroupLegend />
+        </div>
+        {renderWorkflowTable({ loading, workflow, completions, toggleDog })}
       </div>
-      <div className="workflow-mini-health" style={{ color: tone.color }}>
-        <span className="workflow-health-dot" style={{ background: tone.color, animation: refreshing ? "enrichmentHealthPulse .9s ease-in-out infinite" : "none" }} />
-        <span>{tone.label}</span>
-        <small>{refreshState?.label || "Waiting"}</small>
+    </section>
+  );
+}
+
+function renderWorkflowTable({ loading, workflow, completions, toggleDog }) {
+  if (loading && !workflow.rowCount) {
+    return (
+      <div className="workflow-loading">
+        <div className="workflow-loading-orbit" />
+        <span>Loading Enrichment workflow...</span>
       </div>
-      <div className="workflow-mini-bar"><span style={{ width: `${progress}%` }} /></div>
+    );
+  }
+  if (workflow.rowCount === 0) {
+    return (
+      <div className="empty-state compact">
+        <I.Sparkle />
+        <h2>No scheduled enrichments</h2>
+        <p>No Gingr Enrichment services are scheduled for this date.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="workflow-table-wrap">
+      <table className="workflow-table">
+        <thead>
+          <tr>
+            <th>Dog</th>
+            <th>Room</th>
+            <th>Owner</th>
+            <th>Status</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {workflow.dogs.map((dog) => {
+            const completion = completions[dog.id];
+            const serviceDetail = getWorkflowExtraServiceDetail(dog.services);
+            return (
+              <tr key={dog.id} className={completion ? "complete" : dog.status === "needs_review" ? "review" : ""}>
+                <td>
+                  <div className="workflow-dog-cell">
+                    <WorkflowDogAvatar dog={dog} />
+                    <div>
+                      <div className="workflow-dog-name-line">
+                        <strong>{dog.animalName}</strong>
+                        <WorkflowPlaygroupBadges tags={dog.playgroupTags} />
+                      </div>
+                      <WorkflowReservationLine dog={dog} />
+                      {serviceDetail ? <span className="workflow-service-line">{serviceDetail}</span> : null}
+                      {dog.reason ? <small className="workflow-review-reason">{dog.reason}</small> : null}
+                    </div>
+                  </div>
+                </td>
+                <td>{dog.roomLabel || "-"}</td>
+                <td>{dog.ownerName}</td>
+                <td><span className={`workflow-status ${dog.status}`}>{dog.status === "needs_review" ? "Needs review" : "Scheduled"}</span></td>
+                <td>
+                  <button
+                    type="button"
+                    className={completion ? "workflow-check complete" : "workflow-check"}
+                    onClick={() => {
+                      Promise.resolve(toggleDog(dog)).catch((err) => console.error("[enrichment workflow] completion save failed:", err));
+                    }}
+                  >
+                    {completion ? <I.Check /> : null}
+                  </button>
+                  {completion ? <small>{completion.by || "Staff"} · {formatHealthAge(completion.at)}</small> : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function WorkflowView({ date, monthDate, setMonthDate, setSelectedDate, selectedDateEvents, workflowState, onSelectCalendar, onOpenHealth }) {
-  const { workflow, completions, loading, health, refreshState, toggleDog } = workflowState;
-  const status = getEnrichmentWorkflowStatus(workflow);
-  const tone = healthTone(health?.status);
+function getWorkflowExtraServiceDetail(services = []) {
+  return (Array.isArray(services) ? services : [])
+    .map((service) => String(service || "").trim())
+    .filter((service) => service && !service.toLowerCase().includes("enrichment"))
+    .join(", ");
+}
 
-  function shiftDate(delta) {
-    const next = new Date(`${date}T12:00:00`);
-    next.setDate(next.getDate() + delta);
-    const nextDate = normalizeDate(next);
-    setSelectedDate(nextDate);
-    const nextMonth = getMonthStart(nextDate);
-    if (nextMonth !== getMonthStart(monthDate)) setMonthDate(nextMonth);
-  }
-
+function WorkflowReservationLine({ dog }) {
+  if (!dog?.reservationLabel && !dog?.reservationWindow) return null;
   return (
-    <div className="workflow-grid">
-      <section className="workflow-command">
-        <div className="workflow-command-head">
-          <div>
-            <div className="section-title">Daily Run Queue</div>
-            <h2>{formatEventDate(date, { weekday: "long", year: true })}</h2>
-            <p>Scheduled dogs come from Gingr Enrichment services whose service date matches this report date.</p>
-          </div>
-          <div className="workflow-date-nav">
-            <button type="button" onClick={() => shiftDate(-1)}><I.Back /></button>
-            <button type="button" onClick={() => shiftDate(1)}><I.ChevronRight /></button>
-            <button type="button" className="secondary-btn" onClick={onSelectCalendar}><I.Calendar /> Calendar</button>
-          </div>
-        </div>
-
-        <div className="workflow-stat-grid">
-          <Metric label="Scheduled" value={workflow.scheduledCount} />
-          <Metric label="Complete" value={`${workflow.completedCount}/${workflow.total}`} />
-          <Metric label="Needs Review" value={workflow.needsReviewCount} />
-          <Metric label="Status" value={status === "needs_review" ? "Review" : status === "in_progress" ? "Active" : status === "complete" ? "Done" : workflow.rowCount ? "Ready" : "Empty"} />
-        </div>
-
-        <div className="workflow-health-card">
-          <div>
-            <div className="section-title">Data Health</div>
-            <strong style={{ color: tone.color }}>{tone.label}</strong>
-            <p>Canonical Gingr Enrichment pull for this date.</p>
-          </div>
-          <div className="workflow-health-facts">
-            <span>Read cadence: {Math.round(ENRICHMENT_WORKFLOW_REFRESH_MS / 1000)}s</span>
-            <span>Last sync: {formatHealthAge(workflowState.lastSuccessAt)}</span>
-          </div>
-          <WorkflowHealthButton health={health} refreshState={refreshState} onClick={onOpenHealth} />
-        </div>
-
-        <div className="workflow-table-card">
-          {loading && !workflow.rowCount ? (
-            <div className="workflow-loading">
-              <div className="workflow-loading-orbit" />
-              <span>Loading Enrichment workflow...</span>
-            </div>
-          ) : workflow.rowCount === 0 ? (
-            <div className="empty-state compact">
-              <I.Sparkle />
-              <h2>No scheduled enrichments</h2>
-              <p>No Gingr Enrichment services are scheduled for this date.</p>
-            </div>
-          ) : (
-            <div className="workflow-table-wrap">
-              <div className="workflow-table-toolbar">
-                <span className="section-title">Dog Queue</span>
-                <WorkflowPlaygroupLegend />
-              </div>
-              <table className="workflow-table">
-                <thead>
-                  <tr>
-                    <th>Dog</th>
-                    <th>Room</th>
-                    <th>Owner</th>
-                    <th>Status</th>
-                    <th>Completed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {workflow.dogs.map((dog) => {
-                    const completion = completions[dog.id];
-                    return (
-                      <tr key={dog.id} className={completion ? "complete" : dog.status === "needs_review" ? "review" : ""}>
-                        <td>
-                          <div className="workflow-dog-cell">
-                            <WorkflowDogAvatar dog={dog} />
-                            <div>
-                              <div className="workflow-dog-name-line">
-                                <strong>{dog.animalName}</strong>
-                                <WorkflowPlaygroupBadges tags={dog.playgroupTags} />
-                              </div>
-                              <span>{dog.services.length ? dog.services.join(", ") : "Enrichment"}</span>
-                              {dog.reason ? <small>{dog.reason}</small> : null}
-                            </div>
-                          </div>
-                        </td>
-                        <td>{dog.roomLabel || "-"}</td>
-                        <td>{dog.ownerName}</td>
-                        <td><span className={`workflow-status ${dog.status}`}>{dog.status === "needs_review" ? "Needs review" : "Scheduled"}</span></td>
-                        <td>
-                          <button
-                            type="button"
-                            className={completion ? "workflow-check complete" : "workflow-check"}
-                            onClick={() => {
-                              Promise.resolve(toggleDog(dog)).catch((err) => console.error("[enrichment workflow] completion save failed:", err));
-                            }}
-                          >
-                            {completion ? <I.Check /> : null}
-                          </button>
-                          {completion ? <small>{completion.by || "Staff"} · {formatHealthAge(completion.at)}</small> : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <aside className="workflow-side">
-        <div className="workflow-today-events">
-          <div className="section-title">Event SOP For This Date</div>
-          {selectedDateEvents.length ? selectedDateEvents.map((event) => {
-            const theme = getThemeConfig(event.visual_theme);
-            return (
-              <article key={event.id} style={{ borderColor: theme.color, background: theme.soft }}>
-                <strong style={{ color: theme.color }}>{event.title}</strong>
-                <span>{event.summary || event.sop_details || "No summary added."}</span>
-              </article>
-            );
-          }) : <p>No SOP calendar event is attached to this date.</p>}
-        </div>
-        <div className="workflow-reconcile-card">
-          <div className="section-title">Gingr Reconciliation</div>
-          <strong>{workflow.scheduledCount} scheduled dogs</strong>
-          <p>Matches the Services By Date expectation when Gingr has one Enrichment service scheduled per dog for the selected date.</p>
-          {workflow.needsReviewCount ? <div className="inline-warning">Review dogs with Enrichment services missing service-level scheduled dates.</div> : null}
-        </div>
-      </aside>
+    <div className="workflow-reservation-line">
+      {dog.reservationLabel ? <span className={`workflow-reservation-kind ${dog.reservationCategory || "other"}`}>{dog.reservationLabel}</span> : null}
+      {dog.reservationWindow ? <span className="workflow-reservation-window">{dog.reservationWindow}</span> : null}
     </div>
   );
 }
@@ -999,10 +1075,7 @@ function EventDetail({ event, dayEvents, onSelectEvent, onEdit, onDuplicate, can
         {event.products?.length ? (
           <div className="product-list">
             {event.products.map((product, index) => (
-              <div key={`${product.name}_${index}`}>
-                <ProductLabel product={product} />
-                <span>{product.quantity || (getProductHref(product) ? "Linked reference" : "No link added")}</span>
-              </div>
+              <ProductReferenceCard key={`${product.name}_${index}`} product={product} />
             ))}
           </div>
         ) : <p>No products listed.</p>}
@@ -1058,13 +1131,29 @@ function getProductHref(product) {
   return "";
 }
 
-function ProductLabel({ product }) {
+function getLinkHost(href) {
+  try {
+    return new URL(href).hostname.replace(/^www\./, "");
+  } catch {
+    return "External link";
+  }
+}
+
+function ProductReferenceCard({ product }) {
   const href = getProductHref(product);
-  if (!href) return <strong>{product.name}</strong>;
   return (
-    <a className="product-link" href={href} target="_blank" rel="noreferrer">
-      <I.Link /> {product.name}
-    </a>
+    <article className={href ? "product-reference-card linked" : "product-reference-card"}>
+      <div className="product-reference-main">
+        <strong>{product.name}</strong>
+        <span>{product.quantity || (href ? getLinkHost(href) : "No link added")}</span>
+      </div>
+      {href ? (
+        <a className="product-reference-action" href={href} target="_blank" rel="noreferrer" aria-label={`Open ${product.name}`}>
+          <I.Link />
+          <span>Open</span>
+        </a>
+      ) : null}
+    </article>
   );
 }
 
@@ -1077,7 +1166,8 @@ function ProductLinksInline({ products = [] }) {
         if (!href) return <span key={`${product.name}_${index}`} className="product-text">{product.name}</span>;
         return (
           <a key={`${product.name}_${index}`} href={href} target="_blank" rel="noreferrer">
-            <I.Link /> {product.name}
+            <I.Link />
+            <span>{product.name}</span>
           </a>
         );
       })}
@@ -1463,14 +1553,12 @@ function BuilderView({ draft, setDraft, canManage, saving, selectedEvent, onSave
           <Field label="Checklist"><textarea disabled={disabled} rows={4} value={draft.checklist} onChange={(event) => update("checklist", event.target.value)} /></Field>
         </div>
         <Field label="Products">
-          <textarea
+          <ProductEditor
             disabled={disabled}
-            rows={6}
             value={draft.products}
-            onChange={(event) => update("products", event.target.value)}
-            placeholder={"Backdrop kit | 1 set | https://example.com/backdrop\nTreat puzzles | 6 | https://example.com/puzzle"}
+            onChange={(value) => update("products", value)}
           />
-          <small className="field-help">One product per line: name | quantity | URL. Product URLs become clickable staff references throughout the portal.</small>
+          <small className="field-help">Add one product per row. Links become clean staff references throughout the portal.</small>
         </Field>
         <Field label="Staff Notes"><textarea disabled={disabled} rows={3} value={draft.staff_notes} onChange={(event) => update("staff_notes", event.target.value)} /></Field>
         <div className="form-actions">
@@ -1491,6 +1579,55 @@ function Field({ label, children }) {
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function ProductEditor({ value, onChange, disabled }) {
+  const products = useMemo(() => parseProducts(value), [value]);
+  const rows = [...products, { name: "", quantity: "", url: "" }];
+
+  function commit(nextRows) {
+    onChange(serializeProducts(nextRows));
+  }
+
+  function updateRow(index, field, nextValue) {
+    const nextRows = rows.map((row) => ({ ...row }));
+    nextRows[index] = { ...nextRows[index], [field]: nextValue };
+    commit(nextRows);
+  }
+
+  function removeRow(index) {
+    commit(rows.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  return (
+    <div className="product-editor">
+      {rows.map((product, index) => (
+        <div key={`product-row-${index}`} className="product-editor-row">
+          <input
+            disabled={disabled}
+            value={product.name}
+            onChange={(event) => updateRow(index, "name", event.target.value)}
+            placeholder="Product name"
+          />
+          <input
+            disabled={disabled}
+            value={product.quantity}
+            onChange={(event) => updateRow(index, "quantity", event.target.value)}
+            placeholder="Qty / note"
+          />
+          <input
+            disabled={disabled}
+            value={product.url}
+            onChange={(event) => updateRow(index, "url", event.target.value)}
+            placeholder="Link"
+          />
+          <button type="button" disabled={disabled || (!product.name && !product.quantity && !product.url)} aria-label={`Remove product ${index + 1}`} onClick={() => removeRow(index)}>
+            <I.Trash />
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1524,7 +1661,7 @@ function MarketingHandoff({ monthDate, events, audience, setAudience, graphics, 
               </a>
             ))
           ) : (
-            <p>Add URLs in Create / Edit using name | quantity | URL.</p>
+            <p>Add product links in Create / Edit.</p>
           )}
         </div>
       </div>
@@ -1621,10 +1758,6 @@ function GraphicUploadCard({ audience, graphic, signedUrl, loading, uploading, c
   );
 }
 
-function countProducts(events) {
-  return events.reduce((sum, event) => sum + (event.products?.length || 0), 0);
-}
-
 function formatEnrichmentPrice(event) {
   const cents = Number(event?.price_cents || 0);
   if (!cents) return "$15 add-on";
@@ -1714,17 +1847,22 @@ const PAGE_CSS = `
 @keyframes enrichmentFloatIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes enrichmentHealthPulse{0%,100%{transform:scale(1);box-shadow:0 0 12px currentColor}50%{transform:scale(1.32);box-shadow:0 0 24px currentColor}}
 @keyframes enrichmentHealthSweep{0%{transform:translateX(-100%);opacity:.16}45%{opacity:.75}100%{transform:translateX(100%);opacity:.16}}
+@keyframes enrichmentProgressSheen{0%{transform:translateX(-120%);opacity:0}25%{opacity:.62}100%{transform:translateX(140%);opacity:0}}
+@keyframes enrichmentSoftGlow{0%,100%{transform:translate3d(-12%,0,0) rotate(10deg);opacity:.22}50%{transform:translate3d(18%,4%,0) rotate(10deg);opacity:.42}}
 @keyframes enrichmentOrbit{to{transform:rotate(360deg)}}
-.page-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:24px;font-family:'Outfit',-apple-system,BlinkMacSystemFont,sans-serif}
-.back-link{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:${C.textMut};font:600 14px/20px inherit;cursor:pointer;margin-bottom:12px}
+.page-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:16px;font-family:${K9_FONT_STACK}}
+.back-link{display:inline-flex;align-items:center;gap:7px;border:1px solid transparent;background:transparent;color:${C.textMut};font-family:${K9_FONT_STACK};font-size:13px;line-height:18px;font-weight:800;letter-spacing:0;cursor:pointer;margin:0 0 10px;padding:7px 9px 7px 6px;border-radius:999px;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
+.back-link span{font-weight:800}
+.back-link svg{width:17px;height:17px;stroke-width:2.2}
+.back-link:hover{background:#fff;border-color:rgba(20,83,45,.16);color:${C.pri};transform:translateX(-1px)}
 .eyebrow,.panel-eyebrow{font-size:10px;line-height:14px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:${C.pri}}
-.page-header h1{font-size:34px;line-height:40px;font-weight:850;margin:4px 0;color:${C.text};letter-spacing:0}
+.page-header h1{font-size:32px;line-height:38px;font-weight:850;margin:4px 0;color:${C.text};letter-spacing:0}
 .page-header p{font-size:14px;line-height:22px;font-weight:400;color:${C.textSec};max-width:680px;margin:0}
 .header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .month-control{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid ${C.border};border-radius:6px;padding:6px}
 .month-control button{width:36px;height:36px;border-radius:6px;border:0;background:${C.surfaceHover};color:${C.text};display:flex;align-items:center;justify-content:center;cursor:pointer}
 .month-control span{font-size:14px;line-height:20px;font-weight:600;color:${C.text};min-width:132px;text-align:center}
-.primary-btn,.secondary-btn,.danger-btn{border-radius:6px;padding:10px 14px;font:900 14px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
+.primary-btn,.secondary-btn,.danger-btn{border-radius:6px;padding:10px 14px;font:900 14px/20px ${K9_FONT_STACK};letter-spacing:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
 .primary-btn:hover,.secondary-btn:hover,.danger-btn:hover{transform:translateY(-1px)}
 .primary-btn{border:1px solid ${C.pri};background:${C.pri};color:#fff;box-shadow:0 10px 24px rgba(20,83,45,.18)}
 .secondary-btn{background:#fff;color:${C.pri};border:1px solid rgba(20,83,45,.22);box-shadow:0 8px 18px rgba(15,23,42,.06)}
@@ -1732,21 +1870,53 @@ const PAGE_CSS = `
 .wide{width:100%}
 .storage-pill{font-size:10px;line-height:14px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:6px 9px;background:#fff;color:${C.textMut};border:1px solid ${C.border}}
 .storage-pill.settings{color:${C.warn};background:${C.warnLt}}.storage-pill.seed{color:${C.textMut};background:${C.surfaceHover}}
-.enrichment-hero-grid{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:16px;margin-bottom:16px}
-.enrichment-command-panel,.calendar-shell,.detail-panel,.sop-card,.sop-admin-card,.builder-form,.builder-preview,.handoff-controls,.handoff-main,.graphic-upload-card,.workflow-command,.workflow-side>div{background:#fff;border:1px solid rgba(148,163,184,.24);border-radius:8px;box-shadow:0 14px 36px rgba(15,23,42,.08);animation:enrichmentPanelIn .42s cubic-bezier(.16,1,.3,1) both}
-.enrichment-command-panel{padding:20px;position:relative;overflow:hidden}
-.enrichment-command-panel:before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,${C.pri},${C.acc},${C.info});opacity:.86}
-.panel-title{font-size:24px;line-height:32px;font-weight:800;color:${C.text};margin-top:4px}
-.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:12px;margin-top:16px}
-.metric-tile{border:1px solid rgba(148,163,184,.24);background:linear-gradient(180deg,#fff,${C.surfaceHover});border-radius:6px;padding:12px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
-.metric-tile:hover{transform:translateY(-2px);border-color:rgba(20,83,45,.22);box-shadow:0 10px 22px rgba(15,23,42,.08)}
-.metric-tile div{font-size:11px;line-height:16px;font-weight:700;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
-.metric-tile strong{display:block;font-size:24px;line-height:32px;font-weight:850;color:${C.text};margin-top:4px}
-.focus-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-.focus-row span,.pill-list span{font-size:10px;line-height:14px;font-weight:600;border-radius:999px;background:${C.priLt};color:${C.pri};padding:5px 8px}
+.enrichment-daily-surface{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px;align-items:stretch}
+.daily-module-card,.calendar-shell,.detail-panel,.sop-card,.sop-admin-card,.builder-form,.builder-preview,.handoff-controls,.handoff-main,.graphic-upload-card,.workflow-command,.workflow-side>div{background:#fff;border:1px solid rgba(148,163,184,.24);border-radius:8px;box-shadow:0 14px 36px rgba(15,23,42,.08);animation:enrichmentPanelIn .42s cubic-bezier(.16,1,.3,1) both}
+.daily-module-card{min-height:214px;padding:16px;display:flex;flex-direction:column;gap:12px;position:relative;overflow:hidden;font-family:${K9_FONT_STACK};text-align:left;color:${C.text};transition:transform .22s cubic-bezier(.16,1,.3,1),box-shadow .22s ease,border-color .22s ease}
+button.daily-module-card{width:100%;cursor:pointer}
+.daily-module-card:hover{transform:translateY(-2px);box-shadow:0 18px 42px rgba(15,23,42,.1)}
+.daily-module-card:before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,${C.pri},${C.acc});opacity:.9}
+.daily-module-card>*{position:relative;z-index:1}
+.event-plan-card{border-color:color-mix(in srgb,var(--event-color,${C.pri}) 28%,rgba(148,163,184,.24));background:linear-gradient(135deg,#fff 0%,#fff 50%,var(--event-soft,#F8FAFC) 100%)}
+.event-plan-card:before{background:linear-gradient(90deg,var(--event-color,${C.pri}),${C.acc})}
+.event-plan-card.empty,.event-plan-card.loading{cursor:pointer;background:linear-gradient(135deg,#fff 0%,#F8FAFC 100%)}
+.queue-card{background:linear-gradient(135deg,#fff 0%,#fff 52%,rgba(247,254,231,.72) 100%)}
+.queue-card.has-review:before{background:linear-gradient(90deg,${C.warn},${C.acc})}
+.queue-card:after{content:"";position:absolute;inset:-42% auto auto -28%;width:58%;height:170%;background:linear-gradient(90deg,transparent,rgba(132,204,22,.16),transparent);filter:blur(8px);animation:enrichmentSoftGlow 6.4s ease-in-out infinite;pointer-events:none}
+.sop-snapshot-card{background:linear-gradient(135deg,#fff 0%,#fff 56%,#F8FAFC 100%)}
+.daily-module-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.daily-module-head h2,.daily-module-head h3{font-size:22px;line-height:28px;font-weight:900;color:${C.text};letter-spacing:0;margin:0 0 3px}
+.event-plan-meta{font-size:12px;line-height:16px;font-weight:800;color:${C.textMut};margin-top:-4px}
+.event-plan-card p{font-size:14px;line-height:21px;font-weight:650;color:${C.textSec};margin:0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.event-plan-chip-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:auto}
+.event-plan-chip-row span,.module-price{border-radius:999px;background:#fff;border:1px solid rgba(15,23,42,.07);font-size:10px;line-height:14px;font-weight:900;color:${C.textSec};padding:5px 8px;white-space:nowrap}
+.module-price{color:var(--event-color,${C.pri})}
+.module-skeleton{border-radius:999px;background:#E5E7EB}
+.module-skeleton.short{height:13px;width:130px}
+.module-skeleton.title{height:26px;width:72%}
+.module-skeleton.body{height:14px;width:88%}
+.queue-main{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:72px;margin-top:auto}
+.daily-run-completion{display:flex;align-items:baseline;gap:10px;min-width:0}
+.daily-run-completion span{font-size:12px;line-height:16px;font-weight:900;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
+.daily-run-completion strong{font-size:46px;line-height:48px;font-weight:900;color:${C.text};letter-spacing:0;font-variant-numeric:tabular-nums}
+.daily-run-review{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(217,119,6,.24);background:${C.warnLt};color:${C.warn};border-radius:999px;padding:8px 10px;font:900 12px/16px ${K9_FONT_STACK};white-space:nowrap;box-shadow:0 8px 20px rgba(217,119,6,.08)}
+.daily-run-review svg{width:15px;height:15px;stroke-width:2.2}
+.daily-run-progress{height:7px;border-radius:999px;background:rgba(20,83,45,.1);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(20,83,45,.04)}
+.daily-run-progress span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,${C.pri},${C.acc});transition:width .48s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden}
+.daily-run-progress span:after{content:"";position:absolute;inset:0;width:42%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:enrichmentProgressSheen 2.1s cubic-bezier(.16,1,.3,1) infinite}
+.daily-module-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:auto}
+.daily-module-foot .workflow-health-btn{min-height:44px;min-width:158px;border-radius:10px;padding:0 12px}
+.daily-module-head .secondary-btn{min-height:36px;padding:7px 10px;font-size:12px;line-height:16px}
+.daily-sop-list{display:grid;gap:8px;min-height:0}
+.daily-sop-list article{border:1px solid;border-radius:8px;padding:10px;animation:enrichmentFloatIn .28s ease both}
+.daily-sop-list article strong{display:block;font-size:13px;line-height:18px;font-weight:900}
+.daily-sop-list article span,.daily-sop-list p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;line-height:18px;color:${C.textSec};margin:4px 0 0}
+.pill-list span{font-size:10px;line-height:14px;font-weight:600;border-radius:999px;background:${C.priLt};color:${C.pri};padding:5px 8px}
 .inline-warning{margin-top:12px;border:1px solid rgba(217,119,6,.28);background:${C.warnLt};color:#92400E;border-radius:6px;padding:10px 12px;font-size:12px;line-height:16px;font-weight:500}
-.tab-row{display:flex;gap:8px;margin:8px 0 16px;flex-wrap:wrap}
-.tab{border:1px solid ${C.border};background:#fff;color:${C.textSec};border-radius:999px;padding:9px 14px;font:900 14px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer}
+.inline-warning.top-warning{margin:0 0 12px}
+.tab-row{display:flex;gap:8px;margin:8px 0 12px;flex-wrap:wrap}
+.tab{border:1px solid ${C.border};background:#fff;color:${C.textSec};border-radius:999px;padding:9px 14px;font:900 14px/20px ${K9_FONT_STACK};letter-spacing:0;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
+.tab:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.07);border-color:rgba(20,83,45,.18)}
 .tab.active{background:${C.pri};color:#fff;border-color:${C.pri}}
 .main-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}
 .calendar-shell{padding:14px}
@@ -1773,18 +1943,23 @@ const PAGE_CSS = `
 .detail-chips,.pill-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
 .detail-chips span{font-size:10px;line-height:14px;font-weight:600;border-radius:999px;background:#fff;color:${C.textSec};padding:5px 8px;border:1px solid ${C.border}}
 .same-day-list,.detail-section{padding:14px 2px;border-bottom:1px solid ${C.border}}
-.section-title{font-size:11px;line-height:16px;font-weight:900;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px}
+.section-title{font-family:${K9_FONT_STACK};font-size:11px;line-height:16px;font-weight:900;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px}
 .same-day{border:1px solid ${C.border};background:#fff;border-radius:6px;padding:8px 10px;margin:0 6px 6px 0;font:600 12px/16px inherit;color:${C.textSec};cursor:pointer}
 .same-day.active{background:${C.pri};color:#fff}
 .product-list{display:flex;flex-direction:column;gap:8px}
-.product-list div,.prep-list div{border:1px solid ${C.border};border-radius:6px;padding:9px;background:${C.surfaceHover}}
-.product-list strong,.prep-list strong{display:block;font-size:14px;line-height:20px;font-weight:600;color:${C.text}}
-.product-list span,.prep-list span{display:block;font-size:12px;line-height:16px;font-weight:400;color:${C.textMut};margin-top:3px}
-.product-link,.product-inline-links a,.product-link-panel a,.resource-link-list a{display:inline-flex;align-items:center;gap:6px;color:${C.info};font-size:14px;line-height:20px;font-weight:600;text-decoration:none}
-.product-link:hover,.product-inline-links a:hover,.product-link-panel a:hover,.resource-link-list a:hover{text-decoration:underline}
-.product-link svg,.product-inline-links svg,.product-link-panel svg,.resource-link-list svg{width:16px;height:16px;stroke-width:1.5;flex-shrink:0}
+.product-reference-card,.prep-list div{border:1px solid ${C.border};border-radius:6px;padding:10px;background:${C.surfaceHover}}
+.product-reference-card{display:flex;align-items:center;justify-content:space-between;gap:12px;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.product-reference-card.linked:hover{border-color:rgba(37,99,235,.24);box-shadow:0 10px 22px rgba(37,99,235,.08);transform:translateY(-1px)}
+.product-reference-main{min-width:0}
+.product-reference-main strong,.prep-list strong{display:block;font-size:14px;line-height:20px;font-weight:850;color:${C.text}}
+.product-reference-main span,.prep-list span{display:block;font-size:12px;line-height:16px;font-weight:650;color:${C.textMut};margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.product-reference-action,.product-inline-links a,.product-link-panel a,.resource-link-list a{display:inline-flex;align-items:center;gap:6px;color:${C.info};font-size:13px;line-height:18px;font-weight:850;text-decoration:none}
+.product-reference-action{flex-shrink:0;border:1px solid rgba(37,99,235,.18);background:#fff;border-radius:999px;padding:6px 9px}
+.product-reference-action:hover,.product-inline-links a:hover,.product-link-panel a:hover,.resource-link-list a:hover{border-color:rgba(37,99,235,.32);background:${C.infoLt};text-decoration:none}
+.product-reference-action svg,.product-inline-links svg,.product-link-panel svg,.resource-link-list svg{width:15px;height:15px;stroke-width:1.8;flex-shrink:0}
 .product-inline-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
-.product-inline-links .product-text{display:inline-flex;font-size:12px;line-height:16px;font-weight:400;color:${C.textMut}}
+.product-inline-links a,.product-inline-links .product-text{border:1px solid ${C.border};background:#fff;border-radius:999px;padding:6px 9px}
+.product-inline-links .product-text{display:inline-flex;font-size:12px;line-height:16px;font-weight:750;color:${C.textMut}}
 .checklist-list{display:flex;flex-direction:column;gap:8px}
 .checklist-list div{display:flex;gap:8px;align-items:flex-start;font-size:14px;line-height:22px;color:${C.textSec}}
 .checklist-list svg{color:${C.pri};flex-shrink:0;margin-top:2px;stroke-width:1.5}
@@ -1798,15 +1973,16 @@ const PAGE_CSS = `
 .sop-admin-card p{font-size:13px;line-height:20px;color:${C.textSec};margin:0;max-width:760px}
 .sop-admin-card small{display:block;margin-top:5px;font-size:11px;line-height:15px;color:${C.warn}}
 .sop-admin-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-.enterprise-lock-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(20,83,45,.18);background:#fff;color:${C.textMut};padding:7px 10px;font:900 10px/14px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.enterprise-lock-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(20,83,45,.18);background:#fff;color:${C.textMut};padding:7px 10px;font:900 10px/14px ${K9_FONT_STACK};text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
 .sop-card{padding:18px}.sop-card h2{font-size:24px;line-height:32px;font-weight:700;color:${C.text};margin:0 0 8px}
 .sop-card.span-two{grid-column:span 2}
 .resource-link-list{display:flex;flex-direction:column;gap:9px;margin-top:14px}
-.resource-link-list a{border:1px solid ${C.border};background:${C.surfaceHover};border-radius:6px;padding:10px 12px}
+.resource-link-list a{border:1px solid ${C.border};background:${C.surfaceHover};border-radius:6px;padding:10px 12px;justify-content:flex-start;transition:border-color .18s ease,background .18s ease,transform .18s ease,box-shadow .18s ease}
+.resource-link-list a:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(37,99,235,.08)}
 .resource-editor{display:grid;gap:9px;margin-top:14px}
 .resource-editor-row{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:8px;align-items:center}
 .resource-editor-row input:first-child{grid-column:1/-1}
-.resource-editor-row input,.program-sop-editor input,.program-sop-editor textarea{width:100%;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};font:700 13px/20px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;padding:10px 11px;transition:border-color .16s ease,box-shadow .16s ease}
+.resource-editor-row input,.program-sop-editor input,.program-sop-editor textarea{width:100%;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};font:700 13px/20px ${K9_FONT_STACK};padding:10px 11px;transition:border-color .16s ease,box-shadow .16s ease}
 .program-sop-editor textarea{resize:vertical;font-weight:600;line-height:19px;min-height:58px}
 .resource-editor-row input:focus,.program-sop-editor input:focus,.program-sop-editor textarea:focus{outline:0;border-color:${C.pri};box-shadow:0 0 0 3px rgba(20,83,45,.09)}
 .resource-editor-row>button,.program-sop-editor-head>button,.program-sop-editor-item>button{width:36px;height:36px;border-radius:8px;border:1px solid rgba(220,38,38,.18);background:#FEF2F2;color:${C.dan};display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
@@ -1832,10 +2008,17 @@ const PAGE_CSS = `
 .field-grid{display:grid;gap:12px}.field-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .field span{font-size:12px;line-height:16px;font-weight:500;color:${C.textSec}}
-.field input,.field textarea,.field select{border:1px solid ${C.border};border-radius:6px;padding:12px;font:400 14px/22px inherit;color:${C.text};background:#fff}
+.field input,.field textarea,.field select{border:1px solid ${C.border};border-radius:6px;padding:12px;font-family:${K9_FONT_STACK};font-size:14px;line-height:22px;font-weight:700;color:${C.text};background:#fff;letter-spacing:0}
 .field input:focus,.field textarea:focus,.field select:focus{outline:2px solid rgba(20,83,45,.16);border-color:${C.pri}}
 .field textarea{resize:vertical}
 .field-help{font-size:12px;line-height:16px;color:${C.textMut};margin-top:2px}
+.product-editor{display:grid;gap:8px}
+.product-editor-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(120px,.42fr) minmax(0,1.15fr) 38px;gap:8px;align-items:center}
+.product-editor-row input{min-width:0}
+.product-editor-row>button{width:38px;height:38px;border-radius:8px;border:1px solid rgba(220,38,38,.18);background:#FEF2F2;color:${C.dan};display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .16s ease,opacity .16s ease}
+.product-editor-row>button:disabled{opacity:.34;cursor:not-allowed}
+.product-editor-row>button:not(:disabled):hover{transform:translateY(-1px)}
+.product-editor-row>button svg{width:16px;height:16px;stroke-width:1.9}
 .toggle-row{display:flex;align-items:center;gap:8px;font-size:14px;line-height:20px;font-weight:500;color:${C.text};margin:4px 0 14px}
 .form-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 .handoff-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:16px;align-items:start}
@@ -1847,6 +2030,7 @@ const PAGE_CSS = `
 .notes-box,.product-link-panel{margin-top:14px;border-radius:6px;background:${C.surfaceHover};border:1px solid ${C.border};padding:12px}
 .notes-box p,.product-link-panel p{font-size:12px;line-height:16px;margin:0 0 8px;color:${C.textMut}}
 .product-link-panel{display:flex;flex-direction:column;gap:8px}
+.product-link-panel a{border:1px solid ${C.border};background:#fff;border-radius:999px;padding:7px 10px;width:max-content;max-width:100%}
 .handoff-main{padding:18px}
 .graphic-upload-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:16px}
 .graphic-upload-card{padding:16px;box-shadow:none}
@@ -1866,8 +2050,8 @@ const PAGE_CSS = `
 .handoff-event p{margin-top:4px}
 .handoff-event-meta{display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0}
 .handoff-event-meta span{font-size:10px;line-height:14px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;background:#fff;border:1px solid ${C.border};color:${C.textSec};padding:5px 8px;white-space:nowrap}
-.workflow-health-btn{position:relative;overflow:hidden;border:2px solid;border-radius:12px;padding:0 16px;font:900 14px/15px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;min-height:64px;min-width:154px;transition:filter .2s ease,transform .2s ease}
-.workflow-health-btn:hover{filter:brightness(1.12)}
+.workflow-health-btn{position:relative;overflow:hidden;border:2px solid;border-radius:12px;padding:0 16px;font:900 14px/15px ${K9_FONT_STACK};letter-spacing:0;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;min-height:64px;min-width:154px;transition:filter .2s ease,transform .2s ease,box-shadow .2s ease}
+.workflow-health-btn:hover{filter:brightness(1.12);transform:translateY(-1px);box-shadow:0 12px 30px rgba(15,23,42,.09)}
 .workflow-health-sweep{position:absolute;inset:0;width:60%;pointer-events:none}
 .workflow-health-progressbar{position:absolute;left:0;bottom:0;height:3px;transition:width .35s ease;pointer-events:none}
 .workflow-health-dot{width:10px;height:10px;border-radius:999px;display:inline-block;flex-shrink:0;position:relative;z-index:1}
@@ -1877,17 +2061,18 @@ const PAGE_CSS = `
 .workflow-mini-status{position:relative;margin-top:16px;border:1px solid rgba(20,83,45,.14);background:linear-gradient(135deg,#fff,${C.priLt});border-radius:8px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:12px;overflow:hidden}
 .workflow-mini-status strong{display:block;font-size:20px;line-height:26px;font-weight:850;color:${C.text};margin-top:3px}
 .workflow-mini-status p{font-size:12px;line-height:18px;color:${C.textSec};margin:3px 0 0}
-.workflow-mini-health{display:flex;align-items:center;gap:8px;font:900 12px/16px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;white-space:nowrap}
+.workflow-mini-health{display:flex;align-items:center;gap:8px;font:900 12px/16px ${K9_FONT_STACK};white-space:nowrap}
 .workflow-mini-health small{display:block;color:${C.textMut};font-size:10px;font-weight:700;margin-left:2px}
 .workflow-mini-bar{grid-column:1/-1;height:6px;border-radius:999px;background:rgba(20,83,45,.1);overflow:hidden}
 .workflow-mini-bar span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,${C.pri},${C.acc});transition:width .45s cubic-bezier(.16,1,.3,1)}
 .workflow-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
 .workflow-command{padding:20px}
+.workflow-command.workflow-command-tight{padding:0;background:transparent;border:0;box-shadow:none}
 .workflow-command-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
 .workflow-command-head h2{font-size:28px;line-height:36px;font-weight:850;color:${C.text};margin:0 0 4px}
 .workflow-command-head p,.workflow-reconcile-card p,.workflow-today-events p,.workflow-health-card p{font-size:14px;line-height:22px;color:${C.textSec};margin:0}
 .workflow-date-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.workflow-date-nav>button:not(.secondary-btn){width:38px;height:38px;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;font-weight:900;transition:transform .18s ease,box-shadow .18s ease}
+.workflow-date-nav>button:not(.secondary-btn){width:38px;height:38px;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:${K9_FONT_STACK};font-weight:900;transition:transform .18s ease,box-shadow .18s ease}
 .workflow-date-nav>button:not(.secondary-btn):hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.08)}
 .workflow-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
 .workflow-health-card{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:16px;align-items:center;border:1px solid rgba(148,163,184,.24);background:${C.surfaceHover};border-radius:8px;padding:14px;margin-bottom:14px}
@@ -1896,6 +2081,7 @@ const PAGE_CSS = `
 .workflow-table-card{border:1px solid rgba(148,163,184,.24);border-radius:8px;overflow:hidden;background:#fff}
 .workflow-table-wrap{overflow:auto}
 .workflow-table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid ${C.borderLight};background:#fff}
+.workflow-table-toolbar p{font-size:12px;line-height:18px;color:${C.textSec};margin:2px 0 0;max-width:780px}
 .workflow-table{width:100%;border-collapse:collapse;font-size:13px}
 .workflow-table th{background:${C.surfaceHover};border-bottom:1px solid ${C.border};text-align:left;padding:11px 14px;font-size:11px;line-height:16px;font-weight:850;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
 .workflow-table td{padding:13px 14px;border-bottom:1px solid ${C.borderLight};vertical-align:middle;color:${C.textSec}}
@@ -1908,10 +2094,19 @@ const PAGE_CSS = `
 .workflow-dog-name-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .workflow-dog-cell strong{display:block;font-size:15px;line-height:20px;font-weight:900;color:${C.text}}
 .workflow-dog-cell span,.workflow-dog-cell small,.workflow-table td:last-child small{display:block;font-size:11px;line-height:16px;color:${C.textMut};margin-top:2px}
+.workflow-reservation-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px}
+.workflow-reservation-kind{display:inline-flex!important;align-items:center;width:max-content;border-radius:999px;padding:3px 7px;font:900 9px/12px ${K9_FONT_STACK};letter-spacing:.02em;text-transform:uppercase;margin:0!important;border:1px solid rgba(148,163,184,.28);background:#fff;color:${C.textMut}}
+.workflow-reservation-kind.boarding{background:#EEF2FF;color:#3730A3;border-color:#C7D2FE}
+.workflow-reservation-kind.daycare{background:#ECFDF5;color:#166534;border-color:#BBF7D0}
+.workflow-reservation-kind.day_boarding{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
+.workflow-reservation-kind.evaluation{background:#FEFCE8;color:#854D0E;border-color:#FEF08A}
+.workflow-reservation-window{display:inline-flex!important;align-items:center;width:max-content;margin:0!important;color:${C.textSec}!important;font:800 11px/15px ${K9_FONT_STACK}!important;letter-spacing:0}
+.workflow-service-line{font-weight:650}
+.workflow-review-reason{max-width:560px;color:#92400E!important;font:850 11px/16px ${K9_FONT_STACK}!important;margin-top:6px!important}
 .workflow-playgroup-badges{display:inline-flex!important;align-items:center;gap:4px;margin-top:0!important}
-.workflow-playgroup-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:22px;height:18px;border-radius:999px;padding:0 6px;font:900 9px/18px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;text-transform:uppercase;letter-spacing:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.42)}
+.workflow-playgroup-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:22px;height:18px;border-radius:999px;padding:0 6px;font:900 9px/18px ${K9_FONT_STACK};text-transform:uppercase;letter-spacing:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.42)}
 .workflow-playgroup-legend{display:flex;align-items:center;justify-content:flex-end;gap:8px 10px;flex-wrap:wrap}
-.workflow-playgroup-legend-item{display:inline-flex;align-items:center;gap:5px;font:850 10px/14px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;color:${C.textMut};white-space:nowrap}
+.workflow-playgroup-legend-item{display:inline-flex;align-items:center;gap:5px;font:850 10px/14px ${K9_FONT_STACK};color:${C.textMut};white-space:nowrap}
 .workflow-playgroup-legend-item .workflow-playgroup-badge{height:17px;min-width:21px;font-size:8px;line-height:17px}
 .workflow-status{display:inline-flex;border-radius:999px;padding:5px 8px;font-size:10px;line-height:14px;font-weight:850;text-transform:uppercase;letter-spacing:.04em;border:1px solid ${C.border};color:${C.pri};background:${C.priLt};white-space:nowrap}
 .workflow-status.needs_review{color:${C.warn};background:${C.warnLt};border-color:rgba(217,119,6,.22)}
@@ -1932,7 +2127,7 @@ const PAGE_CSS = `
 .enrichment-health-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:24px 26px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
 .enrichment-health-head h2{font-size:24px;line-height:30px;font-weight:900;color:#fff;margin:0}
 .enrichment-health-head p{margin:4px 0 0;font-size:13px;line-height:19px;color:rgba(255,255,255,.5)}
-.enrichment-health-head button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:rgba(255,255,255,.8);cursor:pointer;font:900 20px/1 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif}
+.enrichment-health-head button{width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:rgba(255,255,255,.8);cursor:pointer;font:900 20px/1 ${K9_FONT_STACK}}
 .enrichment-health-body{padding:26px;display:grid;gap:14px}
 .enrichment-health-section{padding:18px;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.045);display:grid;gap:14px}
 .enrichment-health-section-title{display:flex;align-items:center;gap:10px}
@@ -1942,7 +2137,7 @@ const PAGE_CSS = `
 .enrichment-health-fact{min-width:0;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);padding:9px 10px}
 .enrichment-health-fact span{display:block;font-size:9px;line-height:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.35)}
 .enrichment-health-fact strong{display:block;margin-top:3px;font-size:13px;line-height:18px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.enrichment-health-refresh{justify-self:start;border:1px solid rgba(132,204,22,.42);background:rgba(132,204,22,.14);color:#84CC16;border-radius:10px;padding:11px 14px;font:900 13px/18px 'Outfit',-apple-system,BlinkMacSystemFont,sans-serif;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.enrichment-health-refresh{justify-self:start;border:1px solid rgba(132,204,22,.42);background:rgba(132,204,22,.14);color:#84CC16;border-radius:10px;padding:11px 14px;font:900 13px/18px ${K9_FONT_STACK};display:inline-flex;align-items:center;gap:8px;cursor:pointer}
 .enrichment-health-refresh:disabled{opacity:.65;cursor:wait}
 .enrichment-audit-list{display:grid;gap:8px;max-height:320px;overflow:auto}
 .enrichment-audit-list>p{font-size:12px;line-height:18px;color:rgba(255,255,255,.42);margin:0}
@@ -1951,7 +2146,7 @@ const PAGE_CSS = `
 .enrichment-audit-row span,.enrichment-audit-row small{display:block;margin-top:3px;font-size:11px;line-height:15px;color:rgba(255,255,255,.48)}
 .enrichment-audit-row small{color:#FCA5A5}
 .enrichment-audit-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-@media(max-width:1100px){.page-header,.enrichment-hero-grid,.main-grid,.sop-grid,.builder-grid,.handoff-grid,.workflow-grid{grid-template-columns:1fr;display:grid}.sop-card.span-two{grid-column:auto}.sop-admin-card{align-items:flex-start;flex-direction:column}.sop-section-list,.graphic-upload-grid{grid-template-columns:1fr}.detail-panel,.handoff-controls,.workflow-side{position:static}.metric-grid,.workflow-stat-grid{grid-template-columns:repeat(2,1fr)}.workflow-health-card{grid-template-columns:1fr}.workflow-command-head{flex-direction:column}.workflow-date-nav{justify-content:flex-start}.workflow-mini-status{grid-template-columns:1fr}.workflow-table-toolbar{align-items:flex-start;flex-direction:column}.workflow-playgroup-legend{justify-content:flex-start}}
+@media(max-width:1100px){.page-header,.enrichment-daily-surface,.main-grid,.sop-grid,.builder-grid,.handoff-grid,.workflow-grid{grid-template-columns:1fr;display:grid}.sop-card.span-two{grid-column:auto}.sop-admin-card{align-items:flex-start;flex-direction:column}.sop-section-list,.graphic-upload-grid{grid-template-columns:1fr}.detail-panel,.handoff-controls,.workflow-side{position:static}.workflow-stat-grid{grid-template-columns:repeat(2,1fr)}.workflow-health-card{grid-template-columns:1fr}.workflow-command-head,.daily-module-head{flex-direction:column}.workflow-date-nav{justify-content:flex-start}.workflow-mini-status{grid-template-columns:1fr}.workflow-table-toolbar{align-items:flex-start;flex-direction:column}.workflow-playgroup-legend{justify-content:flex-start}.queue-main{align-items:flex-start;flex-direction:column;min-height:auto}.daily-run-completion strong{font-size:38px;line-height:40px}.daily-module-foot{align-items:flex-start;justify-content:flex-start}}
 `;
 
 export default EnrichmentsPage;

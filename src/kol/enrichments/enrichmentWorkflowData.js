@@ -22,20 +22,64 @@ export function getWorkflowDogId(dog) {
   ).trim();
 }
 
-export function normalizeWorkflowDog(row = {}, photoMap = {}, playgroupMap = {}) {
+export function normalizeWorkflowDog(row = {}, photoMap = {}, playgroupMap = {}, reservationContextMap = {}) {
   const status = String(row.status || "").toLowerCase();
   const needsReview = row.isSuggested || status === "suggested" || status === "needs_review";
   const animalId = getWorkflowDogId(row);
   const playgroupAssignment = row.playgroupAssignment || row.playgroup_assignment || playgroupMap[animalId] || null;
+  const reservationContext = row.reservationContext || row.reservation_context || reservationContextMap[animalId] || {};
+  const reservationType = firstPresent(
+    row.reservationType,
+    row.reservation_type,
+    reservationContext.reservationType,
+    reservationContext.reservation_type,
+    reservationContext.reservation_type_name,
+  );
+  const startDate = firstPresent(
+    row.startDate,
+    row.start_date,
+    row.reservationStart,
+    row.reservation_start,
+    row.reservationDates?.start,
+    reservationContext.startDate,
+    reservationContext.start_date,
+  );
+  const endDate = firstPresent(
+    row.endDate,
+    row.end_date,
+    row.reservationEnd,
+    row.reservation_end,
+    row.reservationDates?.end,
+    reservationContext.endDate,
+    reservationContext.end_date,
+  );
+  const checkInDate = firstPresent(row.checkInDate, row.check_in_date, reservationContext.checkInDate, reservationContext.check_in_date);
+  const checkOutDate = firstPresent(row.checkOutDate, row.check_out_date, reservationContext.checkOutDate, reservationContext.check_out_date);
+  const reservationCategory = row.reservationCategory || row.reservation_category || reservationContext.reservationCategory || reservationContext.reservation_category || classifyEnrichmentReservationContext(reservationType);
+  const reservationWindow = formatEnrichmentReservationWindow(startDate, endDate);
+  const serviceDates = firstServiceDates(
+    row.serviceDates,
+    row.service_dates,
+    row.enrichmentServiceDates,
+    row.enrichment_service_dates,
+    reservationContext.serviceDates,
+    reservationContext.service_dates,
+  );
+  const reportDate = firstPresent(row.reportDate, row.report_date, row.targetDate, row.target_date);
   return {
     id: animalId,
     animalId,
     animalName: row.animalName || row.animal_name || "Unknown",
     ownerName: row.ownerName || row.owner_name || "Unknown",
     roomLabel: row.roomLabel || row.room_label || "",
-    reservationType: row.reservationType || row.reservation_type || "",
+    reservationType,
+    reservationCategory,
+    reservationLabel: formatEnrichmentReservationKind(reservationType, reservationCategory),
+    reservationDates: { start: startDate, end: endDate, checkIn: checkInDate, checkOut: checkOutDate },
+    reservationWindow,
     services: Array.isArray(row.services) ? row.services : [],
-    reason: formatWorkflowReviewReason(row.reason || "", row.reportDate || row.report_date),
+    serviceDates,
+    reason: formatWorkflowReviewReason(row.reason || "", reportDate, { serviceDates, reservationWindow }),
     imageUrl: row.imageUrl || row.image_url || row.photoUrl || row.photo_url || photoMap[animalId] || "",
     playgroupAssignment,
     playgroupTags: getWorkflowPlaygroupTags(playgroupAssignment),
@@ -43,9 +87,12 @@ export function normalizeWorkflowDog(row = {}, photoMap = {}, playgroupMap = {})
   };
 }
 
-export function normalizeEnrichmentWorkflow(computedItems, completions = {}, photoMap = {}, playgroupMap = {}) {
+export function normalizeEnrichmentWorkflow(computedItems, completions = {}, photoMap = {}, playgroupMap = {}, reservationContextMap = {}, reportDateOverride = "") {
+  const reportDate = firstPresent(computedItems?.reportDate, computedItems?.report_date, reportDateOverride);
   const dogs = Array.isArray(computedItems?.dogs)
-    ? computedItems.dogs.map((dog) => normalizeWorkflowDog(dog, photoMap, playgroupMap)).filter((dog) => dog.id)
+    ? computedItems.dogs
+      .map((dog) => normalizeWorkflowDog({ ...dog, reportDate: dog.reportDate || dog.report_date || reportDate }, photoMap, playgroupMap, reservationContextMap))
+      .filter((dog) => dog.id)
     : [];
   const scheduled = dogs.filter((dog) => dog.status === "scheduled");
   const needsReview = dogs.filter((dog) => dog.status === "needs_review");
@@ -63,6 +110,104 @@ export function normalizeEnrichmentWorkflow(computedItems, completions = {}, pho
     rawScheduledCount: Number(computedItems?.scheduledCount || 0),
     rawSuggestedCount: Number(computedItems?.suggestedCount || 0),
     summary: computedItems?.summary || null,
+  };
+}
+
+export function classifyEnrichmentReservationContext(typeName = "") {
+  const value = String(typeName || "").toLowerCase();
+  if (!value) return "";
+  if (value.includes("evaluation") || value.includes("eval") || value.includes("first stay")) return "evaluation";
+  if (value.includes("day boarding")) return "day_boarding";
+  if (value.includes("daycare") || value.includes("day care")) return "daycare";
+  if (value.includes("boarding") || value.includes("luxury") || value.includes("executive") || value.includes("suite") || value.includes("compartment")) return "boarding";
+  return "other";
+}
+
+export function formatEnrichmentReservationKind(typeName = "", category = "") {
+  const cat = category || classifyEnrichmentReservationContext(typeName);
+  if (cat === "boarding") return "Boarding";
+  if (cat === "daycare") return "Daycare";
+  if (cat === "day_boarding") return "Day boarding";
+  if (cat === "evaluation") return "Evaluation";
+  const raw = String(typeName || "").trim();
+  return raw || "";
+}
+
+export function formatEnrichmentReservationWindow(startDate = "", endDate = "") {
+  const start = formatReservationDatePart(startDate);
+  const end = formatReservationDatePart(endDate);
+  if (!start && !end) return "";
+  if (start && !end) return start.full;
+  if (!start && end) return `Ends ${end.full}`;
+  if (start.dateKey === end.dateKey) {
+    if (start.time && end.time) return `${start.date}, ${start.time} to ${end.time}`;
+    return start.date;
+  }
+  return `${start.full} to ${end.full}`;
+}
+
+function firstPresent(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function firstServiceDates(...values) {
+  for (const value of values) {
+    const dates = normalizeWorkflowServiceDates(value);
+    if (dates.length) return dates;
+  }
+  return [];
+}
+
+export function normalizeWorkflowServiceDates(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(/[,|]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  return [...new Set(source
+    .map(extractWorkflowServiceDate)
+    .filter(Boolean))];
+}
+
+function extractWorkflowServiceDate(value) {
+  if (value && typeof value === "object") {
+    return extractWorkflowServiceDate(
+      value.scheduled_at ||
+      value.scheduled_date ||
+      value.scheduledAt ||
+      value.date ||
+      value.service_date ||
+      value.start_date ||
+      value.value ||
+      ""
+    );
+  }
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.toLowerCase() === "missing") return "missing";
+  const match = raw.match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : raw;
+}
+
+function formatReservationDatePart(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/\d{4}-\d{2}-\d{2}/);
+  if (!match) return null;
+  const hasClock = /T\d{2}:\d{2}/.test(raw);
+  const parsed = hasClock ? new Date(raw) : new Date(`${match[0]}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const date = parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = hasClock ? parsed.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  return {
+    date,
+    time,
+    full: time ? `${date}, ${time}` : date,
+    dateKey: match[0],
   };
 }
 
@@ -155,9 +300,20 @@ export function formatHealthTime(value) {
   }
 }
 
-export function formatWorkflowReviewReason(reason, reportDate = "") {
+export function formatWorkflowReviewReason(reason, reportDate = "", context = {}) {
   const raw = String(reason || "").trim();
   if (!raw) return "";
+  const parsedServiceDates = normalizeWorkflowServiceDates(
+    context.serviceDates?.length ? context.serviceDates : parseServiceDatesFromReviewReason(raw)
+  );
+  const usesGenericReviewCopy = /Enrichment service needs review|Enrichment service needs a scheduled date|Current service dates:/i.test(raw);
+  if (usesGenericReviewCopy) {
+    return buildWorkflowReviewExplanation({
+      reportDate,
+      serviceDates: parsedServiceDates,
+      reservationWindow: context.reservationWindow || "",
+    });
+  }
   const pretty = raw.replace(/\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[-+]\d{2}:\d{2}|Z)?)?/g, (match) => {
     const date = match.slice(0, 10);
     const label = formatWorkflowDateLabel(date);
@@ -170,6 +326,43 @@ export function formatWorkflowReviewReason(reason, reportDate = "") {
     .replace(/Current service dates:/, "Service dates:")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function parseServiceDatesFromReviewReason(reason) {
+  const match = String(reason || "").match(/Current service dates:\s*([^.]*)/i);
+  if (!match) return [];
+  return match[1].split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function buildWorkflowReviewExplanation({ reportDate = "", serviceDates = [], reservationWindow = "" }) {
+  const targetLabel = formatWorkflowDateLabel(reportDate) || "this date";
+  const datedLabels = serviceDates
+    .filter((date) => date && date !== "missing")
+    .map((date) => formatWorkflowDateLabel(date) || date)
+    .filter(Boolean);
+  const hasMissingDate = serviceDates.includes("missing");
+  const context = reservationWindow
+    ? `Dog is here ${reservationWindow}`
+    : `Reservation is active ${targetLabel}`;
+  const problems = [];
+
+  if (datedLabels.length) {
+    problems.push(`Enrichment is dated ${joinHuman(datedLabels)} instead of ${targetLabel}`);
+  }
+  if (hasMissingDate) {
+    problems.push("one Enrichment service has no service date");
+  }
+  if (!problems.length) {
+    return `${context}, but the Enrichment service needs review before staff run it today.`;
+  }
+  return `${context}, but ${joinHuman(problems)}. Confirm whether staff should run it today.`;
+}
+
+function joinHuman(items) {
+  const list = items.filter(Boolean);
+  if (list.length <= 1) return list[0] || "";
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(", ")}, and ${list[list.length - 1]}`;
 }
 
 function formatWorkflowDateLabel(date) {
