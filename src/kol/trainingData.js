@@ -646,12 +646,123 @@ export function buildUpdateTrainingRecordConfigArgs({
   };
 }
 
+export const LABOR_EMPLOYMENT_COMMITMENT_OPTIONS = [
+  { value: "full_time", label: "Full-Time", shortLabel: "FT" },
+  { value: "part_time", label: "Part-Time", shortLabel: "PT" },
+];
+
+const LABOR_EMPLOYMENT_COMMITMENT_LABELS = Object.fromEntries(
+  LABOR_EMPLOYMENT_COMMITMENT_OPTIONS.map((option) => [option.value, option])
+);
+
+export function normalizeLaborEmploymentCommitment(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  if (normalized === "ft" || normalized === "fulltime") return "full_time";
+  if (normalized === "pt" || normalized === "parttime") return "part_time";
+  return LABOR_EMPLOYMENT_COMMITMENT_LABELS[normalized] ? normalized : null;
+}
+
+export function getLaborEmploymentCommitmentLabel(value, { short = false } = {}) {
+  const normalized = normalizeLaborEmploymentCommitment(value);
+  if (!normalized) return short ? "Unassigned" : "Unassigned";
+  const option = LABOR_EMPLOYMENT_COMMITMENT_LABELS[normalized];
+  return short ? option.shortLabel : option.label;
+}
+
+export function readLaborEmploymentCommitment(employee = {}) {
+  if (!employee || typeof employee !== "object") return null;
+  return normalizeLaborEmploymentCommitment(
+    employee.employment_commitment
+    || employee.employmentCommitment
+    || employee.commitment
+    || employee.metadata?.employment_commitment
+  );
+}
+
+export const LABOR_ROSTER_POSITION_GROUPS = [
+  { key: "manager", label: "Managers" },
+  { key: "supervisor", label: "Supervisors" },
+  { key: "csr", label: "CSRs" },
+  { key: "pct", label: "PCTs" },
+  { key: "other", label: "Other" },
+];
+
+const LABOR_ROSTER_POSITION_GROUP_BY_KEY = Object.fromEntries(
+  LABOR_ROSTER_POSITION_GROUPS.map((group) => [group.key, group])
+);
+
+export function getLaborRosterPositionGroup(positionTitle = "") {
+  const title = String(positionTitle || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!title) return "other";
+  if (/(director|regional|general manager|\bgm\b|assistant manager|\bagm\b|manager)/.test(title)) return "manager";
+  if (/(supervisor|lead)/.test(title)) return "supervisor";
+  if (/(customer service representative|\bcsr\b)/.test(title)) return "csr";
+  if (/(pet care technician|\bpct\b|technician)/.test(title)) return "pct";
+  return "other";
+}
+
+export function buildLaborRosterStaffingSummary(rosterSnapshot = []) {
+  const emptyRowsByGroup = Object.fromEntries(
+    LABOR_ROSTER_POSITION_GROUPS.map((group) => [
+      group.key,
+      {
+        key: group.key,
+        label: group.label,
+        fullTime: 0,
+        partTime: 0,
+        unassigned: 0,
+        total: 0,
+      },
+    ])
+  );
+  const activeRows = (Array.isArray(rosterSnapshot) ? rosterSnapshot : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => isLaborEmployeeActive(row));
+
+  activeRows.forEach((row) => {
+    const groupKey = LABOR_ROSTER_POSITION_GROUP_BY_KEY[row.position_group]
+      ? row.position_group
+      : getLaborRosterPositionGroup(row.position_title);
+    const matrixRow = emptyRowsByGroup[groupKey] || emptyRowsByGroup.other;
+    const commitment = readLaborEmploymentCommitment(row);
+    if (commitment === "full_time") {
+      matrixRow.fullTime += 1;
+    } else if (commitment === "part_time") {
+      matrixRow.partTime += 1;
+    } else {
+      matrixRow.unassigned += 1;
+    }
+    matrixRow.total += 1;
+  });
+
+  const staffingMatrix = LABOR_ROSTER_POSITION_GROUPS
+    .map((group) => emptyRowsByGroup[group.key])
+    .filter((row) => row.key !== "other" || row.total > 0 || row.unassigned > 0);
+
+  return {
+    activeEmployeeCount: activeRows.length,
+    managerCount: emptyRowsByGroup.manager.total,
+    supervisorCount: emptyRowsByGroup.supervisor.total,
+    csrCount: emptyRowsByGroup.csr.total,
+    pctCount: emptyRowsByGroup.pct.total,
+    otherPositionCount: emptyRowsByGroup.other.total,
+    fullTimeCount: activeRows.filter((row) => readLaborEmploymentCommitment(row) === "full_time").length,
+    partTimeCount: activeRows.filter((row) => readLaborEmploymentCommitment(row) === "part_time").length,
+    unassignedCommitmentCount: activeRows.filter((row) => !readLaborEmploymentCommitment(row)).length,
+    staffingMatrix,
+  };
+}
+
 export function buildCreateLaborEmployeeRpcArgs({
   locationRef,
   fullName,
   positionTitle,
   startDate,
   endDate = null,
+  employmentCommitment = null,
   linkedUserId = null,
   actorUserId = null,
   actorName = null,
@@ -662,6 +773,7 @@ export function buildCreateLaborEmployeeRpcArgs({
     p_position_title: positionTitle?.trim?.() || "",
     p_start_date: startDate || null,
     p_end_date: endDate || null,
+    p_employment_commitment: normalizeLaborEmploymentCommitment(employmentCommitment),
     p_linked_user_id: normalizeOptionalUuid(linkedUserId),
     p_actor_user_id: normalizeOptionalUuid(actorUserId),
     p_actor_name: actorName?.trim?.() || null,
@@ -674,6 +786,7 @@ export function buildUpdateLaborEmployeeRpcArgs({
   positionTitle = null,
   startDate = null,
   endDate = null,
+  employmentCommitment = null,
   linkedUserId = null,
   actorUserId = null,
 }) {
@@ -684,6 +797,8 @@ export function buildUpdateLaborEmployeeRpcArgs({
     p_start_date: startDate || null,
     p_end_date: endDate || null,
     p_end_date_provided: true,
+    p_employment_commitment: normalizeLaborEmploymentCommitment(employmentCommitment),
+    p_employment_commitment_provided: true,
     p_linked_user_id: normalizeOptionalUuid(linkedUserId),
     p_actor_user_id: normalizeOptionalUuid(actorUserId),
   };
@@ -933,8 +1048,10 @@ export function buildLaborDashboardMetrics({ rosterSnapshot = [], employeeNotes 
     return openCount === 0 && completedCount > 0;
   }).length;
   const trainingComplianceDenominator = activeRows.length;
+  const staffingSummary = buildLaborRosterStaffingSummary(cleanRosterSnapshot);
 
   return {
+    ...staffingSummary,
     activeEmployeeCount: activeRows.length,
     employeeNoteCount30d: noteCount30d,
     attendanceMarkCount30d,
