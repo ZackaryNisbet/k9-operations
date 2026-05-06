@@ -2423,6 +2423,30 @@ function isOperationalAddonStatus(value: any): boolean {
   return ["scheduled", "confirmed", "checked-in", "completed"].includes(normalized);
 }
 
+function extractServiceScheduledDate(service: any): string | null {
+  const candidates = [
+    service?.scheduled_at,
+    service?.scheduled_date,
+    service?.scheduledAt,
+    service?.date,
+    service?.service_date,
+    service?.start_date,
+  ];
+  for (const value of candidates) {
+    const match = String(value || "").match(/\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+  }
+  return null;
+}
+
+function reservationSpansDate(res: any, targetDate: string): boolean {
+  const start = String(res.startDate || res.start_date || "").slice(0, 10);
+  const end = String(res.endDate || res.end_date || "").slice(0, 10);
+  if (start && start > targetDate) return false;
+  if (end && end < targetDate) return false;
+  return true;
+}
+
 function computeServiceReport(
   reservations: Record<string, any>,
   filterKeyword: string,
@@ -2499,11 +2523,9 @@ function computeEnrichmentReport(
   const suggested: Array<ServiceDog & { reason: string }> = [];
   const seen = new Set<string>();
 
-  // Merge live + DB reservations, preferring live data
-  const merged: Record<string, any> = { ...dbReservations };
-  for (const [id, res] of Object.entries(liveReservations)) {
-    merged[id] = res;
-  }
+  // Merge live + DB reservations. Prefer the synced DB row when both exist
+  // because it preserves service-level scheduled_at values from Gingr reports.
+  const merged: Record<string, any> = { ...liveReservations, ...dbReservations };
 
   for (const res of Object.values(merged)) {
     const services = res.services || [];
@@ -2520,19 +2542,26 @@ function computeEnrichmentReport(
     );
 
     if (enrichmentServices.length === 0) continue;
+
+    const scheduledServices = enrichmentServices.filter((s: any) =>
+      extractServiceScheduledDate(s) === targetDate
+    );
+    const undatedServices = enrichmentServices.filter((s: any) =>
+      extractServiceScheduledDate(s) === null
+    );
+    const shouldSuggest = scheduledServices.length === 0 &&
+      undatedServices.length > 0 &&
+      reservationSpansDate(res, targetDate);
+
+    if (scheduledServices.length === 0 && !shouldSuggest) continue;
     seen.add(animalId);
 
     const ownerFirst = res.owner?.first_name || "";
     const ownerLast = res.owner?.last_name || "";
 
-    // Check if any enrichment is scheduled for the target date
-    const scheduledForToday = enrichmentServices.some((s: any) => {
-      const schedAt = s.scheduled_at || s.scheduled_date || "";
-      return schedAt.includes(targetDate);
-    });
-
     const resType = res.reservation_type?.type || "";
-    const svcNames = enrichmentServices.map(
+    const serviceRows = scheduledServices.length > 0 ? scheduledServices : undatedServices;
+    const svcNames = serviceRows.map(
       (s: any) => s.name || s.service_name || "enrichment",
     );
 
@@ -2552,19 +2581,20 @@ function computeEnrichmentReport(
         res.roomLabel || res.room?.name || "",
       ),
       services: svcNames,
-      status: scheduledForToday ? "scheduled" : "suggested",
+      status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
       reservationType: resType,
       summary: svcNames.join(", "),
     };
 
-    if (scheduledForToday) {
+    if (scheduledServices.length > 0) {
       scheduled.push(dog);
     } else {
-      // Has enrichment on reservation but not specifically scheduled for today — suggest it
-      const serviceDates = enrichmentServices.map((s: any) => s.scheduled_at || s.scheduled_date || "unknown").join(", ");
+      // Has enrichment on reservation, but the service date is missing. Do not suggest
+      // services explicitly scheduled for another date.
+      const serviceDates = enrichmentServices.map((s: any) => extractServiceScheduledDate(s) || "missing").join(", ");
       suggested.push({
         ...dog,
-        reason: `Enrichment on reservation (scheduled: ${serviceDates}) but not specifically for ${targetDate}`,
+        reason: `Enrichment service needs a scheduled date for ${targetDate}. Current service dates: ${serviceDates}`,
       });
     }
   }
@@ -2589,26 +2619,19 @@ async function fetchReservationsForDate(
   targetDate: string,
   roomLookup?: RoomOccupancyLookup | null,
 ): Promise<Record<string, any>> {
-  const nextDay = addDays(targetDate, 1);
   const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services, room_assignment";
 
-  const [{ data: activeRes }, { data: pendingRes }] = await Promise.all([
-    // Dogs checked in whose stay spans the target date
-    supabase.from("gingr_reservations").select(resSelect)
-      .eq("location_id", locationId)
-      .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
-      .lte("start_date", `${targetDate}T23:59:59`).gte("end_date", `${targetDate}T00:00:00`),
-    // Dogs with reservations starting on the target date (not yet checked in)
-    supabase.from("gingr_reservations").select(resSelect)
-      .eq("location_id", locationId)
-      .is("check_in_date", null).is("check_out_date", null).is("cancelled_date", null)
-      .gte("start_date", `${targetDate}T00:00:00`).lt("start_date", nextDay + "T00:00:00"),
-  ]);
+  const { data: reservationRows } = await supabase.from("gingr_reservations")
+    .select(resSelect)
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${targetDate}T23:59:59`)
+    .gte("end_date", `${targetDate}T00:00:00`);
 
   // Deduplicate and convert to the format expected by computeServiceReport / computePrivatePlay
   const seen = new Set<string>();
   const result: Record<string, any> = {};
-  for (const r of [...(activeRes || []), ...(pendingRes || [])]) {
+  for (const r of (reservationRows || [])) {
     const id = String(r.gingr_id);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -2627,6 +2650,7 @@ async function fetchReservationsForDate(
       services: Array.isArray(r.services) ? r.services : (rd.services || []),
       animalGingrId: String(r.animal_gingr_id || rd.animal?.id || ""),
       checkInDate: r.check_in_date || null,
+      endDate: r.end_date || "",
       startDate: r.start_date || "",
       roomLabel: resolveCanonicalRoomLabel(
         roomLookup,
