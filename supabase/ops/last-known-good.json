@@ -16,18 +16,18 @@
       "updatedAt": "2026-04-22T18:37:02.826Z"
     },
     "ops-compute": {
-      "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
+      "commit": "8ac020be08871362d5ba7f4ded3c0a08bf6537bc",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "surface unassigned roll call dogs",
-      "updatedAt": "2026-04-20T08:52:02.318Z"
+      "note": "enrichment workflow data accuracy",
+      "updatedAt": "2026-05-06T11:10:44.054Z"
     },
     "ops-compute-ondemand": {
-      "commit": "663202565b958293b2873d5785d9fbb5c4787f26",
+      "commit": "a45ee7d50ddd9f68f78d3481d2f8126ae060ae1d",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "surface unassigned roll call dogs",
-      "updatedAt": "2026-04-20T08:52:02.318Z"
+      "note": "enrichment on-demand review counts",
+      "updatedAt": "2026-05-06T11:16:13.362Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
