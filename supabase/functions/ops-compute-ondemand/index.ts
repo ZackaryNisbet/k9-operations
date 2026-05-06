@@ -255,6 +255,7 @@ async function fetchReservationsForDate(
       startDate: r.start_date || "",
       endDate: r.end_date || "",
       checkInDate: r.check_in_date || null,
+      checkOutDate: r.check_out_date || null,
     };
   }
   return result;
@@ -1261,6 +1262,19 @@ async function computeEnrichmentReport(
     if (end && end < targetDate) return false;
     return true;
   };
+  const getServiceDates = (services: any[]) =>
+    [...new Set((services || []).map((service: any) => extractServiceScheduledDate(service) || "missing"))];
+  const buildEnrichmentReviewReason = (serviceDates: string[] = [], startDate = "", endDate = "") => {
+    const dated = serviceDates.filter((date) => date && date !== "missing");
+    const hasMissing = serviceDates.includes("missing");
+    const reservationContext = startDate || endDate
+      ? `Dog is here ${startDate || "unknown start"} to ${endDate || "unknown end"}`
+      : `Reservation is active ${targetDate}`;
+    const issues: string[] = [];
+    if (dated.length) issues.push(`Enrichment is dated ${dated.join(", ")} instead of ${targetDate}`);
+    if (hasMissing) issues.push("one Enrichment service has no service date");
+    return `${reservationContext}, but ${issues.length ? issues.join(" and ") : "the Enrichment service needs review"}. Confirm whether staff should run it today.`;
+  };
 
   // 1) First try local reservations (from Supabase — currently checked-in dogs)
   for (const res of Object.values(localReservations)) {
@@ -1282,8 +1296,13 @@ async function computeEnrichmentReport(
     const undatedServices = enrichmentServices.filter((s: any) =>
       extractServiceScheduledDate(s) === null
     );
+    const offDateServices = enrichmentServices.filter((s: any) => {
+      const serviceDate = extractServiceScheduledDate(s);
+      return serviceDate !== null && serviceDate !== targetDate;
+    });
+    const reviewServices = [...offDateServices, ...undatedServices];
     const shouldSuggest = scheduledServices.length === 0 &&
-      undatedServices.length > 0 &&
+      reviewServices.length > 0 &&
       reservationSpansDate(res);
 
     if (scheduledServices.length === 0 && !shouldSuggest) continue;
@@ -1292,7 +1311,8 @@ async function computeEnrichmentReport(
     const ownerFirst = res.owner?.first_name || "";
     const ownerLast = res.owner?.last_name || "";
     const resType = res.reservation_type?.type || "";
-    const serviceRows = scheduledServices.length > 0 ? scheduledServices : undatedServices;
+    const serviceRows = scheduledServices.length > 0 ? scheduledServices : reviewServices;
+    const serviceDates = getServiceDates(enrichmentServices);
 
     const dog = {
       animalId,
@@ -1312,14 +1332,23 @@ async function computeEnrichmentReport(
       services: serviceRows.map((s: any) => s.name || s.service_name || "enrichment"),
       status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
       reservationType: resType,
+      reservationCategory: classifyReservationCategory(resType),
+      startDate: res.startDate || res.start_date || "",
+      endDate: res.endDate || res.end_date || "",
+      checkInDate: res.checkInDate || res.check_in_date || "",
+      checkOutDate: res.checkOutDate || res.check_out_date || "",
+      serviceDates,
       summary: serviceRows.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
     };
 
     if (scheduledServices.length > 0) {
       scheduled.push(dog);
     } else {
-      const serviceDates = enrichmentServices.map((s: any) => extractServiceScheduledDate(s) || "missing").join(", ");
-      suggested.push({ ...dog, isSuggested: true, reason: `Enrichment service needs a scheduled date for ${targetDate}. Current service dates: ${serviceDates}` });
+      suggested.push({
+        ...dog,
+        isSuggested: true,
+        reason: buildEnrichmentReviewReason(serviceDates, dog.startDate, dog.endDate),
+      });
     }
   }
 
@@ -1347,7 +1376,7 @@ async function computeEnrichmentReport(
       suggested.push({
         ...dog,
         isSuggested: true,
-        reason: `Enrichment service needs review for ${targetDate}.`,
+        reason: `Historical Enrichment snapshot is marked needs review for ${targetDate}. Confirm the service date before adding this dog to today's queue.`,
       });
     } else {
       scheduled.push(dog);
@@ -1359,7 +1388,7 @@ async function computeEnrichmentReport(
     try {
       const { data: reservations } = await supabase
         .from("gingr_reservations")
-        .select("animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, raw_data, services")
+        .select("animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, services")
         .eq("location_id", locationId)
         .lte("start_date", `${targetDate}T23:59:59`)
         .gte("end_date", `${targetDate}T00:00:00`)
@@ -1379,9 +1408,23 @@ async function computeEnrichmentReport(
           (s?.name || s?.service_name || "").toLowerCase().includes("enrichment"),
         );
         if (enrichmentSvcs.length === 0) continue;
+        const scheduledServices = enrichmentSvcs.filter((s: any) =>
+          extractServiceScheduledDate(s) === targetDate
+        );
+        const undatedServices = enrichmentSvcs.filter((s: any) =>
+          extractServiceScheduledDate(s) === null
+        );
+        const offDateServices = enrichmentSvcs.filter((s: any) => {
+          const serviceDate = extractServiceScheduledDate(s);
+          return serviceDate !== null && serviceDate !== targetDate;
+        });
+        const reviewServices = [...offDateServices, ...undatedServices];
+        if (scheduledServices.length === 0 && reviewServices.length === 0) continue;
         seen.add(animalId);
+        const serviceRows = scheduledServices.length > 0 ? scheduledServices : reviewServices;
+        const serviceDates = getServiceDates(enrichmentSvcs);
 
-        scheduled.push({
+        const dog = {
           animalId,
           animalName: row?.animal_name || "",
           ownerName: `${row?.owner_first_name || ""} ${row?.owner_last_name || ""}`.trim(),
@@ -1395,11 +1438,26 @@ async function computeEnrichmentReport(
             },
             (row.raw_data as any)?.run?.name || "",
           ),
-          services: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment"),
-          status: "scheduled",
+          services: serviceRows.map((s: any) => s.name || s.service_name || "enrichment"),
+          status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
           reservationType: row?.reservation_type_name || "",
-          summary: enrichmentSvcs.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
-        });
+          reservationCategory: classifyReservationCategory(row?.reservation_type_name || ""),
+          startDate: row?.start_date || "",
+          endDate: row?.end_date || "",
+          checkInDate: row?.check_in_date || "",
+          checkOutDate: row?.check_out_date || "",
+          serviceDates,
+          summary: serviceRows.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
+        };
+        if (scheduledServices.length > 0) {
+          scheduled.push(dog);
+        } else {
+          suggested.push({
+            ...dog,
+            isSuggested: true,
+            reason: buildEnrichmentReviewReason(serviceDates, dog.startDate, dog.endDate),
+          });
+        }
       }
     } catch (err) {
       console.error("Enrichment reservations-table fallback error:", err);

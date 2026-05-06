@@ -19,7 +19,7 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
   const [error, setError] = useState(null);
   const [lastSuccessAt, setLastSuccessAt] = useState(null);
   const [lastStartedAt, setLastStartedAt] = useState(null);
-  const [dogContextMap, setDogContextMap] = useState({ photos: {}, playgroups: {} });
+  const [dogContextMap, setDogContextMap] = useState({ photos: {}, playgroups: {}, reservations: {} });
   const [auditLog, setAuditLog] = useState([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoComputeKeysRef = useRef(new Set());
@@ -37,11 +37,11 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
   const loadDogContextMap = useCallback(async (items) => {
     const animalIds = [...new Set((items?.dogs || []).map((dog) => getWorkflowDogId(dog)).filter(Boolean))];
     if (animalIds.length === 0) {
-      setDogContextMap({ photos: {}, playgroups: {} });
+      setDogContextMap({ photos: {}, playgroups: {}, reservations: {} });
       return;
     }
     try {
-      const [photoResult, playgroupResult] = await Promise.all([
+      const [photoResult, playgroupResult, reservationResult] = await Promise.all([
         supabase
           .from("gingr_animals")
           .select("gingr_id, local_photo_url, image_url")
@@ -52,6 +52,17 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
             .select("animal_gingr_id, size_group, has_private_play, has_evaluation, is_half_and_half, primary_display_playgroup, scheduling_playgroup, playgroup_tags, source_icon_titles, source_icon_comments, half_and_half_note, unresolved_reason")
             .eq("location_id", locationId)
             .in("animal_gingr_id", animalIds)
+          : Promise.resolve({ data: [], error: null }),
+        locationId && reportDate
+          ? supabase
+            .from("gingr_reservations")
+            .select("animal_gingr_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, services")
+            .eq("location_id", locationId)
+            .in("animal_gingr_id", animalIds)
+            .lte("start_date", `${reportDate}T23:59:59`)
+            .gte("end_date", `${reportDate}T00:00:00`)
+            .is("cancelled_date", null)
+            .order("start_date", { ascending: true })
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -71,12 +82,30 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
         playgroups = buildPlaygroupAssignmentMap(playgroupResult.data || []);
       }
 
-      setDogContextMap({ photos, playgroups });
+      const reservations = {};
+      if (reservationResult.error) {
+        console.warn("[enrichment workflow] reservation context load failed:", reservationResult.error?.message || reservationResult.error);
+      } else {
+        for (const row of reservationResult.data || []) {
+          const animalId = String(row.animal_gingr_id || "");
+          if (!animalId || reservations[animalId]) continue;
+          reservations[animalId] = {
+            reservationType: row.reservation_type_name || "",
+            startDate: row.start_date || "",
+            endDate: row.end_date || "",
+            checkInDate: row.check_in_date || "",
+            checkOutDate: row.check_out_date || "",
+            serviceDates: collectEnrichmentServiceDates(row),
+          };
+        }
+      }
+
+      setDogContextMap({ photos, playgroups, reservations });
     } catch (dogContextError) {
       console.warn("[enrichment workflow] dog context load failed:", dogContextError?.message || dogContextError);
-      setDogContextMap({ photos: {}, playgroups: {} });
+      setDogContextMap({ photos: {}, playgroups: {}, reservations: {} });
     }
-  }, [locationId]);
+  }, [locationId, reportDate]);
 
   const load = useCallback(async ({ showLoading = true } = {}) => {
     if (!locationId || !reportDate || !rowId || !completionKey) {
@@ -233,8 +262,8 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
   }, [completionKey, load, locationId, reportDate, rowId]);
 
   const workflow = useMemo(
-    () => normalizeEnrichmentWorkflow(computedItems, completions, dogContextMap.photos, dogContextMap.playgroups),
-    [computedItems, completions, dogContextMap]
+    () => normalizeEnrichmentWorkflow(computedItems, completions, dogContextMap.photos, dogContextMap.playgroups, dogContextMap.reservations, reportDate),
+    [computedItems, completions, dogContextMap, reportDate]
   );
 
   const health = useMemo(
@@ -293,4 +322,35 @@ export function useEnrichmentWorkflow(locationId, reportDate, { actorName = "Sta
     refresh,
     toggleDog,
   };
+}
+
+function collectEnrichmentServiceDates(row = {}) {
+  const rawServices = Array.isArray(row.raw_data?.services) ? row.raw_data.services : [];
+  const topServices = Array.isArray(row.services) ? row.services : [];
+  return [...new Set([...rawServices, ...topServices]
+    .filter((service) => getServiceName(service).toLowerCase().includes("enrichment"))
+    .map((service) => extractServiceScheduledDate(service) || "missing")
+    .filter(Boolean))];
+}
+
+function getServiceName(service) {
+  if (typeof service === "string") return service;
+  return String(service?.name || service?.service_name || service?.label || "");
+}
+
+function extractServiceScheduledDate(service) {
+  if (!service || typeof service !== "object") return null;
+  const candidates = [
+    service.scheduled_at,
+    service.scheduled_date,
+    service.scheduledAt,
+    service.date,
+    service.service_date,
+    service.start_date,
+  ];
+  for (const value of candidates) {
+    const match = String(value || "").match(/\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+  }
+  return null;
 }
