@@ -30,6 +30,25 @@ const ATTENDANCE_MARK_FILTER_FIELDS = [
   { section: "Mark Details", key: "coverage", label: "Coverage", type: "select", ops: ["is", "isNot"], options: ["yes", "no"] },
   { section: "Timing", key: "shift_date", label: "Shift Date", type: "date", ops: ["today", "on", "after", "before", "inLastDays"] },
 ];
+const DEFAULT_ATTENDANCE_POSITION_ORDER = [
+  "General Manager",
+  "Assistant Manager",
+  "Supervisor",
+  "Customer Service Representative",
+  "Pet Care Technician",
+];
+const ATTENDANCE_DEFAULT_SORT = { key: "hierarchy", direction: "asc" };
+const ATTENDANCE_ROSTER_SORT_COLUMNS = [
+  { key: "hierarchy", label: "Position Order" },
+  { key: "employee", label: "Employee" },
+  { key: "status", label: "Status" },
+  { key: "position", label: "Position" },
+  { key: "start", label: "Start Date" },
+  { key: "end", label: "End Date" },
+  { key: "marks30", label: "30 Days" },
+  { key: "policy", label: "Policy Actions" },
+  { key: "last", label: "Last Mark" },
+];
 
 const POLICY_REFERENCE_SECTIONS = [
   {
@@ -86,6 +105,85 @@ function formatDateOnly(value) {
   return value ? fmtDateFull(value) : "—";
 }
 
+function normalizeAttendancePositionTitle(value = "") {
+  const title = String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!title) return "";
+  if (/^(gm|general manager)$/.test(title)) return "general manager";
+  if (/^(am|agm|assistant manager|assistant general manager)$/.test(title)) return "assistant manager";
+  if (/^(csr|customer service representative|front desk|guest service representative)$/.test(title)) return "customer service representative";
+  if (/^(pct|pet care technician|pet care tech|technician|kennel technician)$/.test(title)) return "pet care technician";
+  if (/^(supervisor|shift supervisor|shift lead|lead)$/.test(title)) return "supervisor";
+  return title;
+}
+
+function formatAttendancePositionTitle(value = "") {
+  const raw = String(value || "").trim().replace(/\s+/g, " ");
+  const normalized = normalizeAttendancePositionTitle(raw);
+  if (normalized === "general manager") return "General Manager";
+  if (normalized === "assistant manager") return "Assistant Manager";
+  if (normalized === "supervisor") return "Supervisor";
+  if (normalized === "customer service representative") return "Customer Service Representative";
+  if (normalized === "pet care technician") return "Pet Care Technician";
+  return raw;
+}
+
+function compareAttendanceSortValues(left, right) {
+  if (typeof left === "number" && typeof right === "number") return left - right;
+  return String(left ?? "").localeCompare(String(right ?? ""), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function AttendanceSortControl({ sort, onChange }) {
+  const [open, setOpen] = useState(false);
+  const activeColumn = ATTENDANCE_ROSTER_SORT_COLUMNS.find((column) => column.key === sort.key) || ATTENDANCE_ROSTER_SORT_COLUMNS[0];
+  const isDefault = sort.key === ATTENDANCE_DEFAULT_SORT.key && sort.direction === ATTENDANCE_DEFAULT_SORT.direction;
+  const label = isDefault ? `Sort: ${activeColumn.label}` : `Sort: ${activeColumn.label} ${sort.direction === "desc" ? "Descending" : "Ascending"}`;
+  return (
+    <div className="attendance-sort-control">
+      <button type="button" className={`attendance-sort-trigger${open ? " is-open" : ""}${!isDefault ? " is-active" : ""}`} onClick={() => setOpen((prev) => !prev)}>
+        <I.SortNone />
+        <span>{label}</span>
+        <I.ChevronDown />
+      </button>
+      {open && (
+        <div className="attendance-sort-panel">
+          <button
+            type="button"
+            className={`attendance-sort-reset${isDefault ? " is-active" : ""}`}
+            onClick={() => {
+              onChange(ATTENDANCE_DEFAULT_SORT);
+              setOpen(false);
+            }}
+          >
+            Reset to position order
+          </button>
+          <div className="attendance-sort-options">
+            {ATTENDANCE_ROSTER_SORT_COLUMNS.map((column, index) => (
+              <div key={column.key} className="attendance-sort-row" style={{ animationDelay: `${index * 28}ms` }}>
+                <span>{column.label}</span>
+                <div>
+                  {["asc", "desc"].map((direction) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      className={sort.key === column.key && sort.direction === direction ? "is-active" : ""}
+                      onClick={() => {
+                        onChange({ key: column.key, direction });
+                        setOpen(false);
+                      }}
+                    >
+                      {direction === "desc" ? "Descending" : "Ascending"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function attendanceMarkNeedsValue(op) {
   return !["today"].includes(op);
 }
@@ -129,7 +227,7 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null }) {
+export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [] }) {
   const [tab, setTab] = useState("roster");
   const [loading, setLoading] = useState(true);
   const [resolvedLocationId, setResolvedLocationId] = useState("");
@@ -162,6 +260,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [showMarkFilterPicker, setShowMarkFilterPicker] = useState(false);
   const [markFilterPickerReady, setMarkFilterPickerReady] = useState(false);
   const [configuringMarkFilterKey, setConfiguringMarkFilterKey] = useState(null);
+  const [rosterSort, setRosterSort] = useState(ATTENDANCE_DEFAULT_SORT);
 
   const [showPolicyActionModal, setShowPolicyActionModal] = useState(false);
   const [editingPolicyActionId, setEditingPolicyActionId] = useState(null);
@@ -186,6 +285,27 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const canManage = canLogAttendance ?? (hasLeanPermission(profile, "Labor Log Attendance") || hasLeanPermission(profile, "Attendance Tracker"));
   const legacyRoster = data?.attendanceRoster || [];
   const legacyEntries = data?.attendanceEntries || [];
+  const positionOrderIndex = useMemo(() => {
+    const source = laborPositionOrder.length > 0 ? laborPositionOrder : DEFAULT_ATTENDANCE_POSITION_ORDER;
+    return Object.fromEntries(source.map((title, index) => [normalizeAttendancePositionTitle(title), index]));
+  }, [laborPositionOrder]);
+  const attendancePositionOptions = useMemo(() => {
+    const source = laborPositionOrder.length > 0 ? laborPositionOrder : DEFAULT_ATTENDANCE_POSITION_ORDER;
+    const seen = new Set();
+    const options = source
+      .map((title) => {
+        const label = formatAttendancePositionTitle(title);
+        const normalized = normalizeAttendancePositionTitle(label);
+        if (!label || seen.has(normalized)) return null;
+        seen.add(normalized);
+        return { value: label, label };
+      })
+      .filter(Boolean);
+    const currentLabel = formatAttendancePositionTitle(employeeTitle);
+    const currentNormalized = normalizeAttendancePositionTitle(currentLabel);
+    if (currentLabel && !seen.has(currentNormalized)) options.unshift({ value: currentLabel, label: `${currentLabel} (current)` });
+    return options;
+  }, [employeeTitle, laborPositionOrder]);
 
   useEffect(() => {
     const employeeId = normalizeOptionalUuid(params?.employeeId);
@@ -332,7 +452,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       laborEmployees
         .map((employee) => ({
           value: employee.id,
-          label: `${employee.full_name} (${employee.position_title})`,
+          label: `${employee.full_name} (${formatAttendancePositionTitle(employee.position_title) || "Employee"})`,
         }))
         .sort((a, b) => a.label.localeCompare(b.label)),
     [laborEmployees],
@@ -350,7 +470,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     return [
       {
         value: inactiveEmployee.id,
-        label: `${inactiveEmployee.full_name} (${inactiveEmployee.position_title})`,
+        label: `${inactiveEmployee.full_name} (${formatAttendancePositionTitle(inactiveEmployee.position_title) || "Employee"})`,
       },
       ...activeEmployeeSelectOptions,
     ];
@@ -408,6 +528,31 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   );
 
   const rosterRows = useMemo(() => {
+    const direction = rosterSort.direction === "desc" ? -1 : 1;
+    const getSortValue = (row, key) => {
+      switch (key) {
+        case "hierarchy":
+          return positionOrderIndex[normalizeAttendancePositionTitle(row.position_title)] ?? Number.MAX_SAFE_INTEGER;
+        case "employee":
+          return row.full_name || "";
+        case "status":
+          return row.is_active ? "active" : "inactive";
+        case "position":
+          return formatAttendancePositionTitle(row.position_title);
+        case "start":
+          return row.start_date || "";
+        case "end":
+          return row.end_date || "";
+        case "marks30":
+          return Number(row.recent_attendance_incident_count || 0);
+        case "policy":
+          return Number(row.policy_action_count || 0);
+        case "last":
+          return row.last_attendance_incident_at || "";
+        default:
+          return row.full_name || "";
+      }
+    };
     return [...laborEmployees]
       .map((employee) => {
         const snapshot = snapshotMap[employee.id];
@@ -425,8 +570,17 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
           last_attendance_incident_at: snapshot?.last_attendance_incident_at || incidentStats.lastIncidentDate,
         };
       })
-      .sort((a, b) => Number(!!b.is_active) - Number(!!a.is_active) || a.full_name.localeCompare(b.full_name));
-  }, [incidentStatsByEmployee, laborEmployees, policyActionStatsByEmployee, snapshotMap]);
+      .sort((a, b) => {
+        const activeDelta = Number(!!b.is_active) - Number(!!a.is_active);
+        if (activeDelta !== 0) return activeDelta;
+        if (rosterSort.key === "hierarchy") {
+          const hierarchyDelta = getSortValue(a, "hierarchy") - getSortValue(b, "hierarchy");
+          if (hierarchyDelta !== 0) return hierarchyDelta * direction;
+          return compareAttendanceSortValues(a.full_name, b.full_name);
+        }
+        return compareAttendanceSortValues(getSortValue(a, rosterSort.key), getSortValue(b, rosterSort.key)) * direction;
+      });
+  }, [incidentStatsByEmployee, laborEmployees, policyActionStatsByEmployee, positionOrderIndex, rosterSort, snapshotMap]);
 
   const attendanceSummary = useMemo(() => {
     return summarizeAttendanceIncidents({
@@ -701,7 +855,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         const { error } = await supabase.rpc("update_labor_employee", buildUpdateLaborEmployeeRpcArgs({
           employeeId: editingEmployeeId,
           fullName: employeeName,
-          positionTitle: employeeTitle,
+          positionTitle: formatAttendancePositionTitle(employeeTitle),
           startDate: employeeStartDate,
           endDate: employeeEndDate,
           actorUserId,
@@ -712,7 +866,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         const { error } = await supabase.rpc("create_labor_employee", buildCreateLaborEmployeeRpcArgs({
           locationRef: laborLocationRef,
           fullName: employeeName,
-          positionTitle: employeeTitle,
+          positionTitle: formatAttendancePositionTitle(employeeTitle),
           startDate: employeeStartDate,
           endDate: employeeEndDate,
           actorUserId,
@@ -1047,6 +1201,92 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         @keyframes attendanceFilterFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         @keyframes attendanceFilterChipIn { from { opacity: 0; transform: translateX(-6px) scale(0.9); } to { opacity: 1; transform: translateX(0) scale(1); } }
         @keyframes attendanceConfigSlide { from { opacity: 0; max-height: 0; transform: translateY(-4px); } to { opacity: 1; max-height: 240px; transform: translateY(0); } }
+        .attendance-sort-control { position: relative; display: inline-flex; }
+        .attendance-sort-trigger {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 8px 12px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.border};
+          background: #fff;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 850;
+          cursor: pointer;
+          transition: all 160ms ease;
+          box-shadow: 0 1px 4px rgba(15,23,42,0.04);
+        }
+        .attendance-sort-trigger:hover,
+        .attendance-sort-trigger.is-open,
+        .attendance-sort-trigger.is-active {
+          border-color: ${C.pri};
+          background: ${C.priLt};
+          transform: translateY(-1px);
+          box-shadow: 0 8px 22px rgba(20,83,45,0.11);
+        }
+        .attendance-sort-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: min(520px, 88vw);
+          z-index: 60;
+          padding: 12px;
+          border-radius: 14px;
+          border: 1px solid ${C.border};
+          background: rgba(255,255,255,0.98);
+          box-shadow: 0 24px 60px rgba(15,23,42,0.16);
+          animation: attendanceFilterSlideIn 0.22s ease-out;
+        }
+        .attendance-sort-reset {
+          width: 100%;
+          text-align: left;
+          padding: 8px 10px;
+          margin-bottom: 8px;
+          border-radius: 10px;
+          border: 1.5px dashed ${C.pri};
+          background: #fff;
+          color: ${C.pri};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 850;
+          cursor: pointer;
+        }
+        .attendance-sort-reset.is-active { background: ${C.priLt}; }
+        .attendance-sort-options { display: grid; gap: 8px; }
+        .attendance-sort-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          padding: 8px;
+          border-radius: 10px;
+          border: 1px solid ${C.borderLight};
+          background: #f8fafc;
+          animation: attendanceFilterChipIn 0.24s ease-out both;
+        }
+        .attendance-sort-row > span { color: ${C.text}; font-size: 12px; font-weight: 900; }
+        .attendance-sort-row > div { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+        .attendance-sort-row button {
+          padding: 6px 10px;
+          border-radius: 8px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 850;
+          cursor: pointer;
+          transition: all 160ms ease;
+        }
+        .attendance-sort-row button:hover,
+        .attendance-sort-row button.is-active {
+          border-color: ${C.pri};
+          background: ${C.pri};
+          color: #fff;
+          transform: translateY(-1px);
+        }
       `}</style>
       {!embedded ? (
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -1142,7 +1382,10 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                 <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Labor Roster</div>
                 <div style={{ fontSize: 12, color: C.textMut }}>Attendance now reads the canonical labor employee roster.</div>
               </div>
-              <Btn variant="primary" onClick={() => openEmployeeModal()} disabled={!canManage}>Add Employee</Btn>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <AttendanceSortControl sort={rosterSort} onChange={setRosterSort} />
+                <Btn variant="primary" onClick={() => openEmployeeModal()} disabled={!canManage}>Add Employee</Btn>
+              </div>
             </div>
 
             {rosterRows.length === 0 ? (
@@ -1165,7 +1408,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                           <div style={{ fontSize: 11, color: C.textMut }}>{row.id}</div>
                         </td>
                         <td style={{ padding: "12px 8px" }}><StatusPill active={row.is_active} /></td>
-                        <td style={{ padding: "12px 8px", color: C.textSec }}>{row.position_title || "—"}</td>
+                        <td style={{ padding: "12px 8px", color: C.textSec }}>{formatAttendancePositionTitle(row.position_title) || "—"}</td>
                         <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(row.start_date)}</td>
                         <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(row.end_date)}</td>
                         <td style={{ padding: "12px 8px", fontWeight: 700, color: C.text }}>{row.recent_attendance_incident_count || 0}</td>
@@ -1838,7 +2081,15 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         <Modal title={editingEmployeeId ? "Edit Employee" : "Add Employee"} onClose={() => { setShowEmployeeModal(false); resetEmployeeModal(); }}>
           <div style={{ display: "grid", gap: 14 }}>
             <Inp label="Employee Full Name" value={employeeName} onChange={setEmployeeName} required />
-            <Inp label="Position Title" value={employeeTitle} onChange={setEmployeeTitle} required />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Position Title</div>
+              <CustomSelect
+                value={formatAttendancePositionTitle(employeeTitle)}
+                onChange={setEmployeeTitle}
+                options={attendancePositionOptions}
+                placeholder="Choose approved title"
+              />
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Start Date</div>
