@@ -9,6 +9,7 @@ import {
   normalizeHourAnalysisSettings,
   noteMatchesSearch,
   safeTrainingProgress,
+  shouldCycleLaborModelCoveragePointer,
   toObjectRows,
 } from "../kol/pages/TrainingPage.jsx";
 import { isLaborEmployeeActive } from "../kol/trainingData.js";
@@ -243,5 +244,13 @@ describe("applyLaborRosterFilters", () => {
     expect(monday).toMatchObject({ totalHours: 0.5, marketingHours: 1 });
     expect(monday.columnTotals[0]).toMatchObject({ operatingCoverage: 0.5, operatingHours: 0.5 });
     expect(monday.columnTotals[1]).toMatchObject({ marketingCoverage: 1, marketingHours: 1 });
+  });
+
+  it("keeps active labor model cells editable on first click", () => {
+    expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: true })).toBe(true);
   });
 });
