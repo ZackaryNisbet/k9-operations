@@ -258,6 +258,77 @@ describe("applyLaborRosterFilters", () => {
     expect(monday.columnTotals[1]).toMatchObject({ marketingCoverage: 1, marketingHours: 1 });
   });
 
+  it("buckets typed labor model coverage into the position named in the cell", () => {
+    const emptyLaborDay = (day) => ({
+      day_key: day,
+      columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
+      rows: [],
+    });
+    const laborModel = {
+      days: {
+        monday: {
+          day_key: "monday",
+          columns: [
+            { id: "monday-pct", label: "8-9a", hours: 1 },
+            { id: "monday-csr", label: "9-10a", hours: 1 },
+            { id: "monday-am", label: "10-11a", hours: 1 },
+            { id: "monday-gm", label: "11a-12p", hours: 1 },
+            { id: "monday-sup", label: "12-1p", hours: 1 },
+            { id: "monday-mktg", label: "1-2p", hours: 1 },
+          ],
+          rows: [
+            {
+              id: "am-working-mixed-floor",
+              group_key: "assistant_manager",
+              role_label: "AM mixed coverage",
+              break_enabled: false,
+              coverage: ["PCT", "Customer Service Representative", "AM", "GM", "SUP", "MKTG"],
+            },
+          ],
+        },
+        tuesday: emptyLaborDay("tuesday"),
+        wednesday: emptyLaborDay("wednesday"),
+        thursday: emptyLaborDay("thursday"),
+        friday: emptyLaborDay("friday"),
+        saturday: emptyLaborDay("saturday"),
+        sunday: emptyLaborDay("sunday"),
+      },
+    };
+    const model = buildHourAnalysisModel({
+      settings: normalizeHourAnalysisSettings({ laborModel }),
+      rosterRows: [],
+    });
+    const monday = model.laborModelSummary.dayRows.find((day) => day.key === "monday");
+
+    expect(model.laborModelSummary.totalWeekly).toBe(5);
+    expect(model.laborModelSummary.totalMarketingWeekly).toBe(1);
+    expect(monday.roleHours).toMatchObject({
+      general_manager: 1,
+      assistant_manager: 1,
+      supervisor: 1,
+      csr: 1,
+      pct: 1,
+    });
+    expect(model.laborModelSummary.roleWeekly).toMatchObject({
+      general_manager: 1,
+      assistant_manager: 1,
+      supervisor: 1,
+      csr: 1,
+      pct: 1,
+    });
+    expect(monday.rows[0]).toMatchObject({
+      hours: 5,
+      marketingHours: 1,
+      roleHours: {
+        assistant_manager: 1,
+        csr: 1,
+        pct: 1,
+      },
+    });
+    expect(monday.columnTotals[0]).toMatchObject({ operatingCoverage: 1, operatingHours: 1 });
+    expect(monday.columnTotals[5]).toMatchObject({ marketingCoverage: 1, marketingHours: 1 });
+  });
+
   it("keeps non-contiguous labor model header edits in validation instead of crashing", () => {
     const emptyLaborDay = (day) => ({
       day_key: day,
@@ -308,8 +379,12 @@ describe("applyLaborRosterFilters", () => {
   it("keeps active labor model cells editable on first click", () => {
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: true })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: true })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: false })).toBe(false);
-    expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: true })).toBe(true);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: true })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: false })).toBe(false);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: true })).toBe(false);
   });
 });
