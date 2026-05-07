@@ -8697,6 +8697,31 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Modal>
   ) : null;
 
+  const addHierarchyDraftTitle = useCallback(() => {
+    const option = buildLaborPositionOption(newHierarchyTitle);
+    if (!option) return;
+    setHierarchyDraft((prev) => {
+      if (prev.some((row) => row.normalized_title === option.normalizedTitle)) return prev;
+      return [
+        ...prev,
+        {
+          id: null,
+          position_title: option.label,
+          normalized_title: option.normalizedTitle,
+          sort_order: (prev.length + 1) * 10,
+        },
+      ];
+    });
+    setNewHierarchyTitle("");
+  }, [newHierarchyTitle]);
+  const removeHierarchyDraftTitle = useCallback((normalizedTitle) => {
+    setHierarchyDraft((prev) => prev.filter((row) => row.normalized_title !== normalizedTitle));
+  }, []);
+  const resetHierarchyDraftToDefaults = useCallback(() => {
+    setHierarchyDraft(makeDefaultLaborPositionRows());
+    setNewHierarchyTitle("");
+  }, []);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // EMPLOYEE DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════════════
@@ -10123,30 +10148,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setHierarchyDraft(reordered);
     setDraggingHierarchyTitle("");
   };
-  const addHierarchyDraftTitle = useCallback(() => {
-    const option = buildLaborPositionOption(newHierarchyTitle);
-    if (!option) return;
-    setHierarchyDraft((prev) => {
-      if (prev.some((row) => row.normalized_title === option.normalizedTitle)) return prev;
-      return [
-        ...prev,
-        {
-          id: null,
-          position_title: option.label,
-          normalized_title: option.normalizedTitle,
-          sort_order: (prev.length + 1) * 10,
-        },
-      ];
-    });
-    setNewHierarchyTitle("");
-  }, [newHierarchyTitle]);
-  const removeHierarchyDraftTitle = useCallback((normalizedTitle) => {
-    setHierarchyDraft((prev) => prev.filter((row) => row.normalized_title !== normalizedTitle));
-  }, []);
-  const resetHierarchyDraftToDefaults = useCallback(() => {
-    setHierarchyDraft(makeDefaultLaborPositionRows());
-    setNewHierarchyTitle("");
-  }, []);
   const rosterSectionIcons = {
     "Employee Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
     Employment: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M16 20V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16"/><rect x="6" y="6" width="4" height="4"/><path d="M18 7h4v13h-4"/><path d="M6 14h4"/><path d="M6 18h4"/></svg>,
