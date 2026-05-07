@@ -1140,6 +1140,7 @@ function LaborModelTimeControl({ row = {}, disabled = false, onChange }) {
 }
 
 function LaborModelCoverageCell({ value = "", disabled = false, rowId, columnIndex, onStart, onFillStart, onEnter, onTextChange }) {
+  const inputRef = useRef(null);
   const normalizedValue = normalizeLaborModelCoverageCell(value);
   const active = isLaborModelCoverageActive(normalizedValue);
   const display = getLaborModelCoverageDisplay(normalizedValue);
@@ -1156,15 +1157,18 @@ function LaborModelCoverageCell({ value = "", disabled = false, rowId, columnInd
       }}
     >
       <input
+        ref={inputRef}
         type="text"
         maxLength={4}
         disabled={disabled}
         className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}`}
         value={display}
-        title="Click cycles full, half, clear. Type MKTG for marketing hours."
+        title="Click an empty cell to fill it. Click a focused cell or press Space to cycle full, half, clear. Type MKTG for marketing."
         aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
         onPointerDown={(event) => {
           if (disabled || event.button !== 0) return;
+          const isFocused = inputRef.current === document.activeElement;
+          if (!shouldCycleLaborModelCoveragePointer({ value: normalizedValue, isFocused })) return;
           onStart?.(rowId, columnIndex, nextClickValue);
         }}
         onFocus={(event) => event.currentTarget.select()}
@@ -1848,6 +1852,10 @@ function getLaborModelNextCoverageValue(value = "") {
   if (kind === "empty") return LABOR_MODEL_FULL_COVERAGE_VALUE;
   if (kind === "full") return LABOR_MODEL_HALF_COVERAGE_VALUE;
   return "";
+}
+
+export function shouldCycleLaborModelCoveragePointer({ value = "", isFocused = false } = {}) {
+  return !isLaborModelCoverageActive(value) || Boolean(isFocused);
 }
 
 function getLaborModelCoverageDisplay(value = "") {
@@ -12553,13 +12561,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           align-items: center;
           justify-content: center;
           gap: 2px;
-          opacity: 0.22;
+          opacity: 0;
+          pointer-events: none;
           transform: translateY(2px);
           transition: opacity 150ms ease, transform 150ms ease;
         }
         .labor-model-time-heading:hover .labor-model-column-actions,
         .labor-model-time-heading:focus-within .labor-model-column-actions {
           opacity: 1;
+          pointer-events: auto;
           transform: translateY(0);
         }
         .labor-model-column-action {
@@ -12822,8 +12832,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          justify-content: center;
 	          transition: opacity 150ms ease, transform 150ms cubic-bezier(0.22, 1, 0.36, 1), background 150ms ease;
 	        }
-	        .labor-model-grid-row:hover .labor-model-row-insert,
-	        .labor-model-grid-row:focus-within .labor-model-row-insert {
+	        .labor-model-position-cell:hover .labor-model-row-insert,
+	        .labor-model-position-cell:focus-within .labor-model-row-insert {
 	          opacity: 1;
 	          transform: translateX(-50%) scale(1);
 	        }
@@ -15113,10 +15123,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <thead>
                         <tr>
                           <th>Day</th>
+                          <th>GM</th>
+                          <th>AM</th>
+                          <th>Supervisor</th>
                           <th>CSR</th>
                           <th>PCT</th>
-                          <th>Supervisor</th>
-	                          <th>Assistant Manager</th>
 	                          <th>Marketing</th>
 	                          <th>Total</th>
 	                          <th>Peak</th>
@@ -15126,10 +15137,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         {hourAnalysisLaborModelSummary.dayRows.map((day) => (
                           <tr key={day.key}>
                             <td>{day.label}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.general_manager || 0)}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
                             <td>{formatHourAnalysisHours(day.roleHours.csr || 0)}</td>
                             <td>{formatHourAnalysisHours(day.roleHours.pct || 0)}</td>
-	                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
-	                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
 	                            <td>{formatHourAnalysisHours(day.marketingHours || 0)}</td>
 	                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
 	                            <td>{formatHourAnalysisHours(day.peakCoverage)}</td>
