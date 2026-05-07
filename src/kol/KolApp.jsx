@@ -132,6 +132,8 @@ const LITE_LABOR_TAB_SLUGS = {
   attendance: "attendance",
   interviews: "interviews",
   notes: "notes",
+  "hour-analysis": "hour-analysis",
+  "labor-model": "labor-model",
 };
 const LITE_LABOR_SLUG_TO_TAB = {
   home: "home",
@@ -141,6 +143,8 @@ const LITE_LABOR_SLUG_TO_TAB = {
   attendance: "attendance",
   interviews: "interviews",
   notes: "notes",
+  "hour-analysis": "hour-analysis",
+  "labor-model": "labor-model",
 };
 
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
@@ -382,6 +386,7 @@ const LABOR_TAB_PERMISSION_MAP = {
   attendance: "Labor Attendance",
   interviews: "Labor Interviews",
   notes: "Labor Employee Notes",
+  "hour-analysis": "Labor Roster",
 };
 
 function getPagePermissionRequirements(page, params = {}) {
@@ -1377,13 +1382,13 @@ function LeanAppInner() {
                     </button>
                   )}
                 </div>
-                {/* Progress bar — grows left to right over 5s */}
+                {/* Progress bar tracks the same lifespan as the toast. */}
                 <div style={{ height: 3, background: "rgba(255,255,255,0.06)" }}>
                   <div style={{
                     height: "100%", borderRadius: "0 3px 3px 0",
                     background: `linear-gradient(90deg, ${barColor}99, ${barColor})`,
                     boxShadow: `0 0 8px ${barColor}60`,
-                    animation: "k9-toast-progress 5s linear forwards",
+                    animation: `k9-toast-progress ${duration}s linear forwards`,
                   }} />
                 </div>
               </div>
