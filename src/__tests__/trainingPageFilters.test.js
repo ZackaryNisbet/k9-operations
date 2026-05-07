@@ -246,6 +246,53 @@ describe("applyLaborRosterFilters", () => {
     expect(monday.columnTotals[1]).toMatchObject({ marketingCoverage: 1, marketingHours: 1 });
   });
 
+  it("keeps non-contiguous labor model header edits in validation instead of crashing", () => {
+    const emptyLaborDay = (day) => ({
+      day_key: day,
+      columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
+      rows: [],
+    });
+    const laborModel = {
+      days: {
+        monday: {
+          day_key: "monday",
+          columns: [
+            { id: "monday-open", label: "5:30a-6a", hours: 0.5 },
+            { id: "monday-gap", label: "6:15a-7a", hours: 0.75 },
+          ],
+          rows: [
+            {
+              id: "csr-open",
+              group_key: "csr",
+              role_label: "CSR opening",
+              break_enabled: false,
+              coverage: ["1", "1"],
+            },
+          ],
+        },
+        tuesday: emptyLaborDay("tuesday"),
+        wednesday: emptyLaborDay("wednesday"),
+        thursday: emptyLaborDay("thursday"),
+        friday: emptyLaborDay("friday"),
+        saturday: emptyLaborDay("saturday"),
+        sunday: emptyLaborDay("sunday"),
+      },
+    };
+
+    const model = buildHourAnalysisModel({
+      settings: normalizeHourAnalysisSettings({ laborModel }),
+      rosterRows: [],
+    });
+    const monday = model.laborModelSummary.dayRows.find((day) => day.key === "monday");
+
+    expect(monday.columnValidation.valid).toBe(false);
+    expect(monday.columnValidation.errors[0]).toMatchObject({
+      index: 1,
+      message: "5:30a-6a must end where 6:15a-7a starts.",
+    });
+    expect(monday.totalHours).toBe(1.3);
+  });
+
   it("keeps active labor model cells editable on first click", () => {
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);

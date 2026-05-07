@@ -1944,7 +1944,7 @@ function validateLaborModelColumns(columns = []) {
   parsed.forEach((slot, index) => {
     if (!slot.valid) errors.push({ index, message: slot.error || "Invalid time range." });
     if (index > 0 && slot.valid && parsed[index - 1]?.valid && Math.abs(parsed[index - 1].end - slot.start) > 0.1) {
-      errors.push({ index, message: `${columns[index - 1]?.label || "Previous slot"} must end where ${column.label || "this slot"} starts.` });
+      errors.push({ index, message: `${columns[index - 1]?.label || "Previous slot"} must end where ${columns[index]?.label || "this slot"} starts.` });
     }
   });
   return { valid: errors.length === 0, errors, parsed };
