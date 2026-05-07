@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLaborRosterFilters,
@@ -17,6 +18,17 @@ import { isLaborEmployeeActive } from "../kol/trainingData.js";
 describe("applyLaborRosterFilters", () => {
   beforeEach(() => {
     vi.stubGlobal("window", {});
+  });
+
+  it("keeps labor detail render branches after all TrainingPage hooks", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const firstDetailBranchIndex = source.search(/if \((hasSelectedLaborEmployee|selectedRecordId)/);
+    const remainingHookIndex = source
+      .slice(firstDetailBranchIndex)
+      .search(/use(?:State|Effect|LayoutEffect|Memo|Callback|Ref)\s*\(/);
+
+    expect(firstDetailBranchIndex).toBeGreaterThan(0);
+    expect(remainingHookIndex).toBe(-1);
   });
 
   it("defaults the roster employment status filter to active employees", () => {
