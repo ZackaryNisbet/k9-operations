@@ -430,6 +430,10 @@ const LABOR_MODEL_SHIFT_TYPE_LABELS = Object.fromEntries(LABOR_MODEL_SHIFT_TYPE_
 const LABOR_MODEL_GROUP_OPTIONS = HOUR_ANALYSIS_GROUPS
   .filter((group) => group.key !== "other")
   .map((group) => ({ value: group.key, label: group.label }));
+const LABOR_MODEL_FULL_COVERAGE_VALUE = "1";
+const LABOR_MODEL_HALF_COVERAGE_VALUE = "0.5";
+const LABOR_MODEL_MARKETING_COVERAGE_VALUE = "MKTG";
+const LABOR_MODEL_MARKETING_TOKENS = new Set(["mktg", "marketing"]);
 const LABOR_MODEL_WEEKDAY_COLUMNS = [
   ["5:30-6a", 0.5],
   ["6-7a", 1],
@@ -465,6 +469,8 @@ const LABOR_MODEL_WEEKEND_COLUMNS = [
 ];
 const LABOR_MODEL_WEEKDAY_EMPTY = "- - - - - - - - - - - - - - - -";
 const LABOR_MODEL_WEEKEND_EMPTY = "- - - - - - - - - - - - -";
+const LABOR_MODEL_WEEKDAY_BREAKERS = [6 * 60, 13 * 60, 19 * 60];
+const LABOR_MODEL_WEEKEND_BREAKERS = [7 * 60, 13 * 60, (18 * 60) + 30];
 const LABOR_MODEL_WEEKDAY_PATTERNS = {
   csrAm: "- x x x x x x x x - - - - - - -",
   csrAmExtended: "- x x x x x x x x E E - - - - -",
@@ -1133,33 +1139,68 @@ function LaborModelTimeControl({ row = {}, disabled = false, onChange }) {
   );
 }
 
-function LaborModelCoverageCell({ value = "", disabled = false, rowId, columnIndex, onStart, onEnter, onTextChange }) {
+function LaborModelCoverageCell({ value = "", disabled = false, rowId, columnIndex, onStart, onFillStart, onEnter, onTextChange }) {
   const normalizedValue = normalizeLaborModelCoverageCell(value);
   const active = isLaborModelCoverageActive(normalizedValue);
   const display = getLaborModelCoverageDisplay(normalizedValue);
+  const kind = getLaborModelCoverageKind(normalizedValue);
+  const nextClickValue = getLaborModelNextCoverageValue(normalizedValue);
+  const fillValue = normalizedValue || LABOR_MODEL_FULL_COVERAGE_VALUE;
 
   return (
-    <input
-      type="text"
-      maxLength={4}
-      disabled={disabled}
-      className={`labor-model-coverage-cell-button${active ? " is-active" : ""}`}
-      value={display}
-      aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
-      onPointerDown={(event) => {
-        if (disabled || event.button !== 0) return;
-        onStart?.(rowId, columnIndex, !active);
-      }}
+    <div
+      className={`labor-model-coverage-cell-shell is-${kind}${active ? " is-active" : ""}`}
       onPointerEnter={() => {
         if (disabled) return;
         onEnter?.(rowId, columnIndex);
       }}
-      onFocus={(event) => event.currentTarget.select()}
-      onChange={(event) => onTextChange?.(rowId, columnIndex, normalizeLaborModelCoverageCell(event.target.value))}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") event.currentTarget.blur();
-      }}
-    />
+    >
+      <input
+        type="text"
+        maxLength={4}
+        disabled={disabled}
+        className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}`}
+        value={display}
+        title="Click cycles full, half, clear. Type MKTG for marketing hours."
+        aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
+        onPointerDown={(event) => {
+          if (disabled || event.button !== 0) return;
+          onStart?.(rowId, columnIndex, nextClickValue);
+        }}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => onTextChange?.(rowId, columnIndex, normalizeLaborModelCoverageCell(event.target.value))}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.currentTarget.blur();
+            return;
+          }
+          if (event.key === "Backspace" || event.key === "Delete") {
+            event.preventDefault();
+            onTextChange?.(rowId, columnIndex, "");
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onTextChange?.(rowId, columnIndex, getLaborModelNextCoverageValue(normalizedValue));
+          }
+        }}
+      />
+      {active && !disabled && (
+        <span
+          role="button"
+          tabIndex={-1}
+          className="labor-model-fill-handle"
+          aria-label={`Drag ${display || "coverage"} across row`}
+          title="Drag to fill this value across the row"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onFillStart?.(rowId, columnIndex, fillValue);
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1206,12 +1247,13 @@ function LaborModelHoursLineGraph({ days = [] }) {
           />
         )}
         <path d={path} className="labor-model-graph-line" />
-        {points.map((point) => (
-          <g key={point.key} onMouseEnter={() => setHoveredKey(point.key)} onFocus={() => setHoveredKey(point.key)} tabIndex={0}>
-            <circle cx={point.x} cy={point.y} r={hoveredKey === point.key ? 7 : 5} className="labor-model-graph-dot" />
-            <text x={point.x} y={height - 5} textAnchor="middle" className="labor-model-graph-label">{point.shortLabel || point.label}</text>
-            <title>{point.label}: {formatHourAnalysisHours(point.totalHours)} hours</title>
-          </g>
+	        {points.map((point) => (
+	          <g key={point.key} onMouseEnter={() => setHoveredKey(point.key)} onFocus={() => setHoveredKey(point.key)} tabIndex={0}>
+	            <circle cx={point.x} cy={point.y} r={hoveredKey === point.key ? 7 : 5} className="labor-model-graph-dot" />
+	            <text x={point.x} y={Math.max(14, point.y - 12)} textAnchor="middle" className="labor-model-graph-value">{formatHourAnalysisHours(point.totalHours)}</text>
+	            <text x={point.x} y={height - 5} textAnchor="middle" className="labor-model-graph-label">{point.shortLabel || point.label}</text>
+	            <title>{point.label}: {formatHourAnalysisHours(point.totalHours)} hours</title>
+	          </g>
         ))}
       </svg>
     </div>
@@ -1762,7 +1804,9 @@ function normalizeLaborModelCoverageCell(value = "") {
   const raw = String(value || "").trim();
   if (!raw || raw === "-") return "";
   const normalized = raw.toLowerCase();
-  if (LEGACY_LABOR_MODEL_ACTIVE_TOKENS.has(normalized)) return "1";
+  if (LABOR_MODEL_MARKETING_TOKENS.has(normalized)) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
+  if (["0.5", ".5", "1/2", "1⁄2", "half", "h"].includes(normalized)) return LABOR_MODEL_HALF_COVERAGE_VALUE;
+  if (LEGACY_LABOR_MODEL_ACTIVE_TOKENS.has(normalized)) return LABOR_MODEL_FULL_COVERAGE_VALUE;
   return raw.slice(0, 4).toUpperCase();
 }
 
@@ -1776,9 +1820,41 @@ function isLaborModelCoverageActive(value = "") {
   return Boolean(String(value || "").trim());
 }
 
+function isLaborModelMarketingCoverage(value = "") {
+  return normalizeLaborModelCoverageCell(value) === LABOR_MODEL_MARKETING_COVERAGE_VALUE;
+}
+
+function getLaborModelCoverageKind(value = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized) return "empty";
+  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "half";
+  if (normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return "marketing";
+  return "full";
+}
+
+function getLaborModelCoverageOperatingWeight(value = "") {
+  const kind = getLaborModelCoverageKind(value);
+  if (kind === "half") return 0.5;
+  if (kind === "full") return 1;
+  return 0;
+}
+
+function getLaborModelCoverageMarketingWeight(value = "") {
+  return isLaborModelMarketingCoverage(value) ? 1 : 0;
+}
+
+function getLaborModelNextCoverageValue(value = "") {
+  const kind = getLaborModelCoverageKind(value);
+  if (kind === "empty") return LABOR_MODEL_FULL_COVERAGE_VALUE;
+  if (kind === "full") return LABOR_MODEL_HALF_COVERAGE_VALUE;
+  return "";
+}
+
 function getLaborModelCoverageDisplay(value = "") {
   const normalized = normalizeLaborModelCoverageCell(value);
-  return normalized === "1" ? "" : normalized;
+  if (normalized === LABOR_MODEL_FULL_COVERAGE_VALUE) return "";
+  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "1/2";
+  return normalized;
 }
 
 function parseLaborModelTimePoint(value = "", fallbackSuffix = "") {
@@ -1864,6 +1940,25 @@ function validateLaborModelColumns(columns = []) {
     }
   });
   return { valid: errors.length === 0, errors, parsed };
+}
+
+function getLaborModelColumnBreakerMeta(dayKey = "", column = {}) {
+  const start = Number(column.start_minutes);
+  const end = Number(column.end_minutes);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return { className: "", style: {} };
+  const breakers = ["saturday", "sunday"].includes(dayKey) ? LABOR_MODEL_WEEKEND_BREAKERS : LABOR_MODEL_WEEKDAY_BREAKERS;
+  const normalizedStart = ((start % 1440) + 1440) % 1440;
+  const normalizedEnd = end > start ? end : start + normalizeHourAnalysisNumber(column.hours, 0) * 60;
+  const leftBreaker = breakers.find((breaker) => Math.abs(breaker - normalizedStart) < 0.1);
+  if (Number.isFinite(leftBreaker)) return { className: " has-shift-breaker-left", style: {} };
+  const insideBreaker = breakers.find((breaker) => {
+    const candidate = breaker < normalizedStart ? breaker + 1440 : breaker;
+    return candidate > start && candidate < normalizedEnd;
+  });
+  if (!Number.isFinite(insideBreaker)) return { className: "", style: {} };
+  const candidate = insideBreaker < normalizedStart ? insideBreaker + 1440 : insideBreaker;
+  const pct = ((candidate - start) / Math.max(1, normalizedEnd - start)) * 100;
+  return { className: " has-shift-breaker-inside", style: { "--labor-model-breaker-pct": `${Math.max(3, Math.min(97, pct)).toFixed(2)}%` } };
 }
 
 function inferLaborModelGroupKeyFromLabel(value = "") {
@@ -1974,15 +2069,32 @@ function normalizeHourAnalysisLaborModel(value = {}) {
   };
 }
 
+function calculateLaborModelRowHourBuckets(row = {}, columns = []) {
+  const cells = normalizeLaborModelCoverageCells(row.coverage, columns.length);
+  const raw = cells.reduce((sum, cell, index) => {
+    const slotHours = normalizeHourAnalysisNumber(columns[index]?.hours, 0);
+    return {
+      operatingHours: sum.operatingHours + (getLaborModelCoverageOperatingWeight(cell) * slotHours),
+      marketingHours: sum.marketingHours + (getLaborModelCoverageMarketingWeight(cell) * slotHours),
+    };
+  }, { operatingHours: 0, marketingHours: 0 });
+  const grossHours = raw.operatingHours + raw.marketingHours;
+  if (grossHours <= 0) return { operatingHours: 0, marketingHours: 0, totalHours: 0, breakHours: 0 };
+  const breakHours = row.break_enabled ? Math.min(grossHours, normalizeLaborModelBreakMinutes(row.break_minutes, 30) / 60) : 0;
+  const operatingBreak = Math.min(raw.operatingHours, breakHours);
+  const marketingBreak = Math.min(raw.marketingHours, Math.max(0, breakHours - operatingBreak));
+  const operatingHours = normalizeHourAnalysisNumber(Math.max(0, raw.operatingHours - operatingBreak), 0);
+  const marketingHours = normalizeHourAnalysisNumber(Math.max(0, raw.marketingHours - marketingBreak), 0);
+  return {
+    operatingHours,
+    marketingHours,
+    totalHours: normalizeHourAnalysisNumber(operatingHours + marketingHours, 0),
+    breakHours: normalizeHourAnalysisNumber(breakHours, 0),
+  };
+}
+
 function calculateLaborModelRowHours(row = {}, columns = []) {
-  const covered = normalizeLaborModelCoverageCells(row.coverage, columns.length)
-    .reduce((sum, cell, index) => {
-      if (!isLaborModelCoverageActive(cell)) return sum;
-      return sum + normalizeHourAnalysisNumber(columns[index]?.hours, 0);
-    }, 0);
-  if (covered <= 0) return 0;
-  const breakHours = row.break_enabled ? normalizeLaborModelBreakMinutes(row.break_minutes, 30) / 60 : 0;
-  return normalizeHourAnalysisNumber(Math.max(0, covered - breakHours), 0);
+  return calculateLaborModelRowHourBuckets(row, columns).operatingHours;
 }
 
 function makeLaborModelRoleHoursBucket() {
@@ -1997,17 +2109,23 @@ function buildHourAnalysisLaborModelSummary(model = DEFAULT_HOUR_ANALYSIS_LABOR_
     const columnValidation = validateLaborModelColumns(day.columns);
     const roleHours = makeLaborModelRoleHoursBucket();
     let totalHours = 0;
+    let marketingHours = 0;
     let peakCoverage = 0;
     const baseRowSummaries = day.rows.map((row) => {
-      const rowHours = calculateLaborModelRowHours(row, day.columns);
+      const rowBuckets = calculateLaborModelRowHourBuckets(row, day.columns);
+      const rowHours = rowBuckets.operatingHours;
       const groupKey = normalizeLaborModelGroupKey(row.group_key, row);
       roleHours[groupKey] = normalizeHourAnalysisDelta((roleHours[groupKey] || 0) + rowHours);
       roleWeekly[groupKey] = normalizeHourAnalysisDelta((roleWeekly[groupKey] || 0) + rowHours);
       totalHours = normalizeHourAnalysisDelta(totalHours + rowHours);
+      marketingHours = normalizeHourAnalysisDelta(marketingHours + rowBuckets.marketingHours);
       return {
         ...row,
         group_key: groupKey,
         hours: rowHours,
+        marketingHours: rowBuckets.marketingHours,
+        totalHours: rowBuckets.totalHours,
+        breakHours: rowBuckets.breakHours,
       };
     });
     const rowSummaries = baseRowSummaries.map((row, index, rows) => {
@@ -2023,9 +2141,19 @@ function buildHourAnalysisLaborModelSummary(model = DEFAULT_HOUR_ANALYSIS_LABOR_
         runLength,
       };
     });
-    day.columns.forEach((column, index) => {
-      const coverageCount = rowSummaries.filter((row) => isLaborModelCoverageActive(row.coverage[index])).length;
-      peakCoverage = Math.max(peakCoverage, coverageCount);
+    const columnTotals = day.columns.map((column, index) => {
+      const operatingCoverage = rowSummaries.reduce((sum, row) => sum + getLaborModelCoverageOperatingWeight(row.coverage[index]), 0);
+      const marketingCoverage = rowSummaries.reduce((sum, row) => sum + getLaborModelCoverageMarketingWeight(row.coverage[index]), 0);
+      const slotHours = normalizeHourAnalysisNumber(column.hours, 0);
+      peakCoverage = Math.max(peakCoverage, operatingCoverage);
+      return {
+        index,
+        label: column.label,
+        operatingCoverage: normalizeHourAnalysisNumber(operatingCoverage, 0),
+        marketingCoverage: normalizeHourAnalysisNumber(marketingCoverage, 0),
+        operatingHours: normalizeHourAnalysisNumber(operatingCoverage * slotHours, 0),
+        marketingHours: normalizeHourAnalysisNumber(marketingCoverage * slotHours, 0),
+      };
     });
     return {
       key: dayKey,
@@ -2036,17 +2164,21 @@ function buildHourAnalysisLaborModelSummary(model = DEFAULT_HOUR_ANALYSIS_LABOR_
       rows: rowSummaries,
       roleHours,
       totalHours,
+      marketingHours,
+      columnTotals,
       peakCoverage,
       columnValidation,
     };
   });
   const totalWeekly = normalizeHourAnalysisNumber(dayRows.reduce((sum, row) => sum + row.totalHours, 0), 0);
+  const totalMarketingWeekly = normalizeHourAnalysisNumber(dayRows.reduce((sum, row) => sum + row.marketingHours, 0), 0);
   const highestDay = dayRows.reduce((winner, row) => (row.totalHours > (winner?.totalHours || 0) ? row : winner), dayRows[0] || null);
   return {
     model: normalizedModel,
     dayRows,
     roleWeekly: Object.fromEntries(Object.entries(roleWeekly).map(([key, value]) => [key, normalizeHourAnalysisNumber(value, 0)])),
     totalWeekly,
+    totalMarketingWeekly,
     averageDaily: normalizeHourAnalysisNumber(totalWeekly / 7, 0),
     highestDay,
     hasRows: dayRows.some((day) => day.rows.length > 0 && day.columns.length > 0),
@@ -3434,6 +3566,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [showHourAnalysisAudit, setShowHourAnalysisAudit] = useState(false);
   const [hourAnalysisLaborModelTab, setHourAnalysisLaborModelTab] = useState(LABOR_MODEL_SUMMARY_TAB);
   const [laborModelDragSelection, setLaborModelDragSelection] = useState(null);
+  const laborModelDragSelectionRef = useRef(null);
   const [hourAnalysisChangedKeys, setHourAnalysisChangedKeys] = useState(() => new Set());
   const [whatIfEmployeeName, setWhatIfEmployeeName] = useState("");
   const [whatIfPosition, setWhatIfPosition] = useState("");
@@ -7326,19 +7459,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       };
     });
   }, [addGlobalToast, mutateHourAnalysisLaborModel]);
-  const startLaborModelCoverageDrag = useCallback((dayKey, rowId, columnIndex, shouldActivate) => {
-    const nextValue = shouldActivate ? "1" : "";
-    setLaborModelDragSelection({ dayKey, value: nextValue });
-    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, nextValue);
+  const startLaborModelCoverageDrag = useCallback((dayKey, rowId, columnIndex, nextValue) => {
+    const normalizedValue = normalizeLaborModelCoverageCell(nextValue);
+    const selection = { dayKey, value: normalizedValue };
+    laborModelDragSelectionRef.current = selection;
+    setLaborModelDragSelection(selection);
+    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, normalizedValue);
   }, [updateHourAnalysisLaborModelCell]);
   const enterLaborModelCoverageDrag = useCallback((dayKey, rowId, columnIndex) => {
-    if (!laborModelDragSelection || laborModelDragSelection.dayKey !== dayKey) return;
-    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, laborModelDragSelection.value);
-  }, [laborModelDragSelection, updateHourAnalysisLaborModelCell]);
+    const activeSelection = laborModelDragSelectionRef.current;
+    if (!activeSelection || activeSelection.dayKey !== dayKey) return;
+    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, activeSelection.value);
+  }, [updateHourAnalysisLaborModelCell]);
 
   useEffect(() => {
     if (!laborModelDragSelection) return undefined;
-    const clearDrag = () => setLaborModelDragSelection(null);
+    const clearDrag = () => {
+      laborModelDragSelectionRef.current = null;
+      setLaborModelDragSelection(null);
+    };
     window.addEventListener("mouseup", clearDrag);
     window.addEventListener("pointerup", clearDrag);
     return () => {
@@ -10013,6 +10152,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const activeHourAnalysisLaborModelDayKey = LABOR_MODEL_DAY_KEYS.includes(hourAnalysisLaborModelTab) ? hourAnalysisLaborModelTab : "monday";
   const activeHourAnalysisLaborModelDay = hourAnalysisSettings.laborModel?.days?.[activeHourAnalysisLaborModelDayKey] || hourAnalysisLaborModelSummary.model.days[activeHourAnalysisLaborModelDayKey];
   const activeHourAnalysisLaborModelDaySummary = hourAnalysisLaborModelSummary.dayRows.find((day) => day.key === activeHourAnalysisLaborModelDayKey) || hourAnalysisLaborModelSummary.dayRows[0];
+  const laborModelTabItems = [
+    { id: LABOR_MODEL_SUMMARY_TAB, label: "Summary", detail: `${formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalWeekly)} wk` },
+    ...LABOR_MODEL_DAY_KEYS.map((dayKey) => {
+      const daySummary = hourAnalysisLaborModelSummary.dayRows.find((day) => day.key === dayKey);
+      return {
+        id: dayKey,
+        label: LABOR_MODEL_DAY_LABELS[dayKey],
+        detail: `${formatHourAnalysisHours(daySummary?.totalHours || 0)} hrs`,
+        marketingDetail: daySummary?.marketingHours ? `MKTG ${formatHourAnalysisHours(daySummary.marketingHours)}` : "",
+      };
+    }),
+  ];
   const headerAction = (() => {
     if (tab === "home") {
       return (
@@ -11642,7 +11793,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 14px;
           min-height: min(74vh, 820px);
         }
-        .labor-model-tabs {
+	        .labor-model-tabs {
           --labor-model-tab-count: 8;
           --labor-model-active-index: 0;
           position: relative;
@@ -11650,8 +11801,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           grid-template-columns: repeat(var(--labor-model-tab-count), minmax(0, 1fr));
           align-items: center;
           gap: 0;
-          min-height: 48px;
-          max-height: 48px;
+	          min-height: 58px;
+	          max-height: 58px;
           padding: 5px;
           border: 1px solid ${C.border};
           border-radius: 16px;
@@ -11662,14 +11813,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           isolation: isolate;
         }
         .labor-model-tabs::-webkit-scrollbar { display: none; }
-        .labor-model-tab-indicator {
+	        .labor-model-tab-indicator {
           position: absolute;
           z-index: 0;
           top: 5px;
           bottom: 5px;
           left: 5px;
           width: calc((100% - 10px) / var(--labor-model-tab-count));
-          border-radius: 12px;
+	          border-radius: 11px;
           background: linear-gradient(135deg, #14532d, #166534 58%, #3f6212);
           box-shadow: 0 14px 32px rgba(20, 83, 45, 0.18), inset 0 1px 0 rgba(255,255,255,0.22);
           transform: translateX(calc(var(--labor-model-active-index) * 100%));
@@ -11684,40 +11835,65 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(90deg, transparent, rgba(255,255,255,0.34), transparent);
           animation: laborTabLightSweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
         }
-        .labor-model-tab-button {
+	        .labor-model-tab-button {
           position: relative;
           z-index: 1;
           align-self: center;
-          height: 38px;
+	          min-height: 48px;
           border: none;
           border-radius: 12px;
           background: transparent;
           color: ${C.textSec};
           cursor: pointer;
           font-family: inherit;
-          font-size: 12px;
+	          font-size: 12px;
           font-weight: 900;
           letter-spacing: 0;
-          white-space: nowrap;
-          transition: color 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
-        }
+	          white-space: nowrap;
+	          display: grid;
+	          align-content: center;
+	          justify-items: center;
+	          gap: 2px;
+	          transition: color 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
+	        }
+	        .labor-model-tab-button span,
+	        .labor-model-tab-button small,
+	        .labor-model-tab-button em {
+	          display: block;
+	          line-height: 1.05;
+	        }
+	        .labor-model-tab-button small {
+	          color: ${C.textMut};
+	          font-size: 9px;
+	          font-weight: 950;
+	        }
+	        .labor-model-tab-button em {
+	          color: #0e7490;
+	          font-size: 8px;
+	          font-style: normal;
+	          margin-top: 1px;
+	        }
         .labor-model-tab-button:hover {
           color: ${C.pri};
           background: rgba(20, 83, 45, 0.055);
         }
-        .labor-model-tab-button.is-active {
-          color: #fff;
-          transform: translateY(-1px);
-        }
+	        .labor-model-tab-button.is-active {
+	          color: #fff;
+	          transform: translateY(-1px);
+	        }
+	        .labor-model-tab-button.is-active small,
+	        .labor-model-tab-button.is-active em {
+	          color: rgba(255,255,255,0.86);
+	        }
         .labor-model-summary-view,
         .labor-model-day-view {
           animation: laborModelGridIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .labor-model-summary-cards {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 10px;
-        }
+	        .labor-model-summary-cards {
+	          display: grid;
+	          grid-template-columns: repeat(4, minmax(0, 1fr));
+	          gap: 10px;
+	        }
         .labor-model-metric-card {
           border: 1px solid ${C.borderLight};
           border-radius: 8px;
@@ -11726,10 +11902,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           min-width: 0;
           box-shadow: 0 10px 26px rgba(15, 23, 42, 0.045);
         }
-        .labor-model-metric-card.is-primary {
-          border-color: rgba(20, 83, 45, 0.22);
-          background: linear-gradient(135deg, rgba(240,253,244,0.9), #ffffff 62%);
-        }
+	        .labor-model-metric-card.is-primary {
+	          border-color: rgba(20, 83, 45, 0.22);
+	          background: linear-gradient(135deg, rgba(240,253,244,0.9), #ffffff 62%);
+	        }
+	        .labor-model-metric-card.is-marketing {
+	          border-color: rgba(14, 116, 144, 0.2);
+	          background: linear-gradient(135deg, rgba(236, 254, 255, 0.94), #ffffff 62%);
+	        }
+	        .labor-model-metric-card.is-marketing strong {
+	          color: #0e7490;
+	        }
         .labor-model-metric-card span {
           display: block;
           color: ${C.textMut};
@@ -12213,14 +12396,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-model-graph-dot:hover {
           fill: ${C.pri};
         }
-        .labor-model-graph-label {
-          fill: ${C.textMut};
-          font-size: 12px;
-          font-weight: 900;
-        }
-        .labor-model-shell.is-page .labor-model-summary-cards {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
+	        .labor-model-graph-label {
+	          fill: ${C.textMut};
+	          font-size: 12px;
+	          font-weight: 900;
+	        }
+	        .labor-model-graph-value {
+	          fill: ${C.text};
+	          font-size: 11px;
+	          font-weight: 950;
+	          paint-order: stroke;
+	          stroke: #fff;
+	          stroke-width: 4px;
+	          stroke-linejoin: round;
+	        }
+	        .labor-model-shell.is-page .labor-model-summary-cards {
+	          grid-template-columns: repeat(4, minmax(0, 1fr));
+	        }
         .labor-model-shell.is-page .labor-model-summary-grid {
           grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
           gap: 12px;
@@ -12244,21 +12436,44 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 10px;
           margin-bottom: 8px;
         }
-        .labor-model-grid-title {
-          color: ${C.text};
-          font-size: 16px;
-          font-weight: 950;
-        }
+	        .labor-model-grid-title {
+	          color: ${C.text};
+	          font-size: 16px;
+	          font-weight: 950;
+	          display: flex;
+	          align-items: center;
+	          gap: 8px;
+	          flex-wrap: wrap;
+	        }
+	        .labor-model-grid-title span,
+	        .labor-model-grid-title em {
+	          border-radius: 999px;
+	          padding: 4px 8px;
+	          font-size: 10px;
+	          line-height: 1;
+	          font-style: normal;
+	          font-weight: 950;
+	        }
+	        .labor-model-grid-title span {
+	          border: 1px solid rgba(20, 83, 45, 0.2);
+	          background: rgba(240, 253, 244, 0.9);
+	          color: ${C.pri};
+	        }
+	        .labor-model-grid-title em {
+	          border: 1px solid rgba(14, 116, 144, 0.2);
+	          background: rgba(236, 254, 255, 0.92);
+	          color: #0e7490;
+	        }
         .labor-model-grid-meta {
           color: ${C.textMut};
           font-size: 11px;
           font-weight: 800;
         }
-        .labor-model-grid-wrap {
-          max-height: none;
-          overflow: visible;
-          border-radius: 8px;
-        }
+	        .labor-model-grid-wrap {
+	          max-height: none;
+	          overflow: visible;
+	          border-radius: 8px;
+	        }
         .labor-model-grid-table {
           width: 100%;
           min-width: 0;
@@ -12268,12 +12483,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-model-grid-table td {
           padding: 4px;
         }
-        .labor-model-grid-table th {
-          position: relative;
-          top: auto;
-          height: 42px;
-          font-size: 9px;
-        }
+	        .labor-model-grid-table th {
+	          position: sticky;
+	          top: 0;
+	          z-index: 18;
+	          height: 42px;
+	          font-size: 9px;
+	          box-shadow: 0 1px 0 ${C.borderLight}, 0 8px 18px rgba(15, 23, 42, 0.035);
+	        }
         .labor-model-position-col,
         .labor-model-position-cell {
           width: 180px;
@@ -12290,11 +12507,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-model-grid-table .labor-model-delete-cell {
           width: 34px;
         }
-        .labor-model-time-heading {
-          position: relative;
-          min-width: 0;
-          width: auto;
-        }
+	        .labor-model-time-heading {
+	          position: relative;
+	          min-width: 0;
+	          width: auto;
+	        }
+	        .labor-model-time-heading.has-shift-breaker-left,
+	        .labor-model-coverage-cell.has-shift-breaker-left,
+	        .labor-model-total-cell.has-shift-breaker-left {
+	          border-left: 2px solid rgba(15, 23, 42, 0.28) !important;
+	        }
+	        .labor-model-time-heading.has-shift-breaker-inside,
+	        .labor-model-coverage-cell.has-shift-breaker-inside,
+	        .labor-model-total-cell.has-shift-breaker-inside {
+	          position: relative;
+	        }
+	        .labor-model-time-heading.has-shift-breaker-inside::after,
+	        .labor-model-coverage-cell.has-shift-breaker-inside::after,
+	        .labor-model-total-cell.has-shift-breaker-inside::after {
+	          content: "";
+	          position: absolute;
+	          top: 0;
+	          bottom: 0;
+	          left: var(--labor-model-breaker-pct, 50%);
+	          width: 2px;
+	          background: rgba(15, 23, 42, 0.28);
+	          pointer-events: none;
+	          z-index: 4;
+	        }
         .labor-model-time-editor {
           gap: 2px;
         }
@@ -12360,9 +12600,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 10px;
           line-height: 1.05;
         }
-        .labor-model-position-cell .hour-analysis-picker-panel {
-          min-width: 290px;
-        }
+	        .labor-model-position-cell .hour-analysis-picker-panel {
+	          min-width: 290px;
+	        }
+	        .labor-model-position-cell {
+	          position: relative;
+	        }
         .labor-model-position-stack {
           display: grid;
           gap: 4px;
@@ -12472,18 +12715,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border-radius: 8px;
           text-align: right;
         }
-        .labor-model-coverage-cell {
-          text-align: center;
-          padding: 3px !important;
-        }
-        .labor-model-coverage-cell-button {
+	        .labor-model-coverage-cell {
+	          text-align: center;
+	          padding: 3px !important;
+	        }
+	        .labor-model-coverage-cell-shell {
+	          position: relative;
+	          width: 100%;
+	          height: 24px;
+	        }
+	        .labor-model-coverage-cell-button {
           width: 100%;
           height: 24px;
           min-width: 0;
           border: 1px solid transparent;
           border-radius: 6px;
-          background: #fff;
-          color: #fff;
+	          background: #fff;
+	          color: transparent;
           cursor: pointer;
           font-family: inherit;
           font-size: 9px;
@@ -12494,21 +12742,56 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           overflow: hidden;
           text-overflow: clip;
           outline: none;
-          transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
-          user-select: none;
-        }
+	          transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, color 120ms ease;
+	          user-select: none;
+	        }
         .labor-model-coverage-cell-button:hover {
           border-color: rgba(20, 83, 45, 0.22);
           background: rgba(240, 253, 244, 0.9);
         }
-        .labor-model-coverage-cell-button.is-active {
-          border-color: rgba(20, 83, 45, 0.34);
-          background: linear-gradient(135deg, #14532d, #166534);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 14px rgba(20, 83, 45, 0.12);
-        }
-        .labor-model-coverage-cell-button.is-active:focus {
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 0 0 3px rgba(20, 83, 45, 0.16);
-        }
+	        .labor-model-coverage-cell-button.is-active.is-full {
+	          border-color: rgba(20, 83, 45, 0.34);
+	          background: linear-gradient(135deg, #14532d, #166534);
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 14px rgba(20, 83, 45, 0.12);
+	        }
+	        .labor-model-coverage-cell-button.is-active.is-half {
+	          border-color: rgba(20, 83, 45, 0.3);
+	          background: linear-gradient(90deg, #14532d 0 52%, rgba(240,253,244,0.96) 52% 100%);
+	          color: ${C.pri};
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 6px 14px rgba(20, 83, 45, 0.1);
+	        }
+	        .labor-model-coverage-cell-button.is-active.is-marketing {
+	          border-color: rgba(14, 116, 144, 0.34);
+	          background: linear-gradient(135deg, #0f766e, #0284c7);
+	          color: #fff;
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 6px 14px rgba(14, 116, 144, 0.14);
+	        }
+	        .labor-model-coverage-cell-button.is-active:focus {
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 0 0 3px rgba(20, 83, 45, 0.16);
+	        }
+	        .labor-model-fill-handle {
+	          position: absolute;
+	          top: 3px;
+	          right: -3px;
+	          bottom: 3px;
+	          width: 8px;
+	          border-radius: 999px;
+	          background: rgba(255,255,255,0.92);
+	          box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08), 0 6px 12px rgba(15, 23, 42, 0.12);
+	          cursor: ew-resize;
+	          opacity: 0;
+	          transform: scaleY(0.72);
+	          transition: opacity 120ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1), background 120ms ease;
+	          z-index: 6;
+	        }
+	        .labor-model-coverage-cell-shell:hover .labor-model-fill-handle,
+	        .labor-model-coverage-cell-shell:focus-within .labor-model-fill-handle {
+	          opacity: 1;
+	          transform: scaleY(1);
+	        }
+	        .labor-model-fill-handle:hover {
+	          background: #fff7ed;
+	        }
         .labor-model-hours-cell {
           min-width: 0;
           color: ${C.pri};
@@ -12519,30 +12802,86 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-model-delete-cell {
           min-width: 0;
         }
-        .labor-model-row-plus {
-          position: static;
-          opacity: 0.18;
-          width: 22px;
-          height: 22px;
-          transform: none;
-        }
-        .labor-model-grid-row:hover .labor-model-row-plus,
-        .labor-model-grid-row:focus-within .labor-model-row-plus {
-          opacity: 1;
-        }
-        .labor-model-row-plus:hover {
-          transform: scale(1.06);
-        }
-        .labor-model-delete-button {
+	        .labor-model-row-insert {
+	          position: absolute;
+	          left: 50%;
+	          bottom: -11px;
+	          z-index: 12;
+	          width: 22px;
+	          height: 22px;
+	          border-radius: 999px;
+	          border: 1px solid rgba(249, 115, 22, 0.34);
+	          background: #fff7ed;
+	          color: #c2410c;
+	          box-shadow: 0 10px 20px rgba(249, 115, 22, 0.18);
+	          cursor: pointer;
+	          opacity: 0;
+	          transform: translateX(-50%) scale(0.82);
+	          display: inline-flex;
+	          align-items: center;
+	          justify-content: center;
+	          transition: opacity 150ms ease, transform 150ms cubic-bezier(0.22, 1, 0.36, 1), background 150ms ease;
+	        }
+	        .labor-model-grid-row:hover .labor-model-row-insert,
+	        .labor-model-grid-row:focus-within .labor-model-row-insert {
+	          opacity: 1;
+	          transform: translateX(-50%) scale(1);
+	        }
+	        .labor-model-row-insert:hover {
+	          background: #ffedd5;
+	          transform: translateX(-50%) scale(1.08);
+	        }
+	        .labor-model-empty-add {
+	          display: inline-flex;
+	          align-items: center;
+	          gap: 7px;
+	          border: 1px solid rgba(249, 115, 22, 0.34);
+	          border-radius: 999px;
+	          background: #fff7ed;
+	          color: #c2410c;
+	          padding: 8px 12px;
+	          font-family: inherit;
+	          font-size: 12px;
+	          font-weight: 950;
+	          cursor: pointer;
+	        }
+	        .labor-model-delete-button {
           opacity: 0.18;
           width: 24px;
           height: 24px;
           border-radius: 7px;
         }
-        .labor-model-grid-row:hover .labor-model-delete-button,
-        .labor-model-grid-row:focus-within .labor-model-delete-button {
-          opacity: 1;
-        }
+	        .labor-model-grid-row:hover .labor-model-delete-button,
+	        .labor-model-grid-row:focus-within .labor-model-delete-button {
+	          opacity: 1;
+	        }
+	        .labor-model-total-row td {
+	          position: sticky;
+	          bottom: 0;
+	          z-index: 10;
+	          border-top: 2px solid rgba(20, 83, 45, 0.22);
+	          background: linear-gradient(180deg, #f8fafc, #fff);
+	          color: ${C.text};
+	          font-size: 10px;
+	          font-weight: 950;
+	          text-align: center;
+	          box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.035);
+	        }
+	        .labor-model-total-row td:first-child,
+	        .labor-model-total-row td:nth-child(2) {
+	          text-align: left;
+	        }
+	        .labor-model-total-row small,
+	        .labor-model-total-cell small {
+	          display: block;
+	          margin-top: 2px;
+	          color: #0e7490;
+	          font-size: 8px;
+	          font-weight: 950;
+	        }
+	        .labor-model-total-cell {
+	          color: ${C.pri} !important;
+	        }
         .labor-view-switcher {
           --labor-view-count: 1;
           --labor-view-active-index: 0;
@@ -14697,14 +15036,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div className="labor-model-shell is-page">
             <div className="labor-model-tabs" style={{ "--labor-model-tab-count": LABOR_MODEL_DAY_KEYS.length + 1, "--labor-model-active-index": Math.max(0, [LABOR_MODEL_SUMMARY_TAB, ...LABOR_MODEL_DAY_KEYS].indexOf(hourAnalysisLaborModelTab)) }}>
               <span className="labor-model-tab-indicator" aria-hidden="true" />
-              {[{ id: LABOR_MODEL_SUMMARY_TAB, label: "Summary" }, ...LABOR_MODEL_DAY_KEYS.map((dayKey) => ({ id: dayKey, label: LABOR_MODEL_DAY_LABELS[dayKey] }))].map((item) => (
+              {laborModelTabItems.map((item) => (
                 <button
                   key={item.id}
                   type="button"
                   className={`labor-model-tab-button${hourAnalysisLaborModelTab === item.id ? " is-active" : ""}`}
                   onClick={() => setHourAnalysisLaborModelTab(item.id)}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  <small>
+                    {item.detail}
+                    {item.marketingDetail ? <em>{item.marketingDetail}</em> : null}
+                  </small>
                 </button>
               ))}
             </div>
@@ -14722,12 +15065,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.averageDaily)} hrs</strong>
                     <em>{hourAnalysisLaborModelSummary.highestDay?.label || "No day"} is highest</em>
                   </div>
-                  <div className="labor-model-metric-card">
-                    <span>Frontline Floor</span>
-                    <strong>{formatHourAnalysisHours((hourAnalysisLaborModelSummary.roleWeekly.csr || 0) + (hourAnalysisLaborModelSummary.roleWeekly.pct || 0))} hrs</strong>
-                    <em>Customer Service Representative + Pet Care Technician</em>
-                  </div>
-                </div>
+	                  <div className="labor-model-metric-card">
+	                    <span>Frontline Floor</span>
+	                    <strong>{formatHourAnalysisHours((hourAnalysisLaborModelSummary.roleWeekly.csr || 0) + (hourAnalysisLaborModelSummary.roleWeekly.pct || 0))} hrs</strong>
+	                    <em>Customer Service Representative + Pet Care Technician</em>
+	                  </div>
+	                  <div className="labor-model-metric-card is-marketing">
+	                    <span>Marketing</span>
+	                    <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalMarketingWeekly || 0)} hrs</strong>
+	                    <em>Tracked separately from the operating floor</em>
+	                  </div>
+	                </div>
                 <div className="labor-model-summary-layout" style={{ marginTop: 12 }}>
                   <LaborModelHoursLineGraph days={hourAnalysisLaborModelSummary.dayRows} />
                   <div className="labor-model-panel">
@@ -14768,10 +15116,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           <th>CSR</th>
                           <th>PCT</th>
                           <th>Supervisor</th>
-                          <th>Assistant Manager</th>
-                          <th>Total</th>
-                          <th>Peak</th>
-                        </tr>
+	                          <th>Assistant Manager</th>
+	                          <th>Marketing</th>
+	                          <th>Total</th>
+	                          <th>Peak</th>
+	                        </tr>
                       </thead>
                       <tbody>
                         {hourAnalysisLaborModelSummary.dayRows.map((day) => (
@@ -14779,11 +15128,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             <td>{day.label}</td>
                             <td>{formatHourAnalysisHours(day.roleHours.csr || 0)}</td>
                             <td>{formatHourAnalysisHours(day.roleHours.pct || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
-                            <td>{day.peakCoverage}</td>
-                          </tr>
+	                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.marketingHours || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
+	                            <td>{formatHourAnalysisHours(day.peakCoverage)}</td>
+	                          </tr>
                         ))}
                       </tbody>
                     </table>
@@ -14791,80 +15141,83 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <div className="labor-model-panel">
                     <div className="labor-model-panel-title">How Hours Calculate</div>
                     <div className="labor-model-summary-note" style={{ borderTop: 0 }}>
-                      Time-slot weight is derived from the header range. Example: 5:45a-6a equals 0.25 hours. Green cells count toward that row, and row-level break settings subtract the configured minutes from the row total.
+	                      Time-slot weight is derived from the header range. Click once for a full operating cell, twice for a half cell, and type MKTG for marketing time that stays out of the operating floor.
                     </div>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="labor-model-day-view">
-                <div className="labor-model-grid-toolbar">
-                  <div>
-                    <div className="labor-model-grid-title">{activeHourAnalysisLaborModelDaySummary?.label || LABOR_MODEL_DAY_LABELS[activeHourAnalysisLaborModelDayKey]}</div>
-                    {activeHourAnalysisLaborModelDaySummary?.columnValidation?.valid === false && (
-                      <div className="labor-model-grid-meta">Fix time continuity before this day feeds Staffing Capacity.</div>
-                    )}
-                  </div>
-                  {canEditRoster && (
-                    <Btn variant="secondary" icon={<I.Plus />} onClick={() => insertHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey)}>
-                      Add Line
-                    </Btn>
-                  )}
-                </div>
-                <div className="labor-model-grid-wrap">
-                  <table className="labor-model-grid-table">
-                    <thead>
-                      <tr>
-                        <th className="labor-model-position-col">Position</th>
-                        <th className="labor-model-shift-col">Time</th>
-                        {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => (
-                          <th
-                            key={column.id}
-                            className={`labor-model-time-heading${hourAnalysisChangedKeys.has(`labor-model-column:${column.id}`) ? " is-recent-change" : ""}${column.is_valid === false ? " is-invalid" : ""}`}
-                          >
-                            <div className="labor-model-time-editor">
-                              <LaborModelInlineInput
-                                value={column.label}
-                                disabled={!canEditRoster}
-                                ariaLabel={`${activeHourAnalysisLaborModelDaySummary?.label || "Day"} time slot label`}
-                                className="labor-model-time-input"
-                                onCommit={(nextValue) => updateHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, { label: nextValue })}
-                              />
-                            </div>
-                            {canEditRoster && (
-                              <div className="labor-model-column-actions">
-                                <button
-                                  type="button"
-                                  className="labor-model-column-action"
-                                  aria-label={`Insert time before ${column.label}`}
-                                  onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "left")}
-                                >
-                                  <I.Plus />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="labor-model-column-action is-delete"
-                                  aria-label={`Delete ${column.label}`}
-                                  disabled={(activeHourAnalysisLaborModelDay?.columns || []).length <= 1}
-                                  onClick={() => removeHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex)}
-                                >
-                                  <I.Trash />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="labor-model-column-action"
-                                  aria-label={`Insert time after ${column.label}`}
-                                  onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "right")}
-                                >
-                                  <I.Plus />
-                                </button>
-                              </div>
-                            )}
-                          </th>
-                        ))}
-                        <th className="labor-model-hours-col">Hours</th>
-                        <th className="labor-model-actions-col" aria-label="Actions" />
-                      </tr>
+	            ) : (
+	              <div className="labor-model-day-view">
+	                <div className="labor-model-grid-toolbar">
+	                  <div>
+	                    <div className="labor-model-grid-title">
+	                      {activeHourAnalysisLaborModelDaySummary?.label || LABOR_MODEL_DAY_LABELS[activeHourAnalysisLaborModelDayKey]}
+	                      <span>{formatHourAnalysisHours(activeHourAnalysisLaborModelDaySummary?.totalHours || 0)} operating hrs</span>
+	                      {activeHourAnalysisLaborModelDaySummary?.marketingHours ? <em>{formatHourAnalysisHours(activeHourAnalysisLaborModelDaySummary.marketingHours)} MKTG hrs</em> : null}
+	                    </div>
+	                    {activeHourAnalysisLaborModelDaySummary?.columnValidation?.valid === false && (
+	                      <div className="labor-model-grid-meta">Fix time continuity before this day feeds Staffing Capacity.</div>
+	                    )}
+	                  </div>
+	                </div>
+	                <div className="labor-model-grid-wrap">
+	                  <table className="labor-model-grid-table">
+	                    <thead>
+	                      <tr>
+	                        <th className="labor-model-position-col">Position</th>
+	                        <th className="labor-model-shift-col">Time</th>
+	                        {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => {
+	                          const breakerMeta = getLaborModelColumnBreakerMeta(activeHourAnalysisLaborModelDayKey, column);
+	                          return (
+	                            <th
+	                              key={column.id}
+	                              style={breakerMeta.style}
+	                              className={`labor-model-time-heading${breakerMeta.className}${hourAnalysisChangedKeys.has(`labor-model-column:${column.id}`) ? " is-recent-change" : ""}${column.is_valid === false ? " is-invalid" : ""}`}
+	                            >
+	                              <div className="labor-model-time-editor">
+	                                <LaborModelInlineInput
+	                                  value={column.label}
+	                                  disabled={!canEditRoster}
+	                                  ariaLabel={`${activeHourAnalysisLaborModelDaySummary?.label || "Day"} time slot label`}
+	                                  className="labor-model-time-input"
+	                                  onCommit={(nextValue) => updateHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, { label: nextValue })}
+	                                />
+	                              </div>
+	                              {canEditRoster && (
+	                                <div className="labor-model-column-actions">
+	                                  <button
+	                                    type="button"
+	                                    className="labor-model-column-action"
+	                                    aria-label={`Insert time before ${column.label}`}
+	                                    onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "left")}
+	                                  >
+	                                    <I.Plus />
+	                                  </button>
+	                                  <button
+	                                    type="button"
+	                                    className="labor-model-column-action is-delete"
+	                                    aria-label={`Delete ${column.label}`}
+	                                    disabled={(activeHourAnalysisLaborModelDay?.columns || []).length <= 1}
+	                                    onClick={() => removeHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex)}
+	                                  >
+	                                    <I.Trash />
+	                                  </button>
+	                                  <button
+	                                    type="button"
+	                                    className="labor-model-column-action"
+	                                    aria-label={`Insert time after ${column.label}`}
+	                                    onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "right")}
+	                                  >
+	                                    <I.Plus />
+	                                  </button>
+	                                </div>
+	                              )}
+	                            </th>
+	                          );
+	                        })}
+	                        <th className="labor-model-hours-col">Hours</th>
+	                        <th className="labor-model-actions-col" aria-label="Actions" />
+	                      </tr>
                     </thead>
                     <tbody>
                       {(activeHourAnalysisLaborModelDay?.rows || []).map((row) => {
@@ -14874,9 +15227,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             key={row.id}
                             className={`labor-model-grid-row${hourAnalysisChangedKeys.has(`labor-model-row:${row.id}`) ? " is-recent-change" : ""}`}
                           >
-                            <td className="labor-model-position-cell">
-                              <div className="labor-model-position-stack">
-                                <HourAnalysisAnimatedPicker
+	                            <td className="labor-model-position-cell">
+	                              <div className="labor-model-position-stack">
+	                                <HourAnalysisAnimatedPicker
                                   value={row.group_key}
                                   options={LABOR_MODEL_GROUP_OPTIONS}
                                   disabled={!canEditRoster}
@@ -14886,10 +15239,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 {rowSummary.runLength > 1 && rowSummary.runIndex === 1 && (
                                   <span className="labor-model-run-badge">
                                     {rowSummary.runLength} consecutive {LABOR_MODEL_SHIFT_TYPE_LABELS[rowSummary.shift_type] || "Opening"}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
+	                                  </span>
+	                                )}
+	                              </div>
+	                              {canEditRoster && (
+	                                <button
+	                                  type="button"
+	                                  className="labor-model-row-insert"
+	                                  aria-label={`Insert row after ${getHourAnalysisGroupLabel(row.group_key)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
+	                                  title="Insert row here"
+	                                  onClick={() => insertHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id)}
+	                                >
+	                                  <I.Plus />
+	                                </button>
+	                              )}
+	                            </td>
                             <td className="labor-model-shift-cell">
                               <LaborModelTimeControl
                                 row={row}
@@ -14897,20 +15261,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onChange={(updates) => updateHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id, updates)}
                               />
                             </td>
-                            {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => (
-                              <td key={`${row.id}-${column.id}`} className="labor-model-coverage-cell">
-                                <LaborModelCoverageCell
-                                  value={row.coverage[columnIndex] || ""}
-                                  disabled={!canEditRoster}
-                                  rowId={row.id}
-                                  columnIndex={columnIndex}
-                                  onStart={(targetRowId, targetColumnIndex, shouldActivate) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, shouldActivate)}
-                                  onEnter={(targetRowId, targetColumnIndex) => enterLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
-                                  onTextChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
-                                />
-                              </td>
-                            ))}
-                            <td className="labor-model-hours-cell">{formatHourAnalysisHours(rowSummary?.hours || calculateLaborModelRowHours(row, activeHourAnalysisLaborModelDay?.columns || []))}</td>
+	                            {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => {
+	                              const breakerMeta = getLaborModelColumnBreakerMeta(activeHourAnalysisLaborModelDayKey, column);
+	                              return (
+	                                <td key={`${row.id}-${column.id}`} style={breakerMeta.style} className={`labor-model-coverage-cell${breakerMeta.className}`}>
+	                                  <LaborModelCoverageCell
+	                                    value={row.coverage[columnIndex] || ""}
+	                                    disabled={!canEditRoster}
+	                                    rowId={row.id}
+	                                    columnIndex={columnIndex}
+	                                    onStart={(targetRowId, targetColumnIndex, nextValue) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
+	                                    onFillStart={(targetRowId, targetColumnIndex, fillValue) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, fillValue)}
+	                                    onEnter={(targetRowId, targetColumnIndex) => enterLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
+	                                    onTextChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
+	                                  />
+	                                </td>
+	                              );
+	                            })}
+	                            <td className="labor-model-hours-cell">{formatHourAnalysisHours(rowSummary?.hours || calculateLaborModelRowHours(row, activeHourAnalysisLaborModelDay?.columns || []))}</td>
                             <td className="labor-model-delete-cell">
                               {canEditRoster && (
                                 <button
@@ -14926,16 +15294,46 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           </tr>
                         );
                       })}
-                      {(activeHourAnalysisLaborModelDay?.rows || []).length === 0 && (
-                        <tr>
-                          <td colSpan={(activeHourAnalysisLaborModelDay?.columns || []).length + 4} style={{ padding: 24, textAlign: "center", color: C.textMut, fontWeight: 820 }}>
-                            Add a Labor Model line to begin building the operating floor.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+	                      {(activeHourAnalysisLaborModelDay?.rows || []).length === 0 && (
+	                        <tr>
+	                          <td colSpan={(activeHourAnalysisLaborModelDay?.columns || []).length + 4} style={{ padding: 24, textAlign: "center", color: C.textMut, fontWeight: 820 }}>
+	                            {canEditRoster ? (
+	                              <button type="button" className="labor-model-empty-add" onClick={() => insertHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey)}>
+	                                <I.Plus /> Add first row
+	                              </button>
+	                            ) : "Add a Labor Model line to begin building the operating floor."}
+	                          </td>
+	                        </tr>
+	                      )}
+	                    </tbody>
+	                    <tfoot>
+	                      <tr className="labor-model-total-row">
+	                        <td>Operating floor</td>
+	                        <td>
+	                          {formatHourAnalysisHours(activeHourAnalysisLaborModelDaySummary?.totalHours || 0)} hrs
+	                          {activeHourAnalysisLaborModelDaySummary?.marketingHours ? <small>{formatHourAnalysisHours(activeHourAnalysisLaborModelDaySummary.marketingHours)} MKTG</small> : null}
+	                        </td>
+	                        {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => {
+	                          const columnTotal = activeHourAnalysisLaborModelDaySummary?.columnTotals?.[columnIndex] || {};
+	                          const breakerMeta = getLaborModelColumnBreakerMeta(activeHourAnalysisLaborModelDayKey, column);
+	                          return (
+	                            <td
+	                              key={`total-${column.id}`}
+	                              style={breakerMeta.style}
+	                              className={`labor-model-total-cell${breakerMeta.className}`}
+	                              title={`${formatHourAnalysisHours(columnTotal.operatingHours || 0)} operating hrs${columnTotal.marketingHours ? `; ${formatHourAnalysisHours(columnTotal.marketingHours)} marketing hrs` : ""}`}
+	                            >
+	                              {formatHourAnalysisHours(columnTotal.operatingCoverage || 0)}
+	                              {columnTotal.marketingCoverage ? <small>M{formatHourAnalysisHours(columnTotal.marketingCoverage)}</small> : null}
+	                            </td>
+	                          );
+	                        })}
+	                        <td className="labor-model-hours-cell">{formatHourAnalysisHours(activeHourAnalysisLaborModelDaySummary?.totalHours || 0)}</td>
+	                        <td />
+	                      </tr>
+	                    </tfoot>
+	                  </table>
+	                </div>
               </div>
             )}
           </div>
