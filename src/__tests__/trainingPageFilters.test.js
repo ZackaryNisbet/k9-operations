@@ -127,6 +127,7 @@ describe("applyLaborRosterFilters", () => {
             { id: "monday-gm-row", group_key: "general_manager", role_label: "GM floor", coverage: ["x", "", ""] },
             { id: "monday-csr-row", group_key: "csr", role_label: "CSR floor", coverage: ["", "x", ""] },
             { id: "monday-pct-row", group_key: "pct", role_label: "PCT floor", coverage: ["", "", "x"] },
+            { id: "monday-mktg-row", group_key: "csr", role_label: "Marketing time", coverage: ["MKTG", "", ""] },
           ],
         },
         tuesday: emptyLaborDay("tuesday"),
@@ -181,6 +182,8 @@ describe("applyLaborRosterFilters", () => {
     expect(model.totals.requiredWeekly).toBe(70);
     expect(model.totals.targetWeekly).toBe(85);
     expect(model.laborModelSummary.totalWeekly).toBe(70);
+    expect(model.laborModelSummary.totalMarketingWeekly).toBe(10);
+    expect(model.laborModelSummary.dayRows.find((day) => day.key === "monday")).toMatchObject({ marketingHours: 10 });
     expect(model.weeklyRows.find((row) => row.key === "general_manager")).toMatchObject({ reliefPercent: 0, requiredWeekly: 10, targetWeekly: 10 });
     expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 25 });
     expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 50 });
@@ -195,5 +198,50 @@ describe("applyLaborRosterFilters", () => {
       preferredHours: 28,
     });
     expect(model.whatIfRows[0]).toMatchObject({ full_name: "Candidate One", groupKey: "csr", preferredHours: 15 });
+  });
+
+  it("keeps half coverage and MKTG cells weighted separately in the labor model", () => {
+    const emptyLaborDay = (day) => ({
+      day_key: day,
+      columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
+      rows: [],
+    });
+    const laborModel = {
+      days: {
+        monday: {
+          day_key: "monday",
+          columns: [
+            { id: "monday-operating", label: "8-9a", hours: 1 },
+            { id: "monday-marketing", label: "9-10a", hours: 1 },
+          ],
+          rows: [
+            {
+              id: "half-and-marketing",
+              group_key: "csr",
+              role_label: "CSR mixed coverage",
+              break_enabled: false,
+              coverage: ["0.5", "MKTG"],
+            },
+          ],
+        },
+        tuesday: emptyLaborDay("tuesday"),
+        wednesday: emptyLaborDay("wednesday"),
+        thursday: emptyLaborDay("thursday"),
+        friday: emptyLaborDay("friday"),
+        saturday: emptyLaborDay("saturday"),
+        sunday: emptyLaborDay("sunday"),
+      },
+    };
+    const model = buildHourAnalysisModel({
+      settings: normalizeHourAnalysisSettings({ laborModel }),
+      rosterRows: [],
+    });
+    const monday = model.laborModelSummary.dayRows.find((day) => day.key === "monday");
+
+    expect(model.laborModelSummary.totalWeekly).toBe(0.5);
+    expect(model.laborModelSummary.totalMarketingWeekly).toBe(1);
+    expect(monday).toMatchObject({ totalHours: 0.5, marketingHours: 1 });
+    expect(monday.columnTotals[0]).toMatchObject({ operatingCoverage: 0.5, operatingHours: 0.5 });
+    expect(monday.columnTotals[1]).toMatchObject({ marketingCoverage: 1, marketingHours: 1 });
   });
 });
