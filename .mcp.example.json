@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "agent_handler": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "<package-name>",
+        "<server-url>",
+        "--header",
+        "Authorization: Bearer <token>"
+      ],
+      "env": {
+        "AUTH_TOKEN": "<token>"
+      }
+    }
+  }
+}

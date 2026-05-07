@@ -5,6 +5,14 @@ import { supabase } from "../supabaseClient";
 import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType } from "../shared/opsHelpers";
 
+const sanitizeGingrSyncError = (value) => {
+  const text = String(value || "Sync failed. Check the server logs for details.")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/(api[_-]?key|authorization|auth[_-]?token|token|secret)(['"]?\s*[:=]\s*['"]?)[^'",\s}]+/gi, "$1$2[redacted]")
+    .replace(/(password)(['"]?\s*[:=]\s*['"]?)[^'",\s}]+/gi, "$1$2[redacted]");
+  return text.length > 280 ? `${text.slice(0, 277)}...` : text;
+};
+
 function useGingrData(locationId, refreshOptions = {}) {
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
@@ -648,7 +656,7 @@ function useGingrData(locationId, refreshOptions = {}) {
           errObj._raw = fnError;
           throw errObj;
         }
-        console.log(`Gingr sync iteration ${iteration}:`, fnData);
+        if (import.meta.env.DEV) console.log(`Gingr sync iteration ${iteration}:`, fnData);
         const resResult = fnData?.results?.reservations;
         totalSynced += resResult?.synced || 0;
         if (resResult && resResult.backfill_complete === false && resResult.chunks_remaining > 0) {
@@ -666,8 +674,8 @@ function useGingrData(locationId, refreshOptions = {}) {
       setSyncProgress(null);
       return { totalSynced, iterations: iteration };
     } catch (err) {
-      console.error("Sync failed:", err);
-      const errorLog = { timestamp: new Date().toISOString(), error: err._detail || err.message, location_id: locationId, syncType };
+      if (import.meta.env.DEV) console.error("Sync failed:", err);
+      const errorLog = { timestamp: new Date().toISOString(), error: sanitizeGingrSyncError(err._detail || err.message), location_id: locationId, syncType };
       setLastErrorLog(errorLog);
       setSyncing(false);
       setSyncProgress(null);

@@ -16,6 +16,14 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 import { useAuth } from "../../AuthProvider";
 import RoomConfig from "./RoomConfig";
 
+const sanitizeGingrSettingsError = (value) => {
+  const text = String(value || "Request failed. Check the server logs for details.")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/(api[_-]?key|authorization|auth[_-]?token|token|secret)(['"]?\s*[:=]\s*['"]?)[^'",\s}]+/gi, "$1$2[redacted]")
+    .replace(/(password)(['"]?\s*[:=]\s*['"]?)[^'",\s}]+/gi, "$1$2[redacted]");
+  return text.length > 280 ? `${text.slice(0, 277)}...` : text;
+};
+
 function GingrIntegrationTab() {
   const [subdomain, setSubdomain] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -97,7 +105,7 @@ function GingrIntegrationTab() {
     setSaving(false);
     if (error) {
       setSaveError(error.message || "Failed to save credentials.");
-      console.error("Save error:", error);
+      if (import.meta.env.DEV) console.error("Save error:", error);
     } else {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -137,8 +145,9 @@ function GingrIntegrationTab() {
       }
     } catch (e) {
       setTestStatus("error");
-      setTestMessage(e.message || "Could not reach Gingr. Make sure the Edge Function is deployed.");
-      setLastErrorLog({ timestamp: new Date().toISOString(), error: e.message, context: "test_connection" });
+      const safeMessage = sanitizeGingrSettingsError(e.message || "Could not reach Gingr. Make sure the Edge Function is deployed.");
+      setTestMessage(safeMessage);
+      setLastErrorLog({ timestamp: new Date().toISOString(), error: safeMessage, context: "test_connection" });
     }
   };
 
@@ -183,8 +192,9 @@ function GingrIntegrationTab() {
       if (newState) setSyncState(newState);
     } catch (err) {
       setSyncStatus("error");
-      setSyncMessage(`Sync failed: ${err.message || "Unknown error"}`);
-      setLastErrorLog({ timestamp: new Date().toISOString(), error: err.message, context: "settings_sync" });
+      const safeMessage = sanitizeGingrSettingsError(err.message || "Unknown error");
+      setSyncMessage(`Sync failed: ${safeMessage}`);
+      setLastErrorLog({ timestamp: new Date().toISOString(), error: safeMessage, context: "settings_sync" });
     }
   };
 

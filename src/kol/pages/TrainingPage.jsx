@@ -36,6 +36,7 @@ import {
   formatTrainingTimestamp,
   getLaborEmploymentCommitmentLabel,
   getLaborAttachmentPreviewKind,
+  getLaborRosterPositionGroup,
   groupLaborEmployeeDocumentsByNote,
   groupLaborEmployeeNotes,
   groupTrainingNotes,
@@ -96,15 +97,20 @@ const ITEM_STATUS_COLORS = {
 
 const TABS = [
   { id: "home", label: "Home" },
-  { id: "training", label: "Training" },
-  { id: "performance-reviews", label: "Performance Reviews" },
-  { id: "templates", label: "Templates" },
   { id: "attendance", label: "Attendance" },
+  { id: "performance-reviews", label: "Performance Reviews" },
+  { id: "training", label: "Training" },
   { id: "interviews", label: "Interviews" },
   { id: "notes", label: "Notes" },
+  { id: "hour-analysis", label: "Hour Analysis" },
 ];
 
-const LABOR_TAB_IDS = new Set(TABS.map((tab) => tab.id));
+const HIDDEN_LABOR_TABS = [
+  { id: "templates", label: "Templates" },
+  { id: "labor-model", label: "Labor Model" },
+];
+
+const LABOR_TAB_IDS = new Set([...TABS, ...HIDDEN_LABOR_TABS].map((tab) => tab.id));
 const LABOR_TAB_PERMISSION_MAP = {
   home: "Labor Roster",
   training: "Labor Roster",
@@ -113,6 +119,8 @@ const LABOR_TAB_PERMISSION_MAP = {
   attendance: "Labor Attendance",
   interviews: "Labor Interviews",
   notes: "Labor Employee Notes",
+  "hour-analysis": "Labor Roster",
+  "labor-model": "Labor Roster",
 };
 const normalizeLaborTab = (value) => LABOR_TAB_IDS.has(value) ? value : "home";
 const normalizeAttendanceView = (value) => value === "summary" ? "summary" : "input";
@@ -158,15 +166,480 @@ function LaborViewSwitcher({ options = [], value, onChange }) {
   );
 }
 
+const SORT_DIRECTION_LABELS = {
+  asc: "Ascending",
+  desc: "Descending",
+};
+
+function getLaborSortDisplayLabel(sort = {}, columns = [], defaultSort = {}) {
+  const column = columns.find((item) => item.key === sort.key);
+  if (!column) return "Sort";
+  if (sort.key === defaultSort.key && sort.direction === defaultSort.direction) return `Sort: ${column.label}`;
+  return `Sort: ${column.label} ${SORT_DIRECTION_LABELS[sort.direction] || "Ascending"}`;
+}
+
+function LaborSortControl({ sort, columns = [], defaultSort, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const pickerRef = useRef(null);
+  const activeSort = sort || defaultSort || {};
+  const normalizedDefault = defaultSort || columns[0] || { key: "", direction: "asc" };
+  const isDefault = activeSort.key === normalizedDefault.key && activeSort.direction === normalizedDefault.direction;
+
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setReady(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return undefined;
+    const handlePointerDown = (event) => {
+      if (!pickerRef.current || pickerRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="labor-sort-control" ref={pickerRef}>
+      <button
+        type="button"
+        className={`labor-sort-trigger${open ? " is-open" : ""}${!isDefault ? " is-active" : ""}`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <I.SortNone />
+        <span>{getLaborSortDisplayLabel(activeSort, columns, normalizedDefault)}</span>
+        <span style={{ display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}>
+          <I.ChevronDown />
+        </span>
+      </button>
+      {open && (
+        <div className="labor-sort-panel">
+          <div className="hour-analysis-picker-heading">Sort Table</div>
+          <div className="labor-sort-panel-body">
+            <button
+              type="button"
+              className={`hour-analysis-picker-option${isDefault ? " is-active" : ""} is-reset`}
+              style={{ animation: ready ? "filterChipIn 0.22s ease-out both" : "none" }}
+              onClick={() => {
+                onChange?.(normalizedDefault);
+                setOpen(false);
+              }}
+            >
+              Reset to position order
+            </button>
+            <div className="labor-sort-option-grid">
+              {columns.map((column, index) => (
+                <div
+                  key={column.key}
+                  className="labor-sort-option-row"
+                  style={{ animation: ready ? `filterChipIn 0.24s ease-out ${(index + 1) * 0.035}s both` : "none" }}
+                >
+                  <span>{column.label}</span>
+                  <div>
+                    {["asc", "desc"].map((direction) => {
+                      const active = activeSort.key === column.key && activeSort.direction === direction;
+                      return (
+                        <button
+                          key={direction}
+                          type="button"
+                          className={`labor-sort-direction${active ? " is-active" : ""}`}
+                          onClick={() => {
+                            onChange?.({ key: column.key, direction });
+                            setOpen(false);
+                          }}
+                        >
+                          {SORT_DIRECTION_LABELS[direction]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
+const LABOR_HOUR_ANALYSIS_SETTING_KEY = "labor_hour_analysis";
 const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
 const LABOR_COMMITMENT_SELECT_OPTIONS = [
   { value: "", label: "Unassigned" },
   ...LABOR_EMPLOYMENT_COMMITMENT_OPTIONS,
 ];
+const HOUR_ANALYSIS_GROUPS = [
+  { key: "general_manager", label: "General Manager" },
+  { key: "assistant_manager", label: "Assistant Manager" },
+  { key: "supervisor", label: "Supervisor" },
+  { key: "csr", label: "Customer Service Representative" },
+  { key: "pct", label: "Pet Care Technician" },
+  { key: "other", label: "Other" },
+];
+const HOUR_ANALYSIS_GROUP_LABELS = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, group.label]));
+const DEFAULT_LABOR_POSITION_TITLES = [
+  "General Manager",
+  "Assistant Manager",
+  "Supervisor",
+  "Customer Service Representative",
+  "Pet Care Technician",
+];
+const LABOR_DEFAULT_SORT = { key: "hierarchy", direction: "asc" };
+const LABOR_ROSTER_SORT_COLUMNS = [
+  { key: "hierarchy", label: "Position Order" },
+  { key: "name", label: "Name" },
+  { key: "position", label: "Position" },
+  { key: "commitment", label: "Commitment" },
+  { key: "phone", label: "Phone" },
+  { key: "email", label: "Email" },
+  { key: "training", label: "Training" },
+  { key: "performance_reviews", label: "Performance Reviews" },
+  { key: "notes", label: "Notes" },
+];
+const LABOR_TRAINING_SORT_COLUMNS = [
+  { key: "hierarchy", label: "Position Order" },
+  { key: "employee", label: "Employee" },
+  { key: "position", label: "Position" },
+  { key: "plan", label: "Training Plan" },
+  { key: "progress", label: "Progress" },
+  { key: "status", label: "Status" },
+  { key: "target", label: "Target Date" },
+];
+const LABOR_PERFORMANCE_REVIEW_SORT_COLUMNS = [
+  { key: "hierarchy", label: "Position Order" },
+  { key: "employee", label: "Employee" },
+  { key: "position", label: "Position" },
+  { key: "start_date", label: "Start Date" },
+  { key: "compliance", label: "Review Status" },
+  { key: "review30", label: "30 Day" },
+  { key: "review60", label: "60 Day" },
+  { key: "review90", label: "90 Day" },
+];
+const LABOR_HOUR_PERSON_SORT_COLUMNS = [
+  { key: "hierarchy", label: "Position Order" },
+  { key: "name", label: "Name" },
+  { key: "position", label: "Position" },
+  { key: "commitment", label: "Commitment" },
+  { key: "preferred", label: "Preferred Hours" },
+  { key: "split", label: "Coverage Split" },
+  { key: "note", label: "Justification" },
+];
+const HOUR_ANALYSIS_RANGE_KEYS = ["min", "expected", "max"];
+const HOUR_ANALYSIS_RANGE_LABELS = {
+  min: "Min",
+  expected: "Expected",
+  max: "Max",
+};
+const DEFAULT_HOUR_ANALYSIS_EXPECTATIONS = {
+  general_manager: {
+    full_time: { min: 30, expected: 35, max: 40 },
+    part_time: { min: 0, expected: 0, max: 0 },
+  },
+  assistant_manager: {
+    full_time: { min: 30, expected: 35, max: 40 },
+    part_time: { min: 0, expected: 0, max: 0 },
+  },
+  supervisor: {
+    full_time: { min: 30, expected: 35, max: 40 },
+    part_time: { min: 0, expected: 0, max: 0 },
+  },
+  csr: {
+    full_time: { min: 24, expected: 30, max: 40 },
+    part_time: { min: 8, expected: 15, max: 25 },
+  },
+  pct: {
+    full_time: { min: 24, expected: 30, max: 40 },
+    part_time: { min: 8, expected: 15, max: 25 },
+  },
+  other: {
+    full_time: { min: 24, expected: 30, max: 40 },
+    part_time: { min: 8, expected: 15, max: 25 },
+  },
+};
+const DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON = {
+  general_manager: 8,
+  assistant_manager: 8,
+  supervisor: 16,
+  csr: 24,
+  pct: 43.5,
+  other: 0,
+};
+const HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT = 15;
+const HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT = 20;
+const HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT = 25;
+const HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT = 30;
+const HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS = new Set(["csr", "pct"]);
+const HOUR_ANALYSIS_SPLIT_TARGET_OPTIONS = [
+  { value: "", label: "Primary role" },
+  { value: "csr", label: "Customer Service Representative floor" },
+  { value: "pct", label: "Pet Care Technician floor" },
+];
+const HOUR_ANALYSIS_FULL_TIME_HIRE_EQUIVALENT_HOURS = 35;
+const HOUR_ANALYSIS_RESEARCH_TARGET_LABEL = `${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief target`;
+const HOUR_ANALYSIS_STAFFING_SOURCES = [
+  { label: "NICE shrinkage staffing formula", href: "https://help.nice-incontact.com/content/workforcemanagement/staffingrequirementcalculations.htm" },
+  { label: "BLS absence baseline", href: "https://www.bls.gov/cps/cpsaat47.htm" },
+  { label: "SWPP shrinkage survey", href: "https://swpp.org/surveys/SWPP%20Survey%20Results%20Spring%202024%20-%20Shrinkage.pdf" },
+  { label: "SHRM absence cost study", href: "https://www.shrm.org/content/dam/en/shrm/topics-tools/news/hr-magazine/kronos_us_executive_summary_final.pdf" },
+  { label: "Gap stable-scheduling study", href: "https://worklifelaw.org/projects/stable-scheduling-study/report/" },
+];
+const LABOR_MODEL_SUMMARY_TAB = "summary";
+const LABOR_MODEL_DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const LABOR_MODEL_DAY_LABELS = {
+  monday: "Monday",
+  tuesday: "Tuesday",
+  wednesday: "Wednesday",
+  thursday: "Thursday",
+  friday: "Friday",
+  saturday: "Saturday",
+  sunday: "Sunday",
+};
+const LABOR_MODEL_DAY_SHORT_LABELS = {
+  monday: "Mon",
+  tuesday: "Tue",
+  wednesday: "Wed",
+  thursday: "Thu",
+  friday: "Fri",
+  saturday: "Sat",
+  sunday: "Sun",
+};
+const LABOR_MODEL_SHIFT_TYPE_OPTIONS = [
+  { value: "opening", label: "Opening" },
+  { value: "mid", label: "Mid" },
+  { value: "close", label: "Close" },
+];
+const LABOR_MODEL_SHIFT_TYPE_LABELS = Object.fromEntries(LABOR_MODEL_SHIFT_TYPE_OPTIONS.map((option) => [option.value, option.label]));
+const LABOR_MODEL_GROUP_OPTIONS = HOUR_ANALYSIS_GROUPS
+  .filter((group) => group.key !== "other")
+  .map((group) => ({ value: group.key, label: group.label }));
+const LABOR_MODEL_WEEKDAY_COLUMNS = [
+  ["5:30-6a", 0.5],
+  ["6-7a", 1],
+  ["7-8a", 1],
+  ["8-9a", 1],
+  ["9-10a", 1],
+  ["10-11a", 1],
+  ["11a-12p", 1],
+  ["12-12:30p", 0.5],
+  ["12:30-1p", 0.5],
+  ["1-2p", 1],
+  ["2-3p", 1],
+  ["3-4p", 1],
+  ["4-5p", 1],
+  ["5-6p", 1],
+  ["6-7p", 1],
+  ["7-7:30p", 0.5],
+];
+const LABOR_MODEL_WEEKEND_COLUMNS = [
+  ["6:30-7a", 0.5],
+  ["7-8a", 1],
+  ["8-9a", 1],
+  ["9-10a", 1],
+  ["10-11a", 1],
+  ["11a-12p", 1],
+  ["12-1p", 1],
+  ["1-2p", 1],
+  ["2-3p", 1],
+  ["3-4p", 1],
+  ["4-5p", 1],
+  ["5-6p", 1],
+  ["6-7p", 1],
+];
+const LABOR_MODEL_WEEKDAY_EMPTY = "- - - - - - - - - - - - - - - -";
+const LABOR_MODEL_WEEKEND_EMPTY = "- - - - - - - - - - - - -";
+const LABOR_MODEL_WEEKDAY_PATTERNS = {
+  csrAm: "- x x x x x x x x - - - - - - -",
+  csrAmExtended: "- x x x x x x x x E E - - - - -",
+  csrMondayMid: "- - - - x x x x x x x x x - - -",
+  csrWeekdayMid: "- x RUN RUN PCT PCT PCT PCT PCT - - - - - - -",
+  csrPm: "- - - - - - - - - x x x x x x -",
+  csrWeekdayPmFlex: "- - - - - - - - - PCT PCT PCT RUN RUN x -",
+  pctAmExtended: "- x x x x x x x x E E - - - - -",
+  pctAm: "- x x x x x x x x - - - - - - -",
+  pctPm: "- - - - - - - - - x x x x x x -",
+  supAm: "x x x x x x x x x - - - - - - -",
+  supMondayPm: "- - - - - - - - - x x x x x x x",
+  supWeekdayPm: "- - - - - - - - x x x x x x x x",
+  modAm: "- x x x x x x x x - - - - - - -",
+  modMondayPm: "- - - - - - - - - x x x x x x -",
+  modWeekdayPm: "- - - - - - - - x x x x x x x -",
+};
+const LABOR_MODEL_WEEKEND_PATTERNS = {
+  am: "- x x x x x x - - - - - -",
+  pm: "- - - - - - - x x x x x -",
+};
+const LEGACY_LABOR_MODEL_ACTIVE_TOKENS = new Set(["x", "e", "pct", "run", "yes", "true", "1", "✓"]);
+const DEFAULT_HOUR_ANALYSIS_LABOR_MODEL = {
+  version: 1,
+  source: "CH Labor Model Revisited - Clean Daily Pages FIXED.xlsx",
+  days: {
+    monday: makeDefaultLaborModelDay("monday", "5:30 AM - 7:30 PM", LABOR_MODEL_WEEKDAY_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAm],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAmExtended],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKDAY_PATTERNS.csrMondayMid],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAmExtended],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.supAm],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.supMondayPm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.modAm],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.modMondayPm],
+    ]),
+    tuesday: makeDefaultLaborModelDay("tuesday", "5:30 AM - 7:30 PM", LABOR_MODEL_WEEKDAY_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAm],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAmExtended],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayMid],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayPmFlex],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAmExtended],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.supAm],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.supWeekdayPm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.modAm],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.modWeekdayPm],
+    ]),
+    wednesday: makeDefaultLaborModelDay("wednesday", "5:30 AM - 7:30 PM", LABOR_MODEL_WEEKDAY_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAm],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAmExtended],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayMid],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayPmFlex],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAmExtended],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.supAm],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.supWeekdayPm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.modAm],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.modWeekdayPm],
+    ]),
+    thursday: makeDefaultLaborModelDay("thursday", "5:30 AM - 7:30 PM", LABOR_MODEL_WEEKDAY_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAm],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAmExtended],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayMid],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayPmFlex],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAmExtended],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.supAm],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.supWeekdayPm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.modAm],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.modWeekdayPm],
+    ]),
+    friday: makeDefaultLaborModelDay("friday", "5:30 AM - 7:30 PM", LABOR_MODEL_WEEKDAY_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAm],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.csrAmExtended],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayMid],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.csrPm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKDAY_PATTERNS.csrWeekdayPmFlex],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAmExtended],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKDAY_PATTERNS.pctAm],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKDAY_PATTERNS.pctPm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKDAY_EMPTY],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.supAm],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.supWeekdayPm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKDAY_PATTERNS.modAm],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKDAY_PATTERNS.modWeekdayPm],
+    ]),
+    saturday: makeDefaultLaborModelDay("saturday", "6:30 AM - 7:00 PM", LABOR_MODEL_WEEKEND_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKEND_EMPTY],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKEND_EMPTY],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKEND_EMPTY],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+    ]),
+    sunday: makeDefaultLaborModelDay("sunday", "6:30 AM - 7:00 PM", LABOR_MODEL_WEEKEND_COLUMNS, [
+      ["csr", "CSR 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["csr", "CSR 2 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["csr", "CSR 3 Mid", LABOR_MODEL_WEEKEND_EMPTY],
+      ["csr", "CSR 1 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["csr", "CSR 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["csr", "CSR 3", LABOR_MODEL_WEEKEND_EMPTY],
+      ["pct", "PCT 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 2 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 3 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 4 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 5 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["pct", "PCT 1 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 3 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["pct", "PCT 4 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["supervisor", "SUP 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["supervisor", "SUP 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+      ["assistant_manager", "MOD 1 AM", LABOR_MODEL_WEEKEND_PATTERNS.am],
+      ["assistant_manager", "MOD 2 PM", LABOR_MODEL_WEEKEND_PATTERNS.pm],
+    ]),
+  },
+};
 const LABOR_ROSTER_PRINT_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
   day: "numeric",
@@ -238,7 +711,72 @@ const LABOR_NOTE_TYPE_OPTIONS = [
 ];
 
 function normalizePositionTitle(value = "") {
-  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  const title = String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!title) return "";
+  if (/^(gm|general manager)$/.test(title)) return "general manager";
+  if (/^(am|agm|assistant manager|assistant general manager)$/.test(title)) return "assistant manager";
+  if (/^(csr|customer service representative|front desk|guest service representative)$/.test(title)) return "customer service representative";
+  if (/^(pct|pet care technician|pet care tech|technician|kennel technician)$/.test(title)) return "pet care technician";
+  if (/^(supervisor|shift supervisor|shift lead|lead)$/.test(title)) return "supervisor";
+  return title;
+}
+
+function formatLaborPositionTitle(value = "") {
+  const raw = String(value || "").trim().replace(/\s+/g, " ");
+  const normalized = normalizePositionTitle(raw);
+  if (!normalized) return "";
+  if (normalized === "general manager") return "General Manager";
+  if (normalized === "assistant manager") return "Assistant Manager";
+  if (normalized === "supervisor") return "Supervisor";
+  if (normalized === "customer service representative") return "Customer Service Representative";
+  if (normalized === "pet care technician") return "Pet Care Technician";
+  return raw;
+}
+
+function buildLaborPositionOption(title) {
+  const label = formatLaborPositionTitle(title);
+  if (!label) return null;
+  return { value: label, label, normalizedTitle: normalizePositionTitle(label) };
+}
+
+function isPersistedLaborPositionRowTrusted(row = {}) {
+  return Boolean(row.created_by_user_id || row.updated_by_user_id || row.created_by_name || row.updated_by_name);
+}
+
+function makeDefaultLaborPositionRows() {
+  return DEFAULT_LABOR_POSITION_TITLES.map((positionTitle, index) => ({
+    id: null,
+    position_title: positionTitle,
+    normalized_title: normalizePositionTitle(positionTitle),
+    sort_order: (index + 1) * 10,
+  }));
+}
+
+function compareLaborSortValues(left, right) {
+  const leftValue = left == null ? "" : left;
+  const rightValue = right == null ? "" : right;
+  if (typeof leftValue === "number" && typeof rightValue === "number") return leftValue - rightValue;
+  return String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function getLaborPositionSortIndex(positionTitle, positionHierarchyIndex = {}) {
+  return positionHierarchyIndex[normalizePositionTitle(positionTitle)] ?? Number.MAX_SAFE_INTEGER;
+}
+
+function sortLaborRowsByConfig(rows = [], sort = LABOR_DEFAULT_SORT, positionHierarchyIndex = {}, getSortValue = () => "") {
+  const activeSort = sort || LABOR_DEFAULT_SORT;
+  const direction = activeSort.direction === "desc" ? -1 : 1;
+  return [...rows].sort((leftRow, rightRow) => {
+    if (activeSort.key === "hierarchy") {
+      const leftPosition = getSortValue(leftRow, "position");
+      const rightPosition = getSortValue(rightRow, "position");
+      const leftIndex = getLaborPositionSortIndex(leftPosition, positionHierarchyIndex);
+      const rightIndex = getLaborPositionSortIndex(rightPosition, positionHierarchyIndex);
+      if (leftIndex !== rightIndex) return (leftIndex - rightIndex) * direction;
+      return compareLaborSortValues(getSortValue(leftRow, "name") || getSortValue(leftRow, "employee"), getSortValue(rightRow, "name") || getSortValue(rightRow, "employee"));
+    }
+    return compareLaborSortValues(getSortValue(leftRow, activeSort.key), getSortValue(rightRow, activeSort.key)) * direction;
+  });
 }
 
 function getDefaultPositionWeight(value = "") {
@@ -314,6 +852,549 @@ function LaborCommitmentBadge({ value, compact = false }) {
     >
       {getLaborEmploymentCommitmentLabel(value, { short: compact })}
     </span>
+  );
+}
+
+function HourAnalysisNumberInput({ value, onCommit, disabled, ariaLabel, className = "hour-analysis-number-input", style = {} }) {
+  const formattedValue = formatHourAnalysisHours(value);
+  const [draft, setDraft] = useState(formattedValue);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(formatHourAnalysisHours(value));
+  }, [focused, value]);
+
+  const commit = useCallback((rawValue) => {
+    const trimmed = String(rawValue ?? "").trim();
+    if (!trimmed || trimmed === ".") return;
+    const nextValue = normalizeHourAnalysisNumber(trimmed, 0);
+    if (nextValue === normalizeHourAnalysisNumber(value, 0)) return;
+    onCommit?.(nextValue);
+  }, [onCommit, value]);
+
+  return (
+    <input
+      className={className}
+      type="text"
+      inputMode="decimal"
+      pattern="[0-9]*[.]?[0-9]*"
+      value={focused ? draft : formattedValue}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      style={style}
+      onFocus={(event) => {
+        setFocused(true);
+        setDraft(formatHourAnalysisHours(value));
+        window.requestAnimationFrame(() => event.target.select());
+      }}
+      onChange={(event) => {
+        const nextValue = event.target.value.replace(/,/g, "");
+        if (!/^\d*\.?\d*$/.test(nextValue)) return;
+        setDraft(nextValue);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        if (!draft || draft === ".") {
+          setDraft(formatHourAnalysisHours(value));
+          return;
+        }
+        commit(draft);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(formatHourAnalysisHours(value));
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function LaborModelInlineInput({ value = "", onCommit, disabled = false, ariaLabel, className = "labor-model-text-input", placeholder = "", style = {} }) {
+  const [draft, setDraft] = useState(String(value ?? ""));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value ?? ""));
+  }, [focused, value]);
+
+  const commit = useCallback(() => {
+    const nextValue = String(draft ?? "").trim();
+    if (nextValue === String(value ?? "").trim()) return;
+    onCommit?.(nextValue);
+  }, [draft, onCommit, value]);
+
+  return (
+    <input
+      type="text"
+      className={className}
+      value={focused ? draft : String(value ?? "")}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      style={style}
+      onFocus={(event) => {
+        setFocused(true);
+        setDraft(String(value ?? ""));
+        window.requestAnimationFrame(() => event.target.select());
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        commit();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(String(value ?? ""));
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function HourAnalysisNoteInput({ value = "", onCommit, disabled, ariaLabel, placeholder = "Why this number?" }) {
+  const [draft, setDraft] = useState(value || "");
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(value || "");
+  }, [focused, value]);
+
+  const commit = useCallback(() => {
+    const nextValue = String(draft || "").trim();
+    if (nextValue === String(value || "").trim()) return;
+    onCommit?.(nextValue);
+  }, [draft, onCommit, value]);
+
+  return (
+    <textarea
+      className="hour-analysis-note-input"
+      value={focused ? draft : (value || "")}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      rows={2}
+      onFocus={() => setFocused(true)}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        commit();
+      }}
+      onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(value || "");
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function HourAnalysisAnimatedPicker({ label, value, options = [], onChange, placeholder = "Select...", disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setReady(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  return (
+    <div>
+      {label && (
+        <div style={{ fontSize: 11, fontWeight: 750, color: C.textSec, marginBottom: 5, letterSpacing: 0, textTransform: "uppercase" }}>
+          {label}
+        </div>
+      )}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((prev) => !prev)}
+        className="hour-analysis-picker-trigger"
+      >
+        <span>{selected?.label || placeholder}</span>
+        <span style={{ display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}>
+          <I.ChevronDown />
+        </span>
+      </button>
+      {open && (
+        <div className="hour-analysis-picker-panel">
+          <div className="hour-analysis-picker-heading">Choose {label || "value"}</div>
+          <div className="hour-analysis-picker-options">
+            {options.map((option, index) => {
+              const active = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`hour-analysis-picker-option${active ? " is-active" : ""}`}
+                  style={{ animation: ready ? `filterChipIn 0.25s ease-out ${index * 0.035}s both` : "none" }}
+                  onClick={() => {
+                    onChange?.(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LaborModelTimeControl({ row = {}, disabled = false, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const shiftType = normalizeLaborModelShiftType(row.shift_type, row);
+  const shiftLabel = LABOR_MODEL_SHIFT_TYPE_LABELS[shiftType] || "Opening";
+  const breakEnabled = Boolean(row.break_enabled);
+  const breakMinutes = normalizeLaborModelBreakMinutes(row.break_minutes, 30);
+
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setReady(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  return (
+    <div className="labor-model-shift-control">
+      <button
+        type="button"
+        disabled={disabled}
+        className={`labor-model-shift-trigger${breakEnabled ? " has-break" : ""}`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span>{shiftLabel}</span>
+        {breakEnabled && <small>{breakMinutes}m break</small>}
+        {!disabled && (
+          <span style={{ display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}>
+            <I.ChevronDown />
+          </span>
+        )}
+      </button>
+      {open && !disabled && (
+        <div className="labor-model-shift-panel">
+          <div className="hour-analysis-picker-heading">Choose time</div>
+          <div className="hour-analysis-picker-options">
+            {LABOR_MODEL_SHIFT_TYPE_OPTIONS.map((option, index) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`hour-analysis-picker-option${option.value === shiftType ? " is-active" : ""}`}
+                style={{ animation: ready ? `filterChipIn 0.25s ease-out ${index * 0.035}s both` : "none" }}
+                onClick={() => onChange?.({ shift_type: option.value })}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="labor-model-break-row">
+            <div>
+              <strong>Break</strong>
+              <span>{breakEnabled ? "Subtracts from this row." : "No break is deducted."}</span>
+            </div>
+            <button
+              type="button"
+              className={`labor-model-break-toggle${breakEnabled ? " is-on" : ""}`}
+              onClick={() => onChange?.({ break_enabled: !breakEnabled, break_minutes: breakMinutes || 30 })}
+            >
+              {breakEnabled ? "On" : "Off"}
+            </button>
+          </div>
+          {breakEnabled && (
+            <div className="labor-model-break-duration">
+              <span>Minutes</span>
+              <HourAnalysisNumberInput
+                value={breakMinutes || 30}
+                onCommit={(nextValue) => onChange?.({ break_enabled: true, break_minutes: normalizeLaborModelBreakMinutes(nextValue, 30) })}
+                ariaLabel="Break duration minutes"
+                className="labor-model-break-input"
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LaborModelCoverageCell({ value = "", disabled = false, rowId, columnIndex, onStart, onEnter, onTextChange }) {
+  const normalizedValue = normalizeLaborModelCoverageCell(value);
+  const active = isLaborModelCoverageActive(normalizedValue);
+  const display = getLaborModelCoverageDisplay(normalizedValue);
+
+  return (
+    <input
+      type="text"
+      maxLength={4}
+      disabled={disabled}
+      className={`labor-model-coverage-cell-button${active ? " is-active" : ""}`}
+      value={display}
+      aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
+      onPointerDown={(event) => {
+        if (disabled || event.button !== 0) return;
+        onStart?.(rowId, columnIndex, !active);
+      }}
+      onPointerEnter={() => {
+        if (disabled) return;
+        onEnter?.(rowId, columnIndex);
+      }}
+      onFocus={(event) => event.currentTarget.select()}
+      onChange={(event) => onTextChange?.(rowId, columnIndex, normalizeLaborModelCoverageCell(event.target.value))}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
+function LaborModelHoursLineGraph({ days = [] }) {
+  const [hoveredKey, setHoveredKey] = useState("");
+  const values = days.map((day) => normalizeHourAnalysisNumber(day.totalHours, 0));
+  const maxValue = Math.max(1, ...values);
+  const width = 680;
+  const height = 190;
+  const padX = 38;
+  const padY = 24;
+  const points = days.map((day, index) => {
+    const x = days.length <= 1 ? width / 2 : padX + ((width - padX * 2) * index) / (days.length - 1);
+    const y = height - padY - ((normalizeHourAnalysisNumber(day.totalHours, 0) / maxValue) * (height - padY * 2));
+    return { ...day, x, y };
+  });
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  const hovered = points.find((point) => point.key === hoveredKey) || points.reduce((winner, point) => (point.totalHours > (winner?.totalHours || 0) ? point : winner), points[0]);
+
+  return (
+    <div className="labor-model-graph-card">
+      <div className="labor-model-graph-header">
+        <div>
+          <span>Weekly Shape</span>
+          <strong>{hovered?.label || "Week"}: {formatHourAnalysisHours(hovered?.totalHours || 0)} hrs</strong>
+        </div>
+        <em>Hover a day</em>
+      </div>
+      <svg className="labor-model-line-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Labor model hours by day">
+        <defs>
+          <linearGradient id="laborModelGraphFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="rgba(20,83,45,0.22)" />
+            <stop offset="100%" stopColor="rgba(20,83,45,0.02)" />
+          </linearGradient>
+        </defs>
+        {[0, 0.5, 1].map((ratio) => {
+          const y = height - padY - ratio * (height - padY * 2);
+          return <line key={ratio} x1={padX} x2={width - padX} y1={y} y2={y} className="labor-model-graph-gridline" />;
+        })}
+        {points.length > 0 && (
+          <path
+            d={`${path} L ${points[points.length - 1].x.toFixed(1)} ${height - padY} L ${points[0].x.toFixed(1)} ${height - padY} Z`}
+            className="labor-model-graph-area"
+          />
+        )}
+        <path d={path} className="labor-model-graph-line" />
+        {points.map((point) => (
+          <g key={point.key} onMouseEnter={() => setHoveredKey(point.key)} onFocus={() => setHoveredKey(point.key)} tabIndex={0}>
+            <circle cx={point.x} cy={point.y} r={hoveredKey === point.key ? 7 : 5} className="labor-model-graph-dot" />
+            <text x={point.x} y={height - 5} textAnchor="middle" className="labor-model-graph-label">{point.shortLabel || point.label}</text>
+            <title>{point.label}: {formatHourAnalysisHours(point.totalHours)} hours</title>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function HourAnalysisSplitControl({ row = {}, disabled = false, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const canSplitRole = ["general_manager", "assistant_manager", "supervisor", "csr"].includes(row.groupKey);
+  const splitFloorGroup = row.split?.floor_group || "";
+  const isSplit = Boolean(splitFloorGroup);
+  const floorLabel = getHourAnalysisGroupLabel(splitFloorGroup);
+  const primaryHours = normalizeHourAnalysisNumber(row.split?.admin_hours ?? row.preferredHours, 0);
+  const floorHours = normalizeHourAnalysisNumber(row.split?.floor_hours, 0);
+  const disabledTrigger = disabled || !canSplitRole;
+
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setReady(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  if (!canSplitRole && !isSplit) {
+    return <span className="hour-analysis-split-static">Primary role</span>;
+  }
+
+  return (
+    <div className="hour-analysis-split-compact">
+      <button
+        type="button"
+        className={`hour-analysis-split-trigger${isSplit ? " is-active" : ""}`}
+        disabled={disabledTrigger}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span>
+          {isSplit
+            ? `${formatHourAnalysisHours(primaryHours)} ${row.groupLabel} + ${formatHourAnalysisHours(floorHours)} ${floorLabel}`
+            : "Primary role"}
+        </span>
+        {!disabledTrigger && (
+          <span style={{ display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}>
+            <I.ChevronDown />
+          </span>
+        )}
+      </button>
+      {open && !disabledTrigger && (
+        <div className="hour-analysis-split-panel">
+          <div className="hour-analysis-picker-heading">Allocate weekly hours</div>
+          <div className="hour-analysis-picker-options">
+            {HOUR_ANALYSIS_SPLIT_TARGET_OPTIONS.map((option, index) => (
+              <button
+                key={option.value || "primary"}
+                type="button"
+                className={`hour-analysis-picker-option${option.value === splitFloorGroup ? " is-active" : ""}`}
+                style={{ animation: ready ? `filterChipIn 0.25s ease-out ${index * 0.035}s both` : "none" }}
+                onClick={() => {
+                  onChange?.({
+                    floor_group: option.value,
+                    admin_hours: option.value ? (row.split?.admin_hours ?? Math.min(8, row.preferredHours || 0)) : null,
+                  });
+                  if (!option.value) setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {isSplit && (
+            <div className="hour-analysis-split-editor">
+              <div>
+                <span>Primary-role hours</span>
+                <small>Remaining hours flow to {floorLabel}.</small>
+              </div>
+              <HourAnalysisNumberInput
+                value={primaryHours}
+                onCommit={(nextValue) => onChange?.({ admin_hours: nextValue })}
+                ariaLabel={`${row.full_name || "Employee"} primary-role coverage hours`}
+                style={{ width: 92, textAlign: "right" }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HourAnalysisPositionMoveControl({ row = {}, options = [], disabled = false, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const pickerRef = useRef(null);
+  const sourcePosition = formatLaborPositionTitle(row.sourcePositionTitle || row.position_title || row.position || "");
+  const targetPosition = formatLaborPositionTitle(row.position_title || row.position || sourcePosition || "");
+  const moved = Boolean(row.isMovement && sourcePosition && targetPosition && normalizePositionTitle(sourcePosition) !== normalizePositionTitle(targetPosition));
+  const displayPosition = targetPosition || sourcePosition || "Choose position";
+  const resetOption = sourcePosition
+    ? [{ value: "", label: `Roster position: ${sourcePosition}`, isReset: true }]
+    : [];
+  const pickerOptions = [
+    ...resetOption,
+    ...options.filter((option) => option.normalizedTitle !== normalizePositionTitle(sourcePosition)),
+  ];
+
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setReady(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return undefined;
+    const handlePointerDown = (event) => {
+      if (!pickerRef.current || pickerRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="hour-analysis-position-move" ref={pickerRef}>
+      <button
+        type="button"
+        className={`hour-analysis-position-trigger${moved ? " is-moved" : ""}`}
+        disabled={disabled}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className="hour-analysis-position-display">
+          {moved ? (
+            <>
+              <span className="hour-analysis-position-original">{sourcePosition}</span>
+              <span className="hour-analysis-arrow">→</span>
+              <span>{targetPosition}</span>
+            </>
+          ) : (
+            <span>{displayPosition || "—"}</span>
+          )}
+        </span>
+        {!disabled && (
+          <span style={{ display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}>
+            <I.ChevronDown />
+          </span>
+        )}
+      </button>
+      {open && !disabled && (
+        <div className="hour-analysis-position-panel">
+          <div className="hour-analysis-picker-heading">Choose Position</div>
+          <div className="hour-analysis-picker-options">
+            {pickerOptions.map((option, index) => {
+              const active = option.isReset ? !moved : normalizePositionTitle(option.value) === normalizePositionTitle(targetPosition);
+              return (
+                <button
+                  key={option.isReset ? "__reset_position__" : option.value}
+                  type="button"
+                  className={`hour-analysis-picker-option${active ? " is-active" : ""}${option.isReset ? " is-reset" : ""}`}
+                  style={{ animation: ready ? `filterChipIn 0.25s ease-out ${index * 0.035}s both` : "none" }}
+                  onClick={() => {
+                    onChange?.(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -595,6 +1676,1226 @@ export function getLaborEmployeeRowId(row = {}) {
 export function getTrainingRecordEmployeeId(record = {}) {
   if (!isObjectRow(record)) return null;
   return record.labor_employee_id || record.employee_id || null;
+}
+
+function normalizeHourAnalysisNumber(value, fallback = 0) {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(String(value ?? "").replace(/,/g, ""));
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.round(parsed * 10) / 10;
+}
+
+function formatHourAnalysisHours(value) {
+  const normalized = normalizeHourAnalysisNumber(value, 0);
+  if (Number.isInteger(normalized)) return String(normalized);
+  return normalized.toFixed(1).replace(/\.0$/, "");
+}
+
+function normalizeHourAnalysisDelta(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.round(parsed * 10) / 10;
+}
+
+function readHourAnalysisRangeNumber(value) {
+  if (value == null || value === "") return 0;
+  const parsed = Number(String(value ?? "").replace(/,/g, ""));
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.round(parsed * 10) / 10;
+}
+
+function getHourAnalysisEmployeeKey(row = {}) {
+  return getLaborEmployeeRowId(row)
+    || normalizeLaborContactEmail(row.contact_email || row.email)
+    || normalizeEmployeeName(row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" "));
+}
+
+function normalizeHourAnalysisGroupKey(value, row = {}) {
+  const key = String(value || "").trim().replace(/\s+/g, "_").replace(/-/g, "_").toLowerCase();
+  if (HOUR_ANALYSIS_GROUP_LABELS[key]) return key;
+  const title = normalizePositionTitle(row.position_title || row.position || "");
+  const managementKey = title.includes("assistant") ? "assistant_manager" : "general_manager";
+  if (key === "manager" || key === "managers" || key === "management") return managementKey;
+  if (key === "supervisors") return "supervisor";
+  if (key === "csrs") return "csr";
+  if (key === "pcts") return "pct";
+  if (key === "leadership") {
+    const titleGroup = getLaborRosterPositionGroup(row.position_title || row.position || "");
+    if (titleGroup === "supervisor") return "supervisor";
+    return managementKey;
+  }
+  return "other";
+}
+
+function getHourAnalysisGroupKey(row = {}) {
+  const positionTitle = row.position_title || row.position || "";
+  const normalizedTitle = normalizePositionTitle(positionTitle);
+  if (normalizedTitle.includes("assistant manager")) return "assistant_manager";
+  if (normalizedTitle.includes("general manager") || normalizedTitle.includes("director") || normalizedTitle.includes("regional") || normalizedTitle.includes("manager")) return "general_manager";
+  const explicitGroup = row.hour_analysis_group || row.group_key || row.groupKey || row.position_group;
+  if (explicitGroup) return normalizeHourAnalysisGroupKey(explicitGroup, { position_title: positionTitle });
+  return normalizeHourAnalysisGroupKey(getLaborRosterPositionGroup(positionTitle), { position_title: positionTitle });
+}
+
+function getHourAnalysisGroupLabel(value) {
+  return HOUR_ANALYSIS_GROUP_LABELS[value] || HOUR_ANALYSIS_GROUP_LABELS.other;
+}
+
+function slugifyLaborModelId(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || `item-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseLaborModelCoverage(value = "") {
+  if (Array.isArray(value)) return value.map((cell) => String(cell || "").trim());
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((cell) => (cell === "-" ? "" : cell.trim()));
+}
+
+function normalizeLaborModelCoverageCell(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "-") return "";
+  const normalized = raw.toLowerCase();
+  if (LEGACY_LABOR_MODEL_ACTIVE_TOKENS.has(normalized)) return "1";
+  return raw.slice(0, 4).toUpperCase();
+}
+
+function normalizeLaborModelCoverageCells(value = [], targetLength = 0) {
+  const cells = parseLaborModelCoverage(value);
+  const nextCells = Array.from({ length: targetLength }, (_, index) => normalizeLaborModelCoverageCell(cells[index] || ""));
+  return nextCells;
+}
+
+function isLaborModelCoverageActive(value = "") {
+  return Boolean(String(value || "").trim());
+}
+
+function getLaborModelCoverageDisplay(value = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  return normalized === "1" ? "" : normalized;
+}
+
+function parseLaborModelTimePoint(value = "", fallbackSuffix = "") {
+  const raw = String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+  const match = raw.match(/^(\d{1,2})(?::?(\d{2}))?(a|am|p|pm)?$/);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = match[2] ? Number(match[2]) : 0;
+  let suffix = match[3] || fallbackSuffix || "";
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 12 || minute < 0 || minute >= 60) return null;
+  suffix = suffix.startsWith("p") ? "p" : suffix.startsWith("a") ? "a" : "";
+  if (!suffix) return null;
+  if (hour === 12) hour = suffix === "a" ? 0 : 12;
+  else if (suffix === "p") hour += 12;
+  return { minutes: (hour * 60) + minute, suffix };
+}
+
+function parseLaborModelTimeRange(label = "") {
+  const raw = String(label || "").trim();
+  const parts = raw.split(/\s*[-–—]\s*/).filter(Boolean);
+  if (parts.length !== 2) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
+  const suffixes = parts.map((part) => {
+    const match = String(part || "").trim().toLowerCase().match(/(a|am|p|pm)$/);
+    if (!match) return "";
+    return match[1].startsWith("p") ? "p" : "a";
+  });
+  const start = parseLaborModelTimePoint(parts[0], suffixes[0] || suffixes[1]);
+  const endRaw = parseLaborModelTimePoint(parts[1], suffixes[1] || suffixes[0] || start?.suffix);
+  if (!start || !endRaw) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
+  let endMinutes = endRaw.minutes;
+  if (endMinutes <= start.minutes) endMinutes += 24 * 60;
+  const durationMinutes = endMinutes - start.minutes;
+  if (durationMinutes <= 0 || durationMinutes > 12 * 60) {
+    return { valid: false, label: raw, hours: 0, error: "Time slot duration must be positive and less than 12 hours." };
+  }
+  return {
+    valid: true,
+    label: raw,
+    start: start.minutes,
+    end: endMinutes,
+    hours: normalizeHourAnalysisNumber(durationMinutes / 60, 0),
+  };
+}
+
+function formatLaborModelTimePoint(minutes = 0) {
+  const normalized = ((Math.round(Number(minutes) || 0) % 1440) + 1440) % 1440;
+  const hour24 = Math.floor(normalized / 60);
+  const minute = normalized % 60;
+  const suffix = hour24 >= 12 ? "p" : "a";
+  let hour = hour24 % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}${minute ? `:${String(minute).padStart(2, "0")}` : ""}${suffix}`;
+}
+
+function formatLaborModelTimeRange(start = 0, end = 0) {
+  return `${formatLaborModelTimePoint(start)}-${formatLaborModelTimePoint(end)}`;
+}
+
+function normalizeLaborModelShiftType(value = "", row = {}) {
+  const raw = String(value || row.shift_type || row.shiftType || row.time_type || row.timeType || row.time || "").trim().toLowerCase();
+  if (["opening", "open", "am", "morning"].includes(raw)) return "opening";
+  if (["mid", "middle", "swing"].includes(raw)) return "mid";
+  if (["close", "closing", "pm", "evening"].includes(raw)) return "close";
+  const label = String(row.role_label || row.roleLabel || row.label || row.shift_label || row.shiftLabel || "").toLowerCase();
+  if (/\b(mid|middle)\b/.test(label)) return "mid";
+  if (/\b(pm|close|closing)\b/.test(label)) return "close";
+  return "opening";
+}
+
+function normalizeLaborModelBreakMinutes(value, fallback = 30) {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(240, parsed));
+}
+
+function validateLaborModelColumns(columns = []) {
+  const parsed = columns.map((column) => parseLaborModelTimeRange(column.label));
+  const errors = [];
+  parsed.forEach((slot, index) => {
+    if (!slot.valid) errors.push({ index, message: slot.error || "Invalid time range." });
+    if (index > 0 && slot.valid && parsed[index - 1]?.valid && Math.abs(parsed[index - 1].end - slot.start) > 0.1) {
+      errors.push({ index, message: `${columns[index - 1]?.label || "Previous slot"} must end where ${column.label || "this slot"} starts.` });
+    }
+  });
+  return { valid: errors.length === 0, errors, parsed };
+}
+
+function inferLaborModelGroupKeyFromLabel(value = "") {
+  const label = String(value || "").trim().toLowerCase();
+  if (!label) return "other";
+  if (/^(csr|customer service representative)\b/.test(label)) return "csr";
+  if (/^(pct|pet care technician)\b/.test(label)) return "pct";
+  if (/^(sup|supervisor)\b/.test(label)) return "supervisor";
+  if (/^(mod|am|assistant manager)\b/.test(label)) return "assistant_manager";
+  if (/^(gm|general manager)\b/.test(label)) return "general_manager";
+  return getHourAnalysisGroupKey({ position_title: value });
+}
+
+function normalizeLaborModelGroupKey(value = "", row = {}) {
+  const explicit = normalizeHourAnalysisGroupKey(value, row);
+  if (explicit !== "other") return explicit;
+  const inferred = inferLaborModelGroupKeyFromLabel(row.role_label || row.roleLabel || row.label || row.shift_label || row.shiftLabel || "");
+  return HOUR_ANALYSIS_GROUP_LABELS[inferred] ? inferred : "other";
+}
+
+function makeDefaultLaborModelDay(dayKey, coverageWindow, columns = [], rowDefinitions = []) {
+  const normalizedColumns = columns.map(([label, hours], index) => ({
+    id: `${dayKey}-slot-${index + 1}`,
+    label,
+    hours: parseLaborModelTimeRange(label).valid ? parseLaborModelTimeRange(label).hours : Math.max(0, Math.round(Number(hours || 0) * 10) / 10),
+  }));
+  return {
+    day_key: dayKey,
+    day_label: LABOR_MODEL_DAY_LABELS[dayKey] || dayKey,
+    coverage_window: coverageWindow,
+    columns: normalizedColumns,
+    rows: rowDefinitions.map(([groupKey, label, coveragePattern], index) => ({
+      id: `${dayKey}-${slugifyLaborModelId(label)}-${index + 1}`,
+      group_key: groupKey,
+      role_label: label,
+      shift_type: normalizeLaborModelShiftType("", { role_label: label }),
+      break_enabled: true,
+      break_minutes: 30,
+      coverage: normalizeLaborModelCoverageCells(coveragePattern, normalizedColumns.length),
+    })),
+  };
+}
+
+function cloneDefaultHourAnalysisLaborModel() {
+  return JSON.parse(JSON.stringify(DEFAULT_HOUR_ANALYSIS_LABOR_MODEL));
+}
+
+function normalizeHourAnalysisLaborModelColumn(column = {}, index = 0, dayKey = "day") {
+  const source = isObjectRow(column) ? column : {};
+  const label = String(source.label || source.time || source.window || `Slot ${index + 1}`).trim();
+  const parsedRange = parseLaborModelTimeRange(label);
+  return {
+    id: String(source.id || `${dayKey}-slot-${index + 1}`).trim(),
+    label,
+    hours: parsedRange.valid
+      ? parsedRange.hours
+      : normalizeHourAnalysisNumber(source.hours ?? source.duration ?? source.slot_hours ?? source.slotHours, 1),
+    start_minutes: parsedRange.valid ? parsedRange.start : null,
+    end_minutes: parsedRange.valid ? parsedRange.end : null,
+    is_valid: parsedRange.valid,
+    validation_error: parsedRange.valid ? "" : parsedRange.error,
+  };
+}
+
+function normalizeHourAnalysisLaborModelRow(row = {}, index = 0, columns = [], dayKey = "day") {
+  const source = isObjectRow(row) ? row : {};
+  const roleLabel = String(source.role_label || source.roleLabel || source.label || source.shift_label || source.shiftLabel || `Line ${index + 1}`).trim();
+  const breakEnabledSource = source.break_enabled ?? source.breakEnabled ?? source.has_break ?? source.hasBreak;
+  const breakEnabled = breakEnabledSource == null ? true : Boolean(breakEnabledSource);
+  return {
+    id: String(source.id || `${dayKey}-${slugifyLaborModelId(roleLabel)}-${index + 1}`).trim(),
+    group_key: normalizeLaborModelGroupKey(source.group_key || source.groupKey || source.role_group || source.roleGroup || source.position_group || source.positionGroup, { ...source, role_label: roleLabel }),
+    role_label: roleLabel,
+    shift_type: normalizeLaborModelShiftType(source.shift_type || source.shiftType || source.time_type || source.timeType, { ...source, role_label: roleLabel }),
+    break_enabled: breakEnabled,
+    break_minutes: normalizeLaborModelBreakMinutes(source.break_minutes ?? source.breakMinutes ?? source.break_duration_minutes ?? source.breakDurationMinutes, 30),
+    coverage: normalizeLaborModelCoverageCells(source.coverage || source.cells || source.values, columns.length),
+  };
+}
+
+function normalizeHourAnalysisLaborModelDay(dayKey, value = {}, fallback = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const fallbackDay = isObjectRow(fallback) ? fallback : {};
+  const rawColumns = Array.isArray(source.columns) ? source.columns : fallbackDay.columns || [];
+  const columns = rawColumns.map((column, index) => normalizeHourAnalysisLaborModelColumn(column, index, dayKey));
+  const rawRows = Array.isArray(source.rows) ? source.rows : fallbackDay.rows || [];
+  const rows = rawRows.map((row, index) => normalizeHourAnalysisLaborModelRow(row, index, columns, dayKey));
+  return {
+    day_key: dayKey,
+    day_label: LABOR_MODEL_DAY_LABELS[dayKey] || source.day_label || source.dayLabel || fallbackDay.day_label || dayKey,
+    coverage_window: String(source.coverage_window || source.coverageWindow || fallbackDay.coverage_window || "").trim(),
+    columns,
+    rows,
+  };
+}
+
+function normalizeHourAnalysisLaborModel(value = {}) {
+  const defaults = cloneDefaultHourAnalysisLaborModel();
+  const source = isObjectRow(value) ? value : {};
+  const rawDays = isObjectRow(source.days) ? source.days : source;
+  return {
+    version: Number(source.version || defaults.version || 1),
+    source: String(source.source || defaults.source || "").trim(),
+    days: Object.fromEntries(LABOR_MODEL_DAY_KEYS.map((dayKey) => [
+      dayKey,
+      normalizeHourAnalysisLaborModelDay(dayKey, rawDays[dayKey], defaults.days[dayKey]),
+    ])),
+  };
+}
+
+function calculateLaborModelRowHours(row = {}, columns = []) {
+  const covered = normalizeLaborModelCoverageCells(row.coverage, columns.length)
+    .reduce((sum, cell, index) => {
+      if (!isLaborModelCoverageActive(cell)) return sum;
+      return sum + normalizeHourAnalysisNumber(columns[index]?.hours, 0);
+    }, 0);
+  if (covered <= 0) return 0;
+  const breakHours = row.break_enabled ? normalizeLaborModelBreakMinutes(row.break_minutes, 30) / 60 : 0;
+  return normalizeHourAnalysisNumber(Math.max(0, covered - breakHours), 0);
+}
+
+function makeLaborModelRoleHoursBucket() {
+  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, 0]));
+}
+
+function buildHourAnalysisLaborModelSummary(model = DEFAULT_HOUR_ANALYSIS_LABOR_MODEL) {
+  const normalizedModel = normalizeHourAnalysisLaborModel(model);
+  const roleWeekly = makeLaborModelRoleHoursBucket();
+  const dayRows = LABOR_MODEL_DAY_KEYS.map((dayKey) => {
+    const day = normalizedModel.days[dayKey];
+    const columnValidation = validateLaborModelColumns(day.columns);
+    const roleHours = makeLaborModelRoleHoursBucket();
+    let totalHours = 0;
+    let peakCoverage = 0;
+    const baseRowSummaries = day.rows.map((row) => {
+      const rowHours = calculateLaborModelRowHours(row, day.columns);
+      const groupKey = normalizeLaborModelGroupKey(row.group_key, row);
+      roleHours[groupKey] = normalizeHourAnalysisDelta((roleHours[groupKey] || 0) + rowHours);
+      roleWeekly[groupKey] = normalizeHourAnalysisDelta((roleWeekly[groupKey] || 0) + rowHours);
+      totalHours = normalizeHourAnalysisDelta(totalHours + rowHours);
+      return {
+        ...row,
+        group_key: groupKey,
+        hours: rowHours,
+      };
+    });
+    const rowSummaries = baseRowSummaries.map((row, index, rows) => {
+      const runKey = `${row.group_key}:${row.shift_type}`;
+      let startIndex = index;
+      while (startIndex > 0 && `${rows[startIndex - 1].group_key}:${rows[startIndex - 1].shift_type}` === runKey) startIndex -= 1;
+      let endIndex = index;
+      while (endIndex + 1 < rows.length && `${rows[endIndex + 1].group_key}:${rows[endIndex + 1].shift_type}` === runKey) endIndex += 1;
+      const runLength = endIndex - startIndex + 1;
+      return {
+        ...row,
+        runIndex: index - startIndex + 1,
+        runLength,
+      };
+    });
+    day.columns.forEach((column, index) => {
+      const coverageCount = rowSummaries.filter((row) => isLaborModelCoverageActive(row.coverage[index])).length;
+      peakCoverage = Math.max(peakCoverage, coverageCount);
+    });
+    return {
+      key: dayKey,
+      label: LABOR_MODEL_DAY_LABELS[dayKey] || dayKey,
+      shortLabel: LABOR_MODEL_DAY_SHORT_LABELS[dayKey] || dayKey,
+      coverageWindow: day.coverage_window,
+      columns: day.columns,
+      rows: rowSummaries,
+      roleHours,
+      totalHours,
+      peakCoverage,
+      columnValidation,
+    };
+  });
+  const totalWeekly = normalizeHourAnalysisNumber(dayRows.reduce((sum, row) => sum + row.totalHours, 0), 0);
+  const highestDay = dayRows.reduce((winner, row) => (row.totalHours > (winner?.totalHours || 0) ? row : winner), dayRows[0] || null);
+  return {
+    model: normalizedModel,
+    dayRows,
+    roleWeekly: Object.fromEntries(Object.entries(roleWeekly).map(([key, value]) => [key, normalizeHourAnalysisNumber(value, 0)])),
+    totalWeekly,
+    averageDaily: normalizeHourAnalysisNumber(totalWeekly / 7, 0),
+    highestDay,
+    hasRows: dayRows.some((day) => day.rows.length > 0 && day.columns.length > 0),
+  };
+}
+
+function normalizeHourAnalysisRangeOrder(range = {}) {
+  const rawExpected = normalizeHourAnalysisNumber(range.expected ?? range.preferred ?? range.hours, 0);
+  const rawMin = normalizeHourAnalysisNumber(range.min ?? range.minimum ?? range.min_hours, rawExpected);
+  const rawMax = normalizeHourAnalysisNumber(range.max ?? range.maximum ?? range.max_hours, Math.max(rawExpected, rawMin));
+  const min = Math.min(rawMin, rawExpected, rawMax);
+  const max = Math.max(rawMin, rawExpected, rawMax);
+  const expected = Math.max(min, Math.min(max, rawExpected));
+  return { min, expected, max };
+}
+
+function buildHourAnalysisRangeFromExpected(value, defaults = {}, commitment = "full_time") {
+  const defaultRange = normalizeHourAnalysisRangeOrder(defaults);
+  const expected = normalizeHourAnalysisNumber(value, defaultRange.expected);
+  if (expected <= 0) return { min: 0, expected: 0, max: 0 };
+  if (expected === defaultRange.expected) return defaultRange;
+  if (commitment === "part_time") {
+    return normalizeHourAnalysisRangeOrder({
+      min: Math.max(0, expected - 7),
+      expected,
+      max: expected + 10,
+    });
+  }
+  return normalizeHourAnalysisRangeOrder({
+    min: Math.max(0, expected >= 35 ? expected - 5 : expected - 6),
+    expected,
+    max: Math.max(expected + 5, 40),
+  });
+}
+
+function normalizeHourAnalysisRangeValue(value, defaults = {}, commitment = "full_time") {
+  const defaultRange = normalizeHourAnalysisRangeOrder(defaults);
+  if (!isObjectRow(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? buildHourAnalysisRangeFromExpected(parsed, defaultRange, commitment) : defaultRange;
+  }
+  return normalizeHourAnalysisRangeOrder({
+    min: value.min ?? value.minimum ?? value.min_hours ?? defaultRange.min,
+    expected: value.expected ?? value.preferred ?? value.hours ?? value.preferred_hours ?? defaultRange.expected,
+    max: value.max ?? value.maximum ?? value.max_hours ?? defaultRange.max,
+  });
+}
+
+function updateHourAnalysisRangeBand(range = {}, band = "expected", value = 0) {
+  const normalizedBand = HOUR_ANALYSIS_RANGE_KEYS.includes(band) ? band : "expected";
+  return normalizeHourAnalysisRangeOrder({
+    ...normalizeHourAnalysisRangeOrder(range),
+    [normalizedBand]: normalizeHourAnalysisNumber(value, 0),
+  });
+}
+
+function readHourAnalysisGroupInput(input = {}, groupKey = "other") {
+  const source = isObjectRow(input) ? input : {};
+  if (isObjectRow(source[groupKey])) return source[groupKey];
+  if (groupKey === "general_manager" || groupKey === "assistant_manager") {
+    if (isObjectRow(source.management)) return source.management;
+    if (isObjectRow(source.manager)) return source.manager;
+    if (isObjectRow(source.managers)) return source.managers;
+    if (isObjectRow(source.leadership)) return source.leadership;
+  }
+  if (groupKey === "supervisor") {
+    if (isObjectRow(source.supervisors)) return source.supervisors;
+    if (isObjectRow(source.leadership)) return source.leadership;
+  }
+  return {};
+}
+
+function normalizeHourAnalysisExpectationMap(input = {}) {
+  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
+    const defaults = DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key] || {};
+    const raw = readHourAnalysisGroupInput(input, group.key);
+    return [
+      group.key,
+      {
+        full_time: normalizeHourAnalysisRangeValue(raw.full_time ?? raw.fullTime, defaults.full_time, "full_time"),
+        part_time: normalizeHourAnalysisRangeValue(raw.part_time ?? raw.partTime, defaults.part_time, "part_time"),
+      },
+    ];
+  }));
+}
+
+function normalizeHourAnalysisOverrideRange(value = {}) {
+  if (!isObjectRow(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? { expected: normalizeHourAnalysisNumber(parsed, 0) } : {};
+  }
+  return Object.fromEntries(HOUR_ANALYSIS_RANGE_KEYS.flatMap((key) => {
+    const rawValue = key === "min"
+      ? value.min ?? value.minimum ?? value.min_hours
+      : key === "expected"
+        ? value.expected ?? value.preferred ?? value.hours ?? value.preferred_hours ?? value.expected_hours
+        : value.max ?? value.maximum ?? value.max_hours;
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) return [];
+    return [[key, normalizeHourAnalysisNumber(parsed, 0)]];
+  }));
+}
+
+function normalizeHourAnalysisOverrides(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    if (!employeeKey) return [];
+    const overrides = normalizeHourAnalysisOverrideRange(value);
+    if (Object.keys(overrides).length === 0) return [];
+    return [[employeeKey, overrides]];
+  }));
+}
+
+function normalizeHourAnalysisNotes(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    const note = String(value || "").trim();
+    if (!employeeKey || !note) return [];
+    return [[employeeKey, note]];
+  }));
+}
+
+function normalizeHourAnalysisCoverageSplit(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const floorGroup = normalizeHourAnalysisGroupKey(source.floor_group || source.floorGroup || source.floor_role || source.floorRole);
+  const normalizedFloorGroup = ["csr", "pct"].includes(floorGroup) ? floorGroup : "";
+  const hasAdminHours = source.admin_hours != null || source.adminHours != null || source.primary_hours != null || source.primaryHours != null;
+  return {
+    floor_group: normalizedFloorGroup,
+    admin_hours: hasAdminHours ? normalizeHourAnalysisNumber(source.admin_hours ?? source.adminHours ?? source.primary_hours ?? source.primaryHours, 0) : null,
+  };
+}
+
+function normalizeHourAnalysisSplits(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    if (!employeeKey) return [];
+    const split = normalizeHourAnalysisCoverageSplit(value);
+    if (!split.floor_group && split.admin_hours == null) return [];
+    return [[employeeKey, split]];
+  }));
+}
+
+function normalizeHourAnalysisPositionMovement(value = {}) {
+  if (value == null || value === "") return {};
+  const source = isObjectRow(value) ? value : {};
+  const rawPosition = isObjectRow(value)
+    ? (source.position_title
+      || source.positionTitle
+      || source.target_position_title
+      || source.targetPositionTitle
+      || source.position
+      || "")
+    : value;
+  const positionTitle = formatLaborPositionTitle(rawPosition);
+  if (!positionTitle) return {};
+  return {
+    position_title: positionTitle,
+    group_key: getHourAnalysisGroupKey({ position_title: positionTitle }),
+  };
+}
+
+function normalizeHourAnalysisPositionMovements(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    if (!employeeKey) return [];
+    const movement = normalizeHourAnalysisPositionMovement(value);
+    if (!movement.position_title) return [];
+    return [[employeeKey, movement]];
+  }));
+}
+
+function normalizeHourAnalysisAuditLog(input = []) {
+  return toObjectRows(input)
+    .map((entry, index) => ({
+      id: String(entry.id || `hour-analysis-audit-${index}`).trim(),
+      occurred_at: entry.occurred_at || entry.occurredAt || entry.timestamp || new Date(0).toISOString(),
+      action: String(entry.action || "changed").trim(),
+      entity_id: String(entry.entity_id || entry.entityId || "").trim(),
+      entity_label: String(entry.entity_label || entry.entityLabel || "").trim(),
+      summary: String(entry.summary || "").trim(),
+      before: entry.before ?? entry.old_value ?? entry.oldValue ?? null,
+      after: entry.after ?? entry.new_value ?? entry.newValue ?? null,
+      note: String(entry.note || "").trim(),
+      actor_id: entry.actor_id || entry.actorId || null,
+      actor_name: String(entry.actor_name || entry.actorName || "Staff").trim(),
+    }))
+    .filter((entry) => entry.id && entry.action)
+    .sort((left, right) => String(right.occurred_at || "").localeCompare(String(left.occurred_at || "")))
+    .slice(0, 300);
+}
+
+function normalizeHourAnalysisScenarioType(value = "") {
+  const normalized = String(value || "").trim().replace(/[-\s]+/g, "_").toLowerCase();
+  return ["move", "movement", "transfer", "role_move", "role_change"].includes(normalized) ? "move" : "add";
+}
+
+function normalizeHourAnalysisWhatIfRows(input = []) {
+  return toObjectRows(input).map((row, index) => {
+    const id = String(row.id || `what-if-${index + 1}`).trim();
+    const scenarioType = normalizeHourAnalysisScenarioType(row.scenario_type || row.scenarioType || (row.source_employee_key || row.sourceEmployeeKey ? "move" : "add"));
+    const commitment = readLaborEmploymentCommitment(row) || "full_time";
+    const positionTitle = formatLaborPositionTitle(row.position_title || row.position || "");
+    const groupKey = getHourAnalysisGroupKey({
+      group_key: row.group_key || row.groupKey,
+      position_group: row.position_group,
+      position_title: positionTitle,
+    });
+    const rawHourOverrides = row.hour_overrides || row.hourOverrides || {};
+    const rawOverride = row.preferred_hours_override ?? row.preferredHoursOverride ?? row.preferred_hours ?? row.preferredHours;
+    const hourOverrides = normalizeHourAnalysisOverrideRange({
+      ...(isObjectRow(rawHourOverrides) ? rawHourOverrides : {}),
+      ...((rawOverride === "" || rawOverride == null) ? {} : { expected: rawOverride }),
+    });
+    return {
+      id,
+      scenario_type: scenarioType,
+      source_employee_key: String(row.source_employee_key || row.sourceEmployeeKey || row.source_employee_id || row.sourceEmployeeId || "").trim(),
+      source_full_name: String(row.source_full_name || row.sourceFullName || "").trim(),
+      source_position_title: formatLaborPositionTitle(row.source_position_title || row.sourcePositionTitle || ""),
+      source_employment_commitment: readLaborEmploymentCommitment({ employment_commitment: row.source_employment_commitment || row.sourceEmploymentCommitment }) || "",
+      source_group_key: normalizeHourAnalysisGroupKey(row.source_group_key || row.sourceGroupKey || row.source_position_group || row.sourcePositionGroup),
+      full_name: String(row.full_name || row.name || "What-if Employee").trim() || "What-if Employee",
+      position_title: positionTitle,
+      employment_commitment: commitment,
+      group_key: groupKey,
+      hour_overrides: hourOverrides,
+      split: normalizeHourAnalysisCoverageSplit(row.split || row.coverage_split || row.coverageSplit),
+      note: String(row.note || row.justification || "").trim(),
+    };
+  });
+}
+
+function normalizeHourAnalysisSkeletonMap(input = {}) {
+  const source = isObjectRow(input) ? input : {};
+  const defaultAdminDaily = DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager;
+  const hasLegacyLeadership = source.leadership != null && source.management == null && source.manager == null && source.supervisor == null;
+  const legacyLeadership = normalizeHourAnalysisNumber(source.leadership, defaultAdminDaily + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor);
+  const rawManagement = source.management ?? source.manager;
+  const splitManagement = rawManagement != null ? normalizeHourAnalysisNumber(rawManagement / 2, defaultAdminDaily / 2) : null;
+  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
+    let rawValue = source[group.key];
+    if (group.key === "general_manager") rawValue = source.general_manager ?? source.generalManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager) : rawValue);
+    if (group.key === "assistant_manager") rawValue = source.assistant_manager ?? source.assistantManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager) : rawValue);
+    if (group.key === "supervisor") rawValue = source.supervisor ?? source.supervisors ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 2, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor) : rawValue);
+    return [
+      group.key,
+      normalizeHourAnalysisNumber(rawValue, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON[group.key] ?? 0),
+    ];
+  }));
+}
+
+function normalizeHourAnalysisThresholds(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const skeletonSource = source.daily_skeleton || source.dailySkeleton || source.skeleton_daily || source.skeletonDaily;
+  const hasSavedThresholds = isObjectRow(skeletonSource);
+  if (!hasSavedThresholds) {
+    return {
+      reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
+      daily_skeleton: normalizeHourAnalysisSkeletonMap(DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON),
+    };
+  }
+  const normalized = {
+    reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
+    daily_skeleton: normalizeHourAnalysisSkeletonMap(skeletonSource),
+  };
+  const allSkeletonValuesAreZero = Object.values(normalized.daily_skeleton).every((hours) => normalizeHourAnalysisNumber(hours, 0) === 0);
+  if (allSkeletonValuesAreZero) {
+    return {
+      reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
+      daily_skeleton: normalizeHourAnalysisSkeletonMap(DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON),
+    };
+  }
+  return normalized;
+}
+
+export function normalizeHourAnalysisSettings(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  return {
+    expectations: normalizeHourAnalysisExpectationMap(source.expectations),
+    overrides: normalizeHourAnalysisOverrides(source.overrides),
+    notes: normalizeHourAnalysisNotes(source.notes || source.justifications),
+    splits: normalizeHourAnalysisSplits(source.splits || source.coverage_splits || source.coverageSplits),
+    positionMovements: normalizeHourAnalysisPositionMovements(source.positionMovements || source.position_movements || source.movements || source.roleMovements || source.role_movements),
+    whatIfRows: normalizeHourAnalysisWhatIfRows(source.whatIfRows || source.what_if_rows),
+    thresholds: normalizeHourAnalysisThresholds(source.thresholds || source.coverage || source.capacity),
+    laborModel: normalizeHourAnalysisLaborModel(source.laborModel || source.labor_model || source.laborModelSettings || source.labor_model_settings),
+    auditLog: normalizeHourAnalysisAuditLog(source.auditLog || source.audit_log),
+  };
+}
+
+function makeHourAnalysisRangeTotals() {
+  return { min: 0, expected: 0, max: 0 };
+}
+
+function addHourAnalysisRangeDelta(target, range = {}, delta = 1) {
+  const multiplier = Number(delta);
+  const normalizedDelta = Number.isFinite(multiplier) ? multiplier : 1;
+  HOUR_ANALYSIS_RANGE_KEYS.forEach((key) => {
+    target[key] = normalizeHourAnalysisDelta(target[key] + (readHourAnalysisRangeNumber(range[key]) * normalizedDelta));
+  });
+}
+
+function addHourAnalysisRange(target, range = {}) {
+  addHourAnalysisRangeDelta(target, range, 1);
+}
+
+function sumHourAnalysisRanges(...ranges) {
+  const total = makeHourAnalysisRangeTotals();
+  ranges.forEach((range) => addHourAnalysisRange(total, range));
+  return total;
+}
+
+function mergeHourAnalysisRange(inheritedRange = {}, overrideRange = {}) {
+  const inherited = normalizeHourAnalysisRangeOrder(inheritedRange);
+  const overrides = normalizeHourAnalysisOverrideRange(overrideRange);
+  return normalizeHourAnalysisRangeOrder(Object.fromEntries(HOUR_ANALYSIS_RANGE_KEYS.map((key) => [
+    key,
+    Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : inherited[key],
+  ])));
+}
+
+function getHourAnalysisDefaultCoverageSplit(row = {}, groupKey = "other") {
+  const title = normalizePositionTitle(row.position_title || row.position || "");
+  if (groupKey === "supervisor" && title.includes("csr") && title.includes("supervisor")) {
+    return { floor_group: "csr", admin_hours: 8 };
+  }
+  if (groupKey === "supervisor" && title.includes("pct") && title.includes("supervisor")) {
+    return { floor_group: "pct", admin_hours: 8 };
+  }
+  return { floor_group: "", admin_hours: null };
+}
+
+function resolveHourAnalysisCoverageSplit({ row = {}, groupKey = "other", preferredHours = 0, split = {} } = {}) {
+  const defaultSplit = getHourAnalysisDefaultCoverageSplit(row, groupKey);
+  const normalizedSplit = normalizeHourAnalysisCoverageSplit(split);
+  const floorGroup = normalizedSplit.floor_group || defaultSplit.floor_group;
+  const preferred = normalizeHourAnalysisNumber(preferredHours, 0);
+  if (!floorGroup || !["general_manager", "assistant_manager", "supervisor", "csr"].includes(groupKey)) {
+    return {
+      floor_group: "",
+      admin_hours: preferred,
+      primary_hours: preferred,
+      floor_hours: 0,
+    };
+  }
+  const defaultAdminHours = defaultSplit.floor_group ? defaultSplit.admin_hours : preferred;
+  const rawAdminHours = normalizedSplit.admin_hours == null ? defaultAdminHours : normalizedSplit.admin_hours;
+  const adminHours = Math.max(0, Math.min(preferred, normalizeHourAnalysisNumber(rawAdminHours, 0)));
+  return {
+    floor_group: floorGroup,
+    admin_hours: adminHours,
+    primary_hours: adminHours,
+    floor_hours: normalizeHourAnalysisNumber(preferred - adminHours, 0),
+  };
+}
+
+function buildHourAnalysisRangeFromHours(hours = 0) {
+  const expected = normalizeHourAnalysisNumber(hours, 0);
+  return { min: expected, expected, max: expected };
+}
+
+function calculateHourAnalysisRecommendedTarget(requiredWeekly = 0, reservePercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
+  const required = normalizeHourAnalysisNumber(requiredWeekly, 0);
+  const reserve = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reservePercent, HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT)));
+  if (required <= 0) return 0;
+  if (reserve <= 0) return required;
+  return normalizeHourAnalysisNumber(required / (1 - (reserve / 100)), 0);
+}
+
+function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
+  const floor = normalizeHourAnalysisNumber(requiredWeekly, 0);
+  const relief = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reliefPercent, 0)));
+  const targetWeekly = calculateHourAnalysisRecommendedTarget(floor, relief);
+  const healthyLowWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0);
+  const healthyHighWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0);
+  const overRosteredWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0);
+  return {
+    floor,
+    healthyLowWeekly,
+    targetWeekly,
+    healthyHighWeekly,
+    overRosteredWeekly,
+    healthyLowSurplus: normalizeHourAnalysisDelta(healthyLowWeekly - floor),
+    targetSurplus: normalizeHourAnalysisDelta(targetWeekly - floor),
+    healthyHighSurplus: normalizeHourAnalysisDelta(healthyHighWeekly - floor),
+    overRosteredSurplus: normalizeHourAnalysisDelta(overRosteredWeekly - floor),
+    targetBufferPercent: relief,
+    healthyMinPercent: relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0,
+    healthyMaxPercent: relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0,
+    overRosteredPercent: relief > 0 ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0,
+    targetUtilization: targetWeekly > 0 ? normalizeHourAnalysisNumber((floor / targetWeekly) * 100, 0) : 0,
+  };
+}
+
+function combineHourAnalysisCapacityStandards(rows = []) {
+  const combined = rows.reduce((acc, row) => {
+    const standard = row.capacityStandard || buildHourAnalysisCapacityStandard(row.requiredWeekly, row.reliefPercent);
+    acc.floor += standard.floor;
+    acc.healthyLowWeekly += standard.healthyLowWeekly;
+    acc.targetWeekly += standard.targetWeekly;
+    acc.healthyHighWeekly += standard.healthyHighWeekly;
+    acc.overRosteredWeekly += standard.overRosteredWeekly;
+    return acc;
+  }, {
+    floor: 0,
+    healthyLowWeekly: 0,
+    targetWeekly: 0,
+    healthyHighWeekly: 0,
+    overRosteredWeekly: 0,
+  });
+  return {
+    ...combined,
+    floor: normalizeHourAnalysisNumber(combined.floor, 0),
+    healthyLowWeekly: normalizeHourAnalysisNumber(combined.healthyLowWeekly, 0),
+    targetWeekly: normalizeHourAnalysisNumber(combined.targetWeekly, 0),
+    healthyHighWeekly: normalizeHourAnalysisNumber(combined.healthyHighWeekly, 0),
+    overRosteredWeekly: normalizeHourAnalysisNumber(combined.overRosteredWeekly, 0),
+    healthyLowSurplus: normalizeHourAnalysisDelta(combined.healthyLowWeekly - combined.floor),
+    targetSurplus: normalizeHourAnalysisDelta(combined.targetWeekly - combined.floor),
+    healthyHighSurplus: normalizeHourAnalysisDelta(combined.healthyHighWeekly - combined.floor),
+    overRosteredSurplus: normalizeHourAnalysisDelta(combined.overRosteredWeekly - combined.floor),
+    targetBufferPercent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
+    healthyMinPercent: HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT,
+    healthyMaxPercent: HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT,
+    overRosteredPercent: HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT,
+    targetUtilization: combined.targetWeekly > 0 ? normalizeHourAnalysisNumber((combined.floor / combined.targetWeekly) * 100, 0) : 0,
+  };
+}
+
+function buildHourAnalysisCapacityStatus({ requiredWeekly = 0, targetWeekly = 0, capacity = {}, standard = null } = {}) {
+  const required = normalizeHourAnalysisNumber(requiredWeekly, 0);
+  const capacityStandard = standard || buildHourAnalysisCapacityStandard(required);
+  const target = normalizeHourAnalysisNumber(targetWeekly || capacityStandard.targetWeekly, required);
+  const healthyLow = normalizeHourAnalysisNumber(capacityStandard.healthyLowWeekly, target);
+  const healthyHigh = normalizeHourAnalysisNumber(capacityStandard.healthyHighWeekly, target);
+  const overRostered = normalizeHourAnalysisNumber(capacityStandard.overRosteredWeekly, healthyHigh);
+  const expected = normalizeHourAnalysisNumber(capacity.expected, 0);
+  const reliefPercent = normalizeHourAnalysisNumber(capacityStandard.targetBufferPercent, 0);
+  if (required <= 0) {
+    return { key: "unset", label: "No floor", tone: "default", message: "No Labor Model floor is assigned to this role." };
+  }
+  if (expected < required) {
+    return { key: "short", label: "Short", tone: "danger", message: `Preferred capacity misses the operating floor by ${formatHourAnalysisHours(required - expected)} hrs/wk.` };
+  }
+  if (reliefPercent <= 0 && expected > required) {
+    return { key: "admin_surplus", label: "Surplus", tone: "warning", message: `No relief buffer is applied to General Manager, Assistant Manager, or Supervisor coverage. Reassign ${formatHourAnalysisHours(expected - required)} hrs/wk to a floor split or reduce planned admin coverage.` };
+  }
+  if (expected < healthyLow) {
+    return { key: "thin", label: "Thin reserve", tone: "warning", message: `Preferred capacity covers the floor but is ${formatHourAnalysisHours(healthyLow - expected)} hrs/wk below the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% relief sensitivity case.` };
+  }
+  if (expected > overRostered) {
+    return { key: "over_rostered", label: "Overbuilt", tone: "warning", message: `Preferred capacity is ${formatHourAnalysisHours(expected - overRostered)} hrs/wk above the ${HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT}% relief sensitivity case. Freeze offers or rebalance hours before employees lose expected hours.` };
+  }
+  if (expected > healthyHigh) {
+    return { key: "high", label: "High reserve", tone: "warning", message: `Preferred capacity is ${formatHourAnalysisHours(expected - healthyHigh)} hrs/wk above the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity case. Confirm this is seasonal demand, not accidental overstaffing.` };
+  }
+  if (expected < target) {
+    return { key: "healthy_low", label: "On target", tone: "success", message: `Preferred capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(target - expected)} hrs/wk below the planning case.` };
+  }
+  if (expected > target) {
+    return { key: "healthy_high", label: "On target", tone: "success", message: `Preferred capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(expected - target)} hrs/wk above the planning case.` };
+  }
+  return { key: "healthy", label: "On target", tone: "success", message: `Preferred capacity lands on the ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief planning case.` };
+}
+
+export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) {
+  const normalizedSettings = normalizeHourAnalysisSettings(settings);
+  const laborModelSummary = buildHourAnalysisLaborModelSummary(normalizedSettings.laborModel);
+  const activeRows = toObjectRows(rosterRows).filter((row) => isLaborEmployeeActive(row));
+  const makeEmptyBucket = () => ({ fullTime: 0, partTime: 0, unassigned: 0, total: 0, whatIfFullTime: 0, whatIfPartTime: 0, whatIfTotal: 0 });
+  const headcountByGroup = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, makeEmptyBucket()]));
+  const makeWeeklyBucket = () => ({
+    fullTime: makeHourAnalysisRangeTotals(),
+    partTime: makeHourAnalysisRangeTotals(),
+    total: makeHourAnalysisRangeTotals(),
+    whatIfFullTime: makeHourAnalysisRangeTotals(),
+    whatIfPartTime: makeHourAnalysisRangeTotals(),
+    whatIfTotal: makeHourAnalysisRangeTotals(),
+  });
+  const weeklyHoursByGroup = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, makeWeeklyBucket()]));
+  const activeRowsByEmployeeKey = new Map();
+  activeRows.forEach((row) => {
+    const employeeKey = getHourAnalysisEmployeeKey(row);
+    if (employeeKey && !activeRowsByEmployeeKey.has(employeeKey)) activeRowsByEmployeeKey.set(employeeKey, row);
+  });
+
+  const addHeadcount = ({ groupKey, commitment, isWhatIf = false, delta = 1 }) => {
+    const target = headcountByGroup[groupKey] || headcountByGroup.other;
+    const amount = normalizeHourAnalysisDelta(Number(delta));
+    if (commitment === "full_time") target[isWhatIf ? "whatIfFullTime" : "fullTime"] += amount;
+    else if (commitment === "part_time") target[isWhatIf ? "whatIfPartTime" : "partTime"] += amount;
+    else if (!isWhatIf) target.unassigned += amount;
+    if (isWhatIf) target.whatIfTotal += amount;
+    else target.total += amount;
+  };
+
+  const addWeeklyHours = ({ groupKey, commitment, range, isWhatIf = false, delta = 1 }) => {
+    const target = weeklyHoursByGroup[groupKey] || weeklyHoursByGroup.other;
+    if (commitment === "full_time") {
+      addHourAnalysisRangeDelta(isWhatIf ? target.whatIfFullTime : target.fullTime, range, delta);
+    } else if (commitment === "part_time") {
+      addHourAnalysisRangeDelta(isWhatIf ? target.whatIfPartTime : target.partTime, range, delta);
+    }
+    addHourAnalysisRangeDelta(isWhatIf ? target.whatIfTotal : target.total, range, delta);
+  };
+
+  const employeeRows = activeRows.map((row) => {
+    const employeeKey = getHourAnalysisEmployeeKey(row);
+    const sourcePositionTitle = formatLaborPositionTitle(row.position_title || row.position || "");
+    const sourceGroupKey = getHourAnalysisGroupKey(row);
+    const commitment = readLaborEmploymentCommitment(row);
+    const overrideRange = employeeKey ? normalizeHourAnalysisOverrideRange(normalizedSettings.overrides[employeeKey]) : {};
+    const sourceInheritedRange = commitment ? normalizedSettings.expectations[sourceGroupKey]?.[commitment] ?? makeHourAnalysisRangeTotals() : makeHourAnalysisRangeTotals();
+    const sourcePreferredRange = mergeHourAnalysisRange(sourceInheritedRange, overrideRange);
+    const movement = employeeKey ? normalizeHourAnalysisPositionMovement(normalizedSettings.positionMovements[employeeKey]) : {};
+    const targetPositionTitle = movement.position_title || sourcePositionTitle;
+    const isMovement = Boolean(movement.position_title && normalizePositionTitle(movement.position_title) !== normalizePositionTitle(sourcePositionTitle));
+    const groupKey = isMovement ? movement.group_key || getHourAnalysisGroupKey({ position_title: targetPositionTitle }) : sourceGroupKey;
+    const effectiveRow = { ...row, position_title: targetPositionTitle, position: targetPositionTitle };
+    const inheritedRange = commitment ? normalizedSettings.expectations[groupKey]?.[commitment] ?? makeHourAnalysisRangeTotals() : makeHourAnalysisRangeTotals();
+    const preferredRange = mergeHourAnalysisRange(inheritedRange, overrideRange);
+    const note = employeeKey ? String(normalizedSettings.notes[employeeKey] || "").trim() : "";
+    const sourceSplit = resolveHourAnalysisCoverageSplit({
+      row,
+      groupKey: sourceGroupKey,
+      preferredHours: sourcePreferredRange.expected,
+      split: employeeKey ? normalizedSettings.splits[employeeKey] : {},
+    });
+    addHeadcount({ groupKey: sourceGroupKey, commitment });
+    addWeeklyHours({ groupKey: sourceGroupKey, commitment, range: buildHourAnalysisRangeFromHours(sourceSplit.primary_hours) });
+    if (sourceSplit.floor_group && sourceSplit.floor_hours > 0) {
+      addWeeklyHours({ groupKey: sourceSplit.floor_group, commitment, range: buildHourAnalysisRangeFromHours(sourceSplit.floor_hours) });
+    }
+    const split = resolveHourAnalysisCoverageSplit({
+      row: effectiveRow,
+      groupKey,
+      preferredHours: preferredRange.expected,
+      split: employeeKey ? normalizedSettings.splits[employeeKey] : {},
+    });
+    if (isMovement) {
+      addHeadcount({ groupKey: sourceGroupKey, commitment, isWhatIf: true, delta: -1 });
+      addWeeklyHours({ groupKey: sourceGroupKey, commitment, range: buildHourAnalysisRangeFromHours(sourceSplit.primary_hours), isWhatIf: true, delta: -1 });
+      if (sourceSplit.floor_group && sourceSplit.floor_hours > 0) {
+        addWeeklyHours({ groupKey: sourceSplit.floor_group, commitment, range: buildHourAnalysisRangeFromHours(sourceSplit.floor_hours), isWhatIf: true, delta: -1 });
+      }
+      addHeadcount({ groupKey, commitment, isWhatIf: true });
+      addWeeklyHours({ groupKey, commitment, range: buildHourAnalysisRangeFromHours(split.primary_hours), isWhatIf: true });
+      if (split.floor_group && split.floor_hours > 0) {
+        addWeeklyHours({ groupKey: split.floor_group, commitment, range: buildHourAnalysisRangeFromHours(split.floor_hours), isWhatIf: true });
+      }
+    }
+    return {
+      ...row,
+      employeeKey,
+      sourcePositionTitle,
+      sourceGroupKey,
+      sourceGroupLabel: getHourAnalysisGroupLabel(sourceGroupKey),
+      position_title: targetPositionTitle,
+      groupKey,
+      groupLabel: getHourAnalysisGroupLabel(groupKey),
+      commitment,
+      inheritedRange,
+      overrideRange,
+      preferredRange,
+      inheritedHours: inheritedRange.expected,
+      overrideHours: Object.prototype.hasOwnProperty.call(overrideRange, "expected") ? overrideRange.expected : null,
+      preferredHours: preferredRange.expected,
+      note,
+      split,
+      isOverride: Object.keys(overrideRange).length > 0,
+      isSplit: Boolean(split.floor_group && split.floor_hours > 0),
+      isMovement,
+      isWhatIf: false,
+    };
+  });
+
+  const whatIfRows = normalizedSettings.whatIfRows.map((row) => {
+    const isMovement = row.scenario_type === "move";
+    const sourceEmployeeKey = String(row.source_employee_key || "").trim();
+    const sourceRow = isMovement && sourceEmployeeKey ? activeRowsByEmployeeKey.get(sourceEmployeeKey) : null;
+    let sourcePlan = null;
+    if (sourceRow) {
+      const sourceGroupKey = getHourAnalysisGroupKey(sourceRow);
+      const sourceCommitment = readLaborEmploymentCommitment(sourceRow) || row.source_employment_commitment || "full_time";
+      const sourceInheritedRange = sourceCommitment ? normalizedSettings.expectations[sourceGroupKey]?.[sourceCommitment] ?? makeHourAnalysisRangeTotals() : makeHourAnalysisRangeTotals();
+      const sourceOverrideRange = normalizeHourAnalysisOverrideRange(normalizedSettings.overrides[sourceEmployeeKey]);
+      const sourcePreferredRange = mergeHourAnalysisRange(sourceInheritedRange, sourceOverrideRange);
+      const sourceSplit = resolveHourAnalysisCoverageSplit({
+        row: sourceRow,
+        groupKey: sourceGroupKey,
+        preferredHours: sourcePreferredRange.expected,
+        split: normalizedSettings.splits[sourceEmployeeKey] || {},
+      });
+      sourcePlan = {
+        employeeKey: sourceEmployeeKey,
+        full_name: sourceRow.full_name || [sourceRow.first_name, sourceRow.last_name].filter(Boolean).join(" ") || row.source_full_name || "Moved employee",
+        position_title: formatLaborPositionTitle(sourceRow.position_title || sourceRow.position || row.source_position_title || ""),
+        groupKey: sourceGroupKey,
+        groupLabel: getHourAnalysisGroupLabel(sourceGroupKey),
+        commitment: sourceCommitment,
+        preferredHours: sourcePreferredRange.expected,
+        split: sourceSplit,
+      };
+      addHeadcount({ groupKey: sourceGroupKey, commitment: sourceCommitment, isWhatIf: true, delta: -1 });
+      addWeeklyHours({ groupKey: sourceGroupKey, commitment: sourceCommitment, range: buildHourAnalysisRangeFromHours(sourceSplit.primary_hours), isWhatIf: true, delta: -1 });
+      if (sourceSplit.floor_group && sourceSplit.floor_hours > 0) {
+        addWeeklyHours({ groupKey: sourceSplit.floor_group, commitment: sourceCommitment, range: buildHourAnalysisRangeFromHours(sourceSplit.floor_hours), isWhatIf: true, delta: -1 });
+      }
+    }
+    const groupKey = row.group_key || getHourAnalysisGroupKey(row);
+    const commitment = readLaborEmploymentCommitment(row) || "full_time";
+    const inheritedRange = normalizedSettings.expectations[groupKey]?.[commitment] ?? makeHourAnalysisRangeTotals();
+    const overrideRange = normalizeHourAnalysisOverrideRange(row.hour_overrides);
+    const preferredRange = mergeHourAnalysisRange(inheritedRange, overrideRange);
+    const split = resolveHourAnalysisCoverageSplit({
+      row,
+      groupKey,
+      preferredHours: preferredRange.expected,
+      split: normalizedSettings.splits[row.id] || row.split,
+    });
+    addHeadcount({ groupKey, commitment, isWhatIf: true });
+    addWeeklyHours({ groupKey, commitment, range: buildHourAnalysisRangeFromHours(split.primary_hours), isWhatIf: true });
+    if (split.floor_group && split.floor_hours > 0) {
+      addWeeklyHours({ groupKey: split.floor_group, commitment, range: buildHourAnalysisRangeFromHours(split.floor_hours), isWhatIf: true });
+    }
+    return {
+      id: row.id,
+      employeeKey: row.id,
+      scenarioType: row.scenario_type,
+      isMovement,
+      sourceEmployeeKey,
+      sourcePlan,
+      sourceFullName: sourcePlan?.full_name || row.source_full_name || "",
+      sourcePositionTitle: formatLaborPositionTitle(sourcePlan?.position_title || row.source_position_title || ""),
+      sourceGroupKey: sourcePlan?.groupKey || row.source_group_key || "",
+      sourceGroupLabel: sourcePlan?.groupLabel || getHourAnalysisGroupLabel(row.source_group_key || "other"),
+      sourceCommitment: sourcePlan?.commitment || row.source_employment_commitment || "",
+      sourcePreferredHours: sourcePlan?.preferredHours ?? null,
+      sourceMissing: isMovement && !sourcePlan,
+      full_name: row.full_name,
+      position_title: formatLaborPositionTitle(row.position_title),
+      groupKey,
+      groupLabel: getHourAnalysisGroupLabel(groupKey),
+      commitment,
+      employment_commitment: commitment,
+      inheritedRange,
+      overrideRange,
+      preferredRange,
+      inheritedHours: inheritedRange.expected,
+      overrideHours: Object.prototype.hasOwnProperty.call(overrideRange, "expected") ? overrideRange.expected : null,
+      preferredHours: preferredRange.expected,
+      note: normalizedSettings.notes[row.id] || row.note || "",
+      split,
+      isOverride: Object.keys(overrideRange).length > 0,
+      isSplit: Boolean(split.floor_group && split.floor_hours > 0),
+      isWhatIf: true,
+    };
+  });
+
+  const headcountRows = HOUR_ANALYSIS_GROUPS
+    .map((group) => {
+      const counts = headcountByGroup[group.key] || makeEmptyBucket();
+      return {
+        key: group.key,
+        label: group.label,
+        ...counts,
+        projectedFullTime: counts.fullTime + counts.whatIfFullTime,
+        projectedPartTime: counts.partTime + counts.whatIfPartTime,
+        projectedTotal: counts.total + counts.whatIfTotal,
+      };
+    })
+    .filter((row) => row.key !== "other" || row.total || row.whatIfTotal || row.unassigned);
+
+  const weeklyRows = HOUR_ANALYSIS_GROUPS
+    .map((group) => {
+      const hours = weeklyHoursByGroup[group.key] || makeWeeklyBucket();
+      const projected = sumHourAnalysisRanges(hours.total, hours.whatIfTotal);
+      const legacyDailySkeleton = normalizeHourAnalysisNumber(normalizedSettings.thresholds.daily_skeleton[group.key], 0);
+      const requiredWeekly = laborModelSummary.hasRows
+        ? normalizeHourAnalysisNumber(laborModelSummary.roleWeekly[group.key] || 0, 0)
+        : normalizeHourAnalysisNumber(legacyDailySkeleton * 7, 0);
+      const requiredDaily = normalizeHourAnalysisNumber(requiredWeekly / 7, 0);
+      const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(group.key);
+      const reliefPercent = isFrontline ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0;
+      const capacityStandard = buildHourAnalysisCapacityStandard(requiredWeekly, reliefPercent);
+      const targetWeekly = capacityStandard.targetWeekly;
+      const expectedHireHours = normalizeHourAnalysisNumber(
+        normalizedSettings.expectations[group.key]?.full_time?.expected,
+        DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key]?.full_time?.expected || HOUR_ANALYSIS_FULL_TIME_HIRE_EQUIVALENT_HOURS,
+      );
+      const expectedGapToTarget = normalizeHourAnalysisDelta(projected.expected - targetWeekly);
+      const hireDeficitHours = Math.max(0, normalizeHourAnalysisDelta(targetWeekly - projected.expected));
+      const recommendedFullTimeHires = hireDeficitHours > 0 && expectedHireHours > 0 ? Math.ceil(hireDeficitHours / expectedHireHours) : 0;
+      const recommendedFullTimeEquivalent = hireDeficitHours > 0 && expectedHireHours > 0 ? normalizeHourAnalysisNumber(hireDeficitHours / expectedHireHours, 0) : 0;
+      return {
+        key: group.key,
+        label: group.label,
+        ...hours,
+        projected,
+        min: projected.min,
+        expected: projected.expected,
+        max: projected.max,
+        requiredDaily,
+        requiredWeekly,
+        reliefPercent,
+        targetWeekly,
+        capacityStandard,
+        expectedGapToTarget,
+        hireDeficitHours,
+        expectedHireHours,
+        isFrontline,
+        recommendedFullTimeHires,
+        recommendedFullTimeEquivalent,
+        recommendedHireHours: normalizeHourAnalysisNumber(recommendedFullTimeHires * expectedHireHours, 0),
+        capacityStatus: buildHourAnalysisCapacityStatus({ requiredWeekly, targetWeekly, capacity: projected, standard: capacityStandard }),
+      };
+    })
+    .filter((row) => row.key !== "other" || row.total.expected || row.whatIfTotal.expected || row.requiredWeekly);
+
+  const totals = weeklyRows.reduce((acc, row) => {
+    addHourAnalysisRange(acc.fullTime, row.fullTime);
+    addHourAnalysisRange(acc.partTime, row.partTime);
+    addHourAnalysisRange(acc.total, row.total);
+    addHourAnalysisRange(acc.whatIfFullTime, row.whatIfFullTime);
+    addHourAnalysisRange(acc.whatIfPartTime, row.whatIfPartTime);
+    addHourAnalysisRange(acc.whatIfTotal, row.whatIfTotal);
+    return acc;
+  }, {
+    fullTime: makeHourAnalysisRangeTotals(),
+    partTime: makeHourAnalysisRangeTotals(),
+    total: makeHourAnalysisRangeTotals(),
+    whatIfFullTime: makeHourAnalysisRangeTotals(),
+    whatIfPartTime: makeHourAnalysisRangeTotals(),
+    whatIfTotal: makeHourAnalysisRangeTotals(),
+  });
+  const projectedFullTime = sumHourAnalysisRanges(totals.fullTime, totals.whatIfFullTime);
+  const projectedPartTime = sumHourAnalysisRanges(totals.partTime, totals.whatIfPartTime);
+  const projectedTotal = sumHourAnalysisRanges(totals.total, totals.whatIfTotal);
+  const legacyRequiredDaily = HOUR_ANALYSIS_GROUPS.reduce((sum, group) => sum + normalizeHourAnalysisNumber(normalizedSettings.thresholds.daily_skeleton[group.key], 0), 0);
+  const requiredWeekly = laborModelSummary.hasRows
+    ? normalizeHourAnalysisNumber(laborModelSummary.totalWeekly, 0)
+    : normalizeHourAnalysisNumber(legacyRequiredDaily * 7, 0);
+  const requiredDaily = normalizeHourAnalysisNumber(requiredWeekly / 7, 0);
+  const capacityStandard = combineHourAnalysisCapacityStandards(weeklyRows);
+  const targetWeekly = capacityStandard.targetWeekly;
+  const expectedGapToTarget = normalizeHourAnalysisDelta(projectedTotal.expected - targetWeekly);
+  const hireDeficitHours = Math.max(0, normalizeHourAnalysisDelta(targetWeekly - projectedTotal.expected));
+  const fullTimeEquivalentHires = hireDeficitHours > 0 ? normalizeHourAnalysisNumber(hireDeficitHours / HOUR_ANALYSIS_FULL_TIME_HIRE_EQUIVALENT_HOURS, 0) : 0;
+  const fullTimeHireCount = hireDeficitHours > 0 ? Math.max(1, Math.round(hireDeficitHours / HOUR_ANALYSIS_FULL_TIME_HIRE_EQUIVALENT_HOURS)) : 0;
+  const hiringRecommendations = weeklyRows
+    .filter((row) => row.recommendedFullTimeHires > 0)
+    .map((row) => ({
+      key: row.key,
+      label: row.label,
+      shortHours: row.hireDeficitHours,
+      hireCount: row.recommendedFullTimeHires,
+      hireEquivalent: row.recommendedFullTimeEquivalent,
+      hireHours: row.recommendedHireHours,
+      expectedHireHours: row.expectedHireHours,
+      isFrontline: row.isFrontline,
+    }));
+  const roleDeficitHours = normalizeHourAnalysisNumber(hiringRecommendations.reduce((sum, row) => sum + row.shortHours, 0), 0);
+  const roleSurplusRows = weeklyRows
+    .filter((row) => row.expectedGapToTarget > 0)
+    .map((row) => ({
+      key: row.key,
+      label: row.label,
+      surplusHours: row.expectedGapToTarget,
+    }));
+  const roleSurplusHours = normalizeHourAnalysisNumber(roleSurplusRows.reduce((sum, row) => sum + row.surplusHours, 0), 0);
+  const recommendedPlanHours = hireDeficitHours;
+  const recommendedPlanHeadcount = fullTimeHireCount;
+  const expectedAfterRecommendedPlan = normalizeHourAnalysisNumber(projectedTotal.expected + recommendedPlanHours, 0);
+  const wholeRolePlanHours = normalizeHourAnalysisNumber(hiringRecommendations.reduce((sum, row) => sum + row.hireHours, 0), 0);
+  const wholeRolePlanHeadcount = hiringRecommendations.reduce((sum, row) => sum + row.hireCount, 0);
+  const expectedAfterWholeRolePlan = normalizeHourAnalysisNumber(projectedTotal.expected + wholeRolePlanHours, 0);
+  const headcountTotals = headcountRows.reduce((acc, row) => ({
+    fullTime: acc.fullTime + row.fullTime,
+    partTime: acc.partTime + row.partTime,
+    unassigned: acc.unassigned + row.unassigned,
+    total: acc.total + row.total,
+    whatIfFullTime: acc.whatIfFullTime + row.whatIfFullTime,
+    whatIfPartTime: acc.whatIfPartTime + row.whatIfPartTime,
+    whatIfTotal: acc.whatIfTotal + row.whatIfTotal,
+  }), { fullTime: 0, partTime: 0, unassigned: 0, total: 0, whatIfFullTime: 0, whatIfPartTime: 0, whatIfTotal: 0 });
+
+  return {
+    settings: normalizedSettings,
+    rows: [...employeeRows, ...whatIfRows],
+    employeeRows,
+    whatIfRows,
+    headcountRows,
+    headcountTotals,
+    weeklyRows,
+    laborModelSummary,
+    totals: {
+      ...totals,
+      rosterRange: totals.total,
+      whatIfRange: totals.whatIfTotal,
+      projectedFullTimeRange: projectedFullTime,
+      projectedPartTimeRange: projectedPartTime,
+      projectedRange: projectedTotal,
+      projectedFullTime: projectedFullTime.expected,
+      projectedPartTime: projectedPartTime.expected,
+      projectedTotal: projectedTotal.expected,
+      requiredDaily,
+      requiredWeekly,
+      targetWeekly,
+      healthyLowWeekly: capacityStandard.healthyLowWeekly,
+      healthyHighWeekly: capacityStandard.healthyHighWeekly,
+      overRosteredWeekly: capacityStandard.overRosteredWeekly,
+      capacityStandard,
+      expectedGapToTarget,
+      hireDeficitHours,
+      fullTimeEquivalentHires,
+      fullTimeHireCount,
+      hiringRecommendations,
+      roleDeficitHours,
+      roleSurplusRows,
+      roleSurplusHours,
+      recommendedPlanHours,
+      recommendedPlanHeadcount,
+      expectedAfterRecommendedPlan,
+      wholeRolePlanHours,
+      wholeRolePlanHeadcount,
+      expectedAfterWholeRolePlan,
+      reservePercent: normalizedSettings.thresholds.reserve_percent,
+      capacityStatus: buildHourAnalysisCapacityStatus({ requiredWeekly, targetWeekly, capacity: projectedTotal, standard: capacityStandard }),
+      min: totals.total.min,
+      expected: totals.total.expected,
+      max: totals.total.max,
+      whatIfMin: totals.whatIfTotal.min,
+      whatIfExpected: totals.whatIfTotal.expected,
+      whatIfMax: totals.whatIfTotal.max,
+      projectedMin: projectedTotal.min,
+      projectedExpected: projectedTotal.expected,
+      projectedMax: projectedTotal.max,
+      total: totals.total.expected,
+      whatIfTotal: totals.whatIfTotal.expected,
+      projectedHeadcount: headcountTotals.total + headcountTotals.whatIfTotal,
+      projectedFullTimeHeadcount: headcountTotals.fullTime + headcountTotals.whatIfFullTime,
+      projectedPartTimeHeadcount: headcountTotals.partTime + headcountTotals.whatIfPartTime,
+    },
+  };
 }
 
 function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-8") {
@@ -1105,10 +3406,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [noteFilterType, setNoteFilterType] = useState("all");
   const [noteFilterDateRange, setNoteFilterDateRange] = useState("all");
   const [noteSearchText, setNoteSearchText] = useState("");
-  const [rosterSort, setRosterSort] = useState({ key: "hierarchy", direction: "asc" });
+  const [rosterSort, setRosterSort] = useState(LABOR_DEFAULT_SORT);
+  const [trainingSort, setTrainingSort] = useState(LABOR_DEFAULT_SORT);
+  const [performanceReviewSort, setPerformanceReviewSort] = useState(LABOR_DEFAULT_SORT);
+  const [hourAnalysisPersonSort, setHourAnalysisPersonSort] = useState(LABOR_DEFAULT_SORT);
   const [showHierarchyManager, setShowHierarchyManager] = useState(false);
   const [savingHierarchy, setSavingHierarchy] = useState(false);
   const [hierarchyDraft, setHierarchyDraft] = useState([]);
+  const [newHierarchyTitle, setNewHierarchyTitle] = useState("");
   const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
   const [rosterFilters, setRosterFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [rosterDraftFilters, setRosterDraftFilters] = useState(DEFAULT_ROSTER_FILTERS);
@@ -1122,9 +3427,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [rosterViewName, setRosterViewName] = useState("");
   const [rosterPrintMode, setRosterPrintMode] = useState(false);
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
+  const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
+  const [hourAnalysisLoaded, setHourAnalysisLoaded] = useState(false);
+  const [savingHourAnalysis, setSavingHourAnalysis] = useState(false);
+  const [showHourAnalysisWhatIfModal, setShowHourAnalysisWhatIfModal] = useState(false);
+  const [showHourAnalysisAudit, setShowHourAnalysisAudit] = useState(false);
+  const [hourAnalysisLaborModelTab, setHourAnalysisLaborModelTab] = useState(LABOR_MODEL_SUMMARY_TAB);
+  const [laborModelDragSelection, setLaborModelDragSelection] = useState(null);
+  const [hourAnalysisChangedKeys, setHourAnalysisChangedKeys] = useState(() => new Set());
+  const [whatIfEmployeeName, setWhatIfEmployeeName] = useState("");
+  const [whatIfPosition, setWhatIfPosition] = useState("");
+  const [whatIfCommitment, setWhatIfCommitment] = useState("full_time");
+  const [whatIfHourOverrides, setWhatIfHourOverrides] = useState({});
+  const [whatIfNote, setWhatIfNote] = useState("");
   const firstRosterNameInputRef = useRef(null);
   const prevRosterFilterOpen = useRef(false);
   const pendingEmployeeRecordTabRef = useRef("");
+  const hourAnalysisLoadedSnapshotRef = useRef("");
+  const hourAnalysisSaveTimerRef = useRef(null);
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -1165,6 +3485,64 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         { onConflict: "location_id,setting_key" },
       );
   }, [laborLocationRef]);
+
+  useEffect(() => {
+    if (!laborLocationRef) {
+      const defaults = normalizeHourAnalysisSettings();
+      setHourAnalysisSettings(defaults);
+      hourAnalysisLoadedSnapshotRef.current = JSON.stringify(defaults);
+      setHourAnalysisLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    setHourAnalysisLoaded(false);
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", laborLocationRef)
+      .eq("setting_key", LABOR_HOUR_ANALYSIS_SETTING_KEY)
+      .maybeSingle()
+      .then(({ data: row, error }) => {
+        if (cancelled) return;
+        if (error) console.warn("Labor hour analysis settings load skipped:", error);
+        const normalized = normalizeHourAnalysisSettings(row?.setting_value);
+        setHourAnalysisSettings(normalized);
+        hourAnalysisLoadedSnapshotRef.current = JSON.stringify(normalized);
+        setHourAnalysisLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [laborLocationRef]);
+
+  useEffect(() => {
+    if (!hourAnalysisLoaded || !laborLocationRef) return undefined;
+    const normalized = normalizeHourAnalysisSettings(hourAnalysisSettings);
+    const serialized = JSON.stringify(normalized);
+    if (serialized === hourAnalysisLoadedSnapshotRef.current) return undefined;
+    if (hourAnalysisSaveTimerRef.current) window.clearTimeout(hourAnalysisSaveTimerRef.current);
+    setSavingHourAnalysis(true);
+    hourAnalysisSaveTimerRef.current = window.setTimeout(async () => {
+      const { error } = await supabase
+        .from("lite_settings")
+        .upsert(
+          {
+            location_id: laborLocationRef,
+            setting_key: LABOR_HOUR_ANALYSIS_SETTING_KEY,
+            setting_value: normalized,
+          },
+          { onConflict: "location_id,setting_key" },
+        );
+      if (error) {
+        console.error("Failed to save labor hour analysis settings", error);
+        addGlobalToast?.(error.message || "Failed to save hour analysis", "error");
+      } else {
+        hourAnalysisLoadedSnapshotRef.current = serialized;
+      }
+      setSavingHourAnalysis(false);
+    }, 520);
+    return () => {
+      if (hourAnalysisSaveTimerRef.current) window.clearTimeout(hourAnalysisSaveTimerRef.current);
+    };
+  }, [addGlobalToast, hourAnalysisLoaded, hourAnalysisSettings, laborLocationRef]);
 
   useEffect(() => {
     if (showRosterFilterPanel && !prevRosterFilterOpen.current) {
@@ -1897,7 +4275,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const fallbackEmployees = toObjectRows(laborEmployees).filter((employee) => !suggestedRoster.some((entry) => entry.id === employee.id));
     return [...suggestedRoster, ...fallbackEmployees].map((employee) => ({
       value: employee.id,
-      label: `${employee.full_name} (${employee.position_title})`,
+      label: `${employee.full_name} (${formatLaborPositionTitle(employee.position_title) || "Employee"})`,
     }));
   }, [laborEmployees, rosterSnapshot]);
 
@@ -2590,7 +4968,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           templateId: newTemplateId,
           locationRef: laborLocationRef,
           employeeFullName: newEmployeeName,
-          targetRole: newTargetRole,
+          targetRole: formatLaborPositionTitle(newTargetRole),
           hireDate: newHireDate,
           trainingStartDate: newStartDate,
           targetEndDate: newTargetEndDate,
@@ -2719,7 +5097,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       recordId: selectedRecordId,
       laborEmployeeId: configLaborEmployeeId,
       employeeFullName: configEmployeeName,
-      targetRole: configTargetRole,
+      targetRole: formatLaborPositionTitle(configTargetRole),
       hireDate: configHireDate,
       trainingStartDate: configStartDate,
       targetEndDate: configTargetEndDate,
@@ -2871,7 +5249,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const { error } = await supabase.rpc("update_labor_employee", buildUpdateLaborEmployeeRpcArgs({
         employeeId: editingLaborEmployeeId,
         fullName: laborEmployeeName,
-        positionTitle: laborEmployeeRole,
+        positionTitle: formatLaborPositionTitle(laborEmployeeRole),
         startDate: laborEmployeeStartDate,
         endDate: laborEmployeeEndDate,
         employmentCommitment: laborEmployeeCommitment,
@@ -2897,7 +5275,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const { data, error } = await supabase.rpc("create_labor_employee", buildCreateLaborEmployeeRpcArgs({
         locationRef: laborLocationRef,
         fullName: laborEmployeeName,
-        positionTitle: laborEmployeeRole,
+        positionTitle: formatLaborPositionTitle(laborEmployeeRole),
         startDate: laborEmployeeStartDate,
         endDate: laborEmployeeEndDate,
         employmentCommitment: laborEmployeeCommitment,
@@ -2947,7 +5325,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const { data, error } = await supabase.rpc("create_labor_employee", buildCreateLaborEmployeeRpcArgs({
       locationRef: laborLocationRef,
       fullName,
-      positionTitle: newRosterEmployeeRole,
+      positionTitle: formatLaborPositionTitle(newRosterEmployeeRole),
       startDate: newRosterEmployeeStartDate,
       endDate: newRosterEmployeeEndDate,
       employmentCommitment: newRosterEmployeeCommitment,
@@ -4146,20 +6524,55 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return;
     }
     if (!hierarchyPersistenceAvailable) {
-      addGlobalToast("Hierarchy saving requires the labor hierarchy database migration", "warning");
+      addGlobalToast("Labor settings require the position hierarchy database migration", "warning");
       setShowHierarchyManager(false);
       return;
     }
     setSavingHierarchy(true);
     try {
-      const existingByTitle = Object.fromEntries(
-        positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
-      );
-      const updates = hierarchyDraft.map((row, index) => ({
-        existing: existingByTitle[row.normalized_title] || null,
-        position_title: row.position_title,
-        sort_order: (index + 1) * 10,
-      }));
+      const seenDraftTitles = new Set();
+      const draftRows = hierarchyDraft
+        .map((row, index) => {
+          const positionTitle = formatLaborPositionTitle(row.position_title);
+          const normalizedTitle = normalizePositionTitle(positionTitle);
+          if (!normalizedTitle || seenDraftTitles.has(normalizedTitle)) return null;
+          seenDraftTitles.add(normalizedTitle);
+          return {
+            id: row.id || null,
+            position_title: positionTitle,
+            normalized_title: normalizedTitle,
+            sort_order: (index + 1) * 10,
+          };
+        })
+        .filter(Boolean);
+
+      const existingByTitle = {};
+      positionHierarchy.forEach((row) => {
+        const normalizedTitle = normalizePositionTitle(row.position_title);
+        if (!normalizedTitle) return;
+        const current = existingByTitle[normalizedTitle];
+        const rowCanonical = formatLaborPositionTitle(row.position_title).toLowerCase();
+        const currentCanonical = current ? formatLaborPositionTitle(current.position_title).toLowerCase() : "";
+        const rowIsCanonical = String(row.position_title || "").trim().toLowerCase() === rowCanonical;
+        const currentIsCanonical = current && String(current.position_title || "").trim().toLowerCase() === currentCanonical;
+        if (!current || (rowIsCanonical && !currentIsCanonical)) existingByTitle[normalizedTitle] = row;
+      });
+
+      const retainedExistingIds = new Set();
+      const updates = draftRows.map((entry) => {
+        const existing = existingByTitle[entry.normalized_title] || null;
+        if (existing?.id) retainedExistingIds.add(existing.id);
+        return { ...entry, existing };
+      });
+      const deleteIds = positionHierarchy
+        .map((row) => row.id)
+        .filter((id) => id && !retainedExistingIds.has(id));
+
+      const deleteResults = await Promise.all(deleteIds.map((id) => (
+        supabase.from("labor_position_hierarchy").delete().eq("id", id)
+      )));
+      const failedDelete = deleteResults.find((result) => result.error);
+      if (failedDelete?.error) throw failedDelete.error;
 
       const mutationResults = await Promise.all(updates.map((entry) => {
         if (entry.existing?.id) {
@@ -4193,12 +6606,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .order("sort_order", { ascending: true });
       if (error) throw error;
       setPositionHierarchy(hierarchyRes || []);
-      setRosterSort({ key: "hierarchy", direction: "asc" });
+      setRosterSort(LABOR_DEFAULT_SORT);
       setShowHierarchyManager(false);
-      addGlobalToast("Roster hierarchy updated", "success");
+      addGlobalToast("Labor position settings updated", "success");
     } catch (error) {
       console.error("Failed to save labor position hierarchy", error);
-      addGlobalToast(error.message || "Failed to save roster hierarchy", "error");
+      addGlobalToast(error.message || "Failed to save labor position settings", "error");
     }
     setSavingHierarchy(false);
   }, [actorName, actorUserId, addGlobalToast, canEditRoster, hierarchyDraft, hierarchyPersistenceAvailable, positionHierarchy, resolvedLaborLocationId]);
@@ -4266,6 +6679,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const contactEmail = readLaborEmployeeContact(contactEmployee, "contact_email");
       const contactPhone = readLaborEmployeeContact(contactEmployee, "contact_phone");
       const fullName = row.full_name || contactEmployee?.full_name || "";
+      const positionTitle = formatLaborPositionTitle(row.position_title || contactEmployee?.position_title || "");
       const { firstName, lastName } = splitEmployeeName(fullName);
       const endDate = row.end_date || contactEmployee?.end_date || null;
       const isActive = row.is_active ?? !endDate;
@@ -4277,7 +6691,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         id: employeeId || row.id,
         labor_employee_id: employeeId,
         full_name: fullName,
-        position_title: row.position_title || contactEmployee?.position_title || "",
+        position_title: positionTitle,
         employment_commitment: readLaborEmploymentCommitment(row) || readLaborEmploymentCommitment(contactEmployee) || null,
       };
       const requirementRows = buildEmployeeTrainingRequirementRows({
@@ -4300,7 +6714,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         id: employeeId || row.id,
         labor_employee_id: employeeId,
         full_name: fullName,
-        position_title: row.position_title || contactEmployee?.position_title || "",
+        position_title: positionTitle,
         employment_commitment: readLaborEmploymentCommitment(row) || readLaborEmploymentCommitment(contactEmployee) || null,
         position_group: row.position_group || contactEmployee?.position_group || null,
         metadata: contactEmployee?.metadata || row.metadata || {},
@@ -4343,6 +6757,909 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     return buildLaborRosterStaffingSummary(preparedRosterRows).staffingMatrix;
   }, [displayedDashboardMetrics.staffingMatrix, preparedRosterRows]);
+  const positionHierarchyRows = useMemo(() => {
+    const trustedRows = positionHierarchy.filter(isPersistedLaborPositionRowTrusted);
+    const sourceRows = trustedRows.length > 0 ? trustedRows : makeDefaultLaborPositionRows();
+    const seen = new Set();
+
+    return sourceRows
+      .map((row, index) => {
+        const positionTitle = formatLaborPositionTitle(row.position_title);
+        const normalizedTitle = normalizePositionTitle(positionTitle);
+        if (!normalizedTitle || seen.has(normalizedTitle)) return null;
+        seen.add(normalizedTitle);
+        return {
+          id: row.id || null,
+          position_title: positionTitle,
+          normalized_title: normalizedTitle,
+          sort_order: Number.isFinite(row.sort_order) ? row.sort_order : (index + 1) * 10,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => {
+        const orderDelta = (left.sort_order ?? 9999) - (right.sort_order ?? 9999);
+        if (orderDelta !== 0) return orderDelta;
+        return left.position_title.localeCompare(right.position_title, undefined, { sensitivity: "base" });
+      });
+  }, [positionHierarchy]);
+  const positionHierarchyIndex = useMemo(() => {
+    return Object.fromEntries(positionHierarchyRows.map((row, index) => [row.normalized_title, index]));
+  }, [positionHierarchyRows]);
+  const approvedLaborPositionOptions = useMemo(() => (
+    positionHierarchyRows.map((row) => buildLaborPositionOption(row.position_title)).filter(Boolean)
+  ), [positionHierarchyRows]);
+  const getLaborPositionOptionsWithCurrent = useCallback((currentTitle = "") => {
+    const options = [...approvedLaborPositionOptions];
+    const currentOption = buildLaborPositionOption(currentTitle);
+    if (currentOption && !options.some((option) => option.normalizedTitle === currentOption.normalizedTitle)) {
+      options.unshift({ ...currentOption, label: `${currentOption.label} (current)` });
+    }
+    return options;
+  }, [approvedLaborPositionOptions]);
+  const hourAnalysisModel = useMemo(() => buildHourAnalysisModel({
+    rosterRows: preparedRosterRows,
+    settings: hourAnalysisSettings,
+  }), [hourAnalysisSettings, preparedRosterRows]);
+  const hourAnalysisGroupHierarchyOrder = useMemo(() => {
+    const order = new Map();
+    const considerPosition = (positionTitle, fallbackIndex = 10000) => {
+      const title = String(positionTitle || "").trim();
+      if (!title) return;
+      const groupKey = getHourAnalysisGroupKey({ position_title: title });
+      const sort = positionHierarchyIndex[normalizePositionTitle(title)] ?? fallbackIndex;
+      if (!order.has(groupKey) || sort < order.get(groupKey)) order.set(groupKey, sort);
+    };
+    positionHierarchyRows.forEach((row, index) => considerPosition(row.position_title, index));
+    HOUR_ANALYSIS_GROUPS.forEach((group, index) => {
+      if (!order.has(group.key)) order.set(group.key, 5000 + index);
+    });
+    return order;
+  }, [positionHierarchyIndex, positionHierarchyRows]);
+  const hourAnalysisGroups = useMemo(() => {
+    const populated = new Set([
+      ...hourAnalysisModel.headcountRows.map((row) => row.key),
+      ...hourAnalysisModel.weeklyRows.map((row) => row.key),
+    ]);
+    return HOUR_ANALYSIS_GROUPS
+      .filter((group) => group.key !== "other" || populated.has("other"))
+      .sort((left, right) => (hourAnalysisGroupHierarchyOrder.get(left.key) ?? 9999) - (hourAnalysisGroupHierarchyOrder.get(right.key) ?? 9999));
+  }, [hourAnalysisGroupHierarchyOrder, hourAnalysisModel.headcountRows, hourAnalysisModel.weeklyRows]);
+  const hourAnalysisPositionOptions = approvedLaborPositionOptions;
+  const hourAnalysisCommitmentOptions = useMemo(() => (
+    LABOR_EMPLOYMENT_COMMITMENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))
+  ), []);
+  const whatIfPreviewGroupKey = getHourAnalysisGroupKey({ position_title: whatIfPosition });
+  const whatIfPreviewCommitment = readLaborEmploymentCommitment({ employment_commitment: whatIfCommitment }) || "full_time";
+  const whatIfPreviewRange = hourAnalysisSettings.expectations[whatIfPreviewGroupKey]?.[whatIfPreviewCommitment] || makeHourAnalysisRangeTotals();
+  const canAddHourAnalysisWhatIf = Boolean(String(whatIfPosition || "").trim());
+  const renderHourAnalysisHeadcount = (base = 0, whatIf = 0) => {
+    const projected = normalizeHourAnalysisNumber(base, 0) + normalizeHourAnalysisNumber(whatIf, 0);
+    const scenarioDelta = normalizeHourAnalysisNumber(Math.abs(whatIf), 0);
+    const scenarioCopy = whatIf > 0
+      ? `${base} + ${scenarioDelta} what-if`
+      : whatIf < 0
+        ? `${base} - ${scenarioDelta} moved`
+        : "";
+    return (
+      <span className="hour-analysis-headcount-stack">
+        <strong>{projected}</strong>
+        {whatIf ? <small>{scenarioCopy}</small> : null}
+      </span>
+    );
+  };
+  const hourAnalysisTargetProgress = hourAnalysisModel.totals.targetWeekly > 0
+    ? Math.max(0, Math.min(100, (hourAnalysisModel.totals.projectedExpected / hourAnalysisModel.totals.targetWeekly) * 100))
+    : 0;
+  const hourAnalysisDecision = useMemo(() => {
+    const totals = hourAnalysisModel.totals;
+    if (totals.hireDeficitHours > 0) {
+      return {
+        label: "Recruit",
+        tone: "short",
+        value: `${formatHourAnalysisHours(totals.hireDeficitHours)} hrs/wk short`,
+        copy: `Start recruiting or add preferred hours in the bottleneck roles. Preferred capacity is ${formatHourAnalysisHours(totals.projectedExpected)} hrs/wk against a ${formatHourAnalysisHours(totals.targetWeekly)} hrs/wk target.`,
+      };
+    }
+    if (totals.projectedExpected > totals.overRosteredWeekly) {
+      return {
+        label: "Overbuilt",
+        tone: "surplus",
+        value: `${formatHourAnalysisHours(totals.projectedExpected - totals.overRosteredWeekly)} hrs/wk over healthy`,
+        copy: `Freeze offers, rescind speculative what-ifs, or reduce low-confidence hours. Preferred capacity is above the high relief case where employees may stop getting the hours they expect.`,
+      };
+    }
+    if (totals.expectedGapToTarget > 0) {
+      return {
+        label: "On target",
+        tone: "healthy",
+        value: `${formatHourAnalysisHours(totals.expectedGapToTarget)} hrs/wk reserve`,
+        copy: `Preferred capacity is inside the healthy band. Keep recruiting warm, but do not add headcount without a known demand change.`,
+      };
+    }
+    return {
+      label: "On target",
+      tone: "healthy",
+      value: "Coverage aligned",
+      copy: `Preferred capacity lands on the operating target. Maintain the roster and watch call-outs.`,
+    };
+  }, [hourAnalysisModel.totals]);
+  const markHourAnalysisChanged = useCallback((keys = []) => {
+    const normalizedKeys = Array.isArray(keys) ? keys.filter(Boolean) : [keys].filter(Boolean);
+    if (normalizedKeys.length === 0) return;
+    setHourAnalysisChangedKeys((prev) => new Set([...prev, ...normalizedKeys]));
+    window.setTimeout(() => {
+      setHourAnalysisChangedKeys((prev) => {
+        const next = new Set(prev);
+        normalizedKeys.forEach((key) => next.delete(key));
+        return next;
+      });
+    }, 1100);
+  }, []);
+  const appendHourAnalysisAudit = useCallback((settings, entry) => {
+    const normalized = normalizeHourAnalysisSettings(settings);
+    const occurredAt = new Date().toISOString();
+    const auditEntry = {
+      id: `hour-analysis-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      occurred_at: occurredAt,
+      actor_id: actorUserId,
+      actor_name: actorName,
+      ...entry,
+    };
+    return {
+      ...normalized,
+      auditLog: normalizeHourAnalysisAuditLog([auditEntry, ...(normalized.auditLog || [])]),
+    };
+  }, [actorName, actorUserId]);
+  const updateHourExpectation = useCallback((groupKey, commitment, band, value) => {
+    const normalizedGroup = HOUR_ANALYSIS_GROUP_LABELS[groupKey] ? groupKey : "other";
+    const normalizedCommitment = commitment === "part_time" ? "part_time" : "full_time";
+    const normalizedBand = HOUR_ANALYSIS_RANGE_KEYS.includes(band) ? band : "expected";
+    if (normalizedBand !== "expected") return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const currentRange = normalized.expectations[normalizedGroup]?.[normalizedCommitment] || DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[normalizedGroup]?.[normalizedCommitment] || {};
+      const before = normalizeHourAnalysisNumber(currentRange.expected, 0);
+      const after = normalizeHourAnalysisNumber(value, 0);
+      if (before === after) return normalized;
+      markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "default_preferred_hours_changed",
+          entity_id: `${normalizedGroup}:${normalizedCommitment}`,
+          entity_label: `${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)}`,
+          summary: `Changed default preferred hours for ${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)} from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          before,
+          after,
+        }),
+        expectations: {
+          ...normalized.expectations,
+          [normalizedGroup]: {
+            ...normalized.expectations[normalizedGroup],
+            [normalizedCommitment]: updateHourAnalysisRangeBand(currentRange, normalizedBand, after),
+          },
+        },
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateHourAnalysisSkeletonHours = useCallback((groupKey, value) => {
+    const normalizedGroup = HOUR_ANALYSIS_GROUP_LABELS[groupKey] ? groupKey : "other";
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const before = normalizeHourAnalysisNumber(normalized.thresholds.daily_skeleton[normalizedGroup], 0);
+      const after = normalizeHourAnalysisNumber(value, 0);
+      if (before === after) return normalized;
+      markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "skeleton_hours_changed",
+          entity_id: `skeleton:${normalizedGroup}`,
+          entity_label: getHourAnalysisGroupLabel(normalizedGroup),
+          summary: `Changed ${getHourAnalysisGroupLabel(normalizedGroup)} daily skeleton from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/day.`,
+          before,
+          after,
+        }),
+        thresholds: {
+          ...normalized.thresholds,
+          daily_skeleton: {
+            ...normalized.thresholds.daily_skeleton,
+            [normalizedGroup]: after,
+          },
+        },
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const mutateHourAnalysisLaborModel = useCallback((mutator) => {
+    if (typeof mutator !== "function") return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const result = mutator(normalized.laborModel, normalized);
+      if (!result || !result.model) return normalized;
+      const nextLaborModel = normalizeHourAnalysisLaborModel(result.model);
+      if (JSON.stringify(normalized.laborModel) === JSON.stringify(nextLaborModel)) return normalized;
+      const changedKeys = Array.isArray(result.changedKeys) && result.changedKeys.length > 0
+        ? result.changedKeys
+        : ["capacity", "labor-model"];
+      markHourAnalysisChanged(changedKeys);
+      return {
+        ...appendHourAnalysisAudit(normalized, result.audit || {
+          action: "labor_model_changed",
+          entity_id: "labor-model",
+          entity_label: "Labor Model",
+          summary: "Updated Labor Model.",
+          before: null,
+          after: null,
+        }),
+        laborModel: nextLaborModel,
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateHourAnalysisLaborModelCell = useCallback((dayKey, rowId, columnIndex, value) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    const normalizedColumnIndex = Number(columnIndex);
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      const row = day.rows.find((item) => item.id === rowId);
+      if (!row || !Number.isInteger(normalizedColumnIndex) || normalizedColumnIndex < 0 || normalizedColumnIndex >= day.columns.length) return null;
+      const before = String(row.coverage[normalizedColumnIndex] || "").trim();
+      const after = normalizeLaborModelCoverageCell(value);
+      if (before === after) return null;
+      const nextRows = day.rows.map((item) => (
+        item.id === rowId
+          ? { ...item, coverage: item.coverage.map((cell, index) => (index === normalizedColumnIndex ? after : cell)) }
+          : item
+      ));
+      return {
+        model: { ...normalizedModel, days: { ...normalizedModel.days, [normalizedDay]: { ...day, rows: nextRows } } },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`],
+        audit: {
+          action: "labor_model_cell_changed",
+          entity_id: `labor-model:${normalizedDay}:${rowId}:${normalizedColumnIndex}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${row.role_label}`,
+          summary: `Changed ${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${row.role_label} coverage at ${day.columns[normalizedColumnIndex]?.label || "time slot"}.`,
+          before,
+          after,
+        },
+      };
+    });
+  }, [mutateHourAnalysisLaborModel]);
+  const updateHourAnalysisLaborModelRow = useCallback((dayKey, rowId, updates = {}) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      const row = day.rows.find((item) => item.id === rowId);
+      if (!row) return null;
+      const before = row;
+      const nextRoleLabel = Object.prototype.hasOwnProperty.call(updates, "role_label")
+        ? String(updates.role_label || "").trim() || row.role_label
+        : row.role_label;
+      const nextGroupKey = Object.prototype.hasOwnProperty.call(updates, "group_key")
+        ? normalizeLaborModelGroupKey(updates.group_key, { ...row, role_label: nextRoleLabel })
+        : row.group_key;
+      const nextShiftType = Object.prototype.hasOwnProperty.call(updates, "shift_type")
+        ? normalizeLaborModelShiftType(updates.shift_type, row)
+        : row.shift_type;
+      const nextBreakEnabled = Object.prototype.hasOwnProperty.call(updates, "break_enabled")
+        ? Boolean(updates.break_enabled)
+        : Boolean(row.break_enabled);
+      const nextBreakMinutes = Object.prototype.hasOwnProperty.call(updates, "break_minutes")
+        ? normalizeLaborModelBreakMinutes(updates.break_minutes, row.break_minutes || 30)
+        : normalizeLaborModelBreakMinutes(row.break_minutes, 30);
+      const after = {
+        ...row,
+        role_label: nextRoleLabel,
+        group_key: nextGroupKey,
+        shift_type: nextShiftType,
+        break_enabled: nextBreakEnabled,
+        break_minutes: nextBreakMinutes,
+      };
+      if (
+        before.role_label === after.role_label
+        && before.group_key === after.group_key
+        && before.shift_type === after.shift_type
+        && Boolean(before.break_enabled) === Boolean(after.break_enabled)
+        && normalizeLaborModelBreakMinutes(before.break_minutes, 30) === after.break_minutes
+      ) return null;
+      return {
+        model: {
+          ...normalizedModel,
+          days: {
+            ...normalizedModel.days,
+            [normalizedDay]: {
+              ...day,
+              rows: day.rows.map((item) => (item.id === rowId ? after : item)),
+            },
+          },
+        },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`],
+        audit: {
+          action: "labor_model_row_changed",
+          entity_id: `labor-model:${normalizedDay}:${rowId}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${row.role_label}`,
+          summary: `Updated Labor Model line ${row.role_label} on ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before,
+          after,
+        },
+      };
+    });
+  }, [mutateHourAnalysisLaborModel]);
+  const insertHourAnalysisLaborModelRow = useCallback((dayKey, afterRowId = "") => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      const insertIndex = afterRowId ? day.rows.findIndex((row) => row.id === afterRowId) + 1 : day.rows.length;
+      const safeIndex = Math.max(0, Math.min(day.rows.length, insertIndex || day.rows.length));
+      const referenceRow = day.rows[Math.max(0, safeIndex - 1)] || day.rows[safeIndex] || {};
+      const nextRow = {
+        id: `${normalizedDay}-line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        group_key: referenceRow.group_key || "pct",
+        role_label: `${getHourAnalysisGroupLabel(referenceRow.group_key || "pct")} ${LABOR_MODEL_SHIFT_TYPE_LABELS[referenceRow.shift_type || "opening"] || "Opening"}`,
+        shift_type: referenceRow.shift_type || "opening",
+        break_enabled: referenceRow.break_enabled ?? true,
+        break_minutes: normalizeLaborModelBreakMinutes(referenceRow.break_minutes, 30),
+        coverage: Array.from({ length: day.columns.length }, () => ""),
+      };
+      const nextRows = [...day.rows];
+      nextRows.splice(safeIndex, 0, nextRow);
+      return {
+        model: { ...normalizedModel, days: { ...normalizedModel.days, [normalizedDay]: { ...day, rows: nextRows } } },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`, `labor-model-row:${nextRow.id}`],
+        audit: {
+          action: "labor_model_row_added",
+          entity_id: `labor-model:${normalizedDay}:${nextRow.id}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${nextRow.role_label}`,
+          summary: `Inserted a Labor Model line on ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before: null,
+          after: nextRow,
+        },
+      };
+    });
+  }, [mutateHourAnalysisLaborModel]);
+  const removeHourAnalysisLaborModelRow = useCallback((dayKey, rowId) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      const targetRow = day.rows.find((row) => row.id === rowId);
+      if (!targetRow) return null;
+      return {
+        model: {
+          ...normalizedModel,
+          days: {
+            ...normalizedModel.days,
+            [normalizedDay]: {
+              ...day,
+              rows: day.rows.filter((row) => row.id !== rowId),
+            },
+          },
+        },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`],
+        audit: {
+          action: "labor_model_row_removed",
+          entity_id: `labor-model:${normalizedDay}:${rowId}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${targetRow.role_label}`,
+          summary: `Removed Labor Model line ${targetRow.role_label} from ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before: targetRow,
+          after: null,
+        },
+      };
+    });
+  }, [mutateHourAnalysisLaborModel]);
+  const updateHourAnalysisLaborModelColumn = useCallback((dayKey, columnIndex, updates = {}) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    const normalizedColumnIndex = Number(columnIndex);
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      if (!Number.isInteger(normalizedColumnIndex) || normalizedColumnIndex < 0 || normalizedColumnIndex >= day.columns.length) return null;
+      const before = day.columns[normalizedColumnIndex];
+      const nextLabel = Object.prototype.hasOwnProperty.call(updates, "label") ? String(updates.label || "").trim() || before.label : before.label;
+      const parsedRange = parseLaborModelTimeRange(nextLabel);
+      if (Object.prototype.hasOwnProperty.call(updates, "label") && !parsedRange.valid) {
+        addGlobalToast?.(parsedRange.error || "Use a valid time range.", "error");
+        return null;
+      }
+      const after = {
+        ...before,
+        label: nextLabel,
+        hours: parsedRange.valid ? parsedRange.hours : normalizeHourAnalysisNumber(updates.hours ?? before.hours, before.hours),
+        start_minutes: parsedRange.valid ? parsedRange.start : before.start_minutes,
+        end_minutes: parsedRange.valid ? parsedRange.end : before.end_minutes,
+        is_valid: parsedRange.valid,
+        validation_error: parsedRange.valid ? "" : before.validation_error,
+      };
+      if (before.label === after.label && before.hours === after.hours) return null;
+      const nextColumnsForValidation = day.columns.map((column, index) => (index === normalizedColumnIndex ? after : column));
+      const validation = validateLaborModelColumns(nextColumnsForValidation);
+      if (!validation.valid) {
+        const error = validation.errors.find((item) => item.index === normalizedColumnIndex) || validation.errors[0];
+        addGlobalToast?.(error?.message || "Time slots must be contiguous.", "error");
+        return null;
+      }
+      return {
+        model: {
+          ...normalizedModel,
+          days: {
+            ...normalizedModel.days,
+            [normalizedDay]: {
+              ...day,
+              columns: day.columns.map((column, index) => (index === normalizedColumnIndex ? after : column)),
+            },
+          },
+        },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`],
+        audit: {
+          action: "labor_model_column_changed",
+          entity_id: `labor-model:${normalizedDay}:slot-${normalizedColumnIndex}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${before.label}`,
+          summary: `Updated Labor Model time slot ${before.label} on ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before,
+          after,
+        },
+      };
+    });
+  }, [addGlobalToast, mutateHourAnalysisLaborModel]);
+  const insertHourAnalysisLaborModelColumn = useCallback((dayKey, columnIndex, side = "right") => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    const normalizedColumnIndex = Number(columnIndex);
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      const targetIndex = Number.isInteger(normalizedColumnIndex)
+        ? Math.max(0, Math.min(day.columns.length - 1, normalizedColumnIndex))
+        : day.columns.length - 1;
+      const targetColumn = day.columns[targetIndex] || day.columns[day.columns.length - 1] || { label: "8-9a", hours: 1 };
+      const parsedTarget = parseLaborModelTimeRange(targetColumn.label);
+      let safeIndex = side === "left" ? targetIndex : targetIndex + 1;
+      let nextColumn;
+      let nextColumns = [...day.columns];
+      const nextRows = day.rows.map((row) => ({ ...row, coverage: [...row.coverage] }));
+      if (parsedTarget.valid && targetIndex >= 0 && targetIndex < day.columns.length) {
+        if (side === "left" && targetIndex === 0) {
+          const durationMinutes = 30;
+          const start = parsedTarget.start - durationMinutes;
+          const end = parsedTarget.start;
+          nextColumn = {
+            id: `${normalizedDay}-slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            label: formatLaborModelTimeRange(start, end),
+            hours: normalizeHourAnalysisNumber(durationMinutes / 60, 0),
+          };
+          safeIndex = 0;
+        } else if (side === "right" && targetIndex === day.columns.length - 1) {
+          const durationMinutes = Math.max(15, Math.round((parsedTarget.end - parsedTarget.start) / 15) * 15 || 30);
+          const start = parsedTarget.end;
+          const end = parsedTarget.end + durationMinutes;
+          nextColumn = {
+            id: `${normalizedDay}-slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            label: formatLaborModelTimeRange(start, end),
+            hours: normalizeHourAnalysisNumber(durationMinutes / 60, 0),
+          };
+          safeIndex = day.columns.length;
+        } else {
+          const midpoint = parsedTarget.start + Math.max(15, Math.round(((parsedTarget.end - parsedTarget.start) / 2) / 15) * 15);
+          const firstLabel = formatLaborModelTimeRange(parsedTarget.start, midpoint);
+          const secondLabel = formatLaborModelTimeRange(midpoint, parsedTarget.end);
+          const firstHours = parseLaborModelTimeRange(firstLabel).hours;
+          const secondHours = parseLaborModelTimeRange(secondLabel).hours;
+          nextColumn = {
+            id: `${normalizedDay}-slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            label: side === "left" ? firstLabel : secondLabel,
+            hours: side === "left" ? firstHours : secondHours,
+          };
+          nextColumns[targetIndex] = {
+            ...targetColumn,
+            label: side === "left" ? secondLabel : firstLabel,
+            hours: side === "left" ? secondHours : firstHours,
+          };
+          safeIndex = side === "left" ? targetIndex : targetIndex + 1;
+          nextRows.forEach((row) => {
+            const copiedValue = row.coverage[targetIndex] || "";
+            row.coverage.splice(safeIndex, 0, copiedValue);
+          });
+        }
+      }
+      if (!nextColumn) {
+        const referenceColumn = day.columns[Math.max(0, safeIndex - 1)] || day.columns[safeIndex] || {};
+        nextColumn = {
+          id: `${normalizedDay}-slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          label: "New time",
+          hours: normalizeHourAnalysisNumber(referenceColumn.hours, 1),
+        };
+      }
+      if (!parsedTarget.valid || targetIndex < 0 || targetIndex >= day.columns.length || (parsedTarget.valid && (side === "left" && targetIndex === 0 || side === "right" && targetIndex === day.columns.length - 1))) {
+        nextRows.forEach((row) => {
+          row.coverage.splice(safeIndex, 0, "");
+        });
+      }
+      nextColumns.splice(safeIndex, 0, nextColumn);
+      return {
+        model: { ...normalizedModel, days: { ...normalizedModel.days, [normalizedDay]: { ...day, columns: nextColumns, rows: nextRows } } },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`, `labor-model-column:${nextColumn.id}`],
+        audit: {
+          action: "labor_model_column_added",
+          entity_id: `labor-model:${normalizedDay}:${nextColumn.id}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${nextColumn.label}`,
+          summary: `Inserted a Labor Model time slot on ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before: null,
+          after: nextColumn,
+        },
+      };
+    });
+  }, [mutateHourAnalysisLaborModel]);
+  const removeHourAnalysisLaborModelColumn = useCallback((dayKey, columnIndex) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    const normalizedColumnIndex = Number(columnIndex);
+    mutateHourAnalysisLaborModel((model) => {
+      const normalizedModel = normalizeHourAnalysisLaborModel(model);
+      const day = normalizedModel.days[normalizedDay];
+      if (day.columns.length <= 1 || !Number.isInteger(normalizedColumnIndex) || normalizedColumnIndex < 0 || normalizedColumnIndex >= day.columns.length) return null;
+      const targetColumn = day.columns[normalizedColumnIndex];
+      const nextColumns = day.columns.filter((_, index) => index !== normalizedColumnIndex);
+      const validation = validateLaborModelColumns(nextColumns);
+      if (!validation.valid) {
+        addGlobalToast?.("Deleting that slot would leave a gap. Adjust a neighboring time range first, then remove it.", "error");
+        return null;
+      }
+      return {
+        model: {
+          ...normalizedModel,
+          days: {
+            ...normalizedModel.days,
+            [normalizedDay]: {
+              ...day,
+              columns: nextColumns,
+              rows: day.rows.map((row) => ({ ...row, coverage: row.coverage.filter((_, index) => index !== normalizedColumnIndex) })),
+            },
+          },
+        },
+        changedKeys: ["capacity", "labor-model", `labor-model:${normalizedDay}`],
+        audit: {
+          action: "labor_model_column_removed",
+          entity_id: `labor-model:${normalizedDay}:slot-${normalizedColumnIndex}`,
+          entity_label: `${LABOR_MODEL_DAY_LABELS[normalizedDay]} ${targetColumn.label}`,
+          summary: `Removed Labor Model time slot ${targetColumn.label} from ${LABOR_MODEL_DAY_LABELS[normalizedDay]}.`,
+          before: targetColumn,
+          after: null,
+        },
+      };
+    });
+  }, [addGlobalToast, mutateHourAnalysisLaborModel]);
+  const startLaborModelCoverageDrag = useCallback((dayKey, rowId, columnIndex, shouldActivate) => {
+    const nextValue = shouldActivate ? "1" : "";
+    setLaborModelDragSelection({ dayKey, value: nextValue });
+    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, nextValue);
+  }, [updateHourAnalysisLaborModelCell]);
+  const enterLaborModelCoverageDrag = useCallback((dayKey, rowId, columnIndex) => {
+    if (!laborModelDragSelection || laborModelDragSelection.dayKey !== dayKey) return;
+    updateHourAnalysisLaborModelCell(dayKey, rowId, columnIndex, laborModelDragSelection.value);
+  }, [laborModelDragSelection, updateHourAnalysisLaborModelCell]);
+
+  useEffect(() => {
+    if (!laborModelDragSelection) return undefined;
+    const clearDrag = () => setLaborModelDragSelection(null);
+    window.addEventListener("mouseup", clearDrag);
+    window.addEventListener("pointerup", clearDrag);
+    return () => {
+      window.removeEventListener("mouseup", clearDrag);
+      window.removeEventListener("pointerup", clearDrag);
+    };
+  }, [laborModelDragSelection]);
+
+  const setHourAnalysisEmployeeOverride = useCallback((employeeKey, band, hours) => {
+    const normalizedKey = String(employeeKey || "").trim();
+    if (!normalizedKey) return;
+    const normalizedBand = HOUR_ANALYSIS_RANGE_KEYS.includes(band) ? band : "expected";
+    if (normalizedBand !== "expected") return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const before = normalizeHourAnalysisNumber(normalized.overrides[normalizedKey]?.expected, 0);
+      const after = normalizeHourAnalysisNumber(hours, 0);
+      if (before === after && Object.prototype.hasOwnProperty.call(normalized.overrides[normalizedKey] || {}, "expected")) return normalized;
+      markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "preferred_hours_overridden",
+          entity_id: normalizedKey,
+          entity_label: normalizedKey,
+          summary: `Set preferred-hours override to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          before: Object.prototype.hasOwnProperty.call(normalized.overrides[normalizedKey] || {}, "expected") ? before : null,
+          after,
+          note: normalized.notes[normalizedKey] || "",
+        }),
+        overrides: {
+          ...normalized.overrides,
+          [normalizedKey]: {
+            ...(normalized.overrides[normalizedKey] || {}),
+            [normalizedBand]: after,
+          },
+        },
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const clearHourAnalysisEmployeeOverride = useCallback((employeeKey, band) => {
+    const normalizedKey = String(employeeKey || "").trim();
+    if (!normalizedKey) return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const nextOverrides = { ...normalized.overrides };
+      if (HOUR_ANALYSIS_RANGE_KEYS.includes(band)) {
+        if (band !== "expected") return normalized;
+        const nextRange = { ...(nextOverrides[normalizedKey] || {}) };
+        if (!Object.prototype.hasOwnProperty.call(nextRange, band)) return normalized;
+        const before = nextRange[band];
+        delete nextRange[band];
+        if (Object.keys(nextRange).length === 0) delete nextOverrides[normalizedKey];
+        else nextOverrides[normalizedKey] = nextRange;
+        markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
+        return {
+          ...appendHourAnalysisAudit(normalized, {
+            action: "preferred_hours_inherited",
+            entity_id: normalizedKey,
+            entity_label: normalizedKey,
+            summary: `Cleared preferred-hours override and returned to inherited default.`,
+            before,
+            after: null,
+            note: normalized.notes[normalizedKey] || "",
+          }),
+          overrides: nextOverrides,
+        };
+      } else {
+        delete nextOverrides[normalizedKey];
+      }
+      markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
+      return { ...appendHourAnalysisAudit(normalized, {
+        action: "preferred_hours_inherited",
+        entity_id: normalizedKey,
+        entity_label: normalizedKey,
+        summary: `Cleared all preferred-hours overrides.`,
+        before: normalized.overrides[normalizedKey] || null,
+        after: null,
+        note: normalized.notes[normalizedKey] || "",
+      }), overrides: nextOverrides };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateHourAnalysisNote = useCallback((employeeKey, note) => {
+    const normalizedKey = String(employeeKey || "").trim();
+    if (!normalizedKey) return;
+    const nextNote = String(note || "").trim();
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const before = normalized.notes[normalizedKey] || "";
+      if (before === nextNote) return normalized;
+      const nextNotes = { ...normalized.notes };
+      if (nextNote) nextNotes[normalizedKey] = nextNote;
+      else delete nextNotes[normalizedKey];
+      markHourAnalysisChanged([`row:${normalizedKey}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "justification_note_changed",
+          entity_id: normalizedKey,
+          entity_label: normalizedKey,
+          summary: nextNote ? "Updated preferred-hours justification note." : "Cleared preferred-hours justification note.",
+          before,
+          after: nextNote,
+          note: nextNote,
+        }),
+        notes: nextNotes,
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateHourAnalysisCoverageSplit = useCallback((employeeKey, updates = {}) => {
+    const normalizedKey = String(employeeKey || "").trim();
+    if (!normalizedKey) return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const current = normalizeHourAnalysisCoverageSplit(normalized.splits[normalizedKey]);
+      const nextSplit = normalizeHourAnalysisCoverageSplit({ ...current, ...updates });
+      if (current.floor_group === nextSplit.floor_group && current.admin_hours === nextSplit.admin_hours) return normalized;
+      const nextSplits = { ...normalized.splits };
+      if (!nextSplit.floor_group && nextSplit.admin_hours == null) delete nextSplits[normalizedKey];
+      else nextSplits[normalizedKey] = nextSplit;
+      markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "coverage_split_changed",
+          entity_id: normalizedKey,
+          entity_label: normalizedKey,
+          summary: nextSplit.floor_group
+            ? `Changed coverage split to ${formatHourAnalysisHours(nextSplit.admin_hours || 0)} admin hrs/wk plus ${getHourAnalysisGroupLabel(nextSplit.floor_group)} floor coverage.`
+            : "Cleared coverage split.",
+          before: current,
+          after: nextSplit,
+          note: normalized.notes[normalizedKey] || "",
+        }),
+        splits: nextSplits,
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateHourAnalysisPositionMovement = useCallback((row = {}, nextPositionTitle = "") => {
+    const normalizedKey = String(row.employeeKey || row.id || "").trim();
+    if (!normalizedKey || row.isWhatIf) return;
+    const sourcePosition = formatLaborPositionTitle(row.sourcePositionTitle || row.position_title || row.position || "");
+    const targetPosition = formatLaborPositionTitle(nextPositionTitle || "");
+    const sourceGroup = row.sourceGroupKey || getHourAnalysisGroupKey({ position_title: sourcePosition });
+    const targetGroup = targetPosition ? getHourAnalysisGroupKey({ position_title: targetPosition }) : sourceGroup;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const currentMovement = normalizeHourAnalysisPositionMovement(normalized.positionMovements[normalizedKey]);
+      const currentTarget = currentMovement.position_title || "";
+      const shouldClear = !targetPosition || normalizePositionTitle(targetPosition) === normalizePositionTitle(sourcePosition);
+      if (shouldClear && !currentTarget) return normalized;
+      if (!shouldClear && normalizePositionTitle(currentTarget) === normalizePositionTitle(targetPosition)) return normalized;
+      const nextMovements = { ...normalized.positionMovements };
+      if (shouldClear) delete nextMovements[normalizedKey];
+      else nextMovements[normalizedKey] = normalizeHourAnalysisPositionMovement({ position_title: targetPosition });
+      markHourAnalysisChanged(["capacity", `row:${normalizedKey}`, `group:${sourceGroup}`, shouldClear ? null : `group:${targetGroup}`].filter(Boolean));
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: shouldClear ? "position_movement_cleared" : "position_movement_changed",
+          entity_id: normalizedKey,
+          entity_label: row.full_name || normalizedKey,
+          summary: shouldClear
+            ? `Cleared planned role movement for ${row.full_name || "employee"} and returned them to ${sourcePosition || "their roster position"}.`
+            : `Planned role movement for ${row.full_name || "employee"}: ${sourcePosition || "Roster position"} to ${targetPosition}.`,
+          before: currentTarget ? {
+            source_position_title: sourcePosition,
+            target_position_title: currentTarget,
+            source_group_key: sourceGroup,
+            target_group_key: currentMovement.group_key || getHourAnalysisGroupKey({ position_title: currentTarget }),
+          } : null,
+          after: shouldClear ? null : {
+            source_position_title: sourcePosition,
+            target_position_title: targetPosition,
+            source_group_key: sourceGroup,
+            target_group_key: targetGroup,
+          },
+          note: normalized.notes[normalizedKey] || "",
+        }),
+        positionMovements: nextMovements,
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const resetWhatIfHourAnalysisForm = useCallback(() => {
+    setWhatIfEmployeeName("");
+    setWhatIfPosition("");
+    setWhatIfCommitment("full_time");
+    setWhatIfHourOverrides({});
+    setWhatIfNote("");
+  }, []);
+  const addHourAnalysisWhatIfRow = useCallback(() => {
+    const positionTitle = formatLaborPositionTitle(whatIfPosition);
+    const groupKey = getHourAnalysisGroupKey({ position_title: positionTitle });
+    if (!positionTitle) return;
+    const nextRow = {
+      id: `what-if-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      scenario_type: "add",
+      source_employee_key: "",
+      source_full_name: "",
+      source_position_title: "",
+      source_employment_commitment: "",
+      source_group_key: "",
+      full_name: whatIfEmployeeName.trim() || "What-if Employee",
+      position_title: positionTitle || getHourAnalysisGroupLabel(groupKey),
+      employment_commitment: readLaborEmploymentCommitment({ employment_commitment: whatIfCommitment }) || "full_time",
+      group_key: groupKey,
+      hour_overrides: normalizeHourAnalysisOverrideRange(whatIfHourOverrides),
+      split: normalizeHourAnalysisCoverageSplit({}),
+      note: whatIfNote.trim(),
+    };
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      markHourAnalysisChanged(["capacity", `row:${nextRow.id}`, `group:${groupKey}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "what_if_added",
+          entity_id: nextRow.id,
+          entity_label: nextRow.full_name,
+          summary: `Added what-if ${nextRow.full_name} as ${getHourAnalysisGroupLabel(groupKey)} / ${getLaborEmploymentCommitmentLabel(nextRow.employment_commitment)}.`,
+          before: null,
+          after: nextRow,
+          note: nextRow.note,
+        }),
+        whatIfRows: [...normalized.whatIfRows, nextRow],
+      };
+    });
+    setShowHourAnalysisWhatIfModal(false);
+    resetWhatIfHourAnalysisForm();
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged, resetWhatIfHourAnalysisForm, whatIfCommitment, whatIfEmployeeName, whatIfHourOverrides, whatIfNote, whatIfPosition]);
+  const updateHourAnalysisWhatIfOverride = useCallback((rowId, band, hours) => {
+    const normalizedId = String(rowId || "").trim();
+    if (!normalizedId) return;
+    const normalizedBand = HOUR_ANALYSIS_RANGE_KEYS.includes(band) ? band : "expected";
+    if (normalizedBand !== "expected") return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const row = normalized.whatIfRows.find((item) => item.id === normalizedId);
+      if (!row) return normalized;
+      const before = normalizeHourAnalysisNumber(row.hour_overrides?.expected, 0);
+      const after = normalizeHourAnalysisNumber(hours, 0);
+      if (before === after && Object.prototype.hasOwnProperty.call(row.hour_overrides || {}, "expected")) return normalized;
+      markHourAnalysisChanged(["capacity", `row:${normalizedId}`, `group:${row.group_key}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "what_if_preferred_hours_changed",
+          entity_id: normalizedId,
+          entity_label: row.full_name,
+          summary: `Changed what-if preferred hours for ${row.full_name} to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          before: Object.prototype.hasOwnProperty.call(row.hour_overrides || {}, "expected") ? before : null,
+          after,
+          note: row.note || "",
+        }),
+        whatIfRows: normalized.whatIfRows.map((row) => (
+          row.id === normalizedId
+            ? {
+                ...row,
+                hour_overrides: {
+                  ...(row.hour_overrides || {}),
+                  [normalizedBand]: after,
+                },
+              }
+            : row
+        )),
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const clearHourAnalysisWhatIfOverride = useCallback((rowId, band) => {
+    const normalizedId = String(rowId || "").trim();
+    if (!normalizedId) return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const targetRow = normalized.whatIfRows.find((row) => row.id === normalizedId);
+      if (!targetRow) return normalized;
+      if (HOUR_ANALYSIS_RANGE_KEYS.includes(band) && band !== "expected") return normalized;
+      const before = targetRow.hour_overrides?.expected;
+      if (HOUR_ANALYSIS_RANGE_KEYS.includes(band) && !Object.prototype.hasOwnProperty.call(targetRow.hour_overrides || {}, band)) return normalized;
+      markHourAnalysisChanged(["capacity", `row:${normalizedId}`, `group:${targetRow.group_key}`]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "what_if_preferred_hours_inherited",
+          entity_id: normalizedId,
+          entity_label: targetRow.full_name,
+          summary: `Cleared what-if preferred-hours override for ${targetRow.full_name}.`,
+          before: before ?? null,
+          after: null,
+          note: targetRow.note || "",
+        }),
+        whatIfRows: normalized.whatIfRows.map((row) => {
+          if (row.id !== normalizedId) return row;
+          if (!HOUR_ANALYSIS_RANGE_KEYS.includes(band)) return { ...row, hour_overrides: {} };
+          const nextOverrides = { ...(row.hour_overrides || {}) };
+          delete nextOverrides[band];
+          return { ...row, hour_overrides: nextOverrides };
+        }),
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const removeHourAnalysisWhatIfRow = useCallback((rowId) => {
+    const normalizedId = String(rowId || "").trim();
+    if (!normalizedId) return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const targetRow = normalized.whatIfRows.find((row) => row.id === normalizedId);
+      if (!targetRow) return normalized;
+      const nextNotes = { ...normalized.notes };
+      const nextSplits = { ...normalized.splits };
+      delete nextNotes[normalizedId];
+      delete nextSplits[normalizedId];
+      markHourAnalysisChanged(["capacity", `group:${targetRow.group_key}`, targetRow.scenario_type === "move" ? `group:${targetRow.source_group_key}` : null].filter(Boolean));
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "what_if_removed",
+          entity_id: normalizedId,
+          entity_label: targetRow.full_name,
+          summary: targetRow.scenario_type === "move" ? `Removed movement what-if for ${targetRow.full_name}.` : `Removed what-if ${targetRow.full_name}.`,
+          before: targetRow,
+          after: null,
+          note: targetRow.note || normalized.notes[normalizedId] || "",
+        }),
+        notes: nextNotes,
+        splits: nextSplits,
+        whatIfRows: normalized.whatIfRows.filter((row) => row.id !== normalizedId),
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
   const rosterPrintRows = useMemo(() => {
     return preparedRosterRows
       .filter((row) => isLaborEmployeeActive(row))
@@ -4373,14 +7690,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         stats: [
           { label: "Managers", value: displayedDashboardMetrics.managerCount },
           { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
-          { label: "CSRs", value: displayedDashboardMetrics.csrCount },
-          { label: "PCTs", value: displayedDashboardMetrics.pctCount },
+          { label: "Customer Service Representatives", value: displayedDashboardMetrics.csrCount },
+          { label: "Pet Care Technicians", value: displayedDashboardMetrics.pctCount },
           { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
           { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
         ],
         rows: rosterPrintRows.map((row) => ({
           name: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee",
-          position: row.position_title || "Not listed",
+          position: formatLaborPositionTitle(row.position_title) || "Not listed",
           commitment: getLaborEmploymentCommitmentLabel(row.employment_commitment),
           phone: row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed",
           email: row.contact_email || "Not listed",
@@ -4432,53 +7749,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	  const visibleRosterRows = useMemo(() => {
 	    return filteredRosterRows;
 	  }, [filteredRosterRows]);
-  const positionHierarchyRows = useMemo(() => {
-    const savedByTitle = Object.fromEntries(
-      positionHierarchy.map((row) => [normalizePositionTitle(row.position_title), row]),
-    );
-    const merged = [];
-    const seen = new Set();
-
-    preparedRosterRows.forEach((row) => {
-      const normalizedTitle = normalizePositionTitle(row.position_title);
-      const title = String(row.position_title || "").trim();
-      if (!normalizedTitle || seen.has(normalizedTitle)) return;
-      const saved = savedByTitle[normalizedTitle] || null;
-      seen.add(normalizedTitle);
-      merged.push({
-        id: saved?.id || null,
-        position_title: saved?.position_title || title,
-        normalized_title: normalizedTitle,
-        sort_order: saved?.sort_order ?? null,
-      });
-    });
-
-    positionHierarchy.forEach((row) => {
-      const normalizedTitle = normalizePositionTitle(row.position_title);
-      if (!normalizedTitle || seen.has(normalizedTitle)) return;
-      seen.add(normalizedTitle);
-      merged.push({
-        id: row.id,
-        position_title: row.position_title,
-        normalized_title: normalizedTitle,
-        sort_order: row.sort_order ?? null,
-      });
-    });
-
-    return merged.sort((left, right) => {
-      const leftRanked = Number.isFinite(left.sort_order);
-      const rightRanked = Number.isFinite(right.sort_order);
-      if (leftRanked && rightRanked) return left.sort_order - right.sort_order;
-      if (leftRanked !== rightRanked) return leftRanked ? -1 : 1;
-      const weightDelta = getDefaultPositionWeight(right.position_title) - getDefaultPositionWeight(left.position_title);
-      if (weightDelta !== 0) return weightDelta;
-      return left.position_title.localeCompare(right.position_title, undefined, { sensitivity: "base" });
-    });
-  }, [positionHierarchy, preparedRosterRows]);
-  const positionHierarchyIndex = useMemo(() => {
-    return Object.fromEntries(positionHierarchyRows.map((row, index) => [row.normalized_title, index]));
-  }, [positionHierarchyRows]);
-
   useEffect(() => {
     if (showHierarchyManager) {
       setHierarchyDraft(positionHierarchyRows.map((row) => ({ ...row })));
@@ -4557,9 +7827,94 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             instance: employeeInstances.find((instance) => instance.review_cycle === cycle.id) || null,
           })),
         };
-      })
-      .sort((a, b) => String(a.last_name || a.full_name || "").localeCompare(String(b.last_name || b.full_name || ""), undefined, { sensitivity: "base" }));
+      });
   }, [preparedRosterRows, reviewInstances]);
+  const sortedActiveRecords = useMemo(() => (
+    sortLaborRowsByConfig(activeRecords, trainingSort, positionHierarchyIndex, (record, key) => {
+      switch (key) {
+        case "employee":
+        case "name":
+          return record.employee_full_name || "";
+        case "position":
+          return formatLaborPositionTitle(record.target_role || "");
+        case "plan":
+          return record.template_name_snapshot || "";
+        case "progress":
+          return Number(record.progress_percent || 0);
+        case "status":
+          return record.overall_status || "";
+        case "target":
+          return record.target_end_date || "";
+        default:
+          return record.employee_full_name || "";
+      }
+    })
+  ), [activeRecords, positionHierarchyIndex, trainingSort]);
+  const sortedCompletedRecords = useMemo(() => (
+    sortLaborRowsByConfig(completedRecords, trainingSort, positionHierarchyIndex, (record, key) => {
+      switch (key) {
+        case "employee":
+        case "name":
+          return record.employee_full_name || "";
+        case "position":
+          return formatLaborPositionTitle(record.target_role || "");
+        case "plan":
+          return record.template_name_snapshot || "";
+        case "progress":
+          return Number(record.progress_percent || 0);
+        case "status":
+          return record.overall_status || "";
+        case "target":
+          return record.target_end_date || "";
+        default:
+          return record.employee_full_name || "";
+      }
+    })
+  ), [completedRecords, positionHierarchyIndex, trainingSort]);
+  const sortedPerformanceReviewRows = useMemo(() => (
+    sortLaborRowsByConfig(activePerformanceReviewRows, performanceReviewSort, positionHierarchyIndex, (row, key) => {
+      switch (key) {
+        case "employee":
+        case "name":
+          return row.full_name || "";
+        case "position":
+          return formatLaborPositionTitle(row.position_title || "");
+        case "start_date":
+          return row.start_date || "";
+        case "compliance":
+          return row.performance_review_compliance?.label || "";
+        case "review30":
+          return row.review_30_due_date || "";
+        case "review60":
+          return row.review_60_due_date || "";
+        case "review90":
+          return row.review_90_due_date || "";
+        default:
+          return row.full_name || "";
+      }
+    })
+  ), [activePerformanceReviewRows, performanceReviewSort, positionHierarchyIndex]);
+  const sortedHourAnalysisRows = useMemo(() => (
+    sortLaborRowsByConfig(hourAnalysisModel.rows, hourAnalysisPersonSort, positionHierarchyIndex, (row, key) => {
+      switch (key) {
+        case "name":
+        case "employee":
+          return row.full_name || "";
+        case "position":
+          return formatLaborPositionTitle(row.position_title || row.position || "");
+        case "commitment":
+          return getLaborEmploymentCommitmentLabel(row.employment_commitment);
+        case "preferred":
+          return Number(row.preferredHours || 0);
+        case "split":
+          return row.isSplit ? `${row.split?.admin_hours || 0}:${row.split?.floor_group || ""}` : "";
+        case "note":
+          return row.note || "";
+        default:
+          return row.full_name || "";
+      }
+    })
+  ), [hourAnalysisModel.rows, hourAnalysisPersonSort, positionHierarchyIndex]);
   const performanceReviewOverview = useMemo(() => {
     const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
     return [
@@ -4707,7 +8062,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         if (!employeeId) return null;
         return {
           value: employeeId,
-          label: `${employee.full_name || employee.name || "Employee"} (${employee.position_title || employee.position || "Employee"})`,
+          label: `${employee.full_name || employee.name || "Employee"} (${formatLaborPositionTitle(employee.position_title || employee.position) || "Employee"})`,
         };
       })
       .filter(Boolean);
@@ -5030,7 +8385,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           />
         </div>
 	        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.8fr", gap: 12 }}>
-	          <Inp label="Position Title" value={laborEmployeeRole} onChange={setLaborEmployeeRole} required />
+            <HourAnalysisAnimatedPicker
+              label="Position Title"
+              value={formatLaborPositionTitle(laborEmployeeRole)}
+              onChange={setLaborEmployeeRole}
+              options={getLaborPositionOptionsWithCurrent(laborEmployeeRole)}
+              placeholder="Choose approved title"
+            />
 	          <label style={{ display: "block" }}>
 	            <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Commitment</span>
 	            <CustomSelect
@@ -5318,7 +8679,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 {selectedDisplayReviewTitle}
               </div>
               <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
-                {selectedLaborEmployeeView.full_name} · {selectedLaborEmployeeView.position_title || "Employee"} · {reviewCycleLabel}
+                {selectedLaborEmployeeView.full_name} · {formatLaborPositionTitle(selectedLaborEmployeeView.position_title) || "Employee"} · {reviewCycleLabel}
               </div>
               <ReviewTemplateStatusLine
                 reviewTemplateName={selectedReviewTemplate?.name}
@@ -5351,7 +8712,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Employee</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
-              <div style={{ fontSize: 12, color: C.textSec }}>{selectedLaborEmployeeView.position_title || "—"}</div>
+              <div style={{ fontSize: 12, color: C.textSec }}>{formatLaborPositionTitle(selectedLaborEmployeeView.position_title) || "—"}</div>
               {selectedLaborEmployeeView.start_date && (
                 <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>Started {formatLaborDate(selectedLaborEmployeeView.start_date)}</div>
               )}
@@ -5786,7 +9147,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
             <div style={{ minWidth: 280, flex: "1 1 420px" }}>
               <div style={{ fontSize: 28, lineHeight: 1.1, fontWeight: 900, color: C.text, marginBottom: 6 }}>{selectedLaborEmployeeView.full_name}</div>
-              <div style={{ fontSize: 15, color: C.textSec, fontWeight: 700, marginBottom: 10 }}>{selectedLaborEmployeeView.position_title || "Employee"}</div>
+              <div style={{ fontSize: 15, color: C.textSec, fontWeight: 700, marginBottom: 10 }}>{formatLaborPositionTitle(selectedLaborEmployeeView.position_title) || "Employee"}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
 	                <Badge color={selectedLaborEmployeeIsActive ? "success" : "warning"}>
 	                  {selectedLaborEmployeeIsActive ? "Active Employee" : "Inactive Employee"}
@@ -5983,7 +9344,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         }}
                         style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
                       >
-                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{record.target_role}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{formatLaborPositionTitle(record.target_role) || "—"}</td>
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
                         <td style={{ padding: "11px 12px" }}><StatusBadge status={record.overall_status} /></td>
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</td>
@@ -6299,7 +9660,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ? Number(selectedRecord.required_item_count)
       : 0;
     const recordEmployeeName = selectedRecord.employee_full_name || selectedLaborEmployeeView?.full_name || "Employee";
-    const recordTargetRole = selectedRecord.target_role || selectedLaborEmployeeView?.position_title || "Employee";
+    const recordTargetRole = formatLaborPositionTitle(selectedRecord.target_role || selectedLaborEmployeeView?.position_title) || "Employee";
     const recordTemplateName = selectedRecord.template_name_snapshot || selectedVersion?.name || "Training Plan";
 
     return (
@@ -6462,7 +9823,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 placeholder="Link to roster employee"
               />
               <Inp label="Employee Full Name" value={configEmployeeName} onChange={setConfigEmployeeName} required />
-              <Inp label="Position Title" value={configTargetRole} onChange={setConfigTargetRole} required />
+              <HourAnalysisAnimatedPicker
+                label="Position Title"
+                value={formatLaborPositionTitle(configTargetRole)}
+                onChange={setConfigTargetRole}
+                options={getLaborPositionOptionsWithCurrent(configTargetRole)}
+                placeholder="Choose approved title"
+              />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Inp label="Hire Date" type="date" value={configHireDate} onChange={setConfigHireDate} />
                 <Inp label="Training Start Date" type="date" value={configStartDate} onChange={setConfigStartDate} />
@@ -6507,7 +9874,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
     >
       <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.text }}>{rec.employee_full_name}</td>
-      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{rec.target_role}</td>
+      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{formatLaborPositionTitle(rec.target_role) || "—"}</td>
       <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{rec.template_name_snapshot}</td>
       <td style={{ padding: "10px 12px" }}>
         <div style={{ minWidth: 110 }}>
@@ -6609,6 +9976,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setHierarchyDraft(reordered);
     setDraggingHierarchyTitle("");
   };
+  const addHierarchyDraftTitle = useCallback(() => {
+    const option = buildLaborPositionOption(newHierarchyTitle);
+    if (!option) return;
+    setHierarchyDraft((prev) => {
+      if (prev.some((row) => row.normalized_title === option.normalizedTitle)) return prev;
+      return [
+        ...prev,
+        {
+          id: null,
+          position_title: option.label,
+          normalized_title: option.normalizedTitle,
+          sort_order: (prev.length + 1) * 10,
+        },
+      ];
+    });
+    setNewHierarchyTitle("");
+  }, [newHierarchyTitle]);
+  const removeHierarchyDraftTitle = useCallback((normalizedTitle) => {
+    setHierarchyDraft((prev) => prev.filter((row) => row.normalized_title !== normalizedTitle));
+  }, []);
+  const resetHierarchyDraftToDefaults = useCallback(() => {
+    setHierarchyDraft(makeDefaultLaborPositionRows());
+    setNewHierarchyTitle("");
+  }, []);
   const rosterSectionIcons = {
     "Employee Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
     Employment: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M16 20V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16"/><rect x="6" y="6" width="4" height="4"/><path d="M18 7h4v13h-4"/><path d="M6 14h4"/><path d="M6 18h4"/></svg>,
@@ -6617,10 +10008,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   };
   const configuringRosterField = configuringRosterKey ? LABOR_ROSTER_FILTER_FIELDS.find((field) => field.key === configuringRosterKey) : null;
   const configuringRosterValue = configuringRosterKey ? rosterDraftFilters[configuringRosterKey] : null;
+  const displayLaborTab = tab === "templates" ? "training" : tab === "labor-model" ? "hour-analysis" : tab;
+  const hourAnalysisLaborModelSummary = hourAnalysisModel.laborModelSummary;
+  const activeHourAnalysisLaborModelDayKey = LABOR_MODEL_DAY_KEYS.includes(hourAnalysisLaborModelTab) ? hourAnalysisLaborModelTab : "monday";
+  const activeHourAnalysisLaborModelDay = hourAnalysisSettings.laborModel?.days?.[activeHourAnalysisLaborModelDayKey] || hourAnalysisLaborModelSummary.model.days[activeHourAnalysisLaborModelDayKey];
+  const activeHourAnalysisLaborModelDaySummary = hourAnalysisLaborModelSummary.dayRows.find((day) => day.key === activeHourAnalysisLaborModelDayKey) || hourAnalysisLaborModelSummary.dayRows[0];
   const headerAction = (() => {
     if (tab === "home") {
       return (
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {canEditRoster && (
+            <button
+              type="button"
+              className="labor-template-gear-button"
+              title="Labor settings"
+              aria-label="Labor settings"
+              onClick={() => setShowHierarchyManager(true)}
+            >
+              <I.Settings />
+            </button>
+          )}
           <Btn variant="secondary" icon={<I.Download />} onClick={handlePrintRoster} disabled={generatingRosterPdf}>
             {generatingRosterPdf ? "Generating PDF..." : "Download Roster PDF"}
           </Btn>
@@ -6633,17 +10040,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       );
     }
     if (tab === "training") {
-      return <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowNewRecord(true); }}>New Training Record</Btn>;
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {canManageTemplates && (
+            <button
+              type="button"
+              className="labor-template-gear-button"
+              title="Training templates"
+              aria-label="Training templates"
+              onClick={() => changeLaborTab("templates")}
+            >
+              <I.Settings />
+            </button>
+          )}
+          <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowNewRecord(true); }}>New Training Record</Btn>
+        </div>
+      );
     }
     if (tab === "templates" && canManageTemplates) {
       if (previewTemplateId) {
         return (
-          <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
-            {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-          </Btn>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Btn variant="secondary" icon={<I.Back />} onClick={() => changeLaborTab("training")}>Training</Btn>
+            <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
+              {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
+            </Btn>
+          </div>
         );
       }
-      return <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowCreateTemplateModal(true); }}>Add Template</Btn>;
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Btn variant="secondary" icon={<I.Back />} onClick={() => changeLaborTab("training")}>Training</Btn>
+          <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowCreateTemplateModal(true); }}>Add Template</Btn>
+        </div>
+      );
     }
     if (tab === "attendance" || tab === "interviews") {
       return null;
@@ -6652,9 +10082,44 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (!canAccessEmployeeNotes) return null;
       return <Btn variant="primary" onClick={() => setShowGlobalNoteModal(true)}>Add Employee Note</Btn>;
     }
+    if (tab === "hour-analysis") {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span style={{ fontSize: 11, fontWeight: 850, color: savingHourAnalysis ? "#B45309" : C.textMut }}>
+            {savingHourAnalysis ? "Saving..." : "Auto-saved"}
+          </span>
+          <Btn variant="secondary" icon={<I.Clock />} onClick={() => setShowHourAnalysisAudit(true)}>
+            Activity
+          </Btn>
+          <Btn variant="secondary" icon={<I.Calendar />} onClick={() => { setHourAnalysisLaborModelTab(LABOR_MODEL_SUMMARY_TAB); changeLaborTab("labor-model"); }}>
+            Labor Model
+          </Btn>
+          {canEditRoster && (
+            <Btn variant="primary" icon={<I.Plus />} onClick={() => setShowHourAnalysisWhatIfModal(true)}>
+              Add Employee / What If
+            </Btn>
+          )}
+        </div>
+      );
+    }
+    if (tab === "labor-model") {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span style={{ fontSize: 11, fontWeight: 850, color: savingHourAnalysis ? "#B45309" : C.textMut }}>
+            {savingHourAnalysis ? "Saving..." : "Auto-saved"}
+          </span>
+          <Btn variant="secondary" icon={<I.Clock />} onClick={() => setShowHourAnalysisAudit(true)}>
+            Activity
+          </Btn>
+          <Btn variant="secondary" icon={<I.Back />} onClick={() => changeLaborTab("hour-analysis")}>
+            Hour Analysis
+          </Btn>
+        </div>
+      );
+    }
     return null;
   })();
-  const activeLaborTabIndex = Math.max(0, visibleTabs.findIndex((item) => item.id === tab));
+  const activeLaborTabIndex = Math.max(0, visibleTabs.findIndex((item) => item.id === displayLaborTab));
 
   return (
 	    <div className={`labor-page-shell${rosterPrintMode ? " is-printing-roster" : ""}`}>
@@ -7025,7 +10490,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           inset: -30% auto -30% 0;
           width: 46%;
           background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
-          animation: laborTabLightSweep 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+          animation: laborTabLightSweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
         }
         .labor-tab-button {
           position: relative;
@@ -7050,6 +10515,2033 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-tab-button.is-active {
           color: #fff;
           transform: translateY(-1px);
+        }
+        .labor-template-gear-button {
+          width: 40px;
+          height: 40px;
+          border-radius: 12px;
+          border: 1px solid rgba(20, 83, 45, 0.18);
+          background: linear-gradient(180deg, #ffffff, #f8fafc);
+          color: ${C.pri};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+          transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+        }
+        .labor-template-gear-button svg {
+          width: 18px;
+          height: 18px;
+          transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-template-gear-button:hover {
+          transform: translateY(-1px);
+          border-color: rgba(20, 83, 45, 0.36);
+          background: #f0fdf4;
+          box-shadow: 0 16px 32px rgba(20, 83, 45, 0.11);
+        }
+        .labor-template-gear-button:hover svg {
+          transform: rotate(32deg);
+        }
+        @keyframes hourAnalysisCardIn {
+          0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.992); filter: blur(4px); }
+          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+        }
+        @keyframes hourAnalysisWhatIfGlow {
+          0%, 100% { box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.18), 0 0 0 0 rgba(249, 115, 22, 0.16); }
+          50% { box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.36), 0 0 0 5px rgba(249, 115, 22, 0); }
+        }
+        @keyframes hourAnalysisChangePulse {
+          0% { transform: translateY(0); background-color: rgba(236,253,245,0); }
+          24% { transform: translateY(-1px); background-color: rgba(236,253,245,.96); }
+          100% { transform: translateY(0); background-color: rgba(236,253,245,0); }
+        }
+        @keyframes hourAnalysisAuditIn {
+          from { opacity: 0; transform: translateX(10px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .hour-analysis-shell {
+          display: grid;
+          gap: 16px;
+        }
+        .hour-analysis-summary-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+          gap: 16px;
+          align-items: stretch;
+        }
+        .hour-analysis-card {
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #ffffff;
+          overflow: hidden;
+          box-shadow: 0 16px 42px rgba(15, 23, 42, 0.055);
+          animation: hourAnalysisCardIn 320ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-card-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 14px 16px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: linear-gradient(180deg, rgba(248,250,252,0.92), rgba(255,255,255,0.98));
+        }
+        .hour-analysis-card-title {
+          margin: 0;
+          color: ${C.text};
+          font-size: 15px;
+          line-height: 1.15;
+          font-weight: 950;
+          letter-spacing: 0;
+        }
+        .hour-analysis-card-subtitle {
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 12px;
+          line-height: 1.35;
+          font-weight: 650;
+        }
+        .hour-analysis-roster-summary {
+          display: grid;
+          grid-template-columns: minmax(220px, 1.18fr) repeat(3, minmax(150px, 0.72fr));
+          gap: 10px;
+          padding: 14px 16px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: linear-gradient(180deg, #ffffff, #fbfdff);
+        }
+        .hour-analysis-roster-summary-item {
+          min-width: 0;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          padding: 11px 12px;
+          background: #fff;
+        }
+        .hour-analysis-roster-summary-item.is-primary {
+          border-color: rgba(20, 83, 45, 0.22);
+          background: linear-gradient(135deg, rgba(236,253,245,0.86), #ffffff 70%);
+        }
+        .hour-analysis-summary-label {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1.1;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .hour-analysis-summary-value {
+          margin-top: 5px;
+          color: ${C.text};
+          font-size: 22px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-roster-summary-item.is-primary .hour-analysis-summary-value {
+          color: ${C.pri};
+          font-size: 30px;
+        }
+        .hour-analysis-summary-note {
+          margin-top: 5px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 750;
+          line-height: 1.25;
+        }
+        .hour-analysis-what-if-delta {
+          margin-left: 5px;
+          color: #c2410c;
+          font-weight: 950;
+        }
+        .hour-analysis-headcount-stack {
+          display: inline-grid;
+          justify-items: center;
+          gap: 2px;
+          line-height: 1.1;
+        }
+        .hour-analysis-headcount-stack strong {
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .hour-analysis-headcount-stack small {
+          color: #c2410c;
+          font-size: 9.5px;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .hour-analysis-status-pill,
+        .hour-analysis-what-if-tag {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          border-radius: 999px;
+          white-space: nowrap;
+          line-height: 1;
+          font-weight: 950;
+          letter-spacing: 0;
+        }
+        .hour-analysis-status-pill {
+          padding: 7px 10px;
+          background: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          color: #047857;
+          font-size: 11px;
+        }
+        .hour-analysis-what-if-tag {
+          padding: 4px 7px;
+          background: #fff7ed;
+          border: 1px dashed rgba(249, 115, 22, 0.55);
+          color: #c2410c;
+          font-size: 9.5px;
+        }
+        .hour-analysis-number-input {
+          width: 84px;
+          min-width: 0;
+          border: 1.5px solid ${C.border};
+          border-radius: 8px;
+          background: #ffffff;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 900;
+          padding: 8px 9px;
+          outline: none;
+          text-align: right;
+          transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+        .hour-analysis-number-input:focus {
+          border-color: ${C.pri};
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.1);
+        }
+        .hour-analysis-number-input:disabled {
+          background: #f8fafc;
+          color: ${C.textMut};
+          cursor: not-allowed;
+        }
+        .hour-analysis-number-input::-webkit-outer-spin-button,
+        .hour-analysis-number-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .hour-analysis-capacity-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          padding: 16px;
+          border-bottom: 1px solid ${C.borderLight};
+        }
+        .hour-analysis-decision-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 0.92fr) minmax(300px, 1.08fr);
+          gap: 12px;
+          padding: 16px 16px 0;
+          align-items: stretch;
+        }
+        .hour-analysis-decision-card,
+        .hour-analysis-hire-card {
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 14px 15px;
+          min-width: 0;
+        }
+        .hour-analysis-decision-card {
+          border-color: rgba(20, 83, 45, 0.2);
+          background: linear-gradient(135deg, rgba(240,253,244,0.9), #ffffff 58%);
+        }
+        .hour-analysis-decision-card.is-recent-change,
+        .hour-analysis-hire-card.is-recent-change,
+        .hour-analysis-person-row.is-recent-change {
+          animation: hourAnalysisChangePulse 760ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-decision-label {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .hour-analysis-decision-value {
+          margin-top: 7px;
+          color: ${C.pri};
+          font-size: 30px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-decision-copy {
+          margin-top: 8px;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 780;
+          line-height: 1.4;
+        }
+        .hour-analysis-progress-track {
+          height: 9px;
+          border-radius: 999px;
+          background: #e2e8f0;
+          overflow: hidden;
+          margin-top: 12px;
+        }
+        .hour-analysis-progress-fill {
+          height: 100%;
+          border-radius: inherit;
+          background: linear-gradient(90deg, ${C.pri}, #16a34a);
+          transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-hire-list {
+          display: grid;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .hour-analysis-hire-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          padding: 9px 10px;
+          background: #fbfdff;
+        }
+        .hour-analysis-hire-row strong {
+          display: block;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 950;
+          line-height: 1.2;
+        }
+        .hour-analysis-hire-row span {
+          display: block;
+          margin-top: 3px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 760;
+          line-height: 1.25;
+        }
+        .hour-analysis-hire-count {
+          color: ${C.pri};
+          font-size: 14px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+        .hour-analysis-hire-footnote {
+          margin-top: 10px;
+          border-top: 1px solid ${C.borderLight};
+          padding-top: 9px;
+          color: ${C.textSec};
+          font-size: 11px;
+          font-weight: 760;
+          line-height: 1.4;
+        }
+        .hour-analysis-flex-note {
+          margin: 12px 16px 0;
+          border: 1px dashed rgba(15, 23, 42, 0.15);
+          border-radius: 8px;
+          background: #f8fafc;
+          color: ${C.textSec};
+          padding: 10px 12px;
+          font-size: 11.5px;
+          font-weight: 720;
+          line-height: 1.4;
+        }
+        .hour-analysis-capacity-standard {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(220px, 0.34fr);
+          gap: 14px;
+          padding: 15px 16px 0;
+          align-items: stretch;
+        }
+        .hour-analysis-standard-copy {
+          border: 1px solid rgba(20, 83, 45, 0.14);
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.8), #ffffff 58%);
+          padding: 12px 13px;
+        }
+        .hour-analysis-standard-eyebrow {
+          color: ${C.pri};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .hour-analysis-standard-copy p {
+          margin: 7px 0 0;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 720;
+          line-height: 1.45;
+        }
+        .hour-analysis-standard-copy strong {
+          font-weight: 950;
+        }
+        .hour-analysis-standard-sources {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 9px;
+        }
+        .hour-analysis-standard-sources a {
+          display: inline-flex;
+          align-items: center;
+          border: 1px solid #dbeafe;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: #1d4ed8;
+          padding: 4px 7px;
+          font-size: 10px;
+          font-weight: 900;
+          text-decoration: none;
+          transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .hour-analysis-standard-sources a:hover {
+          border-color: #93c5fd;
+          background: #dbeafe;
+          transform: translateY(-1px);
+        }
+        .hour-analysis-standard-math {
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 12px 13px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          min-width: 0;
+        }
+        .hour-analysis-standard-math span {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 900;
+          line-height: 1.25;
+          text-transform: uppercase;
+        }
+        .hour-analysis-standard-math strong {
+          margin-top: 5px;
+          color: ${C.pri};
+          font-size: 25px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-standard-math em {
+          margin-top: 6px;
+          color: ${C.text};
+          font-size: 12px;
+          font-style: normal;
+          font-weight: 850;
+          line-height: 1.25;
+        }
+        .hour-analysis-capacity-card {
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          padding: 11px 12px;
+          background: #fff;
+          transition: transform 170ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 170ms ease, border-color 170ms ease;
+        }
+        .hour-analysis-capacity-card:hover {
+          transform: translateY(-1px);
+          border-color: rgba(20, 83, 45, 0.24);
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+        }
+        .hour-analysis-capacity-label {
+          font-size: 10px;
+          font-weight: 950;
+          color: ${C.textMut};
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .hour-analysis-capacity-value {
+          margin-top: 6px;
+          font-size: 24px;
+          line-height: 1;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .hour-analysis-picker-trigger {
+          width: 100%;
+          min-height: 42px;
+          border: 1.5px solid ${C.border};
+          border-radius: 12px;
+          background: #fff;
+          color: ${C.text};
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 850;
+          text-align: left;
+          transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-picker-trigger:hover,
+        .hour-analysis-picker-trigger:focus {
+          border-color: rgba(20, 83, 45, 0.42);
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.08);
+          outline: none;
+        }
+        .hour-analysis-picker-panel {
+          margin-top: 8px;
+          border-radius: 12px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+          overflow: hidden;
+          animation: filterSlideIn 0.25s ease-out;
+        }
+        .hour-analysis-picker-heading {
+          padding: 8px 14px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: ${C.surface};
+          color: ${C.text};
+          font-size: 11px;
+          font-weight: 800;
+        }
+        .hour-analysis-picker-options {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 5px;
+          padding: 12px 14px;
+          max-height: 260px;
+          overflow: auto;
+        }
+        .hour-analysis-picker-option {
+          padding: 6px 14px;
+          border-radius: 8px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.text};
+          font-size: 11px;
+          font-weight: 650;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.2s cubic-bezier(0.2,0.8,0.2,1);
+          box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }
+        .hour-analysis-picker-option.is-active,
+        .hour-analysis-picker-option:hover {
+          border-color: ${C.pri};
+          background: ${C.pri};
+          color: #fff;
+          transform: translateY(-1px);
+        }
+        .labor-sort-control {
+          position: relative;
+          display: inline-flex;
+        }
+        .labor-sort-trigger {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 8px 12px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.border};
+          background: #fff;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 850;
+          cursor: pointer;
+          box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+          transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
+        }
+        .labor-sort-trigger:hover,
+        .labor-sort-trigger.is-open,
+        .labor-sort-trigger.is-active {
+          border-color: ${C.pri};
+          background: ${C.priLt};
+          box-shadow: 0 8px 22px rgba(20, 83, 45, 0.11);
+          transform: translateY(-1px);
+        }
+        .labor-sort-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: min(520px, 88vw);
+          z-index: 70;
+          border-radius: 14px;
+          border: 1px solid ${C.border};
+          background: rgba(255, 255, 255, 0.98);
+          box-shadow: 0 24px 60px rgba(15, 23, 42, 0.16);
+          overflow: hidden;
+          animation: filterSlideIn 0.25s ease-out;
+        }
+        .labor-sort-panel-body {
+          display: grid;
+          gap: 10px;
+          padding: 12px 14px 14px;
+        }
+        .labor-sort-option-grid {
+          display: grid;
+          gap: 8px;
+        }
+        .labor-sort-option-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          padding: 8px;
+          border-radius: 10px;
+          background: #f8fafc;
+          border: 1px solid ${C.borderLight};
+        }
+        .labor-sort-option-row > span {
+          min-width: 0;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .labor-sort-option-row > div {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .labor-sort-direction {
+          padding: 6px 10px;
+          border-radius: 8px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 850;
+          cursor: pointer;
+          transition: all 160ms ease;
+        }
+        .labor-sort-direction:hover,
+        .labor-sort-direction.is-active {
+          border-color: ${C.pri};
+          background: ${C.pri};
+          color: #fff;
+          transform: translateY(-1px);
+        }
+        .labor-position-settings-list {
+          display: grid;
+          gap: 10px;
+          max-height: 48vh;
+          overflow-y: auto;
+          padding-right: 4px;
+        }
+        .labor-position-settings-row {
+          display: grid;
+          grid-template-columns: auto auto minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: center;
+          padding: 12px 14px;
+          border-radius: 12px;
+          border: 1px solid ${C.border};
+          background: #fff;
+          transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+          animation: filterSlideIn 0.22s ease-out both;
+        }
+        .labor-position-settings-row.is-dragging {
+          border-color: ${C.pri};
+          background: ${C.priLt};
+          box-shadow: 0 14px 34px rgba(20, 83, 45, 0.13);
+          transform: scale(1.004);
+        }
+        .labor-position-row-index {
+          min-width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #f1f5f9;
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 950;
+        }
+        .labor-position-add-row {
+          display: grid;
+          grid-template-columns: minmax(180px, 1fr) auto auto;
+          gap: 8px;
+          align-items: center;
+          padding: 10px;
+          border-radius: 14px;
+          border: 1.5px dashed rgba(20, 83, 45, 0.28);
+          background: linear-gradient(135deg, rgba(240,253,244,0.92), rgba(255,255,255,0.98));
+          animation: filterSlideIn 0.25s ease-out;
+        }
+        .labor-position-add-row input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 10px 12px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.border};
+          background: #fff;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 750;
+          outline: none;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .labor-position-add-row input:focus {
+          border-color: ${C.pri};
+          box-shadow: 0 0 0 4px rgba(20,83,45,0.10);
+        }
+        .labor-position-icon-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 34px;
+          height: 34px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          cursor: pointer;
+          transition: all 160ms ease;
+        }
+        .labor-position-icon-button:hover {
+          border-color: ${C.pri};
+          color: ${C.pri};
+          transform: translateY(-1px);
+        }
+        .labor-position-icon-button.is-primary {
+          border-color: ${C.pri};
+          background: ${C.pri};
+          color: #fff;
+          box-shadow: 0 10px 24px rgba(20,83,45,0.18);
+        }
+        .labor-position-icon-button.is-primary:disabled {
+          border-color: ${C.borderLight};
+          background: #f8fafc;
+          color: ${C.textMut};
+          cursor: not-allowed;
+          box-shadow: none;
+          transform: none;
+        }
+        .labor-position-icon-button.is-danger:hover {
+          border-color: #fecaca;
+          background: #fef2f2;
+          color: #b91c1c;
+        }
+        .hour-analysis-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          min-width: 640px;
+        }
+        .hour-analysis-planning-table {
+          table-layout: fixed;
+          min-width: 980px;
+        }
+        .hour-analysis-planning-table .hour-analysis-col-position {
+          width: 24%;
+        }
+        .hour-analysis-planning-table .hour-analysis-col-total {
+          width: 15%;
+        }
+        .hour-analysis-planning-table .hour-analysis-col-count {
+          width: 14%;
+        }
+        .hour-analysis-planning-table .hour-analysis-col-hours {
+          width: 16.5%;
+        }
+        .hour-analysis-table th {
+          padding: 10px 12px;
+          border-bottom: 1px solid ${C.border};
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 950;
+          text-align: left;
+          text-transform: uppercase;
+          letter-spacing: 0;
+          white-space: nowrap;
+        }
+        .hour-analysis-planning-table th {
+          white-space: normal;
+          line-height: 1.15;
+        }
+        .hour-analysis-planning-table th.hour-analysis-group-heading {
+          background: #f1f5f9;
+          color: ${C.text};
+          font-size: 11.5px;
+          text-align: center;
+          border-left: 1px solid ${C.borderLight};
+        }
+        .hour-analysis-planning-table th.hour-analysis-sticky-heading {
+          vertical-align: middle;
+        }
+        .hour-analysis-planning-table th.hour-analysis-sub-heading {
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          text-align: center;
+        }
+        .hour-analysis-planning-table .hour-analysis-count-cell,
+        .hour-analysis-planning-table .hour-analysis-hours-cell {
+          text-align: center;
+          font-weight: 950;
+        }
+        .hour-analysis-planning-table .hour-analysis-hours-cell .hour-analysis-number-input {
+          display: block;
+          margin: 0 auto;
+        }
+        .hour-analysis-table td {
+          padding: 12px;
+          border-bottom: 1px solid ${C.borderLight};
+          color: ${C.text};
+          font-size: 12.5px;
+          font-weight: 700;
+          vertical-align: middle;
+        }
+        .hour-analysis-table tbody tr:last-child td {
+          border-bottom: none;
+        }
+        .hour-analysis-person-row {
+          transition: background 160ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-person-row:hover {
+          background: #f8fafc;
+        }
+        .hour-analysis-person-row.is-what-if {
+          outline: 1.5px dashed rgba(249, 115, 22, 0.72);
+          outline-offset: -5px;
+          background: linear-gradient(90deg, rgba(255,247,237,0.96), rgba(255,255,255,0.98));
+          animation: hourAnalysisWhatIfGlow 1.2s ease-out 1;
+        }
+        .hour-analysis-person-row.is-movement {
+          outline-color: rgba(37, 99, 235, 0.62);
+          background: linear-gradient(90deg, rgba(239,246,255,0.94), rgba(255,255,255,0.98));
+        }
+        .hour-analysis-move-tag {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 3px 7px;
+          border-radius: 999px;
+          border: 1px dashed rgba(37, 99, 235, 0.44);
+          color: #1d4ed8;
+          background: #eff6ff;
+          font-size: 9.5px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-preferred-cell {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+        .hour-analysis-inherited-hours {
+          color: ${C.text};
+          font-weight: 950;
+          white-space: nowrap;
+        }
+        .hour-analysis-inherited-hours.is-overridden {
+          color: ${C.textMut};
+          text-decoration: line-through;
+          text-decoration-thickness: 2px;
+        }
+        .hour-analysis-arrow {
+          color: #d97706;
+          font-weight: 950;
+        }
+        .hour-analysis-position-move {
+          position: relative;
+          min-width: 220px;
+          max-width: 360px;
+        }
+        .hour-analysis-position-trigger {
+          width: 100%;
+          min-height: 38px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: linear-gradient(180deg, #ffffff, #f8fafc);
+          color: ${C.textSec};
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 8px 10px;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          text-align: left;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+          transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-position-trigger:hover,
+        .hour-analysis-position-trigger:focus {
+          border-color: rgba(20, 83, 45, 0.36);
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.07), 0 12px 26px rgba(15, 23, 42, 0.06);
+          outline: none;
+          transform: translateY(-1px);
+        }
+        .hour-analysis-position-trigger.is-moved {
+          border-color: rgba(249, 115, 22, 0.34);
+          background: linear-gradient(135deg, #fff7ed, #ffffff);
+          box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.08);
+        }
+        .hour-analysis-position-trigger:disabled {
+          cursor: default;
+          color: ${C.textMut};
+          background: #f8fafc;
+          box-shadow: none;
+          transform: none;
+        }
+        .hour-analysis-position-display {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          flex-wrap: wrap;
+          line-height: 1.2;
+        }
+        .hour-analysis-position-display.is-static {
+          font-weight: 950;
+        }
+        .hour-analysis-position-display span {
+          min-width: 0;
+        }
+        .hour-analysis-position-original {
+          color: ${C.textMut};
+          text-decoration: line-through;
+          text-decoration-thickness: 2px;
+        }
+        .hour-analysis-position-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          left: 0;
+          z-index: 40;
+          width: min(360px, 82vw);
+          border-radius: 12px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+          overflow: hidden;
+          animation: filterSlideIn 0.25s ease-out;
+        }
+        .hour-analysis-picker-option.is-reset {
+          border-style: dashed;
+          background: #f8fafc;
+          color: ${C.textSec};
+        }
+        .hour-analysis-picker-option.is-reset:hover,
+        .hour-analysis-picker-option.is-reset.is-active {
+          border-color: rgba(20, 83, 45, 0.34);
+          background: #f0fdf4;
+          color: ${C.pri};
+        }
+        .hour-analysis-mini-button {
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          color: ${C.textSec};
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 850;
+          padding: 7px 9px;
+          transition: border-color 160ms ease, color 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .hour-analysis-mini-button:hover {
+          border-color: rgba(20, 83, 45, 0.3);
+          color: ${C.pri};
+          background: #f0fdf4;
+          transform: translateY(-1px);
+        }
+        .hour-analysis-danger-button:hover {
+          border-color: rgba(220, 38, 38, 0.32);
+          color: #b91c1c;
+          background: #fef2f2;
+        }
+        .hour-analysis-split-cell {
+          display: grid;
+          grid-template-columns: minmax(135px, 1fr) minmax(92px, .55fr);
+          gap: 7px;
+          align-items: end;
+          min-width: 245px;
+        }
+        .hour-analysis-split-note {
+          margin-top: 5px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 780;
+          line-height: 1.25;
+        }
+        .hour-analysis-split-compact {
+          position: relative;
+          min-width: 185px;
+        }
+        .hour-analysis-split-static,
+        .hour-analysis-split-trigger {
+          width: 100%;
+          min-height: 34px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          border-radius: 8px;
+          border: 1px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 880;
+          padding: 7px 9px;
+          line-height: 1.2;
+        }
+        .hour-analysis-split-static {
+          color: ${C.textMut};
+          justify-content: center;
+          background: #f8fafc;
+        }
+        .hour-analysis-split-trigger {
+          cursor: pointer;
+          transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .hour-analysis-split-trigger:hover,
+        .hour-analysis-split-trigger:focus {
+          border-color: rgba(20, 83, 45, 0.36);
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.07);
+          outline: none;
+          transform: translateY(-1px);
+        }
+        .hour-analysis-split-trigger.is-active {
+          color: #1d4ed8;
+          border-color: rgba(37, 99, 235, 0.24);
+          background: #eff6ff;
+        }
+        .hour-analysis-split-trigger:disabled {
+          cursor: default;
+          color: ${C.textMut};
+          background: #f8fafc;
+          transform: none;
+          box-shadow: none;
+        }
+        .hour-analysis-split-panel {
+          margin-top: 8px;
+          border-radius: 12px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          box-shadow: 0 12px 30px rgba(15,23,42,0.09);
+          overflow: hidden;
+          animation: filterSlideIn 0.25s ease-out;
+        }
+        .hour-analysis-split-editor {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: center;
+          border-top: 1px solid ${C.borderLight};
+          padding: 10px 12px;
+          background: #f8fafc;
+        }
+        .hour-analysis-split-editor span,
+        .hour-analysis-movement-preview span {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .hour-analysis-split-editor small {
+          display: block;
+          margin-top: 2px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 720;
+        }
+        .hour-analysis-movement-preview {
+          border: 1px dashed rgba(37, 99, 235, 0.28);
+          border-radius: 8px;
+          background: linear-gradient(135deg, #eff6ff, #ffffff);
+          padding: 10px 11px;
+        }
+        .hour-analysis-movement-preview strong {
+          display: block;
+          margin-top: 4px;
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .hour-analysis-movement-preview em {
+          display: block;
+          margin-top: 3px;
+          color: ${C.textSec};
+          font-size: 11.5px;
+          font-style: normal;
+          font-weight: 780;
+        }
+        .hour-analysis-note-input {
+          width: 100%;
+          min-width: 210px;
+          resize: vertical;
+          border: 1px solid #dbe5ef;
+          border-radius: 8px;
+          padding: 8px 9px;
+          color: ${C.text};
+          background: #fff;
+          font-size: 12px;
+          font-weight: 720;
+          line-height: 1.35;
+          outline: none;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .hour-analysis-note-input:focus {
+          border-color: #60a5fa;
+          box-shadow: 0 0 0 3px rgba(96,165,250,.18);
+        }
+        .hour-analysis-audit-list {
+          display: grid;
+          gap: 8px;
+          max-height: 520px;
+          overflow: auto;
+          padding-right: 2px;
+        }
+        .hour-analysis-audit-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: start;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          padding: 10px 11px;
+          background: #fff;
+          animation: hourAnalysisAuditIn 220ms ease-out both;
+        }
+        .hour-analysis-audit-row strong {
+          display: block;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 950;
+        }
+        .hour-analysis-audit-row span,
+        .hour-analysis-audit-row small {
+          display: block;
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 760;
+          line-height: 1.35;
+        }
+        @keyframes laborModelGridIn {
+          0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.996); filter: blur(3px); }
+          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+        }
+        @keyframes laborModelInsertPulse {
+          0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.28); }
+          70% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+        }
+        .labor-model-shell {
+          display: grid;
+          gap: 14px;
+          min-height: min(74vh, 820px);
+        }
+        .labor-model-tabs {
+          --labor-model-tab-count: 8;
+          --labor-model-active-index: 0;
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(var(--labor-model-tab-count), minmax(0, 1fr));
+          align-items: center;
+          gap: 0;
+          min-height: 48px;
+          max-height: 48px;
+          padding: 5px;
+          border: 1px solid ${C.border};
+          border-radius: 16px;
+          background: linear-gradient(180deg, #fff, #f8fafc);
+          box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+          overflow-x: auto;
+          scrollbar-width: none;
+          isolation: isolate;
+        }
+        .labor-model-tabs::-webkit-scrollbar { display: none; }
+        .labor-model-tab-indicator {
+          position: absolute;
+          z-index: 0;
+          top: 5px;
+          bottom: 5px;
+          left: 5px;
+          width: calc((100% - 10px) / var(--labor-model-tab-count));
+          border-radius: 12px;
+          background: linear-gradient(135deg, #14532d, #166534 58%, #3f6212);
+          box-shadow: 0 14px 32px rgba(20, 83, 45, 0.18), inset 0 1px 0 rgba(255,255,255,0.22);
+          transform: translateX(calc(var(--labor-model-active-index) * 100%));
+          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+          overflow: hidden;
+        }
+        .labor-model-tab-indicator::after {
+          content: "";
+          position: absolute;
+          inset: -40% auto -40% -12%;
+          width: 48%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.34), transparent);
+          animation: laborTabLightSweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+        }
+        .labor-model-tab-button {
+          position: relative;
+          z-index: 1;
+          align-self: center;
+          height: 38px;
+          border: none;
+          border-radius: 12px;
+          background: transparent;
+          color: ${C.textSec};
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0;
+          white-space: nowrap;
+          transition: color 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
+        }
+        .labor-model-tab-button:hover {
+          color: ${C.pri};
+          background: rgba(20, 83, 45, 0.055);
+        }
+        .labor-model-tab-button.is-active {
+          color: #fff;
+          transform: translateY(-1px);
+        }
+        .labor-model-summary-view,
+        .labor-model-day-view {
+          animation: laborModelGridIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-summary-cards {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .labor-model-metric-card {
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 13px 14px;
+          min-width: 0;
+          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.045);
+        }
+        .labor-model-metric-card.is-primary {
+          border-color: rgba(20, 83, 45, 0.22);
+          background: linear-gradient(135deg, rgba(240,253,244,0.9), #ffffff 62%);
+        }
+        .labor-model-metric-card span {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .labor-model-metric-card strong {
+          display: block;
+          margin-top: 7px;
+          color: ${C.text};
+          font-size: 26px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .labor-model-metric-card.is-primary strong {
+          color: ${C.pri};
+        }
+        .labor-model-metric-card em {
+          display: block;
+          margin-top: 7px;
+          color: ${C.textMut};
+          font-style: normal;
+          font-size: 11px;
+          font-weight: 780;
+          line-height: 1.3;
+        }
+        .labor-model-summary-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.2fr) minmax(330px, 0.8fr);
+          gap: 12px;
+          margin-top: 12px;
+          align-items: start;
+        }
+        .labor-model-panel {
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          overflow: hidden;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.045);
+        }
+        .labor-model-panel-title {
+          padding: 12px 14px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #f8fafc;
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .labor-model-summary-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+        .labor-model-summary-table th,
+        .labor-model-summary-table td {
+          padding: 10px 12px;
+          border-bottom: 1px solid ${C.borderLight};
+          font-size: 11.5px;
+          white-space: nowrap;
+        }
+        .labor-model-summary-table th {
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-align: left;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .labor-model-summary-table td {
+          color: ${C.text};
+          font-weight: 820;
+        }
+        .labor-model-summary-table tbody tr:last-child td {
+          border-bottom: none;
+        }
+        .labor-model-summary-note {
+          border-top: 1px solid ${C.borderLight};
+          padding: 11px 13px;
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 760;
+          line-height: 1.4;
+          background: #fbfdff;
+        }
+        .labor-model-day-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 12px;
+          padding: 12px 13px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: linear-gradient(135deg, #ffffff, #f8fafc);
+        }
+        .labor-model-day-title {
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+          line-height: 1.1;
+        }
+        .labor-model-day-subtitle {
+          margin-top: 5px;
+          color: ${C.textMut};
+          font-size: 11.5px;
+          font-weight: 760;
+        }
+        .labor-model-grid-wrap {
+          max-height: min(62vh, 650px);
+          overflow: auto;
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          box-shadow: 0 16px 36px rgba(15, 23, 42, 0.055);
+        }
+        .labor-model-grid-table {
+          width: max-content;
+          min-width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+        .labor-model-grid-table th,
+        .labor-model-grid-table td {
+          border-right: 1px solid ${C.borderLight};
+          border-bottom: 1px solid ${C.borderLight};
+          background: #fff;
+          vertical-align: middle;
+        }
+        .labor-model-grid-table th {
+          position: sticky;
+          top: 0;
+          z-index: 4;
+          padding: 8px;
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+          text-align: center;
+        }
+        .labor-model-sticky-col {
+          position: sticky;
+          left: 0;
+          z-index: 3;
+          min-width: 170px;
+          max-width: 210px;
+          box-shadow: 1px 0 0 ${C.borderLight};
+        }
+        th.labor-model-sticky-col {
+          z-index: 6;
+        }
+        .labor-model-role-col,
+        .labor-model-role-cell {
+          min-width: 230px;
+        }
+        .labor-model-grid-table td {
+          padding: 7px;
+          transition: background 160ms ease;
+        }
+        .labor-model-grid-row {
+          animation: laborModelGridIn 230ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-grid-row:hover td {
+          background: #f8fafc;
+        }
+        .labor-model-grid-row.is-recent-change td,
+        .labor-model-time-heading.is-recent-change {
+          animation: hourAnalysisChangePulse 760ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-line-cell {
+          position: sticky;
+          left: 0;
+          background: #fff;
+        }
+        .labor-model-line-input,
+        .labor-model-text-input,
+        .labor-model-time-input,
+        .labor-model-coverage-input {
+          width: 100%;
+          box-sizing: border-box;
+          border: 1px solid transparent;
+          border-radius: 8px;
+          background: transparent;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          outline: none;
+          transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease, transform 150ms ease;
+        }
+        .labor-model-line-input {
+          padding: 8px 9px;
+        }
+        .labor-model-time-input {
+          min-width: 76px;
+          padding: 6px 7px;
+          text-align: center;
+          font-size: 10.5px;
+        }
+        .labor-model-coverage-input {
+          width: 48px;
+          height: 34px;
+          padding: 0 6px;
+          text-align: center;
+          text-transform: uppercase;
+        }
+        .labor-model-line-input:hover,
+        .labor-model-time-input:hover,
+        .labor-model-coverage-input:hover,
+        .labor-model-line-input:focus,
+        .labor-model-time-input:focus,
+        .labor-model-coverage-input:focus {
+          border-color: rgba(20, 83, 45, 0.28);
+          background: #fff;
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.07);
+        }
+        .labor-model-time-heading {
+          position: sticky;
+          top: 0;
+          min-width: 84px;
+        }
+        .labor-model-time-editor {
+          display: grid;
+          justify-items: center;
+          gap: 5px;
+        }
+        .labor-model-slot-input {
+          width: 52px;
+          padding: 5px 6px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          color: ${C.text};
+          font-size: 11px;
+          font-weight: 950;
+          text-align: center;
+        }
+        .labor-model-role-cell .hour-analysis-picker-trigger {
+          min-height: 34px;
+          border-radius: 8px;
+          padding: 7px 9px;
+          font-size: 11px;
+        }
+        .labor-model-role-cell .hour-analysis-picker-panel {
+          position: absolute;
+          z-index: 45;
+          min-width: 300px;
+        }
+        .labor-model-hours-cell {
+          min-width: 74px;
+          color: ${C.pri};
+          font-weight: 950;
+          text-align: right;
+        }
+        .labor-model-delete-cell {
+          min-width: 46px;
+          text-align: center;
+        }
+        .labor-model-delete-button,
+        .labor-model-column-delete,
+        .labor-model-column-plus,
+        .labor-model-row-plus {
+          border: 1px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textMut};
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: border-color 160ms ease, color 160ms ease, background 160ms ease, opacity 160ms ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-delete-button,
+        .labor-model-column-delete {
+          width: 30px;
+          height: 30px;
+          border-radius: 9px;
+          opacity: 0;
+        }
+        .labor-model-grid-row:hover .labor-model-delete-button,
+        .labor-model-time-heading:hover .labor-model-column-delete {
+          opacity: 1;
+        }
+        .labor-model-delete-button:hover,
+        .labor-model-column-delete:hover {
+          border-color: #fecaca;
+          background: #fef2f2;
+          color: #b91c1c;
+          transform: translateY(-1px);
+        }
+        .labor-model-column-plus,
+        .labor-model-row-plus {
+          width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          color: #c2410c;
+          border-color: rgba(249, 115, 22, 0.34);
+          opacity: 0;
+          box-shadow: 0 8px 18px rgba(249, 115, 22, 0.13);
+        }
+        .labor-model-time-heading:hover .labor-model-column-plus,
+        .labor-model-line-cell:hover .labor-model-row-plus {
+          opacity: 1;
+          animation: laborModelInsertPulse 900ms ease-out;
+        }
+        .labor-model-column-plus {
+          position: absolute;
+          top: 50%;
+          right: -13px;
+          z-index: 8;
+          transform: translateY(-50%);
+        }
+        .labor-model-row-plus {
+          position: absolute;
+          left: 50%;
+          bottom: -13px;
+          z-index: 8;
+          transform: translateX(-50%);
+        }
+        .labor-model-column-plus:hover {
+          opacity: 1;
+          background: #fff7ed;
+          transform: translateY(-50%) scale(1.06);
+        }
+        .labor-model-row-plus:hover {
+          opacity: 1;
+          background: #fff7ed;
+          transform: translateX(-50%) scale(1.06);
+        }
+        .labor-model-column-delete {
+          position: absolute;
+          left: 50%;
+          bottom: 4px;
+          transform: translateX(-50%);
+        }
+        .labor-model-column-delete:hover {
+          transform: translateX(-50%) translateY(-1px);
+        }
+        .labor-model-column-delete:disabled {
+          opacity: 0;
+          cursor: default;
+        }
+        .labor-model-page {
+          display: grid;
+          gap: 14px;
+          animation: laborModuleEnter 340ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-page-header {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 14px 16px;
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.9), #ffffff 52%, #f8fafc);
+          box-shadow: 0 16px 34px rgba(15, 23, 42, 0.055);
+        }
+        .labor-model-page-kicker {
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .labor-model-page-title {
+          margin-top: 4px;
+          color: ${C.text};
+          font-size: 22px;
+          font-weight: 950;
+          line-height: 1.05;
+        }
+        .labor-model-page-subtitle {
+          margin-top: 6px;
+          max-width: 760px;
+          color: ${C.textSec};
+          font-size: 12px;
+          font-weight: 760;
+          line-height: 1.4;
+        }
+        .labor-model-page-stat {
+          min-width: 150px;
+          text-align: right;
+        }
+        .labor-model-page-stat span {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .labor-model-page-stat strong {
+          display: block;
+          margin-top: 5px;
+          color: ${C.pri};
+          font-size: 28px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .labor-model-shell.is-page {
+          min-height: 0;
+          gap: 12px;
+        }
+        .labor-model-shell.is-page .labor-model-tabs {
+          overflow: visible;
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.045);
+        }
+        .labor-model-shell.is-page .labor-model-tab-button {
+          font-size: 11.5px;
+        }
+        .labor-model-summary-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+          gap: 12px;
+          align-items: stretch;
+        }
+        .labor-model-graph-card {
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          padding: 14px;
+          min-width: 0;
+          box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
+          overflow: hidden;
+        }
+        .labor-model-graph-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .labor-model-graph-header span,
+        .labor-model-graph-header em {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          font-style: normal;
+          text-transform: uppercase;
+        }
+        .labor-model-graph-header strong {
+          display: block;
+          margin-top: 4px;
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+        }
+        .labor-model-line-graph {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .labor-model-graph-gridline {
+          stroke: ${C.borderLight};
+          stroke-width: 1;
+        }
+        .labor-model-graph-area {
+          fill: url(#laborModelGraphFill);
+          animation: laborModelGridIn 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-graph-line {
+          fill: none;
+          stroke: ${C.pri};
+          stroke-width: 4;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          filter: drop-shadow(0 8px 10px rgba(20, 83, 45, 0.16));
+          animation: laborModelGridIn 360ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-graph-dot {
+          fill: #fff;
+          stroke: ${C.pri};
+          stroke-width: 4;
+          cursor: pointer;
+          transition: r 160ms ease, fill 160ms ease, transform 160ms ease;
+        }
+        .labor-model-graph-dot:hover {
+          fill: ${C.pri};
+        }
+        .labor-model-graph-label {
+          fill: ${C.textMut};
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .labor-model-shell.is-page .labor-model-summary-cards {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .labor-model-shell.is-page .labor-model-summary-grid {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
+          gap: 12px;
+          margin-top: 0;
+        }
+        .labor-model-shell.is-page .labor-model-summary-table th,
+        .labor-model-shell.is-page .labor-model-summary-table td {
+          padding: 8px 9px;
+          font-size: 10.5px;
+        }
+        .labor-model-shell.is-page .labor-model-summary-table th {
+          font-size: 9px;
+        }
+        .labor-model-shell.is-page .labor-model-day-header {
+          display: none;
+        }
+        .labor-model-grid-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .labor-model-grid-title {
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+        }
+        .labor-model-grid-meta {
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 800;
+        }
+        .labor-model-grid-wrap {
+          max-height: none;
+          overflow: visible;
+          border-radius: 8px;
+        }
+        .labor-model-grid-table {
+          width: 100%;
+          min-width: 0;
+          table-layout: fixed;
+        }
+        .labor-model-grid-table th,
+        .labor-model-grid-table td {
+          padding: 4px;
+        }
+        .labor-model-grid-table th {
+          position: relative;
+          top: auto;
+          height: 42px;
+          font-size: 9px;
+        }
+        .labor-model-position-col,
+        .labor-model-position-cell {
+          width: 180px;
+        }
+        .labor-model-shift-col,
+        .labor-model-shift-cell {
+          width: 118px;
+        }
+        .labor-model-grid-table .labor-model-hours-col,
+        .labor-model-grid-table .labor-model-hours-cell {
+          width: 58px;
+        }
+        .labor-model-grid-table .labor-model-actions-col,
+        .labor-model-grid-table .labor-model-delete-cell {
+          width: 34px;
+        }
+        .labor-model-time-heading {
+          position: relative;
+          min-width: 0;
+          width: auto;
+        }
+        .labor-model-time-editor {
+          gap: 2px;
+        }
+        .labor-model-time-input {
+          min-width: 0;
+          height: 28px;
+          padding: 3px 3px;
+          border-radius: 7px;
+          font-size: 9.5px;
+          line-height: 1.05;
+        }
+        .labor-model-column-actions {
+          position: absolute;
+          inset: auto 2px 2px 2px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 2px;
+          opacity: 0.22;
+          transform: translateY(2px);
+          transition: opacity 150ms ease, transform 150ms ease;
+        }
+        .labor-model-time-heading:hover .labor-model-column-actions,
+        .labor-model-time-heading:focus-within .labor-model-column-actions {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        .labor-model-column-action {
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          border: 1px solid rgba(249, 115, 22, 0.34);
+          background: #fff7ed;
+          color: #c2410c;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 150ms ease, background 150ms ease, color 150ms ease;
+        }
+        .labor-model-column-action:hover {
+          transform: scale(1.08);
+          background: #ffedd5;
+        }
+        .labor-model-column-action.is-delete {
+          border-color: rgba(239, 68, 68, 0.24);
+          background: #fff;
+          color: ${C.textMut};
+        }
+        .labor-model-column-action.is-delete:hover {
+          background: #fef2f2;
+          color: #b91c1c;
+        }
+        .labor-model-column-action:disabled {
+          opacity: 0.35;
+          cursor: default;
+          transform: none;
+        }
+        .labor-model-position-cell .hour-analysis-picker-trigger {
+          min-height: 28px;
+          padding: 5px 7px;
+          border-radius: 7px;
+          font-size: 10px;
+          line-height: 1.05;
+        }
+        .labor-model-position-cell .hour-analysis-picker-panel {
+          min-width: 290px;
+        }
+        .labor-model-position-stack {
+          display: grid;
+          gap: 4px;
+        }
+        .labor-model-run-badge {
+          width: fit-content;
+          border: 1px solid rgba(20, 83, 45, 0.2);
+          border-radius: 999px;
+          background: rgba(240, 253, 244, 0.9);
+          color: ${C.pri};
+          padding: 2px 7px;
+          font-size: 9px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+        .labor-model-shift-control {
+          position: relative;
+        }
+        .labor-model-shift-trigger {
+          width: 100%;
+          min-height: 28px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 7px;
+          background: #fff;
+          color: ${C.text};
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 10px;
+          font-weight: 950;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 4px;
+          padding: 5px 7px;
+          text-align: left;
+          transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+        }
+        .labor-model-shift-trigger small {
+          grid-column: 1 / -1;
+          color: ${C.textMut};
+          font-size: 8.5px;
+          font-weight: 850;
+          white-space: nowrap;
+        }
+        .labor-model-shift-trigger:hover,
+        .labor-model-shift-trigger.has-break {
+          border-color: rgba(20, 83, 45, 0.24);
+          box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.055);
+        }
+        .labor-model-shift-panel {
+          position: absolute;
+          z-index: 50;
+          top: calc(100% + 7px);
+          left: 0;
+          width: 280px;
+          border: 1px solid ${C.border};
+          border-radius: 14px;
+          background: rgba(255,255,255,0.98);
+          box-shadow: 0 24px 55px rgba(15, 23, 42, 0.16);
+          padding: 12px;
+          animation: filterSlideIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .labor-model-break-row,
+        .labor-model-break-duration {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid ${C.borderLight};
+        }
+        .labor-model-break-row strong,
+        .labor-model-break-duration span {
+          display: block;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 950;
+        }
+        .labor-model-break-row span {
+          display: block;
+          margin-top: 2px;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 760;
+        }
+        .labor-model-break-toggle {
+          min-width: 52px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 999px;
+          background: #f8fafc;
+          color: ${C.textMut};
+          padding: 6px 10px;
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 950;
+          cursor: pointer;
+        }
+        .labor-model-break-toggle.is-on {
+          border-color: rgba(20, 83, 45, 0.22);
+          background: rgba(220, 252, 231, 0.86);
+          color: ${C.pri};
+        }
+        .labor-model-break-input {
+          width: 74px;
+          height: 32px;
+          border-radius: 8px;
+          text-align: right;
+        }
+        .labor-model-coverage-cell {
+          text-align: center;
+          padding: 3px !important;
+        }
+        .labor-model-coverage-cell-button {
+          width: 100%;
+          height: 24px;
+          min-width: 0;
+          border: 1px solid transparent;
+          border-radius: 6px;
+          background: #fff;
+          color: #fff;
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 9px;
+          font-weight: 950;
+          text-align: center;
+          text-transform: uppercase;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: clip;
+          outline: none;
+          transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+          user-select: none;
+        }
+        .labor-model-coverage-cell-button:hover {
+          border-color: rgba(20, 83, 45, 0.22);
+          background: rgba(240, 253, 244, 0.9);
+        }
+        .labor-model-coverage-cell-button.is-active {
+          border-color: rgba(20, 83, 45, 0.34);
+          background: linear-gradient(135deg, #14532d, #166534);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 14px rgba(20, 83, 45, 0.12);
+        }
+        .labor-model-coverage-cell-button.is-active:focus {
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 0 0 3px rgba(20, 83, 45, 0.16);
+        }
+        .labor-model-hours-cell {
+          min-width: 0;
+          color: ${C.pri};
+          font-size: 11px;
+          font-weight: 950;
+          text-align: right;
+        }
+        .labor-model-delete-cell {
+          min-width: 0;
+        }
+        .labor-model-row-plus {
+          position: static;
+          opacity: 0.18;
+          width: 22px;
+          height: 22px;
+          transform: none;
+        }
+        .labor-model-grid-row:hover .labor-model-row-plus,
+        .labor-model-grid-row:focus-within .labor-model-row-plus {
+          opacity: 1;
+        }
+        .labor-model-row-plus:hover {
+          transform: scale(1.06);
+        }
+        .labor-model-delete-button {
+          opacity: 0.18;
+          width: 24px;
+          height: 24px;
+          border-radius: 7px;
+        }
+        .labor-model-grid-row:hover .labor-model-delete-button,
+        .labor-model-grid-row:focus-within .labor-model-delete-button {
+          opacity: 1;
         }
         .labor-view-switcher {
           --labor-view-count: 1;
@@ -7127,11 +12619,32 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        @media (prefers-reduced-motion: reduce) {
 	          .labor-module-panel,
 	          .labor-view-switcher,
-	          .labor-tab-indicator::after { animation: none; }
+	          .labor-tab-indicator::after,
+            .hour-analysis-card,
+            .hour-analysis-person-row.is-what-if,
+            .hour-analysis-decision-card.is-recent-change,
+            .hour-analysis-hire-card.is-recent-change,
+            .hour-analysis-person-row.is-recent-change,
+            .hour-analysis-picker-panel,
+            .hour-analysis-split-panel,
+            .hour-analysis-position-panel,
+            .hour-analysis-picker-option,
+            .hour-analysis-audit-row { animation: none; }
 	          .labor-tab-indicator,
 	          .labor-view-switcher-indicator,
 	          .labor-tab-button,
-	          .labor-view-option { transition: none; }
+	          .labor-view-option,
+            .labor-template-gear-button,
+            .labor-template-gear-button svg,
+            .hour-analysis-mini-button,
+            .hour-analysis-person-row,
+            .hour-analysis-number-input,
+            .hour-analysis-note-input,
+            .hour-analysis-picker-trigger,
+            .hour-analysis-split-trigger,
+            .hour-analysis-position-trigger,
+            .hour-analysis-picker-option,
+            .hour-analysis-progress-fill { transition: none; }
 	        }
 	        @media print {
 	          @page {
@@ -7202,6 +12715,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             min-height: 0;
           }
           .labor-view-switcher-indicator { display: none; }
+          .hour-analysis-summary-grid { grid-template-columns: 1fr; }
+          .hour-analysis-roster-summary { grid-template-columns: 1fr; }
+          .hour-analysis-decision-grid { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-standard { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-grid { grid-template-columns: 1fr; }
+          .hour-analysis-card-header { align-items: flex-start; flex-direction: column; }
+          .labor-model-shell.is-page .labor-model-tabs {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-auto-rows: minmax(38px, auto);
+            overflow: visible;
+          }
+          .labor-model-shell.is-page .labor-model-tab-indicator { display: none; }
+          .labor-model-summary-cards,
+          .labor-model-summary-grid,
+          .labor-model-summary-layout { grid-template-columns: 1fr; }
+          .labor-model-day-header { align-items: flex-start; flex-direction: column; }
 	        }
 	      `}</style>
 	      <div className="labor-roster-print-document" aria-hidden={!rosterPrintMode}>
@@ -7232,8 +12761,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	            {[
 	              { label: "Managers", value: displayedDashboardMetrics.managerCount },
 	              { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
-	              { label: "CSRs", value: displayedDashboardMetrics.csrCount },
-	              { label: "PCTs", value: displayedDashboardMetrics.pctCount },
+	              { label: "Customer Service Representatives", value: displayedDashboardMetrics.csrCount },
+	              { label: "Pet Care Technicians", value: displayedDashboardMetrics.pctCount },
 	              { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
 	              { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
 	            ].map((item) => (
@@ -7292,7 +12821,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	            {rosterPrintRows.map((row) => (
 	              <tr key={getLaborEmployeeRowId(row) || row.full_name || row.contact_email}>
 	                <td>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee"}</td>
-	                <td>{row.position_title || "Not listed"}</td>
+	                <td>{formatLaborPositionTitle(row.position_title) || "Not listed"}</td>
 	                <td>{getLaborEmploymentCommitmentLabel(row.employment_commitment)}</td>
 	                <td>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed"}</td>
 	                <td>{row.contact_email || "Not listed"}</td>
@@ -7323,7 +12852,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               key={t.id}
               type="button"
               onClick={() => changeLaborTab(t.id)}
-              className={`labor-tab-button${tab === t.id ? " is-active" : ""}`}
+              className={`labor-tab-button${displayLaborTab === t.id ? " is-active" : ""}`}
             >
               {t.label}
             </button>
@@ -7347,8 +12876,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(156px, 1fr))", gap: 12, marginBottom: 16 }}>
 	            <MetricCard label="Managers" value={displayedDashboardMetrics.managerCount} color={C.pri} />
 	            <MetricCard label="Supervisors" value={displayedDashboardMetrics.supervisorCount} color="#2563EB" />
-	            <MetricCard label="CSRs" value={displayedDashboardMetrics.csrCount} color="#7C3AED" />
-	            <MetricCard label="PCTs" value={displayedDashboardMetrics.pctCount} color="#0891B2" />
+	            <MetricCard label="Customer Service Representatives" value={displayedDashboardMetrics.csrCount} color="#7C3AED" />
+	            <MetricCard label="Pet Care Technicians" value={displayedDashboardMetrics.pctCount} color="#0891B2" />
 	            <MetricCard label="Total Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.text} />
 	            <MetricCard label="Full-Time" value={displayedDashboardMetrics.fullTimeCount} color={C.suc} />
 	            <MetricCard
@@ -7681,18 +13210,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           <SectionHeader title="Roster" count={sortedRosterRows.length}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Btn
-                variant={rosterSort.key === "hierarchy" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setRosterSort({ key: "hierarchy", direction: "asc" })}
-              >
-                Hierarchy
-              </Btn>
-              {canEditRoster && (
-                <Btn variant="ghost" size="sm" onClick={() => setShowHierarchyManager(true)}>
-                  Manage Hierarchy
-                </Btn>
-              )}
+              <LaborSortControl
+                sort={rosterSort}
+                defaultSort={LABOR_DEFAULT_SORT}
+                columns={LABOR_ROSTER_SORT_COLUMNS}
+                onChange={setRosterSort}
+              />
               <Btn
                 variant={showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? "secondary" : "ghost"}
                 size="sm"
@@ -7859,17 +13382,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-	                            <label style={{ display: "grid", gap: 6 }}>
-	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Position Title</span>
-                              <input
+	                            <div>
+                              <HourAnalysisAnimatedPicker
+                                label="Position Title"
                                 value={newRosterEmployeeRole}
-                                onChange={(event) => setNewRosterEmployeeRole(event.target.value)}
-                                placeholder="Position title"
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-	                              />
-	                            </label>
+                                onChange={setNewRosterEmployeeRole}
+                                options={approvedLaborPositionOptions}
+                                placeholder="Choose approved title"
+                              />
+	                            </div>
 	                            <label style={{ display: "grid", gap: 6 }}>
 	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Commitment</span>
 	                              <select
@@ -7990,7 +13511,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, whiteSpace: "nowrap", fontWeight: 700 }}>Inactive since {formatLaborDate(row.end_date)}</div>
 		                          ) : null}
 		                        </td>
-		                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
+		                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{formatLaborPositionTitle(row.position_title) || "—"}</td>
 		                        <td style={{ ...rosterSecondaryCellStyle, minWidth: 116 }}>
 		                          <LaborCommitmentBadge value={row.employment_commitment} />
 		                        </td>
@@ -8041,6 +13562,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             embedded
             tabPreset={attendanceView}
             canLogAttendance={canLogAttendance}
+            laborPositionOrder={positionHierarchyRows.map((row) => row.position_title)}
           />
         </div>
       )}
@@ -8079,6 +13601,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading performance reviews...</Card>
           ) : null}
           <SectionHeader title="Performance Reviews" count={activePerformanceReviewRows.length}>
+            <LaborSortControl
+              sort={performanceReviewSort}
+              defaultSort={LABOR_DEFAULT_SORT}
+              columns={LABOR_PERFORMANCE_REVIEW_SORT_COLUMNS}
+              onChange={setPerformanceReviewSort}
+            />
             <Btn variant="ghost" size="sm" icon={<I.RefreshCw />} onClick={() => refreshLaborData()}>Refresh</Btn>
           </SectionHeader>
           {activePerformanceReviewRows.length === 0 ? (
@@ -8112,7 +13640,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     </tr>
                   </thead>
                   <tbody>
-                    {activePerformanceReviewRows.map((row) => {
+                    {sortedPerformanceReviewRows.map((row) => {
                       const employeeId = getLaborEmployeeRowId(row);
                       return (
                         <tr key={employeeId || row.full_name} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
@@ -8126,7 +13654,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             </button>
                             <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : row.contact_email || "No contact on file"}</div>
                           </td>
-                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{row.position_title || "—"}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{formatLaborPositionTitle(row.position_title) || "—"}</td>
                           <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatLaborDate(row.start_date)}</td>
                           <td style={{ ...rosterCellStyle, minWidth: 170 }}>
                             <Badge color={row.performance_review_compliance?.color || "default"}>
@@ -8192,7 +13720,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           {trainingBundleLoading && !trainingBundleLoaded ? (
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading training records…</Card>
           ) : null}
-          <SectionHeader title="Active Training Records" count={activeRecords.length} />
+          <SectionHeader title="Active Training Records" count={activeRecords.length}>
+            <LaborSortControl
+              sort={trainingSort}
+              defaultSort={LABOR_DEFAULT_SORT}
+              columns={LABOR_TRAINING_SORT_COLUMNS}
+              onChange={setTrainingSort}
+            />
+          </SectionHeader>
           {activeRecords.length === 0 ? (
             <EmptyState icon="GraduationCap" title="No active records" subtitle="Create a new training record to get started" />
           ) : (
@@ -8206,12 +13741,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <th style={tableHeaderStyle}>Status</th>
                   <th style={tableHeaderStyle}>Target</th>
                 </tr></thead>
-                <tbody>{activeRecords.map(r => <RecordRow key={r.id} rec={r} />)}</tbody>
+                <tbody>{sortedActiveRecords.map(r => <RecordRow key={r.id} rec={r} />)}</tbody>
               </table>
             </Card>
           )}
           <div style={{ height: 20 }} />
-          <SectionHeader title="Completed Training Records" count={completedRecords.length} />
+          <SectionHeader title="Completed Training Records" count={completedRecords.length}>
+            <LaborSortControl
+              sort={trainingSort}
+              defaultSort={LABOR_DEFAULT_SORT}
+              columns={LABOR_TRAINING_SORT_COLUMNS}
+              onChange={setTrainingSort}
+            />
+          </SectionHeader>
           {completedRecords.length === 0 ? (
             <EmptyState icon="CheckCircle" title="No completed records" subtitle="Completed training records will appear here" />
           ) : (
@@ -8225,7 +13767,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <th style={tableHeaderStyle}>Status</th>
                   <th style={tableHeaderStyle}>Target</th>
                 </tr></thead>
-                <tbody>{completedRecords.map((record) => <RecordRow key={record.id} rec={record} />)}</tbody>
+                <tbody>{sortedCompletedRecords.map((record) => <RecordRow key={record.id} rec={record} />)}</tbody>
               </table>
             </Card>
           )}
@@ -8699,47 +14241,856 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
         </div>
       )}
+
+      {!loading && tab === "hour-analysis" && canUseLaborTab("hour-analysis") && (
+        <div className="hour-analysis-shell">
+          <div className="hour-analysis-card">
+            <div className="hour-analysis-card-header">
+              <div>
+                <h3 className="hour-analysis-card-title">Headcount & Preferred Hours</h3>
+                <div className="hour-analysis-card-subtitle">Headcount comes from the roster. Preferred hours are editable defaults by role and commitment.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {hourAnalysisModel.whatIfRows.length > 0 && (
+                  <span className="hour-analysis-what-if-tag">WHAT IF {hourAnalysisModel.whatIfRows.length}</span>
+                )}
+                {!canEditRoster && <span className="hour-analysis-status-pill" style={{ background: "#f8fafc", borderColor: C.border, color: C.textMut }}>Read Only</span>}
+              </div>
+            </div>
+            <div className="hour-analysis-roster-summary">
+              <div className="hour-analysis-roster-summary-item is-primary">
+                <div className="hour-analysis-summary-label">Total Headcount</div>
+                <div className="hour-analysis-summary-value">{hourAnalysisModel.totals.projectedHeadcount}</div>
+                <div className="hour-analysis-summary-note">
+                  {hourAnalysisModel.headcountTotals.total} roster
+                  {hourAnalysisModel.headcountTotals.whatIfTotal ? ` + ${hourAnalysisModel.headcountTotals.whatIfTotal} what-if` : ""}
+                  {" "}employees
+                </div>
+              </div>
+              <div className="hour-analysis-roster-summary-item">
+                <div className="hour-analysis-summary-label">Full-Time</div>
+                <div className="hour-analysis-summary-value">{hourAnalysisModel.totals.projectedFullTimeHeadcount}</div>
+                <div className="hour-analysis-summary-note">
+                  {hourAnalysisModel.headcountTotals.fullTime} roster
+                  {hourAnalysisModel.headcountTotals.whatIfFullTime ? ` + ${hourAnalysisModel.headcountTotals.whatIfFullTime} what-if` : ""}
+                </div>
+              </div>
+              <div className="hour-analysis-roster-summary-item">
+                <div className="hour-analysis-summary-label">Part-Time</div>
+                <div className="hour-analysis-summary-value">{hourAnalysisModel.totals.projectedPartTimeHeadcount}</div>
+                <div className="hour-analysis-summary-note">
+                  {hourAnalysisModel.headcountTotals.partTime} roster
+                  {hourAnalysisModel.headcountTotals.whatIfPartTime ? ` + ${hourAnalysisModel.headcountTotals.whatIfPartTime} what-if` : ""}
+                </div>
+              </div>
+              <div className="hour-analysis-roster-summary-item">
+                <div className="hour-analysis-summary-label">Preferred Hours</div>
+                <div className="hour-analysis-summary-value">{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)}</div>
+                <div className="hour-analysis-summary-note">hrs / wk after what-if scenarios</div>
+              </div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="hour-analysis-table hour-analysis-planning-table">
+                <colgroup>
+                  <col className="hour-analysis-col-position" />
+                  <col className="hour-analysis-col-total" />
+                  <col className="hour-analysis-col-count" />
+                  <col className="hour-analysis-col-hours" />
+                  <col className="hour-analysis-col-count" />
+                  <col className="hour-analysis-col-hours" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th className="hour-analysis-sticky-heading" rowSpan={2}>Position</th>
+                    <th className="hour-analysis-sticky-heading" rowSpan={2} style={{ textAlign: "center" }}>Total Headcount</th>
+                    <th className="hour-analysis-group-heading" colSpan={2}>Full-Time</th>
+                    <th className="hour-analysis-group-heading" colSpan={2}>Part-Time</th>
+                  </tr>
+                  <tr>
+                    <th className="hour-analysis-sub-heading">Headcount</th>
+                    <th className="hour-analysis-sub-heading">Preferred Hours</th>
+                    <th className="hour-analysis-sub-heading">Headcount</th>
+                    <th className="hour-analysis-sub-heading">Preferred Hours</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hourAnalysisGroups.map((group) => {
+                    const headcount = hourAnalysisModel.headcountRows.find((row) => row.key === group.key) || {};
+                    const expectation = hourAnalysisSettings.expectations[group.key] || DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key] || {};
+                    return (
+                      <tr key={group.key}>
+                        <td>{group.label}</td>
+                        <td className="hour-analysis-count-cell">
+                          {renderHourAnalysisHeadcount(headcount.total || 0, headcount.whatIfTotal || 0)}
+                        </td>
+                        <td className="hour-analysis-count-cell">
+                          {renderHourAnalysisHeadcount(headcount.fullTime || 0, headcount.whatIfFullTime || 0)}
+                        </td>
+                        <td className="hour-analysis-hours-cell">
+                          <HourAnalysisNumberInput
+                            value={expectation.full_time?.expected ?? 0}
+                            disabled={!canEditRoster}
+                            onCommit={(nextValue) => updateHourExpectation(group.key, "full_time", "expected", nextValue)}
+                            ariaLabel={`${group.label} full-time preferred weekly hours`}
+                          />
+                        </td>
+                        <td className="hour-analysis-count-cell">
+                          {renderHourAnalysisHeadcount(headcount.partTime || 0, headcount.whatIfPartTime || 0)}
+                        </td>
+                        <td className="hour-analysis-hours-cell">
+                          <HourAnalysisNumberInput
+                            value={expectation.part_time?.expected ?? 0}
+                            disabled={!canEditRoster}
+                            onCommit={(nextValue) => updateHourExpectation(group.key, "part_time", "expected", nextValue)}
+                            ariaLabel={`${group.label} part-time preferred weekly hours`}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td style={{ fontWeight: 950 }}>Total</td>
+                    <td className="hour-analysis-count-cell">
+                      {renderHourAnalysisHeadcount(hourAnalysisModel.headcountTotals.total, hourAnalysisModel.headcountTotals.whatIfTotal)}
+                    </td>
+                    <td className="hour-analysis-count-cell">
+                      {renderHourAnalysisHeadcount(hourAnalysisModel.headcountTotals.fullTime, hourAnalysisModel.headcountTotals.whatIfFullTime)}
+                    </td>
+                    <td className="hour-analysis-hours-cell">
+                      {formatHourAnalysisHours(hourAnalysisModel.totals.projectedFullTimeRange?.expected ?? 0)}
+                    </td>
+                    <td className="hour-analysis-count-cell">
+                      {renderHourAnalysisHeadcount(hourAnalysisModel.headcountTotals.partTime, hourAnalysisModel.headcountTotals.whatIfPartTime)}
+                    </td>
+                    <td className="hour-analysis-hours-cell">
+                      {formatHourAnalysisHours(hourAnalysisModel.totals.projectedPartTimeRange?.expected ?? 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="hour-analysis-card">
+            <div className="hour-analysis-card-header">
+              <div>
+                <h3 className="hour-analysis-card-title">Staffing Capacity</h3>
+                <div className="hour-analysis-card-subtitle">One read: recruit, hold steady, or stop adding hours.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <Badge color={hourAnalysisModel.totals.capacityStatus.tone} tip={hourAnalysisModel.totals.capacityStatus.message}>
+                  {hourAnalysisModel.totals.capacityStatus.label}
+                </Badge>
+              </div>
+            </div>
+            <div className="hour-analysis-decision-grid">
+              <div className={`hour-analysis-decision-card${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
+                <div className="hour-analysis-decision-label">{hourAnalysisDecision.label}</div>
+                <div className="hour-analysis-decision-value" style={{ color: hourAnalysisDecision.tone === "short" ? "#b45309" : hourAnalysisDecision.tone === "surplus" ? "#b91c1c" : C.pri }}>
+                  {hourAnalysisDecision.value}
+                </div>
+                <div className="hour-analysis-decision-copy">
+                  {hourAnalysisDecision.copy}
+                </div>
+                <div className="hour-analysis-progress-track" aria-hidden="true">
+                  <div className="hour-analysis-progress-fill" style={{ width: `${hourAnalysisTargetProgress}%` }} />
+                </div>
+                <div className="hour-analysis-decision-copy" style={{ color: C.textMut }}>
+                  Target: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} hrs/wk</strong>. Preferred: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} hrs/wk</strong>. Floor: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredWeekly)} hrs/wk</strong>.
+                </div>
+              </div>
+              <div className="hour-analysis-hire-card">
+                <div className="hour-analysis-decision-label">Role bottlenecks</div>
+                {hourAnalysisModel.totals.hiringRecommendations.length > 0 ? (
+                  <>
+                    <div className="hour-analysis-hire-list">
+                      {hourAnalysisModel.totals.hiringRecommendations.map((row) => (
+                        <div key={row.key} className="hour-analysis-hire-row">
+                          <div>
+                            <strong>{row.label}</strong>
+                            <span>{formatHourAnalysisHours(row.shortHours)} role hrs/wk short at preferred capacity</span>
+                          </div>
+                          <div className="hour-analysis-hire-count">
+                            {row.isFrontline ? `+${formatHourAnalysisHours(row.hireEquivalent)} FTE` : `+${formatHourAnalysisHours(row.shortHours)} hrs`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="hour-analysis-decision-copy">
+                      Add the next <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.recommendedPlanHours)} hrs/wk</strong> into these bottleneck roles first. That moves preferred capacity to <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.expectedAfterRecommendedPlan)} hrs/wk</strong> without adding avoidable surplus.
+                    </div>
+                    <div className="hour-analysis-hire-footnote">
+                      Whole FT-only role coverage would be {hourAnalysisModel.totals.wholeRolePlanHeadcount} hires / {formatHourAnalysisHours(hourAnalysisModel.totals.wholeRolePlanHours)} hrs/wk, landing at {formatHourAnalysisHours(hourAnalysisModel.totals.expectedAfterWholeRolePlan)} hrs/wk. If that is above the healthy band, use part-time hires, change what-if roles, or raise hours for qualified people before accepting the overbuild.
+                    </div>
+                  </>
+                ) : (
+                  <div className="hour-analysis-decision-copy">
+                    Preferred capacity already reaches the operating target. Do not add headcount unless a role-level gap or upcoming demand change is known.
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="hour-analysis-flex-note">
+              Normal guidance uses dedicated role capacity. Cross-coverage is an emergency flex layer: General Managers, Assistant Managers, and Supervisors can cover Customer Service Representative and Pet Care Technician work, Customer Service Representatives can cover Pet Care Technician work, and Pet Care Technicians only cover Pet Care Technician work. Use that for bad weeks, not to hide a normal hiring gap.
+              {hourAnalysisModel.totals.roleSurplusRows.length > 0 ? ` Current surplus: ${hourAnalysisModel.totals.roleSurplusRows.map((row) => `${row.label} +${formatHourAnalysisHours(row.surplusHours)}`).join(", ")} hrs/wk.` : ""}
+            </div>
+            <div className="hour-analysis-capacity-standard">
+              <div className="hour-analysis-standard-copy">
+                <div className="hour-analysis-standard-eyebrow">Staffing standard</div>
+                <p>
+                  {`Labor Model lines define the operating floor by day and role. General Manager, Assistant Manager, and Supervisor targets equal that modeled floor. Customer Service Representative and Pet Care Technician targets use a frontline relief factor: staffed hours / (1 - ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}%). That means 100 required frontline hours need 125 preferred hours to absorb PTO, sick/call-outs, training, meetings, and other unavailable paid time.`}
+                </p>
+                <p>
+                  There is no universal 20% rule. NICE and SWPP support shrinkage/relief-factor math; BLS gives the absence baseline but excludes vacation and holidays; stable-scheduling research warns that overbuilt hourly rosters can create unstable hours and turnover.
+                </p>
+                <div className="hour-analysis-standard-sources" aria-label="Staffing capacity sources">
+                  {HOUR_ANALYSIS_STAFFING_SOURCES.map((source) => (
+                    <a key={source.href} href={source.href} target="_blank" rel="noreferrer">{source.label}</a>
+                  ))}
+                </div>
+              </div>
+              <div className="hour-analysis-standard-math">
+                <span>{HOUR_ANALYSIS_RESEARCH_TARGET_LABEL}</span>
+                <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} hrs/wk</strong>
+                <em>{formatHourAnalysisHours(hourAnalysisModel.totals.capacityStandard.targetSurplus)} relief hrs over floor</em>
+                <span style={{ marginTop: 8 }}>Sensitivity band: {formatHourAnalysisHours(hourAnalysisModel.totals.healthyLowWeekly)}-{formatHourAnalysisHours(hourAnalysisModel.totals.healthyHighWeekly)}</span>
+              </div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="hour-analysis-table" style={{ minWidth: 900 }}>
+                <thead>
+                  <tr>
+                    <th>Position Group</th>
+                    <th style={{ textAlign: "right" }}>Daily Avg Floor</th>
+                    <th style={{ textAlign: "right" }}>Weekly Floor</th>
+                    <th style={{ textAlign: "right" }}>Relief</th>
+                    <th style={{ textAlign: "right" }}>Target</th>
+                    <th style={{ textAlign: "right" }}>Preferred</th>
+                    <th style={{ textAlign: "right" }}>Gap</th>
+                    <th>Role Guidance</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hourAnalysisModel.weeklyRows.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.label}</td>
+                      <td style={{ textAlign: "right", fontWeight: 950 }}>
+                        {formatHourAnalysisHours(row.requiredDaily)}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(row.requiredWeekly)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 950 }}>{row.reliefPercent ? `${row.reliefPercent}%` : "None"}</td>
+                      <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(row.targetWeekly)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 950, color: C.pri }}>{formatHourAnalysisHours(row.expected)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 950, color: row.expectedGapToTarget < 0 ? "#b45309" : "#047857" }}>
+                        {row.expectedGapToTarget < 0 ? `${formatHourAnalysisHours(Math.abs(row.expectedGapToTarget))} short` : `${formatHourAnalysisHours(row.expectedGapToTarget)} surplus`}
+                      </td>
+                      <td style={{ fontWeight: 900 }}>
+                        {row.hireDeficitHours > 0
+                          ? row.isFrontline
+                            ? `Recruit +${formatHourAnalysisHours(row.recommendedFullTimeEquivalent)} FTE`
+                            : `Schedule +${formatHourAnalysisHours(row.hireDeficitHours)} hrs`
+                          : "No hire"}
+                      </td>
+                      <td><Badge color={row.capacityStatus.tone} tip={row.capacityStatus.message}>{row.capacityStatus.label}</Badge></td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ fontWeight: 950 }}>Total</td>
+                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredDaily)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredWeekly)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 950 }}>Mixed</td>
+                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 950, color: C.pri }}>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 950, color: hourAnalysisModel.totals.expectedGapToTarget < 0 ? "#b45309" : "#047857" }}>
+                      {hourAnalysisModel.totals.expectedGapToTarget < 0 ? `${formatHourAnalysisHours(Math.abs(hourAnalysisModel.totals.expectedGapToTarget))} short` : `${formatHourAnalysisHours(hourAnalysisModel.totals.expectedGapToTarget)} surplus`}
+                    </td>
+                    <td style={{ fontWeight: 900 }}>
+                      {hourAnalysisModel.totals.recommendedPlanHeadcount > 0 ? `Add +${formatHourAnalysisHours(hourAnalysisModel.totals.recommendedPlanHours)} hrs` : "No hire"}
+                    </td>
+                    <td><Badge color={hourAnalysisModel.totals.capacityStatus.tone} tip={hourAnalysisModel.totals.capacityStatus.message}>{hourAnalysisModel.totals.capacityStatus.label}</Badge></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="hour-analysis-card">
+            <div className="hour-analysis-card-header">
+              <div>
+                <h3 className="hour-analysis-card-title">Preferred Hours By Person</h3>
+                <div className="hour-analysis-card-subtitle">Click a position to model a role movement. Override hours only when a person differs from the default.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <LaborSortControl
+                  sort={hourAnalysisPersonSort}
+                  defaultSort={LABOR_DEFAULT_SORT}
+                  columns={LABOR_HOUR_PERSON_SORT_COLUMNS}
+                  onChange={setHourAnalysisPersonSort}
+                />
+                <span className="hour-analysis-status-pill" style={{ background: "#eff6ff", borderColor: "#bfdbfe", color: "#1d4ed8" }}>
+                  {hourAnalysisModel.rows.length} rows
+                </span>
+              </div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="hour-analysis-table" style={{ minWidth: 1120 }}>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Position</th>
+                    <th>Commitment</th>
+                    <th style={{ textAlign: "right" }}>Preferred Hours</th>
+                    <th>Coverage Split</th>
+                    <th>Justification</th>
+                    <th style={{ width: 92 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedHourAnalysisRows.map((row) => {
+                    const rowKey = row.employeeKey || row.id || row.full_name;
+                    return (
+                      <tr key={rowKey} className={`hour-analysis-person-row${row.isWhatIf ? " is-what-if" : ""}${row.isMovement ? " is-movement" : ""}${hourAnalysisChangedKeys.has(`row:${rowKey}`) ? " is-recent-change" : ""}`}>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 950 }}>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "—"}</span>
+                            {row.isWhatIf && <span className="hour-analysis-what-if-tag">WHAT IF</span>}
+                            {row.isMovement && <span className="hour-analysis-move-tag">MOVE</span>}
+                            {row.isSplit && <span className="hour-analysis-status-pill" style={{ background: "#eff6ff", borderColor: "#bfdbfe", color: "#1d4ed8" }}>Split</span>}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 10.5, color: C.textMut, fontWeight: 800 }}>
+                            {row.isMovement ? `${row.sourceGroupLabel} -> ${row.groupLabel}` : row.groupLabel}
+                            {row.sourceMissing ? " · source not active" : ""}
+                          </div>
+                        </td>
+                        <td style={{ color: row.position_title ? C.textSec : C.textMut }}>
+                          {row.isWhatIf ? (
+                            row.isMovement ? (
+                              <span className="hour-analysis-position-display is-static">
+                                <span className="hour-analysis-position-original">{formatLaborPositionTitle(row.sourcePositionTitle) || "Current role"}</span>
+                                <span className="hour-analysis-arrow">→</span>
+                                <span>{formatLaborPositionTitle(row.position_title) || "Target role"}</span>
+                              </span>
+                            ) : (
+                              formatLaborPositionTitle(row.position_title) || "—"
+                            )
+                          ) : (
+                            <HourAnalysisPositionMoveControl
+                              row={row}
+                              options={hourAnalysisPositionOptions}
+                              disabled={!canEditRoster}
+                              onChange={(nextPositionTitle) => updateHourAnalysisPositionMovement(row, nextPositionTitle)}
+                            />
+                          )}
+                        </td>
+                        <td><LaborCommitmentBadge value={row.employment_commitment} /></td>
+                        <td style={{ textAlign: "right" }}>
+                          <div className="hour-analysis-preferred-cell" style={{ justifyContent: "flex-end" }}>
+                            {row.isOverride ? (
+                              <>
+                                <span className="hour-analysis-inherited-hours is-overridden">{formatHourAnalysisHours(row.inheritedHours || 0)}</span>
+                                <span className="hour-analysis-arrow">→</span>
+                                <HourAnalysisNumberInput
+                                  value={row.preferredHours || 0}
+                                  disabled={!canEditRoster}
+                                  onCommit={(nextValue) => (
+                                    row.isWhatIf
+                                      ? updateHourAnalysisWhatIfOverride(row.id, "expected", nextValue)
+                                      : setHourAnalysisEmployeeOverride(row.employeeKey, "expected", nextValue)
+                                  )}
+                                  ariaLabel={`${row.full_name || "Employee"} preferred weekly hours override`}
+                                />
+                                {canEditRoster && (
+                                  <button
+                                    type="button"
+                                    className="hour-analysis-mini-button"
+                                    onClick={() => (
+                                      row.isWhatIf
+                                        ? clearHourAnalysisWhatIfOverride(row.id, "expected")
+                                        : clearHourAnalysisEmployeeOverride(row.employeeKey, "expected")
+                                    )}
+                                  >
+                                    Inherit
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className="hour-analysis-inherited-hours">{formatHourAnalysisHours(row.inheritedHours || 0)}</span>
+                                {canEditRoster && (
+                                  <button
+                                    type="button"
+                                    className="hour-analysis-mini-button"
+                                    onClick={() => (
+                                      row.isWhatIf
+                                        ? updateHourAnalysisWhatIfOverride(row.id, "expected", row.inheritedHours || 0)
+                                        : setHourAnalysisEmployeeOverride(row.employeeKey, "expected", row.inheritedHours || 0)
+                                    )}
+                                  >
+                                    Override
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <HourAnalysisSplitControl
+                            row={row}
+                            disabled={!canEditRoster}
+                            onChange={(updates) => updateHourAnalysisCoverageSplit(rowKey, updates)}
+                          />
+                        </td>
+                        <td>
+                          <HourAnalysisNoteInput
+                            value={row.note || ""}
+                            disabled={!canEditRoster}
+                            onCommit={(nextNote) => updateHourAnalysisNote(rowKey, nextNote)}
+                            ariaLabel={`${row.full_name || "Employee"} hour justification note`}
+                            placeholder={row.isOverride || row.isSplit ? "Document the reason..." : "Optional note"}
+                          />
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {row.isWhatIf && canEditRoster ? (
+                            <button
+                              type="button"
+                              className="hour-analysis-mini-button hour-analysis-danger-button"
+                              onClick={() => removeHourAnalysisWhatIfRow(row.id)}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {hourAnalysisModel.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 24, textAlign: "center", color: C.textMut }}>
+                        Add employees to the roster to calculate hour ranges.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && tab === "labor-model" && canUseLaborTab("labor-model") && (
+        <div className="labor-model-page">
+          <div className="labor-model-page-header">
+            <div>
+              <div className="labor-model-page-kicker">Labor Model</div>
+              <div className="labor-model-page-title">Operating Floor Builder</div>
+              <div className="labor-model-page-subtitle">
+                Edit the actual coverage grid. Time ranges calculate their own weight, row breaks subtract from row totals, and the weekly floors feed Staffing Capacity immediately.
+              </div>
+            </div>
+            <div className="labor-model-page-stat">
+              <span>Weekly Floor</span>
+              <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalWeekly)}</strong>
+            </div>
+          </div>
+
+          <div className="labor-model-shell is-page">
+            <div className="labor-model-tabs" style={{ "--labor-model-tab-count": LABOR_MODEL_DAY_KEYS.length + 1, "--labor-model-active-index": Math.max(0, [LABOR_MODEL_SUMMARY_TAB, ...LABOR_MODEL_DAY_KEYS].indexOf(hourAnalysisLaborModelTab)) }}>
+              <span className="labor-model-tab-indicator" aria-hidden="true" />
+              {[{ id: LABOR_MODEL_SUMMARY_TAB, label: "Summary" }, ...LABOR_MODEL_DAY_KEYS.map((dayKey) => ({ id: dayKey, label: LABOR_MODEL_DAY_LABELS[dayKey] }))].map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`labor-model-tab-button${hourAnalysisLaborModelTab === item.id ? " is-active" : ""}`}
+                  onClick={() => setHourAnalysisLaborModelTab(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {hourAnalysisLaborModelTab === LABOR_MODEL_SUMMARY_TAB ? (
+              <div className="labor-model-summary-view">
+                <div className="labor-model-summary-cards">
+                  <div className="labor-model-metric-card is-primary">
+                    <span>Weekly Operating Floor</span>
+                    <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalWeekly)} hrs</strong>
+                    <em>Feeds Staffing Capacity immediately</em>
+                  </div>
+                  <div className="labor-model-metric-card">
+                    <span>Average Day</span>
+                    <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.averageDaily)} hrs</strong>
+                    <em>{hourAnalysisLaborModelSummary.highestDay?.label || "No day"} is highest</em>
+                  </div>
+                  <div className="labor-model-metric-card">
+                    <span>Frontline Floor</span>
+                    <strong>{formatHourAnalysisHours((hourAnalysisLaborModelSummary.roleWeekly.csr || 0) + (hourAnalysisLaborModelSummary.roleWeekly.pct || 0))} hrs</strong>
+                    <em>Customer Service Representative + Pet Care Technician</em>
+                  </div>
+                </div>
+                <div className="labor-model-summary-layout" style={{ marginTop: 12 }}>
+                  <LaborModelHoursLineGraph days={hourAnalysisLaborModelSummary.dayRows} />
+                  <div className="labor-model-panel">
+                    <div className="labor-model-panel-title">Weekly Role Floors</div>
+                    <table className="labor-model-summary-table">
+                      <thead>
+                        <tr>
+                          <th>Position</th>
+                          <th>Floor</th>
+                          <th>Target</th>
+                          <th>Preferred</th>
+                          <th>Gap</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hourAnalysisModel.weeklyRows.map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.label}</td>
+                            <td>{formatHourAnalysisHours(row.requiredWeekly)}</td>
+                            <td>{formatHourAnalysisHours(row.targetWeekly)}</td>
+                            <td>{formatHourAnalysisHours(row.expected)}</td>
+                            <td style={{ color: row.expectedGapToTarget < 0 ? "#b45309" : "#047857", fontWeight: 950 }}>
+                              {row.expectedGapToTarget < 0 ? `${formatHourAnalysisHours(Math.abs(row.expectedGapToTarget))} short` : `${formatHourAnalysisHours(row.expectedGapToTarget)} surplus`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="labor-model-summary-grid">
+                  <div className="labor-model-panel">
+                    <div className="labor-model-panel-title">Hours By Day</div>
+                    <table className="labor-model-summary-table">
+                      <thead>
+                        <tr>
+                          <th>Day</th>
+                          <th>CSR</th>
+                          <th>PCT</th>
+                          <th>Supervisor</th>
+                          <th>Assistant Manager</th>
+                          <th>Total</th>
+                          <th>Peak</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hourAnalysisLaborModelSummary.dayRows.map((day) => (
+                          <tr key={day.key}>
+                            <td>{day.label}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.csr || 0)}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.pct || 0)}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
+                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
+                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
+                            <td>{day.peakCoverage}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="labor-model-panel">
+                    <div className="labor-model-panel-title">How Hours Calculate</div>
+                    <div className="labor-model-summary-note" style={{ borderTop: 0 }}>
+                      Time-slot weight is derived from the header range. Example: 5:45a-6a equals 0.25 hours. Green cells count toward that row, and row-level break settings subtract the configured minutes from the row total.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="labor-model-day-view">
+                <div className="labor-model-grid-toolbar">
+                  <div>
+                    <div className="labor-model-grid-title">{activeHourAnalysisLaborModelDaySummary?.label || LABOR_MODEL_DAY_LABELS[activeHourAnalysisLaborModelDayKey]}</div>
+                    {activeHourAnalysisLaborModelDaySummary?.columnValidation?.valid === false && (
+                      <div className="labor-model-grid-meta">Fix time continuity before this day feeds Staffing Capacity.</div>
+                    )}
+                  </div>
+                  {canEditRoster && (
+                    <Btn variant="secondary" icon={<I.Plus />} onClick={() => insertHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey)}>
+                      Add Line
+                    </Btn>
+                  )}
+                </div>
+                <div className="labor-model-grid-wrap">
+                  <table className="labor-model-grid-table">
+                    <thead>
+                      <tr>
+                        <th className="labor-model-position-col">Position</th>
+                        <th className="labor-model-shift-col">Time</th>
+                        {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => (
+                          <th
+                            key={column.id}
+                            className={`labor-model-time-heading${hourAnalysisChangedKeys.has(`labor-model-column:${column.id}`) ? " is-recent-change" : ""}${column.is_valid === false ? " is-invalid" : ""}`}
+                          >
+                            <div className="labor-model-time-editor">
+                              <LaborModelInlineInput
+                                value={column.label}
+                                disabled={!canEditRoster}
+                                ariaLabel={`${activeHourAnalysisLaborModelDaySummary?.label || "Day"} time slot label`}
+                                className="labor-model-time-input"
+                                onCommit={(nextValue) => updateHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, { label: nextValue })}
+                              />
+                            </div>
+                            {canEditRoster && (
+                              <div className="labor-model-column-actions">
+                                <button
+                                  type="button"
+                                  className="labor-model-column-action"
+                                  aria-label={`Insert time before ${column.label}`}
+                                  onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "left")}
+                                >
+                                  <I.Plus />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="labor-model-column-action is-delete"
+                                  aria-label={`Delete ${column.label}`}
+                                  disabled={(activeHourAnalysisLaborModelDay?.columns || []).length <= 1}
+                                  onClick={() => removeHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex)}
+                                >
+                                  <I.Trash />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="labor-model-column-action"
+                                  aria-label={`Insert time after ${column.label}`}
+                                  onClick={() => insertHourAnalysisLaborModelColumn(activeHourAnalysisLaborModelDayKey, columnIndex, "right")}
+                                >
+                                  <I.Plus />
+                                </button>
+                              </div>
+                            )}
+                          </th>
+                        ))}
+                        <th className="labor-model-hours-col">Hours</th>
+                        <th className="labor-model-actions-col" aria-label="Actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(activeHourAnalysisLaborModelDay?.rows || []).map((row) => {
+                        const rowSummary = activeHourAnalysisLaborModelDaySummary?.rows.find((item) => item.id === row.id) || row;
+                        return (
+                          <tr
+                            key={row.id}
+                            className={`labor-model-grid-row${hourAnalysisChangedKeys.has(`labor-model-row:${row.id}`) ? " is-recent-change" : ""}`}
+                          >
+                            <td className="labor-model-position-cell">
+                              <div className="labor-model-position-stack">
+                                <HourAnalysisAnimatedPicker
+                                  value={row.group_key}
+                                  options={LABOR_MODEL_GROUP_OPTIONS}
+                                  disabled={!canEditRoster}
+                                  placeholder="Position"
+                                  onChange={(nextValue) => updateHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id, { group_key: nextValue })}
+                                />
+                                {rowSummary.runLength > 1 && rowSummary.runIndex === 1 && (
+                                  <span className="labor-model-run-badge">
+                                    {rowSummary.runLength} consecutive {LABOR_MODEL_SHIFT_TYPE_LABELS[rowSummary.shift_type] || "Opening"}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="labor-model-shift-cell">
+                              <LaborModelTimeControl
+                                row={row}
+                                disabled={!canEditRoster}
+                                onChange={(updates) => updateHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id, updates)}
+                              />
+                            </td>
+                            {(activeHourAnalysisLaborModelDay?.columns || []).map((column, columnIndex) => (
+                              <td key={`${row.id}-${column.id}`} className="labor-model-coverage-cell">
+                                <LaborModelCoverageCell
+                                  value={row.coverage[columnIndex] || ""}
+                                  disabled={!canEditRoster}
+                                  rowId={row.id}
+                                  columnIndex={columnIndex}
+                                  onStart={(targetRowId, targetColumnIndex, shouldActivate) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, shouldActivate)}
+                                  onEnter={(targetRowId, targetColumnIndex) => enterLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
+                                  onTextChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
+                                />
+                              </td>
+                            ))}
+                            <td className="labor-model-hours-cell">{formatHourAnalysisHours(rowSummary?.hours || calculateLaborModelRowHours(row, activeHourAnalysisLaborModelDay?.columns || []))}</td>
+                            <td className="labor-model-delete-cell">
+                              {canEditRoster && (
+                                <button
+                                  type="button"
+                                  className="labor-model-delete-button"
+                                  aria-label={`Delete ${getHourAnalysisGroupLabel(row.group_key)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
+                                  onClick={() => removeHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id)}
+                                >
+                                  <I.Trash />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {(activeHourAnalysisLaborModelDay?.rows || []).length === 0 && (
+                        <tr>
+                          <td colSpan={(activeHourAnalysisLaborModelDay?.columns || []).length + 4} style={{ padding: 24, textAlign: "center", color: C.textMut, fontWeight: 820 }}>
+                            Add a Labor Model line to begin building the operating floor.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       </div>
 
+      {canEditRoster && showHourAnalysisWhatIfModal && (
+        <Modal title="Add Employee / What If" onClose={() => { setShowHourAnalysisWhatIfModal(false); resetWhatIfHourAnalysisForm(); }}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ fontSize: 13, lineHeight: 1.45, color: C.textMut }}>
+              Add a planning-only employee to test new headcount. To model a current employee changing roles, use the position dropdown in the person table.
+            </div>
+            <Inp label="Name" value={whatIfEmployeeName} onChange={setWhatIfEmployeeName} placeholder="Candidate or placeholder name" />
+            <HourAnalysisAnimatedPicker
+              label="Position"
+              value={whatIfPosition}
+              onChange={setWhatIfPosition}
+              options={hourAnalysisPositionOptions}
+              placeholder="Choose position"
+            />
+            <HourAnalysisAnimatedPicker
+              label="Commitment"
+              value={whatIfCommitment}
+              onChange={setWhatIfCommitment}
+              options={hourAnalysisCommitmentOptions}
+              placeholder="Choose commitment"
+            />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 750, color: C.textSec, marginBottom: 7, letterSpacing: 0, textTransform: "uppercase" }}>
+                Preferred Hours
+              </div>
+              <HourAnalysisNumberInput
+                value={whatIfHourOverrides.expected ?? whatIfPreviewRange.expected ?? 0}
+                onCommit={(nextValue) => setWhatIfHourOverrides((prev) => ({ ...prev, expected: nextValue }))}
+                ariaLabel="What-if preferred weekly hours"
+                style={{ width: 140, textAlign: "left" }}
+              />
+              <div style={{ marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+                Inherits {getHourAnalysisGroupLabel(whatIfPreviewGroupKey)} / {getLaborEmploymentCommitmentLabel(whatIfPreviewCommitment)} defaults unless changed.
+              </div>
+            </div>
+            <HourAnalysisNoteInput
+              value={whatIfNote}
+              onCommit={setWhatIfNote}
+              ariaLabel="What-if justification note"
+              placeholder="Why are we testing this person?"
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              <Btn variant="ghost" onClick={() => { setShowHourAnalysisWhatIfModal(false); resetWhatIfHourAnalysisForm(); }}>Cancel</Btn>
+              <Btn variant="primary" disabled={!canAddHourAnalysisWhatIf} onClick={addHourAnalysisWhatIfRow}>
+                Add What If
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showHourAnalysisAudit && (
+        <Modal title="Hour Analysis Activity" onClose={() => setShowHourAnalysisAudit(false)}>
+          <div className="hour-analysis-audit-list">
+            {(hourAnalysisSettings.auditLog || []).length === 0 ? (
+              <div style={{ padding: 16, color: C.textMut, fontSize: 13, fontWeight: 720 }}>
+                No Hour Analysis changes have been logged yet.
+              </div>
+            ) : (
+              hourAnalysisSettings.auditLog.map((entry, index) => (
+                <div key={entry.id || index} className="hour-analysis-audit-row" style={{ animationDelay: `${Math.min(index, 8) * 18}ms` }}>
+                  <div>
+                    <strong>{entry.summary || String(entry.action || "Change").replace(/_/g, " ")}</strong>
+                    <span>{entry.entity_label || entry.entity_id || "Hour Analysis"}</span>
+                    {(entry.before != null || entry.after != null) && (
+                      <small>
+                        {entry.before != null ? `From: ${typeof entry.before === "object" ? JSON.stringify(entry.before) : entry.before}` : ""}
+                        {entry.before != null && entry.after != null ? "  " : ""}
+                        {entry.after != null ? `To: ${typeof entry.after === "object" ? JSON.stringify(entry.after) : entry.after}` : ""}
+                      </small>
+                    )}
+                    {entry.note ? <small>Note: {entry.note}</small> : null}
+                  </div>
+                  <div style={{ textAlign: "right", minWidth: 140 }}>
+                    <span style={{ color: C.text, fontWeight: 900 }}>{entry.actor_name || "Staff"}</span>
+                    <small>{formatTrainingTimestamp(entry.occurred_at)}</small>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Modal>
+      )}
+
       {canEditRoster && showHierarchyManager && (
-        <Modal title="Manage Hierarchy" onClose={() => setShowHierarchyManager(false)}>
+        <Modal title="Labor Settings" onClose={() => setShowHierarchyManager(false)}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-              Drag the current resort's position titles into seniority order. This becomes the default roster view, and the <strong>Hierarchy</strong> button restores it after any other sort.
+              Approved titles are the only positions shown in movement and what-if pickers. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Hour Analysis use this order until a manager chooses another sort.
+            </div>
+            <div className="labor-position-add-row">
+              <input
+                value={newHierarchyTitle}
+                onChange={(event) => setNewHierarchyTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addHierarchyDraftTitle();
+                  }
+                  if (event.key === "Escape") setNewHierarchyTitle("");
+                }}
+                placeholder="Add approved title, e.g. Director of Resorts"
+              />
+              <button
+                type="button"
+                className="labor-position-icon-button is-primary"
+                onClick={addHierarchyDraftTitle}
+                disabled={!newHierarchyTitle.trim()}
+                aria-label="Add approved title"
+                title="Add approved title"
+              >
+                <I.Plus />
+              </button>
+              <Btn variant="ghost" size="sm" onClick={resetHierarchyDraftToDefaults}>
+                Reset Defaults
+              </Btn>
             </div>
             {hierarchyDraft.length === 0 ? (
-              <EmptyState icon="Users" title="No positions found" subtitle="Add employees to the roster before configuring hierarchy." />
+              <EmptyState icon="Users" title="No approved titles" subtitle="Add a title or reset to the default labor hierarchy." />
             ) : (
-              <div style={{ display: "grid", gap: 10, maxHeight: "56vh", overflowY: "auto", paddingRight: 4 }}>
+              <div className="labor-position-settings-list">
                 {hierarchyDraft.map((row, index) => (
                   <div
                     key={row.normalized_title}
+                    className={`labor-position-settings-row${draggingHierarchyTitle === row.normalized_title ? " is-dragging" : ""}`}
                     draggable
                     onDragStart={() => setDraggingHierarchyTitle(row.normalized_title)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={() => handleHierarchyDrop(row.normalized_title)}
                     onDragEnd={() => setDraggingHierarchyTitle("")}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "auto auto minmax(0, 1fr)",
-                      gap: 12,
-                      alignItems: "center",
-                      padding: "12px 14px",
-                      borderRadius: 12,
-                      border: `1px solid ${draggingHierarchyTitle === row.normalized_title ? C.pri : C.border}`,
-                      background: draggingHierarchyTitle === row.normalized_title ? C.priLt : "#fff",
-                    }}
                   >
-                    <div style={{ minWidth: 24, fontSize: 11, fontWeight: 800, color: C.textMut }}>{index + 1}</div>
+                    <div className="labor-position-row-index">{index + 1}</div>
                     <span style={{ display: "inline-flex", color: C.textMut, cursor: "grab" }} title="Drag to reorder">
                       <I.GripVertical />
                     </span>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{row.position_title}</div>
-                      {!Number.isFinite(row.sort_order) ? (
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>Unranked title. Saving this modal will pin it into the default resort hierarchy.</div>
-                      ) : null}
+                      <div style={{ fontSize: 14, fontWeight: 850, color: C.text }}>{formatLaborPositionTitle(row.position_title)}</div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>Approved title</div>
                     </div>
+                    <button
+                      type="button"
+                      className="labor-position-icon-button is-danger"
+                      onClick={() => removeHierarchyDraftTitle(row.normalized_title)}
+                      aria-label={`Remove ${row.position_title}`}
+                      title="Remove title"
+                    >
+                      <I.Trash />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -8747,7 +15098,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="ghost" onClick={() => setShowHierarchyManager(false)}>Cancel</Btn>
               <Btn variant="primary" onClick={saveHierarchy} disabled={savingHierarchy}>
-                {savingHierarchy ? "Saving…" : "Save Hierarchy"}
+                {savingHierarchy ? "Saving…" : "Save Labor Settings"}
               </Btn>
             </div>
           </div>
@@ -8775,18 +15126,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               placeholder="Select from roster (recommended)"
             />
             <Inp label="Employee Full Name" value={newEmployeeName} onChange={setNewEmployeeName} required />
-            <CustomSelect label="Target Role" value={newTargetRole} onChange={v => {
+            <CustomSelect label="Target Role" value={formatLaborPositionTitle(newTargetRole)} onChange={v => {
               setNewTargetRole(v);
               // Auto-select first template whose role_scopes includes the selected role
               const match = templateOptions.find(t =>
                 t.roleScopes.some(rs => rs.toUpperCase() === v.toUpperCase())
               );
               if (match) setNewTemplateId(match.value);
-            }} options={[
-              { value: "PCT", label: "PCT (Pet Care Tech)" },
-              { value: "CSR", label: "CSR (Customer Service)" },
-              { value: "Supervisor", label: "Supervisor" },
-            ]} />
+            }} options={getLaborPositionOptionsWithCurrent(newTargetRole)} />
             <CustomSelect label="Training Template" value={newTemplateId} onChange={v => setNewTemplateId(v)} options={templateOptions} />
             {newTemplateId && (() => {
               const opt = templateOptions.find(o => o.value === newTemplateId);
@@ -8890,7 +15237,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               label="Role Scopes"
               value={createTemplateRoleScopesText}
               onChange={setCreateTemplateRoleScopesText}
-              placeholder="PCT, CSR, Supervisor"
+              placeholder="Pet Care Technician, Customer Service Representative, Supervisor"
               help="Comma-separated roles. Leave blank to make the template available to all roles."
             />
             <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5 }}>
