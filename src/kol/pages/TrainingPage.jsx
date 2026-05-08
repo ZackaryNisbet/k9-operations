@@ -54,7 +54,11 @@ import {
   validateLaborTrainingRequirementEvidenceFile,
 } from "../trainingData";
 import { getAttendanceIncidentLabel } from "../attendanceData";
-import { buildLaborRosterPdfBytes } from "../laborRosterPdf";
+import {
+  DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
+  buildLaborRosterPdfBytes,
+  loadLaborRosterPdfAssets,
+} from "../laborRosterPdf";
 import {
   buildDocuSealPerformanceReviewFields,
   buildPerformanceReviewDraftFromInstance,
@@ -3214,6 +3218,29 @@ function downloadBinaryFile(filename, bytes, mimeType = "application/octet-strea
   window.URL.revokeObjectURL(url);
 }
 
+function openPdfBlob(filename, bytes, { print = false } = {}) {
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = window.URL.createObjectURL(blob);
+  const previewWindow = window.open(url, "_blank");
+  if (!previewWindow) {
+    window.URL.revokeObjectURL(url);
+    downloadBinaryFile(filename, bytes, "application/pdf");
+    return false;
+  }
+  if (print) {
+    window.setTimeout(() => {
+      try {
+        previewWindow.focus();
+        previewWindow.print();
+      } catch {
+        // The generated PDF is already open if Chrome blocks scripted print.
+      }
+    }, 900);
+  }
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 120000);
+  return true;
+}
+
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -3717,14 +3744,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [configuringRosterKey, setConfiguringRosterKey] = useState(null);
   const [showSaveRosterView, setShowSaveRosterView] = useState(false);
   const [rosterViewName, setRosterViewName] = useState("");
-  const [rosterPrintOptions, setRosterPrintOptions] = useState({
-    showStaffingMatrix: true,
-    showCommitment: true,
-    showPhone: true,
-    showEmail: true,
-  });
-  const [rosterPrintMode, setRosterPrintMode] = useState(false);
+  const [rosterPrintOptions, setRosterPrintOptions] = useState(DEFAULT_LABOR_ROSTER_PDF_OPTIONS);
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
+  const rosterPdfAssetsRef = useRef(null);
   const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
   const [hourAnalysisLoaded, setHourAnalysisLoaded] = useState(false);
   const [savingHourAnalysis, setSavingHourAnalysis] = useState(false);
@@ -8007,54 +8029,48 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       });
   }, [preparedRosterRows]);
   const rosterPrintTitle = useMemo(() => formatRosterLocationTitle(laborContactLocationName), [laborContactLocationName]);
-  const rosterPrintDateLabel = useMemo(() => formatRosterPrintDate(), [rosterPrintMode]);
-  const rosterPdfFilename = useMemo(() => formatRosterPdfFilename(laborContactLocationName), [laborContactLocationName, rosterPrintMode]);
   const showRosterPrintUnassigned = Number(displayedDashboardMetrics.unassignedCommitmentCount || 0) > 0;
   const updateRosterPrintOption = useCallback((key, value) => {
     setRosterPrintOptions((prev) => ({ ...prev, [key]: Boolean(value) }));
   }, []);
-  const handleBrowserPrintRoster = useCallback(() => {
-    setRosterPrintMode(true);
-  }, []);
-  const handlePrintRoster = useCallback(async () => {
-    if (generatingRosterPdf) return;
-    setGeneratingRosterPdf(true);
-    try {
-      const generatedAt = new Date();
-      const pdfPrintDateLabel = formatRosterPrintDate(generatedAt);
-      const pdfFilename = formatRosterPdfFilename(laborContactLocationName, generatedAt);
-      const pdfBytes = await buildLaborRosterPdfBytes({
-        title: rosterPrintTitle,
-        filename: pdfFilename,
-        printDate: pdfPrintDateLabel,
-        totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
-        showUnassigned: showRosterPrintUnassigned,
-        options: rosterPrintOptions,
-        matrix: rosterStaffingMatrix,
-        stats: [
-          { label: "Managers", value: displayedDashboardMetrics.managerCount },
-          { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
-          { label: "CSR", value: displayedDashboardMetrics.csrCount },
-          { label: "PCT", value: displayedDashboardMetrics.pctCount },
-          { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
-          { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
-        ],
-        rows: rosterPrintRows.map((row) => ({
-          name: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee",
-          position: formatLaborPositionTitle(row.position_title) || "Not listed",
-          commitment: getLaborEmploymentCommitmentLabel(row.employment_commitment),
-          phone: row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed",
-          email: row.contact_email || "Not listed",
-        })),
-      });
-      downloadBinaryFile(pdfFilename, pdfBytes, "application/pdf");
-    } catch (error) {
-      addGlobalToast(error?.message || "Failed to generate roster PDF", "error");
-    } finally {
-      setGeneratingRosterPdf(false);
+  const loadRosterPdfAssetsForBrowser = useCallback(async () => {
+    if (!rosterPdfAssetsRef.current) {
+      rosterPdfAssetsRef.current = await loadLaborRosterPdfAssets();
     }
+    return rosterPdfAssetsRef.current;
+  }, []);
+  const buildRosterPdf = useCallback(async () => {
+    const generatedAt = new Date();
+    const pdfPrintDateLabel = formatRosterPrintDate(generatedAt);
+    const pdfFilename = formatRosterPdfFilename(laborContactLocationName, generatedAt);
+    const assets = await loadRosterPdfAssetsForBrowser();
+    const pdfBytes = await buildLaborRosterPdfBytes({
+      title: rosterPrintTitle,
+      filename: pdfFilename,
+      printDate: pdfPrintDateLabel,
+      totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
+      showUnassigned: showRosterPrintUnassigned,
+      options: rosterPrintOptions,
+      matrix: rosterStaffingMatrix,
+      assets,
+      stats: [
+        { label: "Managers", value: displayedDashboardMetrics.managerCount },
+        { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
+        { label: "CSR", value: displayedDashboardMetrics.csrCount },
+        { label: "PCT", value: displayedDashboardMetrics.pctCount },
+        { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
+        { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
+      ],
+      rows: rosterPrintRows.map((row) => ({
+        name: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee",
+        position: formatLaborPositionTitle(row.position_title) || "Not listed",
+        commitment: getLaborEmploymentCommitmentLabel(row.employment_commitment),
+        phone: row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed",
+        email: row.contact_email || "Not listed",
+      })),
+    });
+    return { pdfBytes, pdfFilename };
   }, [
-    addGlobalToast,
     displayedDashboardMetrics.activeEmployeeCount,
     displayedDashboardMetrics.csrCount,
     displayedDashboardMetrics.fullTimeCount,
@@ -8062,32 +8078,37 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     displayedDashboardMetrics.partTimeCount,
     displayedDashboardMetrics.pctCount,
     displayedDashboardMetrics.supervisorCount,
-    generatingRosterPdf,
     laborContactLocationName,
+    loadRosterPdfAssetsForBrowser,
     rosterPrintOptions,
     rosterPrintRows,
     rosterPrintTitle,
     rosterStaffingMatrix,
     showRosterPrintUnassigned,
   ]);
-  useEffect(() => {
-    if (!rosterPrintMode) return undefined;
-    const previousDocumentTitle = document.title;
-    document.title = rosterPdfFilename;
-    const closePrintMode = () => {
-      document.title = previousDocumentTitle;
-      setRosterPrintMode(false);
-    };
-    const printTimer = window.setTimeout(() => {
-      window.print();
-    }, 120);
-    window.addEventListener("afterprint", closePrintMode);
-    return () => {
-      window.clearTimeout(printTimer);
-      window.removeEventListener("afterprint", closePrintMode);
-      document.title = previousDocumentTitle;
-    };
-  }, [rosterPdfFilename, rosterPrintMode]);
+  const handlePrintRoster = useCallback(async ({ preview = false } = {}) => {
+    if (generatingRosterPdf) return;
+    setGeneratingRosterPdf(true);
+    try {
+      const { pdfBytes, pdfFilename } = await buildRosterPdf();
+      if (preview) {
+        openPdfBlob(pdfFilename, pdfBytes, { print: true });
+      } else {
+        downloadBinaryFile(pdfFilename, pdfBytes, "application/pdf");
+      }
+    } catch (error) {
+      addGlobalToast(error?.message || "Failed to generate roster PDF", "error");
+    } finally {
+      setGeneratingRosterPdf(false);
+    }
+  }, [
+    addGlobalToast,
+    buildRosterPdf,
+    generatingRosterPdf,
+  ]);
+  const handleBrowserPrintRoster = useCallback(() => {
+    handlePrintRoster({ preview: true });
+  }, [handlePrintRoster]);
   const filteredRosterRows = useMemo(() => {
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
@@ -10386,7 +10407,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <I.Settings />
             </button>
           )}
-          <Btn variant="secondary" icon={<I.Download />} onClick={handlePrintRoster} disabled={generatingRosterPdf}>
+          <Btn variant="secondary" icon={<I.Download />} onClick={() => handlePrintRoster()} disabled={generatingRosterPdf}>
             {generatingRosterPdf ? "Generating PDF..." : "Download Roster PDF"}
           </Btn>
           {canEditRoster && (showInlineLaborEmployeeComposer ? (
@@ -10485,7 +10506,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const activeLaborTabIndex = Math.max(0, visibleTabs.findIndex((item) => item.id === displayLaborTab));
 
   return (
-	    <div className={`labor-page-shell${rosterPrintMode ? " is-printing-roster" : ""}`}>
+	    <div className="labor-page-shell">
       <PerformanceReviewStyles />
 	      <style>{`
         html { scrollbar-gutter: stable; }
@@ -10533,254 +10554,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          padding: 20px 10px 34px;
 	          min-height: calc(100vh - 40px);
 	          box-sizing: border-box;
-	        }
-	        .labor-roster-print-document {
-	          display: none;
-	        }
-	        .labor-roster-print-document,
-	        .labor-roster-print-document * {
-	          print-color-adjust: exact;
-	          -webkit-print-color-adjust: exact;
-	        }
-	        .labor-roster-print-masthead {
-	          overflow: hidden;
-	          margin-bottom: 13px;
-	          border: 1px solid #d6e3d1;
-	          border-radius: 18px;
-	          background:
-	            linear-gradient(135deg, rgba(255,255,255,0.98), rgba(246,250,244,0.95)),
-	            #ffffff;
-	          box-shadow: 0 16px 42px rgba(13, 63, 42, 0.08);
-	          page-break-inside: avoid;
-	        }
-	        .labor-roster-print-band {
-	          display: flex;
-	          justify-content: space-between;
-	          align-items: center;
-	          gap: 18px;
-	          min-height: 24px;
-	          padding: 0 18px;
-	          background: linear-gradient(90deg, #0b3d2e 0%, #14532d 52%, #6b5a1d 100%);
-	          color: rgba(255,255,255,0.88);
-	          font-size: 7.5px;
-	          font-weight: 900;
-	          letter-spacing: 0.16em;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-header {
-	          display: grid;
-	          grid-template-columns: auto minmax(0, 1fr) auto;
-	          align-items: center;
-	          gap: 14px;
-	          padding: 17px 18px 15px;
-	        }
-	        .labor-roster-print-mark {
-	          width: 45px;
-	          height: 45px;
-	          border-radius: 14px;
-	          display: grid;
-	          place-items: center;
-	          background: #0d3f2a;
-	          color: #ffffff;
-	          font-size: 17px;
-	          font-weight: 950;
-	          letter-spacing: 0;
-	          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
-	        }
-	        .labor-roster-print-eyebrow {
-	          margin: 0 0 4px;
-	          color: #52685b;
-	          font-size: 8px;
-	          font-weight: 950;
-	          letter-spacing: 0.14em;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-header h1 {
-	          margin: 0;
-	          color: #142219;
-	          font-size: 25px;
-	          line-height: 1.08;
-	          font-weight: 950;
-	          letter-spacing: 0;
-	        }
-	        .labor-roster-print-header p {
-	          margin: 6px 0 0;
-	          color: #5f7167;
-	          font-size: 10px;
-	          line-height: 1.35;
-	          font-weight: 750;
-	        }
-	        .labor-roster-print-meta {
-	          display: grid;
-	          grid-template-columns: 1fr;
-	          gap: 6px;
-	          min-width: 136px;
-	        }
-	        .labor-roster-print-meta-item {
-	          border: 1px solid #d8e4d4;
-	          border-radius: 12px;
-	          background: rgba(255,255,255,0.82);
-	          padding: 7px 10px;
-	          text-align: right;
-	        }
-	        .labor-roster-print-meta-item span,
-	        .labor-roster-print-stat span {
-	          display: block;
-	          color: #65756a;
-	          font-size: 7.5px;
-	          font-weight: 950;
-	          letter-spacing: 0.1em;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-meta-item strong {
-	          display: block;
-	          margin-top: 3px;
-	          color: #0d3f2a;
-	          font-size: 14px;
-	          line-height: 1;
-	          font-weight: 950;
-	        }
-	        .labor-roster-print-stat-strip {
-	          display: grid;
-	          grid-template-columns: repeat(6, minmax(0, 1fr));
-	          gap: 8px;
-	          padding: 0 18px 17px;
-	        }
-	        .labor-roster-print-stat {
-	          border: 1px solid #d8e4d4;
-	          border-left: 4px solid #0d3f2a;
-	          border-radius: 12px;
-	          background: rgba(255,255,255,0.84);
-	          padding: 8px 10px;
-	        }
-	        .labor-roster-print-stat strong {
-	          display: block;
-	          margin-top: 3px;
-	          color: #142219;
-	          font-size: 16px;
-	          line-height: 1;
-	          font-weight: 950;
-	        }
-	        .labor-roster-print-section {
-	          margin-bottom: 11px;
-	          page-break-inside: avoid;
-	        }
-	        .labor-roster-print-section-heading {
-	          display: flex;
-	          justify-content: space-between;
-	          align-items: baseline;
-	          gap: 12px;
-	          margin: 0 0 6px;
-	          color: #142219;
-	        }
-	        .labor-roster-print-section-heading h2 {
-	          margin: 0;
-	          font-size: 12px;
-	          line-height: 1;
-	          font-weight: 950;
-	          letter-spacing: 0.04em;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-section-heading span {
-	          color: #637569;
-	          font-size: 9px;
-	          font-weight: 800;
-	        }
-	        .labor-roster-print-matrix-grid {
-	          display: grid;
-	          grid-template-columns: minmax(160px, 1.55fr) repeat(var(--roster-matrix-columns), minmax(68px, 0.72fr));
-	          overflow: hidden;
-	          border: 1px solid #d8e4d4;
-	          border-radius: 13px;
-	          background: #ffffff;
-	        }
-	        .labor-roster-print-matrix-cell {
-	          min-height: 30px;
-	          padding: 7px 10px;
-	          border-left: 1px solid #d8e4d4;
-	          border-top: 1px solid #e7eee4;
-	          color: #142219;
-	          font-size: 10px;
-	          line-height: 1.2;
-	          font-weight: 800;
-	          box-sizing: border-box;
-	        }
-	        .labor-roster-print-matrix-cell.is-first {
-	          border-left: none;
-	        }
-	        .labor-roster-print-matrix-cell.is-header {
-	          min-height: 28px;
-	          border-top: none;
-	          background: #edf5eb;
-	          color: #385544;
-	          font-size: 8px;
-	          font-weight: 950;
-	          letter-spacing: 0.1em;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-matrix-cell.is-number {
-	          text-align: center;
-	          font-weight: 950;
-	        }
-	        .labor-roster-print-matrix-cell.is-total {
-	          color: #0d3f2a;
-	          background: #f7fbf5;
-	        }
-	        .labor-roster-print-note {
-	          margin: 6px 0 0;
-	          color: #9a4d13;
-	          font-size: 8.5px;
-	          font-weight: 850;
-	        }
-	        .labor-roster-print-table {
-	          width: 100%;
-	          border-collapse: separate;
-	          border-spacing: 0 5px;
-	        }
-	        .labor-roster-print-table th {
-	          border: none;
-	          padding: 7px 10px;
-	          background: #edf5eb;
-	          color: #385544;
-	          font-size: 8px;
-	          font-weight: 950;
-	          letter-spacing: 0.1em;
-	          text-align: left;
-	          text-transform: uppercase;
-	        }
-	        .labor-roster-print-table th:first-child {
-	          border-radius: 10px 0 0 10px;
-	        }
-	        .labor-roster-print-table th:last-child {
-	          border-radius: 0 10px 10px 0;
-	        }
-	        .labor-roster-print-table td {
-	          border-top: 1px solid #d8e4d4;
-	          border-bottom: 1px solid #d8e4d4;
-	          padding: 7px 10px;
-	          background: #ffffff;
-	          color: #142219;
-	          font-size: 9.5px;
-	          line-height: 1.25;
-	          font-weight: 760;
-	          vertical-align: middle;
-	        }
-	        .labor-roster-print-table tbody tr:nth-child(even) td {
-	          background: #f5faf3;
-	        }
-	        .labor-roster-print-table td:first-child {
-	          border-left: 1px solid #d8e4d4;
-	          border-radius: 10px 0 0 10px;
-	          font-weight: 950;
-	        }
-	        .labor-roster-print-table td:last-child {
-	          border-right: 1px solid #d8e4d4;
-	          border-radius: 0 10px 10px 0;
-	        }
-	        .labor-roster-print-table td:nth-child(3) {
-	          text-align: center;
-	          color: #385544;
-	          font-weight: 950;
 	        }
         .labor-module-header {
           min-height: 52px;
@@ -13551,65 +13324,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-picker-option,
             .hour-analysis-progress-fill { transition: none; }
 	        }
-	        @media print {
-	          @page {
-	            size: letter landscape;
-	            margin: 0.35in;
-	          }
-	          html,
-	          body {
-	            height: auto !important;
-	            min-height: 0 !important;
-	            background: #ffffff !important;
-	            overflow: visible !important;
-	            scrollbar-width: auto !important;
-	          }
-	          #root,
-	          #root > div,
-	          #root > div > div {
-	            height: auto !important;
-	            min-height: 0 !important;
-	            max-height: none !important;
-	            overflow: visible !important;
-	          }
-	          body * {
-	            visibility: hidden !important;
-	          }
-	          .labor-page-shell.is-printing-roster {
-	            display: block !important;
-	            max-width: none !important;
-	            min-height: auto !important;
-	            margin: 0 !important;
-	            padding: 0 !important;
-	            background: #ffffff !important;
-	          }
-	          .labor-page-shell.is-printing-roster > :not(.labor-roster-print-document) {
-	            display: none !important;
-	          }
-	          .labor-page-shell.is-printing-roster .labor-roster-print-document,
-	          .labor-page-shell.is-printing-roster .labor-roster-print-document * {
-	            visibility: visible !important;
-	          }
-	          .labor-page-shell.is-printing-roster .labor-roster-print-document {
-	            display: block !important;
-	            position: absolute;
-	            top: 0;
-	            left: 0;
-	            width: 100%;
-	            color: #0f172a !important;
-	            background: #ffffff !important;
-	            font-family: Arial, Helvetica, sans-serif !important;
-	          }
-	          .labor-page-shell.is-printing-roster .labor-roster-print-masthead,
-	          .labor-page-shell.is-printing-roster .labor-roster-print-section {
-	            break-inside: avoid;
-	            page-break-inside: avoid;
-	          }
-	          .labor-page-shell.is-printing-roster .labor-roster-print-table tr {
-	            break-inside: avoid;
-	            page-break-inside: avoid;
-	          }
-	        }
 	        @media (max-width: 880px) {
 	          .labor-page-shell { padding: 14px 8px 28px; }
           .labor-module-header { align-items: flex-start; flex-direction: column; }
@@ -13644,105 +13358,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .labor-model-day-header { align-items: flex-start; flex-direction: column; }
 	        }
 	      `}</style>
-	      <div className="labor-roster-print-document" aria-hidden={!rosterPrintMode}>
-	        <div className="labor-roster-print-masthead">
-	          <div className="labor-roster-print-band">
-	            <span>K9 Operations</span>
-	            <span>Employee Directory</span>
-	          </div>
-	          <div className="labor-roster-print-header">
-	            <div className="labor-roster-print-mark">K9</div>
-	            <div>
-	              <div className="labor-roster-print-eyebrow">Labor Management</div>
-	              <h1>{rosterPrintTitle}</h1>
-	              <p>Team contact roster - active employees only</p>
-	            </div>
-	            <div className="labor-roster-print-meta">
-	              <div className="labor-roster-print-meta-item">
-	                <span>Printed</span>
-	                <strong>{rosterPrintDateLabel}</strong>
-	              </div>
-	              <div className="labor-roster-print-meta-item">
-	                <span>Total Active</span>
-	                <strong>{displayedDashboardMetrics.activeEmployeeCount}</strong>
-	              </div>
-	            </div>
-	          </div>
-	          <div className="labor-roster-print-stat-strip">
-	            {[
-	              { label: "Managers", value: displayedDashboardMetrics.managerCount },
-	              { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
-	              { label: "CSR", value: displayedDashboardMetrics.csrCount },
-	              { label: "PCT", value: displayedDashboardMetrics.pctCount },
-	              { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
-	              { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
-	            ].map((item) => (
-	              <div className="labor-roster-print-stat" key={item.label}>
-	                <span>{item.label}</span>
-	                <strong>{Number(item.value || 0)}</strong>
-	              </div>
-	            ))}
-	          </div>
-	        </div>
-
-	        {rosterPrintOptions.showStaffingMatrix && (
-	        <div className="labor-roster-print-section">
-	          <div className="labor-roster-print-section-heading">
-	            <h2>Staffing Matrix</h2>
-	            <span>Role group by commitment</span>
-	          </div>
-	          <div
-	            className="labor-roster-print-matrix-grid"
-	            style={{ "--roster-matrix-columns": showRosterPrintUnassigned ? 4 : 3 }}
-	          >
-	            {["Position Group", "Full-Time", "Part-Time", ...(showRosterPrintUnassigned ? ["Unassigned"] : []), "Total"].map((label, index) => (
-	              <div key={label} className={`labor-roster-print-matrix-cell is-header${index === 0 ? " is-first" : ""}`}>
-	                {label}
-	              </div>
-	            ))}
-	            {rosterStaffingMatrix.map((row) => (
-	              <React.Fragment key={row.key || row.label}>
-	                <div className="labor-roster-print-matrix-cell is-first">{row.label}</div>
-	                <div className="labor-roster-print-matrix-cell is-number">{Number(row.fullTime || 0)}</div>
-	                <div className="labor-roster-print-matrix-cell is-number">{Number(row.partTime || 0)}</div>
-	                {showRosterPrintUnassigned && (
-	                  <div className="labor-roster-print-matrix-cell is-number">{Number(row.unassigned || 0)}</div>
-	                )}
-	                <div className="labor-roster-print-matrix-cell is-number is-total">{Number(row.total || 0)}</div>
-	              </React.Fragment>
-	            ))}
-	          </div>
-	          {showRosterPrintUnassigned && (
-	            <p className="labor-roster-print-note">
-	              Unassigned means the employee still needs a Full-Time or Part-Time classification in Labor Management.
-	            </p>
-	          )}
-	        </div>
-	        )}
-
-	        <table className="labor-roster-print-table">
-	          <thead>
-	            <tr>
-	              <th>Name</th>
-	              <th>Position</th>
-	              {rosterPrintOptions.showCommitment && <th>Commitment</th>}
-	              {rosterPrintOptions.showPhone && <th>Phone Number</th>}
-	              {rosterPrintOptions.showEmail && <th>Email</th>}
-	            </tr>
-	          </thead>
-	          <tbody>
-	            {rosterPrintRows.map((row) => (
-	              <tr key={getLaborEmployeeRowId(row) || row.full_name || row.contact_email}>
-	                <td>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee"}</td>
-	                <td>{formatLaborPositionTitle(row.position_title) || "Not listed"}</td>
-	                {rosterPrintOptions.showCommitment && <td>{getLaborEmploymentCommitmentLabel(row.employment_commitment)}</td>}
-	                {rosterPrintOptions.showPhone && <td>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed"}</td>}
-	                {rosterPrintOptions.showEmail && <td>{row.contact_email || "Not listed"}</td>}
-	              </tr>
-	            ))}
-	          </tbody>
-	        </table>
-	      </div>
 	      <div className="labor-module-header">
         <div className="labor-module-title">
           <I.GraduationCap />
@@ -13847,6 +13462,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              </div>
 	              <div className="labor-roster-output-body">
 	                {[
+	                  { key: "showMetrics", label: "Metrics" },
 	                  { key: "showStaffingMatrix", label: "Staffing Matrix" },
 	                  { key: "showCommitment", label: "Commitment" },
 	                  { key: "showPhone", label: "Phone" },
@@ -13863,9 +13479,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                ))}
 	                <div className="labor-roster-output-actions">
 	                  <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={handleBrowserPrintRoster}>
-	                    Print
+	                    Preview / Print
 	                  </Btn>
-	                  <Btn variant="primary" size="sm" icon={<I.Download />} onClick={handlePrintRoster} disabled={generatingRosterPdf}>
+	                  <Btn variant="primary" size="sm" icon={<I.Download />} onClick={() => handlePrintRoster()} disabled={generatingRosterPdf}>
 	                    {generatingRosterPdf ? "Generating..." : "PDF"}
 	                  </Btn>
 	                </div>
