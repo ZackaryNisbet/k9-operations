@@ -15322,7 +15322,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div className="hour-analysis-card-header">
               <div>
                 <h3 className="hour-analysis-card-title">Staffing Capacity</h3>
-                <div className="hour-analysis-card-subtitle">One read: recruit, hold steady, or stop adding hours.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <Badge color={hourAnalysisModel.totals.capacityStatus.tone}>
@@ -15559,9 +15558,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div>
               <div className="labor-model-page-kicker">Labor Model</div>
               <div className="labor-model-page-title">Operating Floor Builder</div>
-              <div className="labor-model-page-subtitle">
-                Edit the actual coverage grid. Time ranges calculate their own weight, row breaks subtract from row totals, and the weekly floors feed Staffing Capacity immediately.
-              </div>
             </div>
             <div className="labor-model-page-stat">
               <span>Weekly Floor</span>
