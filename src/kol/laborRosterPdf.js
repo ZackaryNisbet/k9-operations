@@ -1,17 +1,80 @@
+import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const PAGE_WIDTH = 792;
 const PAGE_HEIGHT = 612;
-const MARGIN_X = 30;
-const DARK_GREEN = "#0b3d2e";
-const MID_GREEN = "#14532d";
-const SAGE = "#edf5eb";
-const PALE_SAGE = "#f7fbf5";
-const BORDER = "#d8e4d4";
-const TEXT = "#142219";
-const MUTED = "#637569";
-const WARNING = "#9a4d13";
-const GOLD = "#6b5a1d";
+const MARGIN_X = 42;
+const FOOTER_Y = 32;
+const CONTENT_BOTTOM = 58;
+
+const BRAND = {
+  gold: "#AF8D54",
+  blue: "#003462",
+  black: "#000000",
+  white: "#FFFFFF",
+  bronze: "#59504B",
+  paper: "#FFFEFC",
+  ivory: "#F8F5EF",
+  line: "#D9C9AC",
+};
+
+export const LABOR_ROSTER_BRAND_ASSETS = {
+  logoPng: "/labor/roster-brand-assets/K9Resorts_Horizontal_Logo_BlueGold_RGB.png",
+  logoSvg: "/labor/roster-brand-assets/K9Resorts_Horizontal_Logo_BlueGold_RGB.svg",
+  fonts: {
+    canelaBold: "/fonts/Canela-Bold.otf",
+    gtEestiTextMedium: "/fonts/GT-Eesti-Text-Medium.otf",
+    gtEestiTextBold: "/fonts/GT-Eesti-Text-Bold.otf",
+    gtEestiTextLight: "/fonts/GT-Eesti-Text-Light.otf",
+  },
+};
+
+export const DEFAULT_LABOR_ROSTER_PDF_OPTIONS = {
+  showMetrics: false,
+  showStaffingMatrix: false,
+  showCommitment: false,
+  showPhone: false,
+  showEmail: false,
+};
+
+export function normalizeLaborRosterPdfOptions(options = {}) {
+  return {
+    ...DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
+    ...Object.fromEntries(
+      Object.keys(DEFAULT_LABOR_ROSTER_PDF_OPTIONS).map((key) => [key, Boolean(options[key])]),
+    ),
+  };
+}
+
+async function fetchBytes(path, fetcher = globalThis.fetch) {
+  if (typeof fetcher !== "function") {
+    throw new Error("PDF asset loading requires fetch.");
+  }
+  const response = await fetcher(path);
+  if (!response?.ok) {
+    throw new Error(`Unable to load PDF asset: ${path}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+export async function loadLaborRosterPdfAssets(fetcher) {
+  const [logoPngBytes, canelaBold, gtEestiTextMedium, gtEestiTextBold, gtEestiTextLight] = await Promise.all([
+    fetchBytes(LABOR_ROSTER_BRAND_ASSETS.logoPng, fetcher),
+    fetchBytes(LABOR_ROSTER_BRAND_ASSETS.fonts.canelaBold, fetcher),
+    fetchBytes(LABOR_ROSTER_BRAND_ASSETS.fonts.gtEestiTextMedium, fetcher),
+    fetchBytes(LABOR_ROSTER_BRAND_ASSETS.fonts.gtEestiTextBold, fetcher),
+    fetchBytes(LABOR_ROSTER_BRAND_ASSETS.fonts.gtEestiTextLight, fetcher),
+  ]);
+  return {
+    logoPngBytes,
+    fonts: {
+      canelaBold,
+      gtEestiTextMedium,
+      gtEestiTextBold,
+      gtEestiTextLight,
+    },
+  };
+}
 
 function color(hex) {
   const clean = String(hex || "").replace("#", "");
@@ -25,14 +88,27 @@ function color(hex) {
   );
 }
 
+function toBytes(value) {
+  if (!value) return null;
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return null;
+}
+
 function safeText(value, fallback = "") {
-  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  const text = String(value ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return text || fallback;
 }
 
 function truncateToWidth(value, font, size, maxWidth) {
   const text = safeText(value);
-  if (!text || font.widthOfTextAtSize(text, size) <= maxWidth) return text;
+  if (!text || !font || font.widthOfTextAtSize(text, size) <= maxWidth) return text;
   const ellipsis = "...";
   let next = text;
   while (next.length > 0 && font.widthOfTextAtSize(`${next}${ellipsis}`, size) > maxWidth) {
@@ -44,24 +120,47 @@ function truncateToWidth(value, font, size, maxWidth) {
 function drawText(page, text, x, y, options = {}) {
   const font = options.font;
   const size = options.size || 8;
-  const fill = options.color || color(TEXT);
   const maxWidth = options.maxWidth || null;
   const value = maxWidth && font ? truncateToWidth(text, font, size, maxWidth) : safeText(text);
   if (!value) return;
   const width = font ? font.widthOfTextAtSize(value, size) : 0;
-  const offset = options.align === "center" && maxWidth ? Math.max(0, (maxWidth - width) / 2) : 0;
-  const rightOffset = options.align === "right" && maxWidth ? Math.max(0, maxWidth - width) : 0;
+  const xOffset = options.align === "center" && maxWidth
+    ? Math.max(0, (maxWidth - width) / 2)
+    : options.align === "right" && maxWidth
+      ? Math.max(0, maxWidth - width)
+      : 0;
   page.drawText(value, {
-    x: x + offset + rightOffset,
+    x: x + xOffset,
     y,
     size,
     font,
-    color: fill,
+    color: options.color || color(BRAND.black),
     maxWidth: maxWidth || undefined,
   });
 }
 
-function drawRule(page, x, y, width, height = 0.8, fill = BORDER) {
+function wrapText(value, font, size, maxWidth, maxLines = 3) {
+  const words = safeText(value).split(" ").filter(Boolean);
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (!current || font.widthOfTextAtSize(next, size) <= maxWidth) {
+      current = next;
+      return;
+    }
+    lines.push(current);
+    current = word;
+  });
+  if (current) lines.push(current);
+  const visible = lines.slice(0, maxLines);
+  if (lines.length > maxLines && visible.length > 0) {
+    visible[visible.length - 1] = truncateToWidth(visible[visible.length - 1], font, size, maxWidth);
+  }
+  return visible;
+}
+
+function drawRule(page, x, y, width, height = 0.75, fill = BRAND.line) {
   page.drawRectangle({ x, y, width, height, color: color(fill) });
 }
 
@@ -71,150 +170,261 @@ function drawBox(page, x, y, width, height, options = {}) {
     y,
     width,
     height,
-    color: color(options.fill || "#ffffff"),
-    borderColor: color(options.border || BORDER),
-    borderWidth: options.borderWidth ?? 0.8,
+    color: color(options.fill || BRAND.white),
+    borderColor: color(options.border || BRAND.line),
+    borderWidth: options.borderWidth ?? 0.6,
   });
 }
 
-function drawCard(page, x, y, width, height, label, value, fonts, options = {}) {
-  drawBox(page, x, y, width, height, {
-    fill: options.fill || "#ffffff",
-    border: options.border || BORDER,
-    borderWidth: 0.8,
+async function embedBrandFonts(pdfDoc, assets = {}) {
+  const standard = {
+    headline: await pdfDoc.embedFont(StandardFonts.TimesRomanBold),
+    body: await pdfDoc.embedFont(StandardFonts.Helvetica),
+    bodyLight: await pdfDoc.embedFont(StandardFonts.Helvetica),
+    bodyBold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+  };
+
+  const fontBytes = assets.fonts || {};
+  try {
+    pdfDoc.registerFontkit(fontkit);
+    const [headline, body, bodyBold, bodyLight] = await Promise.all([
+      toBytes(fontBytes.canelaBold) ? pdfDoc.embedFont(toBytes(fontBytes.canelaBold), { subset: false }) : null,
+      toBytes(fontBytes.gtEestiTextMedium) ? pdfDoc.embedFont(toBytes(fontBytes.gtEestiTextMedium), { subset: false }) : null,
+      toBytes(fontBytes.gtEestiTextBold) ? pdfDoc.embedFont(toBytes(fontBytes.gtEestiTextBold), { subset: false }) : null,
+      toBytes(fontBytes.gtEestiTextLight) ? pdfDoc.embedFont(toBytes(fontBytes.gtEestiTextLight), { subset: false }) : null,
+    ]);
+    return {
+      headline: headline || standard.headline,
+      body: body || standard.body,
+      bodyLight: bodyLight || body || standard.bodyLight,
+      bodyBold: bodyBold || body || standard.bodyBold,
+    };
+  } catch {
+    return standard;
+  }
+}
+
+function formatPosterTitle(value = "") {
+  const clean = safeText(value, "Team Roster")
+    .replace(/^K9 Resorts of\s+/i, "")
+    .replace(/^K9 Resorts\s+/i, "")
+    .replace(/\s*-\s*Team Roster$/i, "")
+    .replace(/\s+Roster$/i, "")
+    .trim();
+  return clean ? `${clean} Team Roster` : "Team Roster";
+}
+
+function formatUpdatedLabel(value = "") {
+  const clean = safeText(value);
+  return clean ? `Updated ${clean}` : "";
+}
+
+function getPositionWeight(value = "") {
+  const title = safeText(value).toLowerCase();
+  if (/(director|regional)/.test(title)) return 100;
+  if (/(general manager|\bgm\b)/.test(title)) return 90;
+  if (/(assistant manager|\bagm\b)/.test(title)) return 80;
+  if (/manager/.test(title)) return 70;
+  if (/(supervisor|lead)/.test(title)) return 60;
+  if (/(customer service representative|\bcsr\b)/.test(title)) return 40;
+  if (/(pet care technician|\bpct\b|technician)/.test(title)) return 30;
+  return 0;
+}
+
+function getSortName(row = {}) {
+  const name = safeText(row.name, "Employee");
+  const parts = name.split(" ");
+  const last = parts.length > 1 ? parts[parts.length - 1] : name;
+  return `${last} ${name}`.toLowerCase();
+}
+
+function buildRosterGroups(rows = []) {
+  const groupMap = new Map();
+  rows.forEach((row) => {
+    const position = safeText(row.position, "Team Member");
+    if (!groupMap.has(position)) {
+      groupMap.set(position, { label: position, rows: [], weight: getPositionWeight(position) });
+    }
+    groupMap.get(position).rows.push(row);
   });
-  drawRule(page, x, y, 3.2, height, options.accent || DARK_GREEN);
-  drawText(page, label, x + 8, y + height - 7.6, {
-    font: fonts.bold,
-    size: 4.8,
-    color: color(MUTED),
-    maxWidth: width - 16,
-  });
-  drawText(page, String(value ?? 0), x + 8, y + 3.7, {
-    font: fonts.bold,
-    size: 10.5,
-    color: color(TEXT),
-    maxWidth: width - 16,
+  return Array.from(groupMap.values())
+    .map((group) => ({
+      ...group,
+      rows: group.rows.slice().sort((a, b) => getSortName(a).localeCompare(getSortName(b), undefined, { sensitivity: "base", numeric: true })),
+    }))
+    .sort((a, b) => {
+      if (a.weight !== b.weight) return b.weight - a.weight;
+      return a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true });
+    });
+}
+
+function splitLargeGroups(groups, options) {
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
+  if (detailMode) return groups;
+  return groups.flatMap((group) => {
+    if (group.rows.length <= 8) return [group];
+    const chunkSize = Math.ceil(group.rows.length / 2);
+    const chunks = [];
+    for (let index = 0; index < group.rows.length; index += chunkSize) {
+      chunks.push({
+        ...group,
+        rows: group.rows.slice(index, index + chunkSize),
+      });
+    }
+    return chunks;
   });
 }
 
-function drawMasthead(page, payload, fonts) {
-  const width = PAGE_WIDTH - MARGIN_X * 2;
-  const x = MARGIN_X;
-  const top = PAGE_HEIGHT - 30;
-  drawBox(page, x, top - 108, width, 108, { fill: "#fbfdf9", border: BORDER });
-  page.drawRectangle({ x, y: top - 17, width, height: 17, color: color(DARK_GREEN) });
-  page.drawRectangle({ x: x + width * 0.72, y: top - 17, width: width * 0.28, height: 17, color: color(GOLD) });
-  drawText(page, "K9 OPERATIONS", x + 12, top - 12, {
-    font: fonts.bold,
-    size: 5.3,
-    color: color("#ffffff"),
-    maxWidth: 160,
-  });
-  drawText(page, "EMPLOYEE DIRECTORY", x + width - 116, top - 12, {
-    font: fonts.bold,
-    size: 5.3,
-    color: color("#ffffff"),
-    maxWidth: 104,
-    align: "right",
-  });
+function getDetailLine(row, options) {
+  const details = [];
+  if (options.showCommitment) details.push(safeText(row.commitment, "Commitment not listed"));
+  if (options.showPhone) details.push(safeText(row.phone, "Phone not listed"));
+  if (options.showEmail) details.push(safeText(row.email, "Email not listed"));
+  return details.join("   ");
+}
 
-  drawBox(page, x + 16, top - 56, 32, 32, { fill: DARK_GREEN, border: DARK_GREEN });
-  drawText(page, "K9", x + 25, top - 38.5, {
-    font: fonts.bold,
-    size: 11,
-    color: color("#ffffff"),
-  });
-  drawText(page, "LABOR MANAGEMENT", x + 60, top - 32, {
-    font: fonts.bold,
-    size: 5.5,
-    color: color(MUTED),
+function measureGroupHeight(group, options) {
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
+  const rowHeight = detailMode ? 24 : 16;
+  return 31 + group.rows.length * rowHeight + 6;
+}
+
+function drawLogo(page, logoImage, x, y, width) {
+  if (!logoImage) return 0;
+  const height = width * (logoImage.height / logoImage.width);
+  page.drawImage(logoImage, { x, y, width, height });
+  return height;
+}
+
+function drawMasthead(page, payload, fonts, logoImage, options, pageNumber = 1) {
+  const pageInnerWidth = PAGE_WIDTH - MARGIN_X * 2;
+  drawRule(page, MARGIN_X, PAGE_HEIGHT - 38, pageInnerWidth, 2.1, BRAND.gold);
+
+  if (pageNumber > 1) {
+    drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 70, 118);
+    drawText(page, formatPosterTitle(payload.title), MARGIN_X + 142, PAGE_HEIGHT - 62, {
+      font: fonts.headline,
+      size: 17,
+      color: color(BRAND.blue),
+      maxWidth: 360,
+    });
+    drawText(page, formatUpdatedLabel(payload.printDate), MARGIN_X + pageInnerWidth - 180, PAGE_HEIGHT - 58, {
+      font: fonts.body,
+      size: 7.2,
+      color: color(BRAND.bronze),
+      maxWidth: 180,
+      align: "right",
+    });
+    drawRule(page, MARGIN_X, PAGE_HEIGHT - 82, pageInnerWidth, 0.75, BRAND.line);
+    return PAGE_HEIGHT - 104;
+  }
+
+  drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 101, 168);
+  drawText(page, formatUpdatedLabel(payload.printDate), MARGIN_X + pageInnerWidth - 180, PAGE_HEIGHT - 67, {
+    font: fonts.body,
+    size: 7.4,
+    color: color(BRAND.bronze),
     maxWidth: 180,
+    align: "right",
   });
-  drawText(page, payload.title, x + 60, top - 48, {
-    font: fonts.bold,
-    size: 18,
-    color: color(TEXT),
-    maxWidth: 430,
+  drawText(page, formatPosterTitle(payload.title), MARGIN_X, PAGE_HEIGHT - 151, {
+    font: fonts.headline,
+    size: 31,
+    color: color(BRAND.black),
+    maxWidth: 460,
   });
-  drawText(page, "Team contact roster - active employees only", x + 60, top - 61, {
-    font: fonts.regular,
-    size: 7,
-    color: color(MUTED),
-    maxWidth: 300,
+  drawText(page, "Active team members grouped by role", MARGIN_X + 2, PAGE_HEIGHT - 170, {
+    font: fonts.bodyLight,
+    size: 9.4,
+    color: color(BRAND.bronze),
+    maxWidth: 320,
+  });
+  page.drawRectangle({
+    x: MARGIN_X + pageInnerWidth - 154,
+    y: PAGE_HEIGHT - 159,
+    width: 154,
+    height: 1.4,
+    color: color(BRAND.gold),
   });
 
-  drawBox(page, x + width - 116, top - 48, 98, 23, { fill: "#ffffff", border: BORDER });
-  drawText(page, "PRINTED", x + width - 106, top - 34, {
-    font: fonts.bold,
-    size: 5.3,
-    color: color(MUTED),
-    maxWidth: 78,
-    align: "right",
-  });
-  drawText(page, payload.printDate, x + width - 106, top - 44, {
-    font: fonts.bold,
-    size: 9,
-    color: color(DARK_GREEN),
-    maxWidth: 78,
-    align: "right",
-  });
-  drawBox(page, x + width - 116, top - 76, 98, 23, { fill: "#ffffff", border: BORDER });
-  drawText(page, "TOTAL ACTIVE", x + width - 106, top - 62, {
-    font: fonts.bold,
-    size: 5.3,
-    color: color(MUTED),
-    maxWidth: 78,
-    align: "right",
-  });
-  drawText(page, String(payload.totalEmployees ?? 0), x + width - 106, top - 72, {
-    font: fonts.bold,
-    size: 10,
-    color: color(DARK_GREEN),
-    maxWidth: 78,
-    align: "right",
-  });
+  let nextY = PAGE_HEIGHT - 203;
+  if (options.showMetrics) {
+    nextY = drawMetricsStrip(page, payload, fonts, nextY);
+  }
+  if (options.showStaffingMatrix) {
+    nextY = drawMatrix(page, payload, fonts, nextY);
+  }
+  return nextY - 4;
+}
 
-  const stats = payload.stats || [];
-  const gap = 8;
-  const statWidth = (width - 32 - gap * 5) / 6;
-  const statY = top - 104;
-  stats.slice(0, 6).forEach((stat, index) => {
-    drawCard(page, x + 16 + index * (statWidth + gap), statY, statWidth, 20, stat.label, stat.value, fonts);
+function drawMetricsStrip(page, payload, fonts, startY) {
+  const stats = [
+    { label: "Total Active", value: payload.totalEmployees ?? 0 },
+    ...(payload.stats || []),
+  ].filter((item) => safeText(item.label));
+  const width = PAGE_WIDTH - MARGIN_X * 2;
+  const labelY = startY - 14;
+  drawRule(page, MARGIN_X, startY, width, 0.8, BRAND.line);
+  let x = MARGIN_X;
+  stats.slice(0, 7).forEach((item, index) => {
+    const chipWidth = index === 0 ? 118 : 88;
+    drawText(page, safeText(item.label).toUpperCase(), x, labelY + 8.5, {
+      font: fonts.bodyBold,
+      size: 5.4,
+      color: color(BRAND.gold),
+      maxWidth: chipWidth,
+    });
+    drawText(page, String(item.value ?? 0), x, labelY - 1.5, {
+      font: fonts.bodyBold,
+      size: 10.5,
+      color: color(BRAND.bronze),
+      maxWidth: chipWidth,
+    });
+    x += chipWidth;
+    if (index < stats.length - 1) {
+      page.drawRectangle({ x: x - 15, y: labelY + 1, width: 0.7, height: 17, color: color(BRAND.line) });
+    }
   });
-  return top - 118;
+  return startY - 35;
 }
 
 function drawMatrix(page, payload, fonts, startY) {
-  const width = PAGE_WIDTH - MARGIN_X * 2;
-  const x = MARGIN_X;
-  let y = startY;
-  drawText(page, "STAFFING MATRIX", x, y, {
-    font: fonts.bold,
-    size: 7.8,
-    color: color(TEXT),
-  });
-  y -= 14;
+  const matrix = Array.isArray(payload.matrix) ? payload.matrix : [];
+  if (!matrix.length) return startY;
   const includeUnassigned = Boolean(payload.showUnassigned);
-  const headers = ["Position Group", "Full-Time", "Part-Time", ...(includeUnassigned ? ["Unassigned"] : []), "Total"];
-  const numericWidth = includeUnassigned ? 108 : 144;
-  const firstWidth = width - numericWidth * (headers.length - 1);
-  const rowHeight = 14.2;
+  const headers = ["Role", "FT", "PT", ...(includeUnassigned ? ["Open"] : []), "Total"];
+  const x = MARGIN_X;
+  const width = PAGE_WIDTH - MARGIN_X * 2;
+  const rowHeight = 11.5;
+  const columnWidths = includeUnassigned
+    ? [width - 210, 52, 52, 52, 54]
+    : [width - 158, 52, 52, 54];
+  let y = startY - 10;
+  drawText(page, "Role Balance", x, y, {
+    font: fonts.bodyBold,
+    size: 8.5,
+    color: color(BRAND.blue),
+    maxWidth: 150,
+  });
+  y -= 15;
   let xCursor = x;
   headers.forEach((header, index) => {
-    const cellWidth = index === 0 ? firstWidth : numericWidth;
-    drawBox(page, xCursor, y, cellWidth, rowHeight, { fill: SAGE, border: BORDER });
-    drawText(page, header.toUpperCase(), xCursor + 7, y + 5.8, {
-      font: fonts.bold,
-      size: 5.1,
-      color: color(MUTED),
-      maxWidth: cellWidth - 14,
+    drawBox(page, xCursor, y, columnWidths[index], rowHeight, {
+      fill: BRAND.ivory,
+      border: BRAND.line,
+      borderWidth: 0.35,
+    });
+    drawText(page, header.toUpperCase(), xCursor + 5, y + 3.8, {
+      font: fonts.bodyBold,
+      size: 5.2,
+      color: color(BRAND.bronze),
+      maxWidth: columnWidths[index] - 10,
       align: index === 0 ? "left" : "center",
     });
-    xCursor += cellWidth;
+    xCursor += columnWidths[index];
   });
   y -= rowHeight;
-  (payload.matrix || []).forEach((row) => {
+  matrix.forEach((row) => {
     const values = [
       row.label,
       Number(row.fullTime || 0),
@@ -224,173 +434,183 @@ function drawMatrix(page, payload, fonts, startY) {
     ];
     xCursor = x;
     values.forEach((value, index) => {
-      const cellWidth = index === 0 ? firstWidth : numericWidth;
-      drawBox(page, xCursor, y, cellWidth, rowHeight, {
-        fill: index === values.length - 1 ? PALE_SAGE : "#ffffff",
-        border: BORDER,
+      drawBox(page, xCursor, y, columnWidths[index], rowHeight, {
+        fill: BRAND.white,
+        border: BRAND.line,
+        borderWidth: 0.35,
       });
-      drawText(page, String(value), xCursor + 7, y + 5.7, {
-        font: fonts.bold,
-        size: 6.2,
-        color: color(index === values.length - 1 ? DARK_GREEN : TEXT),
-        maxWidth: cellWidth - 14,
+      drawText(page, String(value), xCursor + 5, y + 3.9, {
+        font: index === values.length - 1 ? fonts.bodyBold : fonts.body,
+        size: 5.7,
+        color: color(index === values.length - 1 ? BRAND.blue : BRAND.bronze),
+        maxWidth: columnWidths[index] - 10,
         align: index === 0 ? "left" : "center",
       });
-      xCursor += cellWidth;
+      xCursor += columnWidths[index];
     });
     y -= rowHeight;
   });
-  if (includeUnassigned) {
-    drawText(page, "Unassigned means the employee still needs a Full-Time or Part-Time classification in Labor Management.", x, y - 8, {
-      font: fonts.bold,
-      size: 5.8,
-      color: color(WARNING),
-      maxWidth: width,
-    });
-    y -= 17;
-  }
-  return y - 10;
+  return y - 12;
 }
 
-function buildRosterColumns(options = {}) {
-  const showCommitment = options.showCommitment !== false;
-  const showPhone = options.showPhone !== false;
-  const showEmail = options.showEmail !== false;
-  const columns = [
-    { key: "name", label: "Name", weight: 1.45, font: "bold" },
-    { key: "position", label: "Position", weight: 1.45 },
-    ...(showCommitment ? [{ key: "commitment", label: "Commitment", weight: 0.72, align: "center", font: "bold", color: MID_GREEN }] : []),
-    ...(showPhone ? [{ key: "phone", label: "Phone", weight: 0.86 }] : []),
-    ...(showEmail ? [{ key: "email", label: "Email", weight: 1.68, size: 5.6 }] : []),
-  ];
-  const totalWidth = PAGE_WIDTH - MARGIN_X * 2;
-  const totalWeight = columns.reduce((sum, column) => sum + column.weight, 0);
-  let used = 0;
-  return columns.map((column, index) => {
-    const width = index === columns.length - 1
-      ? totalWidth - used
-      : Math.floor((totalWidth * column.weight) / totalWeight);
-    used += width;
-    return { ...column, width };
+function drawGroup(page, group, x, topY, width, fonts, options) {
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
+  const rowHeight = detailMode ? 24 : 16;
+  const groupHeight = measureGroupHeight(group, options);
+  const bottomY = topY - groupHeight;
+
+  drawBox(page, x, bottomY, width, groupHeight, {
+    fill: BRAND.white,
+    border: BRAND.line,
+    borderWidth: 0.55,
   });
-}
-
-function drawRosterHeader(page, y, fonts, columns) {
-  let x = MARGIN_X;
-  columns.forEach((column) => {
-    drawBox(page, x, y, column.width, 13, { fill: SAGE, border: SAGE, borderWidth: 0.2 });
-    drawText(page, column.label.toUpperCase(), x + 7, y + 4.8, {
-      font: fonts.bold,
-      size: 5.5,
-      color: color(MUTED),
-      maxWidth: column.width - 14,
-      align: column.align || "left",
-    });
-    x += column.width;
+  page.drawRectangle({ x, y: bottomY, width: 3, height: groupHeight, color: color(BRAND.gold) });
+  drawBox(page, x + 3, topY - 25, width - 3, 25, {
+    fill: BRAND.ivory,
+    border: BRAND.ivory,
+    borderWidth: 0.2,
   });
-  return { columns, nextY: y - 15.2 };
-}
-
-function drawRosterRow(page, row, y, index, fonts, columns, rowHeight, rowGap) {
-  const fill = index % 2 === 0 ? "#ffffff" : PALE_SAGE;
-  let x = MARGIN_X;
-  columns.forEach((column) => {
-    const value = safeText(row[column.key], column.key === "name" ? "Employee" : "Not listed");
-    drawBox(page, x, y, column.width, rowHeight, { fill, border: BORDER, borderWidth: 0.5 });
-    drawText(page, value, x + 7, y + 5.1, {
-      font: column.font === "bold" ? fonts.bold : fonts.regular,
-      size: column.size || 6,
-      color: color(column.color || TEXT),
-      maxWidth: column.width - 14,
-      align: column.align || "left",
-    });
-    x += column.width;
+  drawText(page, group.label, x + 13, topY - 16.5, {
+    font: fonts.bodyBold,
+    size: 8.6,
+    color: color(BRAND.blue),
+    maxWidth: width - 62,
   });
-  return y - rowHeight - rowGap;
+  drawText(page, `${group.rows.length}`, x + width - 37, topY - 16.5, {
+    font: fonts.bodyBold,
+    size: 8.8,
+    color: color(BRAND.gold),
+    maxWidth: 22,
+    align: "right",
+  });
+
+  let y = topY - 39;
+  group.rows.forEach((row, index) => {
+    if (index > 0) drawRule(page, x + 13, y + rowHeight - 5, width - 26, 0.38, "#ECE2D2");
+    drawText(page, safeText(row.name, "Employee"), x + 13, y + rowHeight - 9.8, {
+      font: fonts.bodyBold,
+      size: detailMode ? 7.3 : 7.9,
+      color: color(BRAND.black),
+      maxWidth: width - 26,
+    });
+    if (detailMode) {
+      const detail = getDetailLine(row, options);
+      const lines = wrapText(detail, fonts.bodyLight, 5.5, width - 26, 2);
+      lines.forEach((line, lineIndex) => {
+        drawText(page, line, x + 13, y + 3.4 - lineIndex * 6.4, {
+          font: fonts.bodyLight,
+          size: 5.5,
+          color: color(BRAND.bronze),
+          maxWidth: width - 26,
+        });
+      });
+    }
+    y -= rowHeight;
+  });
+
+  return bottomY;
 }
 
-function addRosterPage(pdfDoc, fonts, pageNumber, payload = {}) {
+function addPage(pdfDoc) {
   const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  if (pageNumber > 1) {
-    drawText(page, payload.title || "Team Roster", MARGIN_X, PAGE_HEIGHT - 25, {
-      font: fonts.bold,
-      size: 8,
-      color: color(MUTED),
-      maxWidth: 360,
-    });
-    drawRule(page, MARGIN_X, PAGE_HEIGHT - 34, PAGE_WIDTH - MARGIN_X * 2, 0.8, BORDER);
-  }
+  page.drawRectangle({ x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT, color: color(BRAND.paper) });
   return page;
 }
 
 function drawFooter(page, fonts, pageNumber, pageCount) {
   const width = PAGE_WIDTH - MARGIN_X * 2;
-  drawRule(page, MARGIN_X, 24, width, 0.6, BORDER);
-  drawText(page, "K9 Operations Labor Management", MARGIN_X, 13, {
-    font: fonts.bold,
-    size: 5.8,
-    color: color(MUTED),
-    maxWidth: 240,
+  drawRule(page, MARGIN_X, FOOTER_Y + 10, width, 0.65, BRAND.line);
+  drawText(page, "K9 Resorts Luxury Pet Hotel", MARGIN_X, FOOTER_Y - 3, {
+    font: fonts.body,
+    size: 6.3,
+    color: color(BRAND.bronze),
+    maxWidth: 180,
   });
-  drawText(page, `Page ${pageNumber} of ${pageCount}`, MARGIN_X + width - 80, 13, {
-    font: fonts.bold,
-    size: 5.8,
-    color: color(MUTED),
-    maxWidth: 80,
+  drawText(page, `Page ${pageNumber} of ${pageCount}`, MARGIN_X + width - 88, FOOTER_Y - 3, {
+    font: fonts.body,
+    size: 6.3,
+    color: color(BRAND.bronze),
+    maxWidth: 88,
     align: "right",
   });
 }
 
-export async function buildLaborRosterPdfBytes(payload = {}) {
-  const pdfDoc = await PDFDocument.create();
-  pdfDoc.setTitle(payload.filename || payload.title || "Team Roster");
-  pdfDoc.setSubject("Team roster");
-  pdfDoc.setCreator("K9 Operations");
-  pdfDoc.setProducer("K9 Operations");
-  const fonts = {
-    regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
-    bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-  };
-
-  let page = addRosterPage(pdfDoc, fonts, 1, payload);
-  let cursorY = drawMasthead(page, payload, fonts);
-  if (payload.options?.showStaffingMatrix !== false) {
-    cursorY = drawMatrix(page, payload, fonts, cursorY);
+async function embedLogo(pdfDoc, assets = {}) {
+  const logoBytes = toBytes(assets.logoPngBytes);
+  if (!logoBytes) return null;
+  try {
+    return await pdfDoc.embedPng(logoBytes);
+  } catch {
+    return null;
   }
-  drawText(page, "TEAM ROSTER", MARGIN_X, cursorY, {
-    font: fonts.bold,
-    size: 8.5,
-    color: color(TEXT),
-  });
-  cursorY -= 16;
-  const columns = buildRosterColumns(payload.options || {});
-  let header = drawRosterHeader(page, cursorY, fonts, columns);
-  cursorY = header.nextY;
-  const bottomY = 30;
-  const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const availableHeight = Math.max(80, cursorY - bottomY - 2);
-  const candidateRowStride = rows.length > 0 ? availableHeight / rows.length : 14.5;
-  const rowGap = rows.length > 24 ? 1.2 : 1.8;
-  const rowHeight = Math.max(10.8, Math.min(13.2, candidateRowStride - rowGap));
-  if (!rows.length) {
-    drawText(page, "No active employees found.", MARGIN_X, cursorY - 4, {
-      font: fonts.bold,
-      size: 8,
-      color: color(MUTED),
+}
+
+function drawRosterGroups(pdfDoc, firstPage, payload, fonts, logoImage, options, groups) {
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
+  const columnCount = detailMode ? 2 : 3;
+  const gap = detailMode ? 18 : 16;
+  const columnWidth = (PAGE_WIDTH - MARGIN_X * 2 - gap * (columnCount - 1)) / columnCount;
+  const pages = [firstPage];
+  let page = firstPage;
+  let contentTop = drawMasthead(page, payload, fonts, logoImage, options, 1);
+  let columns = Array.from({ length: columnCount }, () => contentTop);
+
+  if (!groups.length) {
+    drawText(page, "No active employees found.", MARGIN_X, contentTop - 18, {
+      font: fonts.bodyBold,
+      size: 10,
+      color: color(BRAND.bronze),
       maxWidth: PAGE_WIDTH - MARGIN_X * 2,
     });
+    return pages;
   }
-  rows.forEach((row, index) => {
-    if (cursorY < bottomY + rowHeight + 2) {
-      page = addRosterPage(pdfDoc, fonts, pdfDoc.getPageCount() + 1, payload);
-      header = drawRosterHeader(page, PAGE_HEIGHT - 54, fonts, columns);
-      cursorY = header.nextY;
-    }
-    cursorY = drawRosterRow(page, row, cursorY, index, fonts, header.columns, rowHeight, rowGap);
-  });
 
-  pdfDoc.getPages().forEach((pdfPage, index) => {
-    drawFooter(pdfPage, fonts, index + 1, pdfDoc.getPageCount());
+  groups.forEach((group) => {
+    const groupHeight = measureGroupHeight(group, options);
+    let fittingColumns = columns
+      .map((y, index) => ({ y, index }))
+      .filter((column) => column.y - groupHeight >= CONTENT_BOTTOM)
+      .sort((left, right) => right.y - left.y);
+    let columnIndex = fittingColumns[0]?.index ?? -1;
+    if (columnIndex < 0) {
+      page = addPage(pdfDoc);
+      pages.push(page);
+      contentTop = drawMasthead(page, payload, fonts, logoImage, options, pages.length);
+      columns = Array.from({ length: columnCount }, () => contentTop);
+      fittingColumns = columns
+        .map((y, index) => ({ y, index }))
+        .filter((column) => column.y - groupHeight >= CONTENT_BOTTOM)
+        .sort((left, right) => right.y - left.y);
+      columnIndex = fittingColumns[0]?.index ?? 0;
+    }
+    const x = MARGIN_X + columnIndex * (columnWidth + gap);
+    const topY = columns[columnIndex];
+    columns[columnIndex] = drawGroup(page, group, x, topY, columnWidth, fonts, options) - 10;
+  });
+  return pages;
+}
+
+export async function buildLaborRosterPdfBytes(payload = {}) {
+  const pdfDoc = await PDFDocument.create();
+  pdfDoc.setTitle(payload.filename || payload.title || "K9 Resorts Team Roster");
+  pdfDoc.setSubject("K9 Resorts team roster");
+  pdfDoc.setCreator("K9 Resorts");
+  pdfDoc.setProducer("K9 Resorts");
+
+  const assets = payload.assets || {};
+  const options = normalizeLaborRosterPdfOptions(payload.options || {});
+  const [fonts, logoImage] = await Promise.all([
+    embedBrandFonts(pdfDoc, assets),
+    embedLogo(pdfDoc, assets),
+  ]);
+
+  const page = addPage(pdfDoc);
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const groups = splitLargeGroups(buildRosterGroups(rows), options);
+  const pages = drawRosterGroups(pdfDoc, page, payload, fonts, logoImage, options, groups);
+
+  pages.forEach((pdfPage, index) => {
+    drawFooter(pdfPage, fonts, index + 1, pages.length);
   });
 
   return pdfDoc.save();
