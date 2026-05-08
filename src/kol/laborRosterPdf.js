@@ -194,13 +194,6 @@ function drawMatrix(page, payload, fonts, startY) {
     size: 7.8,
     color: color(TEXT),
   });
-  drawText(page, "Role group by commitment", x + width - 120, y, {
-    font: fonts.bold,
-    size: 6,
-    color: color(MUTED),
-    maxWidth: 120,
-    align: "right",
-  });
   y -= 14;
   const includeUnassigned = Boolean(payload.showUnassigned);
   const headers = ["Position Group", "Full-Time", "Part-Time", ...(includeUnassigned ? ["Unassigned"] : []), "Total"];
