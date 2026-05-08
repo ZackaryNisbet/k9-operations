@@ -92,18 +92,28 @@ describe("labor roster PDF", () => {
     expect(pdfDoc.getPageCount()).toBe(1);
   });
 
-  it("paginates gracefully when optional metrics and contact details are shown", async () => {
+  it("keeps the normal phone and email roster on one page", async () => {
     const bytes = await buildLaborRosterPdfBytes({
       ...basePayload,
       options: {
-        showMetrics: true,
-        showStaffingMatrix: true,
+        showPhone: true,
+        showEmail: true,
+      },
+    });
+    const pdfDoc = await PDFDocument.load(bytes);
+    expect(pdfDoc.getPageCount()).toBe(1);
+  });
+
+  it("keeps commitment, phone, and email on one page without report metrics", async () => {
+    const bytes = await buildLaborRosterPdfBytes({
+      ...basePayload,
+      options: {
         showCommitment: true,
         showPhone: true,
         showEmail: true,
       },
     });
     const pdfDoc = await PDFDocument.load(bytes);
-    expect(pdfDoc.getPageCount()).toBeGreaterThanOrEqual(1);
+    expect(pdfDoc.getPageCount()).toBe(1);
   });
 });
