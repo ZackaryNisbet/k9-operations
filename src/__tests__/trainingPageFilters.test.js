@@ -4,6 +4,7 @@ import {
   applyLaborRosterFilters,
   buildLaborModulePanelKey,
   buildHourAnalysisModel,
+  clearHourAnalysisPlanningState,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
@@ -121,7 +122,7 @@ describe("applyLaborRosterFilters", () => {
     expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary");
   });
 
-  it("builds hour analysis from active roster rows, preferred-hour defaults, overrides, and what-if rows", () => {
+  it("builds hour analysis from active roster rows, expected-hour defaults, overrides, and what-if rows", () => {
     const emptyLaborDay = (day) => ({
       day_key: day,
       columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
@@ -201,6 +202,7 @@ describe("applyLaborRosterFilters", () => {
     expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 25 });
     expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 50 });
     expect(model.totals.capacityStatus.key).toBe("high");
+    expect(model.totals.capacityStatus.message).toContain("Expected capacity");
     expect(model.rows.find((row) => row.employeeKey === "emp-pct-ft")).toMatchObject({
       isOverride: true,
       isMovement: true,
@@ -211,6 +213,52 @@ describe("applyLaborRosterFilters", () => {
       preferredHours: 28,
     });
     expect(model.whatIfRows[0]).toMatchObject({ full_name: "Candidate One", groupKey: "csr", preferredHours: 15 });
+  });
+
+  it("clears Hour Analysis planning state without wiping Expected Hours preferences", () => {
+    const settings = normalizeHourAnalysisSettings({
+      expectations: {
+        csr: { full_time: 32, part_time: 18 },
+      },
+      overrides: {
+        "emp-1": { expected: 36 },
+      },
+      notes: {
+        "emp-1": "Keeps stored Expected Hours note",
+        "what-if-1": "Disposable planning note",
+      },
+      splits: {
+        "emp-1": { floor_group: "csr", admin_hours: 12 },
+        "what-if-1": { floor_group: "pct", admin_hours: 5 },
+      },
+      positionMovements: {
+        "emp-1": { position_title: "PCT" },
+      },
+      whatIfRows: [
+        { id: "what-if-1", full_name: "Candidate", position_title: "CSR", employment_commitment: "part_time" },
+      ],
+      auditLog: [{ id: "existing-audit", summary: "Existing activity" }],
+    });
+
+    const result = clearHourAnalysisPlanningState(settings);
+
+    expect(result.summary).toMatchObject({
+      changed: true,
+      removedWhatIfRows: 1,
+      removedPositionMovements: 1,
+      removedWhatIfNotes: 1,
+      removedWhatIfSplits: 1,
+    });
+    expect(result.settings.whatIfRows).toEqual([]);
+    expect(result.settings.positionMovements).toEqual({});
+    expect(result.settings.expectations.csr.full_time.expected).toBe(32);
+    expect(result.settings.expectations.csr.part_time.expected).toBe(18);
+    expect(result.settings.overrides["emp-1"].expected).toBe(36);
+    expect(result.settings.notes["emp-1"]).toBe("Keeps stored Expected Hours note");
+    expect(result.settings.notes["what-if-1"]).toBeUndefined();
+    expect(result.settings.splits["emp-1"]).toMatchObject({ floor_group: "csr", admin_hours: 12 });
+    expect(result.settings.splits["what-if-1"]).toBeUndefined();
+    expect(result.settings.auditLog[0]).toMatchObject({ id: "existing-audit", summary: "Existing activity" });
   });
 
   it("keeps half coverage and MKTG cells weighted separately in the labor model", () => {
