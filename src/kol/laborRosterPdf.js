@@ -353,7 +353,7 @@ function drawMasthead(page, payload, fonts, logoImage, options, pageNumber = 1) 
   }
 
   if (detailMode && !options.showMetrics && !options.showStaffingMatrix) {
-    drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 54, 108);
+    drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 66, 108);
     drawText(page, formatUpdatedLabel(payload.printDate), MARGIN_X + pageInnerWidth - 180, PAGE_HEIGHT - 46, {
       font: fonts.body,
       size: 7,
