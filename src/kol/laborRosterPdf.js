@@ -272,10 +272,10 @@ function buildRosterGroups(rows = []) {
 
 function splitLargeGroups(groups, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  if (detailMode) return groups;
+  const maxRowsPerGroup = detailMode ? 6 : 8;
   return groups.flatMap((group) => {
-    if (group.rows.length <= 8) return [group];
-    const chunkSize = Math.ceil(group.rows.length / 2);
+    if (group.rows.length <= maxRowsPerGroup) return [group];
+    const chunkSize = detailMode ? maxRowsPerGroup : Math.ceil(group.rows.length / 2);
     const chunks = [];
     for (let index = 0; index < group.rows.length; index += chunkSize) {
       chunks.push({
@@ -287,18 +287,32 @@ function splitLargeGroups(groups, options) {
   });
 }
 
-function getDetailLine(row, options) {
-  const details = [];
-  if (options.showCommitment) details.push(safeText(row.commitment, "Commitment not listed"));
-  if (options.showPhone) details.push(safeText(row.phone, "Phone not listed"));
-  if (options.showEmail) details.push(safeText(row.email, "Email not listed"));
-  return details.join("   ");
+function getDetailLines(row, options) {
+  const lines = [];
+  const topLine = [];
+  if (options.showCommitment) topLine.push(safeText(row.commitment, "Commitment not listed"));
+  if (options.showPhone) topLine.push(safeText(row.phone, "Phone not listed"));
+  if (topLine.length) {
+    lines.push(topLine.join("  |  "));
+  }
+  if (options.showEmail) {
+    lines.push(safeText(row.email, "Email not listed"));
+  }
+  return lines.slice(0, 2);
 }
 
-function measureGroupHeight(group, options) {
+function measureRosterRowHeight(row, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  const rowHeight = detailMode ? 24 : 16;
-  return 31 + group.rows.length * rowHeight + 6;
+  if (!detailMode) return 16;
+  const lineCount = Math.max(1, getDetailLines(row, options).length);
+  return Math.max(20.4, 14.6 + lineCount * 5.7);
+}
+
+function measureGroupHeight(group, options, fonts, width) {
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
+  if (!detailMode) return 31 + group.rows.length * 16 + 6;
+  const rowHeight = group.rows.reduce((total, row) => total + measureRosterRowHeight(row, options), 0);
+  return 31 + rowHeight + 8;
 }
 
 function drawLogo(page, logoImage, x, y, width) {
@@ -467,8 +481,7 @@ function drawMatrix(page, payload, fonts, startY) {
 
 function drawGroup(page, group, x, topY, width, fonts, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  const rowHeight = detailMode ? 24 : 16;
-  const groupHeight = measureGroupHeight(group, options);
+  const groupHeight = measureGroupHeight(group, options, fonts, width);
   const bottomY = topY - groupHeight;
 
   drawBox(page, x, bottomY, width, groupHeight, {
@@ -496,8 +509,10 @@ function drawGroup(page, group, x, topY, width, fonts, options) {
     align: "right",
   });
 
-  let y = topY - 39;
+  let y = detailMode ? topY - 25 : topY - 39;
   group.rows.forEach((row, index) => {
+    const rowHeight = measureRosterRowHeight(row, options);
+    if (detailMode) y -= rowHeight;
     if (index > 0) drawRule(page, x + 13, y + rowHeight - 0.85, width - 26, 0.38, "#ECE2D2");
     const nameY = detailMode
       ? y + rowHeight - 10.5
@@ -509,18 +524,17 @@ function drawGroup(page, group, x, topY, width, fonts, options) {
       maxWidth: width - 26,
     });
     if (detailMode) {
-      const detail = getDetailLine(row, options);
-      const lines = wrapText(detail, fonts.bodyLight, 5.5, width - 26, 2);
+      const lines = getDetailLines(row, options);
       lines.forEach((line, lineIndex) => {
-        drawText(page, line, x + 13, y + 3.4 - lineIndex * 6.4, {
+        drawText(page, line, x + 13, y + rowHeight - 15.8 - lineIndex * 5.7, {
           font: fonts.bodyLight,
-          size: 5.5,
+          size: 4.8,
           color: color(BRAND.bronze),
           maxWidth: width - 26,
         });
       });
     }
-    y -= rowHeight;
+    if (!detailMode) y -= rowHeight;
   });
 
   return bottomY;
@@ -562,7 +576,7 @@ async function embedLogo(pdfDoc, assets = {}) {
 
 function drawRosterGroups(pdfDoc, firstPage, payload, fonts, logoImage, options, groups) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  const columnCount = detailMode ? 2 : 3;
+  const columnCount = 3;
   const gap = detailMode ? 18 : 16;
   const columnWidth = (PAGE_WIDTH - MARGIN_X * 2 - gap * (columnCount - 1)) / columnCount;
   const pages = [firstPage];
@@ -581,7 +595,7 @@ function drawRosterGroups(pdfDoc, firstPage, payload, fonts, logoImage, options,
   }
 
   groups.forEach((group) => {
-    const groupHeight = measureGroupHeight(group, options);
+    const groupHeight = measureGroupHeight(group, options, fonts, columnWidth);
     let fittingColumns = columns
       .map((y, index) => ({ y, index }))
       .filter((column) => column.y - groupHeight >= CONTENT_BOTTOM)
