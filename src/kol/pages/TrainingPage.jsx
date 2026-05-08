@@ -295,6 +295,14 @@ const HOUR_ANALYSIS_GROUPS = [
   { key: "other", label: "Other" },
 ];
 const HOUR_ANALYSIS_GROUP_LABELS = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, group.label]));
+const HOUR_ANALYSIS_GROUP_SHORT_LABELS = {
+  general_manager: "GM",
+  assistant_manager: "AM",
+  supervisor: "SUP",
+  csr: "CSR",
+  pct: "PCT",
+  other: "Other",
+};
 const DEFAULT_LABOR_POSITION_TITLES = [
   "General Manager",
   "Assistant Manager",
@@ -338,7 +346,7 @@ const LABOR_HOUR_PERSON_SORT_COLUMNS = [
   { key: "name", label: "Name" },
   { key: "position", label: "Position" },
   { key: "commitment", label: "Commitment" },
-  { key: "preferred", label: "Preferred Hours" },
+  { key: "preferred", label: "Expected Hours" },
   { key: "split", label: "Coverage Split" },
   { key: "note", label: "Justification" },
 ];
@@ -429,7 +437,7 @@ const LABOR_MODEL_SHIFT_TYPE_OPTIONS = [
 const LABOR_MODEL_SHIFT_TYPE_LABELS = Object.fromEntries(LABOR_MODEL_SHIFT_TYPE_OPTIONS.map((option) => [option.value, option.label]));
 const LABOR_MODEL_GROUP_OPTIONS = HOUR_ANALYSIS_GROUPS
   .filter((group) => group.key !== "other")
-  .map((group) => ({ value: group.key, label: group.label }));
+  .map((group) => ({ value: group.key, label: HOUR_ANALYSIS_GROUP_SHORT_LABELS[group.key] || group.label }));
 const LABOR_MODEL_FULL_COVERAGE_VALUE = "1";
 const LABOR_MODEL_HALF_COVERAGE_VALUE = "0.5";
 const LABOR_MODEL_MARKETING_COVERAGE_VALUE = "MKTG";
@@ -1840,6 +1848,10 @@ function getHourAnalysisGroupLabel(value) {
   return HOUR_ANALYSIS_GROUP_LABELS[value] || HOUR_ANALYSIS_GROUP_LABELS.other;
 }
 
+function getHourAnalysisGroupShortLabel(value) {
+  return HOUR_ANALYSIS_GROUP_SHORT_LABELS[value] || getHourAnalysisGroupLabel(value);
+}
+
 function slugifyLaborModelId(value = "") {
   return String(value || "")
     .trim()
@@ -2580,6 +2592,48 @@ export function normalizeHourAnalysisSettings(value = {}) {
   };
 }
 
+export function clearHourAnalysisPlanningState(value = {}) {
+  const normalized = normalizeHourAnalysisSettings(value);
+  const whatIfIds = new Set(
+    normalized.whatIfRows
+      .map((row) => String(row?.id || row?.employeeKey || "").trim())
+      .filter(Boolean)
+  );
+  const nextNotes = { ...normalized.notes };
+  const nextSplits = { ...normalized.splits };
+  let removedWhatIfNotes = 0;
+  let removedWhatIfSplits = 0;
+  whatIfIds.forEach((id) => {
+    if (Object.prototype.hasOwnProperty.call(nextNotes, id)) {
+      delete nextNotes[id];
+      removedWhatIfNotes += 1;
+    }
+    if (Object.prototype.hasOwnProperty.call(nextSplits, id)) {
+      delete nextSplits[id];
+      removedWhatIfSplits += 1;
+    }
+  });
+  const removedWhatIfRows = normalized.whatIfRows.length;
+  const removedPositionMovements = Object.keys(normalized.positionMovements || {}).length;
+  const changed = Boolean(removedWhatIfRows || removedPositionMovements || removedWhatIfNotes || removedWhatIfSplits);
+  return {
+    settings: {
+      ...normalized,
+      notes: nextNotes,
+      splits: nextSplits,
+      positionMovements: {},
+      whatIfRows: [],
+    },
+    summary: {
+      changed,
+      removedWhatIfRows,
+      removedPositionMovements,
+      removedWhatIfNotes,
+      removedWhatIfSplits,
+    },
+  };
+}
+
 function makeHourAnalysisRangeTotals() {
   return { min: 0, expected: 0, max: 0 };
 }
@@ -2732,27 +2786,27 @@ function buildHourAnalysisCapacityStatus({ requiredWeekly = 0, targetWeekly = 0,
     return { key: "unset", label: "No floor", tone: "default", message: "No Labor Model floor is assigned to this role." };
   }
   if (expected < required) {
-    return { key: "short", label: "Short", tone: "danger", message: `Preferred capacity misses the operating floor by ${formatHourAnalysisHours(required - expected)} hrs/wk.` };
+    return { key: "short", label: "Short", tone: "danger", message: `Expected capacity misses the operational floor by ${formatHourAnalysisHours(required - expected)} hrs/wk.` };
   }
   if (reliefPercent <= 0 && expected > required) {
     return { key: "admin_surplus", label: "Surplus", tone: "warning", message: `No relief buffer is applied to General Manager, Assistant Manager, or Supervisor coverage. Reassign ${formatHourAnalysisHours(expected - required)} hrs/wk to a floor split or reduce planned admin coverage.` };
   }
   if (expected < healthyLow) {
-    return { key: "thin", label: "Thin reserve", tone: "warning", message: `Preferred capacity covers the floor but is ${formatHourAnalysisHours(healthyLow - expected)} hrs/wk below the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% relief sensitivity case.` };
+    return { key: "thin", label: "Thin reserve", tone: "warning", message: `Expected capacity covers the floor but is ${formatHourAnalysisHours(healthyLow - expected)} hrs/wk below the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% relief sensitivity case.` };
   }
   if (expected > overRostered) {
-    return { key: "over_rostered", label: "Overbuilt", tone: "warning", message: `Preferred capacity is ${formatHourAnalysisHours(expected - overRostered)} hrs/wk above the ${HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT}% relief sensitivity case. Freeze offers or rebalance hours before employees lose expected hours.` };
+    return { key: "over_rostered", label: "Overbuilt", tone: "warning", message: `Expected capacity is ${formatHourAnalysisHours(expected - overRostered)} hrs/wk above the ${HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT}% relief sensitivity case. Freeze offers or rebalance hours before employees lose expected hours.` };
   }
   if (expected > healthyHigh) {
-    return { key: "high", label: "High reserve", tone: "warning", message: `Preferred capacity is ${formatHourAnalysisHours(expected - healthyHigh)} hrs/wk above the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity case. Confirm this is seasonal demand, not accidental overstaffing.` };
+    return { key: "high", label: "High reserve", tone: "warning", message: `Expected capacity is ${formatHourAnalysisHours(expected - healthyHigh)} hrs/wk above the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity case. Confirm this is seasonal demand, not accidental overstaffing.` };
   }
   if (expected < target) {
-    return { key: "healthy_low", label: "On target", tone: "success", message: `Preferred capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(target - expected)} hrs/wk below the planning case.` };
+    return { key: "healthy_low", label: "On target", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(target - expected)} hrs/wk below the planning case.` };
   }
   if (expected > target) {
-    return { key: "healthy_high", label: "On target", tone: "success", message: `Preferred capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(expected - target)} hrs/wk above the planning case.` };
+    return { key: "healthy_high", label: "On target", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(expected - target)} hrs/wk above the planning case.` };
   }
-  return { key: "healthy", label: "On target", tone: "success", message: `Preferred capacity lands on the ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief planning case.` };
+  return { key: "healthy", label: "On target", tone: "success", message: `Expected capacity lands on the ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief planning case.` };
 }
 
 export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) {
@@ -3663,6 +3717,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [configuringRosterKey, setConfiguringRosterKey] = useState(null);
   const [showSaveRosterView, setShowSaveRosterView] = useState(false);
   const [rosterViewName, setRosterViewName] = useState("");
+  const [rosterPrintOptions, setRosterPrintOptions] = useState({
+    showStaffingMatrix: true,
+    showCommitment: true,
+    showPhone: true,
+    showEmail: true,
+  });
   const [rosterPrintMode, setRosterPrintMode] = useState(false);
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
   const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
@@ -7063,6 +7123,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter((group) => group.key !== "other" || populated.has("other"))
       .sort((left, right) => (hourAnalysisGroupHierarchyOrder.get(left.key) ?? 9999) - (hourAnalysisGroupHierarchyOrder.get(right.key) ?? 9999));
   }, [hourAnalysisGroupHierarchyOrder, hourAnalysisModel.headcountRows, hourAnalysisModel.weeklyRows]);
+  const hourAnalysisCapacityRows = useMemo(() => {
+    const preferredOrder = new Map(["general_manager", "assistant_manager", "supervisor", "csr", "pct"].map((key, index) => [key, index]));
+    return hourAnalysisModel.weeklyRows
+      .filter((row) => preferredOrder.has(row.key))
+      .sort((left, right) => preferredOrder.get(left.key) - preferredOrder.get(right.key));
+  }, [hourAnalysisModel.weeklyRows]);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
   const hourAnalysisCommitmentOptions = useMemo(() => (
     LABOR_EMPLOYMENT_COMMITMENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))
@@ -7096,7 +7162,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         label: "Recruit",
         tone: "short",
         value: `${formatHourAnalysisHours(totals.hireDeficitHours)} hrs/wk short`,
-        copy: `Start recruiting or add preferred hours in the bottleneck roles. Preferred capacity is ${formatHourAnalysisHours(totals.projectedExpected)} hrs/wk against a ${formatHourAnalysisHours(totals.targetWeekly)} hrs/wk target.`,
+        copy: `Start recruiting or add expected hours in the bottleneck roles. Expected capacity is ${formatHourAnalysisHours(totals.projectedExpected)} hrs/wk against a ${formatHourAnalysisHours(totals.targetWeekly)} hrs/wk target.`,
       };
     }
     if (totals.projectedExpected > totals.overRosteredWeekly) {
@@ -7104,7 +7170,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         label: "Overbuilt",
         tone: "surplus",
         value: `${formatHourAnalysisHours(totals.projectedExpected - totals.overRosteredWeekly)} hrs/wk over healthy`,
-        copy: `Freeze offers, rescind speculative what-ifs, or reduce low-confidence hours. Preferred capacity is above the high relief case where employees may stop getting the hours they expect.`,
+        copy: `Freeze offers, rescind speculative what-ifs, or reduce low-confidence hours. Expected capacity is above the high relief case where employees may stop getting the hours they expect.`,
       };
     }
     if (totals.expectedGapToTarget > 0) {
@@ -7112,16 +7178,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         label: "On target",
         tone: "healthy",
         value: `${formatHourAnalysisHours(totals.expectedGapToTarget)} hrs/wk reserve`,
-        copy: `Preferred capacity is inside the healthy band. Keep recruiting warm, but do not add headcount without a known demand change.`,
+        copy: `Expected capacity is inside the healthy band. Keep recruiting warm, but do not add headcount without a known demand change.`,
       };
     }
     return {
       label: "On target",
       tone: "healthy",
       value: "Coverage aligned",
-      copy: `Preferred capacity lands on the operating target. Maintain the roster and watch call-outs.`,
+      copy: `Expected capacity lands on the operating target. Maintain the roster and watch call-outs.`,
     };
   }, [hourAnalysisModel.totals]);
+  const hourAnalysisPlanningResetSummary = useMemo(() => clearHourAnalysisPlanningState(hourAnalysisSettings).summary, [hourAnalysisSettings]);
+  const hasHourAnalysisPlanningState = hourAnalysisPlanningResetSummary.changed;
   const markHourAnalysisChanged = useCallback((keys = []) => {
     const normalizedKeys = Array.isArray(keys) ? keys.filter(Boolean) : [keys].filter(Boolean);
     if (normalizedKeys.length === 0) return;
@@ -7149,6 +7217,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       auditLog: normalizeHourAnalysisAuditLog([auditEntry, ...(normalized.auditLog || [])]),
     };
   }, [actorName, actorUserId]);
+  const resetHourAnalysisPlanningState = useCallback(() => {
+    setHourAnalysisSettings((prev) => {
+      const { settings, summary } = clearHourAnalysisPlanningState(prev);
+      if (!summary.changed) return settings;
+      markHourAnalysisChanged(["capacity", "planning-reset"]);
+      return appendHourAnalysisAudit(settings, {
+        action: "planning_state_reset",
+        entity_id: "hour-analysis-planning",
+        entity_label: "Hour Analysis Planning",
+        summary: `Reset planning state: removed ${summary.removedWhatIfRows} what-if row${summary.removedWhatIfRows === 1 ? "" : "s"} and ${summary.removedPositionMovements} planned role movement${summary.removedPositionMovements === 1 ? "" : "s"}. Expected Hours preferences were preserved.`,
+        before: {
+          what_if_rows: summary.removedWhatIfRows,
+          planned_role_movements: summary.removedPositionMovements,
+          what_if_notes: summary.removedWhatIfNotes,
+          what_if_splits: summary.removedWhatIfSplits,
+        },
+        after: {
+          what_if_rows: 0,
+          planned_role_movements: 0,
+        },
+        note: "Expected Hours preferences preserved.",
+      });
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
   const updateHourExpectation = useCallback((groupKey, commitment, band, value) => {
     const normalizedGroup = HOUR_ANALYSIS_GROUP_LABELS[groupKey] ? groupKey : "other";
     const normalizedCommitment = commitment === "part_time" ? "part_time" : "full_time";
@@ -7163,10 +7255,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
-          action: "default_preferred_hours_changed",
+          action: "default_expected_hours_changed",
           entity_id: `${normalizedGroup}:${normalizedCommitment}`,
           entity_label: `${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)}`,
-          summary: `Changed default preferred hours for ${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)} from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          summary: `Changed default Expected Hours for ${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)} from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/wk.`,
           before,
           after,
         }),
@@ -7605,10 +7697,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
-          action: "preferred_hours_overridden",
+          action: "expected_hours_overridden",
           entity_id: normalizedKey,
           entity_label: normalizedKey,
-          summary: `Set preferred-hours override to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          summary: `Set Expected Hours override to ${formatHourAnalysisHours(after)} hrs/wk.`,
           before: Object.prototype.hasOwnProperty.call(normalized.overrides[normalizedKey] || {}, "expected") ? before : null,
           after,
           note: normalized.notes[normalizedKey] || "",
@@ -7640,10 +7732,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
         return {
           ...appendHourAnalysisAudit(normalized, {
-            action: "preferred_hours_inherited",
+            action: "expected_hours_inherited",
             entity_id: normalizedKey,
             entity_label: normalizedKey,
-            summary: `Cleared preferred-hours override and returned to inherited default.`,
+            summary: `Cleared Expected Hours override and returned to inherited default.`,
             before,
             after: null,
             note: normalized.notes[normalizedKey] || "",
@@ -7655,10 +7747,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
       markHourAnalysisChanged(["capacity", `row:${normalizedKey}`]);
       return { ...appendHourAnalysisAudit(normalized, {
-        action: "preferred_hours_inherited",
+        action: "expected_hours_inherited",
         entity_id: normalizedKey,
         entity_label: normalizedKey,
-        summary: `Cleared all preferred-hours overrides.`,
+        summary: `Cleared all Expected Hours overrides.`,
         before: normalized.overrides[normalizedKey] || null,
         after: null,
         note: normalized.notes[normalizedKey] || "",
@@ -7682,7 +7774,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           action: "justification_note_changed",
           entity_id: normalizedKey,
           entity_label: normalizedKey,
-          summary: nextNote ? "Updated preferred-hours justification note." : "Cleared preferred-hours justification note.",
+          summary: nextNote ? "Updated Expected Hours justification note." : "Cleared Expected Hours justification note.",
           before,
           after: nextNote,
           note: nextNote,
@@ -7824,10 +7916,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       markHourAnalysisChanged(["capacity", `row:${normalizedId}`, `group:${row.group_key}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
-          action: "what_if_preferred_hours_changed",
+          action: "what_if_expected_hours_changed",
           entity_id: normalizedId,
           entity_label: row.full_name,
-          summary: `Changed what-if preferred hours for ${row.full_name} to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          summary: `Changed what-if Expected Hours for ${row.full_name} to ${formatHourAnalysisHours(after)} hrs/wk.`,
           before: Object.prototype.hasOwnProperty.call(row.hour_overrides || {}, "expected") ? before : null,
           after,
           note: row.note || "",
@@ -7859,10 +7951,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       markHourAnalysisChanged(["capacity", `row:${normalizedId}`, `group:${targetRow.group_key}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
-          action: "what_if_preferred_hours_inherited",
+          action: "what_if_expected_hours_inherited",
           entity_id: normalizedId,
           entity_label: targetRow.full_name,
-          summary: `Cleared what-if preferred-hours override for ${targetRow.full_name}.`,
+          summary: `Cleared what-if Expected Hours override for ${targetRow.full_name}.`,
           before: before ?? null,
           after: null,
           note: targetRow.note || "",
@@ -7918,6 +8010,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const rosterPrintDateLabel = useMemo(() => formatRosterPrintDate(), [rosterPrintMode]);
   const rosterPdfFilename = useMemo(() => formatRosterPdfFilename(laborContactLocationName), [laborContactLocationName, rosterPrintMode]);
   const showRosterPrintUnassigned = Number(displayedDashboardMetrics.unassignedCommitmentCount || 0) > 0;
+  const updateRosterPrintOption = useCallback((key, value) => {
+    setRosterPrintOptions((prev) => ({ ...prev, [key]: Boolean(value) }));
+  }, []);
+  const handleBrowserPrintRoster = useCallback(() => {
+    setRosterPrintMode(true);
+  }, []);
   const handlePrintRoster = useCallback(async () => {
     if (generatingRosterPdf) return;
     setGeneratingRosterPdf(true);
@@ -7931,12 +8029,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         printDate: pdfPrintDateLabel,
         totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
         showUnassigned: showRosterPrintUnassigned,
+        options: rosterPrintOptions,
         matrix: rosterStaffingMatrix,
         stats: [
           { label: "Managers", value: displayedDashboardMetrics.managerCount },
-          { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
-          { label: "Customer Service Representatives", value: displayedDashboardMetrics.csrCount },
-          { label: "Pet Care Technicians", value: displayedDashboardMetrics.pctCount },
+          { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
+          { label: "CSR", value: displayedDashboardMetrics.csrCount },
+          { label: "PCT", value: displayedDashboardMetrics.pctCount },
           { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
           { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
         ],
@@ -7965,6 +8064,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     displayedDashboardMetrics.supervisorCount,
     generatingRosterPdf,
     laborContactLocationName,
+    rosterPrintOptions,
     rosterPrintRows,
     rosterPrintTitle,
     rosterStaffingMatrix,
@@ -10349,6 +10449,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <Btn variant="secondary" icon={<I.Clock />} onClick={() => setShowHourAnalysisAudit(true)}>
             Activity
           </Btn>
+          {canEditRoster && (
+            <Btn variant="secondary" icon={<I.RefreshCw />} onClick={resetHourAnalysisPlanningState} disabled={!hasHourAnalysisPlanningState}>
+              Reset
+            </Btn>
+          )}
           <Btn variant="secondary" icon={<I.Calendar />} onClick={() => { setHourAnalysisLaborModelTab(LABOR_MODEL_SUMMARY_TAB); changeLaborTab("labor-model"); }}>
             Labor Model
           </Btn>
@@ -10706,6 +10811,154 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           justify-content: flex-end;
           flex-shrink: 0;
         }
+        .labor-home-overview {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .labor-home-stat {
+          min-width: 0;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 9px 10px;
+          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
+        }
+        .labor-home-stat.is-primary {
+          border-color: rgba(20, 83, 45, 0.24);
+          background: linear-gradient(135deg, rgba(240,253,244,0.92), #ffffff 62%);
+        }
+        .labor-home-stat span {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          line-height: 1;
+        }
+        .labor-home-stat strong {
+          display: block;
+          margin-top: 6px;
+          color: ${C.text};
+          font-size: 24px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .labor-home-stat em {
+          display: block;
+          margin-top: 4px;
+          color: #c2410c;
+          font-size: 10px;
+          font-style: normal;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .labor-home-top-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(260px, 0.34fr);
+          gap: 12px;
+          align-items: stretch;
+          margin-bottom: 16px;
+        }
+        .labor-home-card-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          min-height: 43px;
+          padding: 10px 12px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #fff;
+        }
+        .labor-home-card-title {
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .labor-home-alert-pill {
+          border-radius: 999px;
+          background: #fff7ed;
+          color: #c2410c;
+          padding: 5px 8px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .labor-home-matrix-table {
+          width: 100%;
+          min-width: 480px;
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+        .labor-home-matrix-table th,
+        .labor-home-matrix-table td {
+          padding: 7px 10px;
+          border-bottom: 1px solid ${C.borderLight};
+          font-size: 11.5px;
+          white-space: nowrap;
+        }
+        .labor-home-matrix-table th {
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 9.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+          text-align: center;
+        }
+        .labor-home-matrix-table th:first-child,
+        .labor-home-matrix-table td:first-child {
+          text-align: left;
+        }
+        .labor-home-matrix-table td {
+          color: ${C.text};
+          font-weight: 900;
+          text-align: center;
+        }
+        .labor-home-matrix-table td:first-child {
+          font-weight: 950;
+        }
+        .labor-home-matrix-table td:last-child {
+          color: ${C.pri};
+          background: #f7fbf5;
+        }
+        .labor-home-matrix-table td.is-warning {
+          color: #c2410c;
+          background: #fff7ed;
+        }
+        .labor-roster-output-body {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+          padding: 12px;
+        }
+        .labor-print-option {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #f8fafc;
+          padding: 8px 9px;
+          color: ${C.text};
+          font-size: 11px;
+          font-weight: 900;
+          line-height: 1.1;
+          cursor: pointer;
+        }
+        .labor-print-option input {
+          accent-color: ${C.pri};
+        }
+        .labor-roster-output-actions {
+          grid-column: 1 / -1;
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-top: 2px;
+        }
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
@@ -10955,7 +11208,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 9.5px;
         }
         .hour-analysis-number-input {
-          width: 84px;
+          width: 78px;
           min-width: 0;
           border: 1.5px solid ${C.border};
           border-radius: 8px;
@@ -10964,9 +11217,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-family: inherit;
           font-size: 13px;
           font-weight: 900;
-          padding: 8px 9px;
+          padding: 7px 8px;
           outline: none;
-          text-align: right;
+          text-align: center;
           transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
         }
         .hour-analysis-number-input:focus {
@@ -11047,6 +11300,175 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border-radius: inherit;
           background: linear-gradient(90deg, ${C.pri}, #16a34a);
           transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-dashboard {
+          display: grid;
+          grid-template-columns: minmax(240px, 0.32fr) minmax(0, 1fr);
+          gap: 12px;
+          padding: 15px 16px 10px;
+          align-items: end;
+        }
+        .hour-analysis-capacity-total {
+          border: 1px solid rgba(20, 83, 45, 0.2);
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.92), #ffffff 64%);
+          padding: 11px 12px;
+          min-width: 0;
+        }
+        .hour-analysis-capacity-total.is-short {
+          border-color: rgba(180, 83, 9, 0.24);
+          background: linear-gradient(135deg, rgba(255,247,237,0.95), #ffffff 64%);
+        }
+        .hour-analysis-capacity-total.is-surplus {
+          border-color: rgba(20, 83, 45, 0.24);
+        }
+        .hour-analysis-capacity-total span,
+        .hour-analysis-capacity-legend span {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+        .hour-analysis-capacity-total strong {
+          display: block;
+          margin-top: 6px;
+          color: ${C.text};
+          font-size: 25px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-capacity-total.is-short strong {
+          color: #b45309;
+        }
+        .hour-analysis-capacity-total em {
+          display: block;
+          margin-top: 6px;
+          color: ${C.textMut};
+          font-size: 11px;
+          font-style: normal;
+          font-weight: 800;
+          line-height: 1.2;
+        }
+        .hour-analysis-capacity-legend {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 16px;
+          flex-wrap: wrap;
+          padding-bottom: 4px;
+        }
+        .hour-analysis-capacity-legend i {
+          display: inline-block;
+          width: 18px;
+          height: 8px;
+          margin-right: 7px;
+          border-radius: 999px;
+          vertical-align: middle;
+        }
+        .hour-analysis-capacity-legend i.is-floor {
+          width: 2px;
+          height: 16px;
+          border-radius: 0;
+          background: ${C.text};
+        }
+        .hour-analysis-capacity-legend i.is-buffer {
+          background: rgba(132, 204, 22, 0.28);
+        }
+        .hour-analysis-capacity-visual {
+          display: grid;
+          gap: 9px;
+          padding: 0 16px 16px;
+        }
+        .hour-analysis-capacity-visual.is-recent-change {
+          animation: hourAnalysisChangePulse 760ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-row {
+          display: grid;
+          grid-template-columns: 92px minmax(220px, 1fr) minmax(146px, auto) minmax(88px, auto);
+          gap: 12px;
+          align-items: center;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 10px 12px;
+        }
+        .hour-analysis-capacity-role strong {
+          display: block;
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .hour-analysis-capacity-role span,
+        .hour-analysis-capacity-numbers span {
+          display: block;
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 850;
+          line-height: 1.15;
+          white-space: nowrap;
+        }
+        .hour-analysis-capacity-bar {
+          position: relative;
+          height: 34px;
+          border: 1px solid #d8e4d4;
+          border-radius: 4px;
+          background:
+            linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px) 0 0 / 25% 100%,
+            #f8fafc;
+          overflow: hidden;
+        }
+        .hour-analysis-capacity-buffer {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          background: rgba(132, 204, 22, 0.24);
+          border-left: 1px solid rgba(20, 83, 45, 0.2);
+        }
+        .hour-analysis-capacity-fill {
+          position: absolute;
+          left: 0;
+          top: 7px;
+          bottom: 7px;
+          border-radius: 0 4px 4px 0;
+          background: linear-gradient(90deg, #14532d, #3f6212);
+          box-shadow: 0 0 0 1px rgba(20,83,45,0.08);
+          transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-floor,
+        .hour-analysis-capacity-target {
+          position: absolute;
+          top: -1px;
+          bottom: -1px;
+          width: 2px;
+          background: ${C.text};
+          transform: translateX(-1px);
+        }
+        .hour-analysis-capacity-target {
+          background: rgba(20, 83, 45, 0.38);
+        }
+        .hour-analysis-capacity-gap {
+          justify-self: end;
+          min-width: 74px;
+          border-radius: 999px;
+          padding: 6px 8px;
+          background: #ecfdf5;
+          color: #047857;
+          font-size: 10.5px;
+          font-weight: 950;
+          line-height: 1;
+          text-align: center;
+          white-space: nowrap;
+        }
+        .hour-analysis-capacity-row.is-short .hour-analysis-capacity-gap {
+          background: #fff7ed;
+          color: #b45309;
+        }
+        .hour-analysis-capacity-row.is-surplus .hour-analysis-capacity-gap {
+          background: #fef2f2;
+          color: #b91c1c;
         }
         .hour-analysis-hire-list {
           display: grid;
@@ -11492,10 +11914,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           min-width: 980px;
         }
         .hour-analysis-planning-table .hour-analysis-col-position {
-          width: 24%;
+          width: 22%;
         }
         .hour-analysis-planning-table .hour-analysis-col-total {
-          width: 15%;
+          width: 14%;
         }
         .hour-analysis-planning-table .hour-analysis-col-count {
           width: 14%;
@@ -11504,7 +11926,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           width: 16.5%;
         }
         .hour-analysis-table th {
-          padding: 10px 12px;
+          padding: 8px 10px;
           border-bottom: 1px solid ${C.border};
           background: #f8fafc;
           color: ${C.textMut};
@@ -11520,11 +11942,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           line-height: 1.15;
         }
         .hour-analysis-planning-table th.hour-analysis-group-heading {
-          background: #f1f5f9;
+          background: #eef6ee;
           color: ${C.text};
           font-size: 11.5px;
           text-align: center;
           border-left: 1px solid ${C.borderLight};
+        }
+        .hour-analysis-planning-table th.hour-analysis-group-heading:last-of-type {
+          background: #fff7ed;
         }
         .hour-analysis-planning-table th.hour-analysis-sticky-heading {
           vertical-align: middle;
@@ -11545,12 +11970,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           margin: 0 auto;
         }
         .hour-analysis-table td {
-          padding: 12px;
+          padding: 9px 10px;
           border-bottom: 1px solid ${C.borderLight};
           color: ${C.text};
           font-size: 12.5px;
           font-weight: 700;
           vertical-align: middle;
+        }
+        .hour-analysis-planning-table tbody td:nth-child(3),
+        .hour-analysis-planning-table tbody td:nth-child(4) {
+          background: rgba(240,253,244,0.46);
+        }
+        .hour-analysis-planning-table tbody td:nth-child(5),
+        .hour-analysis-planning-table tbody td:nth-child(6) {
+          background: rgba(255,247,237,0.48);
         }
         .hour-analysis-table tbody tr:last-child td {
           border-bottom: none;
@@ -11998,7 +12431,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
 	        .labor-model-summary-cards {
 	          display: grid;
-	          grid-template-columns: repeat(4, minmax(0, 1fr));
+	          grid-template-columns: repeat(3, minmax(0, 1fr));
 	          gap: 10px;
 	        }
         .labor-model-metric-card {
@@ -12054,6 +12487,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 12px;
           margin-top: 12px;
           align-items: start;
+        }
+        .labor-model-summary-main {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+          min-width: 0;
         }
         .labor-model-panel {
           border: 1px solid ${C.border};
@@ -13175,6 +13614,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          .labor-page-shell { padding: 14px 8px 28px; }
           .labor-module-header { align-items: flex-start; flex-direction: column; }
           .labor-header-action-slot { width: 100%; justify-content: flex-start; }
+          .labor-home-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .labor-home-top-grid { grid-template-columns: 1fr; }
           .labor-module-tabs { grid-template-columns: repeat(var(--labor-tab-count), minmax(104px, 1fr)); }
           .labor-view-switcher {
             grid-template-columns: 1fr;
@@ -13184,6 +13625,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .hour-analysis-summary-grid { grid-template-columns: 1fr; }
           .hour-analysis-roster-summary { grid-template-columns: 1fr; }
           .hour-analysis-decision-grid { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-dashboard { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-row { grid-template-columns: 72px minmax(170px, 1fr); }
+          .hour-analysis-capacity-numbers,
+          .hour-analysis-capacity-gap { justify-self: start; }
           .hour-analysis-capacity-standard { grid-template-columns: 1fr; }
           .hour-analysis-capacity-grid { grid-template-columns: 1fr; }
           .hour-analysis-card-header { align-items: flex-start; flex-direction: column; }
@@ -13226,9 +13671,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          <div className="labor-roster-print-stat-strip">
 	            {[
 	              { label: "Managers", value: displayedDashboardMetrics.managerCount },
-	              { label: "Supervisors", value: displayedDashboardMetrics.supervisorCount },
-	              { label: "Customer Service Representatives", value: displayedDashboardMetrics.csrCount },
-	              { label: "Pet Care Technicians", value: displayedDashboardMetrics.pctCount },
+	              { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
+	              { label: "CSR", value: displayedDashboardMetrics.csrCount },
+	              { label: "PCT", value: displayedDashboardMetrics.pctCount },
 	              { label: "Full-Time", value: displayedDashboardMetrics.fullTimeCount },
 	              { label: "Part-Time", value: displayedDashboardMetrics.partTimeCount },
 	            ].map((item) => (
@@ -13240,6 +13685,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          </div>
 	        </div>
 
+	        {rosterPrintOptions.showStaffingMatrix && (
 	        <div className="labor-roster-print-section">
 	          <div className="labor-roster-print-section-heading">
 	            <h2>Staffing Matrix</h2>
@@ -13272,15 +13718,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	            </p>
 	          )}
 	        </div>
+	        )}
 
 	        <table className="labor-roster-print-table">
 	          <thead>
 	            <tr>
 	              <th>Name</th>
 	              <th>Position</th>
-	              <th>Commitment</th>
-	              <th>Phone Number</th>
-	              <th>Email</th>
+	              {rosterPrintOptions.showCommitment && <th>Commitment</th>}
+	              {rosterPrintOptions.showPhone && <th>Phone Number</th>}
+	              {rosterPrintOptions.showEmail && <th>Email</th>}
 	            </tr>
 	          </thead>
 	          <tbody>
@@ -13288,9 +13735,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              <tr key={getLaborEmployeeRowId(row) || row.full_name || row.contact_email}>
 	                <td>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Employee"}</td>
 	                <td>{formatLaborPositionTitle(row.position_title) || "Not listed"}</td>
-	                <td>{getLaborEmploymentCommitmentLabel(row.employment_commitment)}</td>
-	                <td>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed"}</td>
-	                <td>{row.contact_email || "Not listed"}</td>
+	                {rosterPrintOptions.showCommitment && <td>{getLaborEmploymentCommitmentLabel(row.employment_commitment)}</td>}
+	                {rosterPrintOptions.showPhone && <td>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : "Not listed"}</td>}
+	                {rosterPrintOptions.showEmail && <td>{row.contact_email || "Not listed"}</td>}
 	              </tr>
 	            ))}
 	          </tbody>
@@ -13339,58 +13786,92 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       >
       {!loading && tab === "home" && canUseLaborTab("home") && (
         <div>
-	          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(156px, 1fr))", gap: 12, marginBottom: 16 }}>
-	            <MetricCard label="Managers" value={displayedDashboardMetrics.managerCount} color={C.pri} />
-	            <MetricCard label="Supervisors" value={displayedDashboardMetrics.supervisorCount} color="#2563EB" />
-	            <MetricCard label="Customer Service Representatives" value={displayedDashboardMetrics.csrCount} color="#7C3AED" />
-	            <MetricCard label="Pet Care Technicians" value={displayedDashboardMetrics.pctCount} color="#0891B2" />
-	            <MetricCard label="Total Employees" value={displayedDashboardMetrics.activeEmployeeCount} color={C.text} />
-	            <MetricCard label="Full-Time" value={displayedDashboardMetrics.fullTimeCount} color={C.suc} />
-	            <MetricCard
-	              label="Part-Time"
-	              value={displayedDashboardMetrics.partTimeCount}
-	              helper={displayedDashboardMetrics.unassignedCommitmentCount ? `${displayedDashboardMetrics.unassignedCommitmentCount} unassigned` : ""}
-	              color="#D97706"
-	            />
+	          <div className="labor-home-overview">
+	            {[
+	              { label: "Total", value: displayedDashboardMetrics.activeEmployeeCount, tone: "primary" },
+	              { label: "Managers", value: displayedDashboardMetrics.managerCount },
+	              { label: "SUP", value: displayedDashboardMetrics.supervisorCount },
+	              { label: "CSR", value: displayedDashboardMetrics.csrCount },
+	              { label: "PCT", value: displayedDashboardMetrics.pctCount },
+	              { label: "FT", value: displayedDashboardMetrics.fullTimeCount },
+	              { label: "PT", value: displayedDashboardMetrics.partTimeCount, helper: displayedDashboardMetrics.unassignedCommitmentCount ? `${displayedDashboardMetrics.unassignedCommitmentCount} unassigned` : "" },
+	            ].map((item) => (
+	              <div key={item.label} className={`labor-home-stat${item.tone === "primary" ? " is-primary" : ""}`}>
+	                <span>{item.label}</span>
+	                <strong>{Number(item.value || 0)}</strong>
+	                {item.helper ? <em>{item.helper}</em> : null}
+	              </div>
+	            ))}
 	          </div>
 
-	          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18, border: `1px solid ${displayedDashboardMetrics.unassignedCommitmentCount ? "#FED7AA" : C.border}` }}>
-	            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 16px", borderBottom: `1px solid ${C.borderLight}`, background: "#fff" }}>
-	              <div>
-	                <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>Staffing Matrix</div>
-	                <div style={{ fontSize: 12, color: C.textMut, marginTop: 3 }}>Active employees by role group and commitment.</div>
-	              </div>
-	              {displayedDashboardMetrics.unassignedCommitmentCount ? (
-	                <div style={{ padding: "6px 10px", borderRadius: 999, background: "#FFF7ED", color: "#C2410C", fontSize: 11, fontWeight: 900 }}>
-	                  {displayedDashboardMetrics.unassignedCommitmentCount} commitment unassigned
+	          <div className="labor-home-top-grid">
+	            <Card className="labor-home-matrix-card" style={{ padding: 0, overflow: "hidden", border: `1px solid ${displayedDashboardMetrics.unassignedCommitmentCount ? "#FED7AA" : C.border}` }}>
+	              <div className="labor-home-card-header">
+	                <div>
+	                  <div className="labor-home-card-title">Staffing Matrix</div>
 	                </div>
-	              ) : null}
-	            </div>
-	            <div style={{ overflowX: "auto" }}>
-	              <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse" }}>
-	                <thead>
-	                  <tr>
-	                    {["Position Group", "Full-Time", "Part-Time", ...(displayedDashboardMetrics.unassignedCommitmentCount ? ["Unassigned"] : []), "Total"].map((label) => (
-	                      <th key={label} style={{ ...tableHeaderStyle, textAlign: label === "Position Group" ? "left" : "center" }}>{label}</th>
-	                    ))}
-	                  </tr>
-	                </thead>
-	                <tbody>
-	                  {rosterStaffingMatrix.map((row) => (
-	                    <tr key={row.key || row.label} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-	                      <td style={{ ...rosterCellStyle, fontSize: 13 }}>{row.label}</td>
-	                      <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900 }}>{Number(row.fullTime || 0)}</td>
-	                      <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900 }}>{Number(row.partTime || 0)}</td>
-	                      {displayedDashboardMetrics.unassignedCommitmentCount ? (
-	                        <td style={{ ...rosterSecondaryCellStyle, textAlign: "center", fontWeight: 900, color: Number(row.unassigned || 0) ? "#C2410C" : C.textSec }}>{Number(row.unassigned || 0)}</td>
-	                      ) : null}
-	                      <td style={{ ...rosterCellStyle, textAlign: "center", fontWeight: 950 }}>{Number(row.total || 0)}</td>
+	                {displayedDashboardMetrics.unassignedCommitmentCount ? (
+	                  <div className="labor-home-alert-pill">
+	                    {displayedDashboardMetrics.unassignedCommitmentCount} unassigned
+	                  </div>
+	                ) : null}
+	              </div>
+	              <div style={{ overflowX: "auto" }}>
+	                <table className="labor-home-matrix-table">
+	                  <thead>
+	                    <tr>
+	                      {["Position", "FT", "PT", ...(displayedDashboardMetrics.unassignedCommitmentCount ? ["Unassigned"] : []), "Total"].map((label) => (
+	                        <th key={label}>{label}</th>
+	                      ))}
 	                    </tr>
-	                  ))}
-	                </tbody>
-	              </table>
-	            </div>
-	          </Card>
+	                  </thead>
+	                  <tbody>
+	                    {rosterStaffingMatrix.map((row) => (
+	                      <tr key={row.key || row.label}>
+	                        <td>{row.label}</td>
+	                        <td>{Number(row.fullTime || 0)}</td>
+	                        <td>{Number(row.partTime || 0)}</td>
+	                        {displayedDashboardMetrics.unassignedCommitmentCount ? (
+	                          <td className={Number(row.unassigned || 0) ? "is-warning" : ""}>{Number(row.unassigned || 0)}</td>
+	                        ) : null}
+	                        <td>{Number(row.total || 0)}</td>
+	                      </tr>
+	                    ))}
+	                  </tbody>
+	                </table>
+	              </div>
+	            </Card>
+	            <Card className="labor-roster-output-card" style={{ padding: 0, overflow: "hidden" }}>
+	              <div className="labor-home-card-header">
+	                <div className="labor-home-card-title">Roster Output</div>
+	              </div>
+	              <div className="labor-roster-output-body">
+	                {[
+	                  { key: "showStaffingMatrix", label: "Staffing Matrix" },
+	                  { key: "showCommitment", label: "Commitment" },
+	                  { key: "showPhone", label: "Phone" },
+	                  { key: "showEmail", label: "Email" },
+	                ].map((option) => (
+	                  <label key={option.key} className="labor-print-option">
+	                    <input
+	                      type="checkbox"
+	                      checked={Boolean(rosterPrintOptions[option.key])}
+	                      onChange={(event) => updateRosterPrintOption(option.key, event.target.checked)}
+	                    />
+	                    <span>{option.label}</span>
+	                  </label>
+	                ))}
+	                <div className="labor-roster-output-actions">
+	                  <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={handleBrowserPrintRoster}>
+	                    Print
+	                  </Btn>
+	                  <Btn variant="primary" size="sm" icon={<I.Download />} onClick={handlePrintRoster} disabled={generatingRosterPdf}>
+	                    {generatingRosterPdf ? "Generating..." : "PDF"}
+	                  </Btn>
+	                </div>
+	              </div>
+	            </Card>
+	          </div>
 
           {savedRosterViews.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, marginBottom: 12, flexWrap: "wrap", animation: "filterSlideIn 0.2s ease-out" }}>
@@ -14713,8 +15194,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div className="hour-analysis-card">
             <div className="hour-analysis-card-header">
               <div>
-                <h3 className="hour-analysis-card-title">Headcount & Preferred Hours</h3>
-                <div className="hour-analysis-card-subtitle">Headcount comes from the roster. Preferred hours are editable defaults by role and commitment.</div>
+                <h3 className="hour-analysis-card-title">Headcount & Expected Hours</h3>
+                <div className="hour-analysis-card-subtitle">Active roster and planning rows by role and commitment.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 {hourAnalysisModel.whatIfRows.length > 0 && (
@@ -14750,7 +15231,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </div>
               </div>
               <div className="hour-analysis-roster-summary-item">
-                <div className="hour-analysis-summary-label">Preferred Hours</div>
+                <div className="hour-analysis-summary-label">Expected Hours</div>
                 <div className="hour-analysis-summary-value">{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)}</div>
                 <div className="hour-analysis-summary-note">hrs / wk after what-if scenarios</div>
               </div>
@@ -14774,9 +15255,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </tr>
                   <tr>
                     <th className="hour-analysis-sub-heading">Headcount</th>
-                    <th className="hour-analysis-sub-heading">Preferred Hours</th>
+                    <th className="hour-analysis-sub-heading">Expected Hours</th>
                     <th className="hour-analysis-sub-heading">Headcount</th>
-                    <th className="hour-analysis-sub-heading">Preferred Hours</th>
+                    <th className="hour-analysis-sub-heading">Expected Hours</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -14797,7 +15278,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             value={expectation.full_time?.expected ?? 0}
                             disabled={!canEditRoster}
                             onCommit={(nextValue) => updateHourExpectation(group.key, "full_time", "expected", nextValue)}
-                            ariaLabel={`${group.label} full-time preferred weekly hours`}
+                            ariaLabel={`${group.label} full-time expected weekly hours`}
                           />
                         </td>
                         <td className="hour-analysis-count-cell">
@@ -14808,7 +15289,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             value={expectation.part_time?.expected ?? 0}
                             disabled={!canEditRoster}
                             onCommit={(nextValue) => updateHourExpectation(group.key, "part_time", "expected", nextValue)}
-                            ariaLabel={`${group.label} part-time preferred weekly hours`}
+                            ariaLabel={`${group.label} part-time expected weekly hours`}
                           />
                         </td>
                       </tr>
@@ -14844,147 +15325,75 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <div className="hour-analysis-card-subtitle">One read: recruit, hold steady, or stop adding hours.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <Badge color={hourAnalysisModel.totals.capacityStatus.tone} tip={hourAnalysisModel.totals.capacityStatus.message}>
+                <Badge color={hourAnalysisModel.totals.capacityStatus.tone}>
                   {hourAnalysisModel.totals.capacityStatus.label}
                 </Badge>
               </div>
             </div>
-            <div className="hour-analysis-decision-grid">
-              <div className={`hour-analysis-decision-card${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
-                <div className="hour-analysis-decision-label">{hourAnalysisDecision.label}</div>
-                <div className="hour-analysis-decision-value" style={{ color: hourAnalysisDecision.tone === "short" ? "#b45309" : hourAnalysisDecision.tone === "surplus" ? "#b91c1c" : C.pri }}>
-                  {hourAnalysisDecision.value}
-                </div>
-                <div className="hour-analysis-decision-copy">
-                  {hourAnalysisDecision.copy}
-                </div>
-                <div className="hour-analysis-progress-track" aria-hidden="true">
-                  <div className="hour-analysis-progress-fill" style={{ width: `${hourAnalysisTargetProgress}%` }} />
-                </div>
-                <div className="hour-analysis-decision-copy" style={{ color: C.textMut }}>
-                  Target: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} hrs/wk</strong>. Preferred: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} hrs/wk</strong>. Floor: <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredWeekly)} hrs/wk</strong>.
-                </div>
+            <div className="hour-analysis-capacity-dashboard">
+              <div className={`hour-analysis-capacity-total${hourAnalysisModel.totals.expectedGapToTarget < 0 ? " is-short" : hourAnalysisModel.totals.expectedGapToTarget > 0 ? " is-surplus" : " is-even"}`}>
+                <span>Gross Position Gap</span>
+                <strong>
+                  {hourAnalysisModel.totals.expectedGapToTarget < 0
+                    ? `${formatHourAnalysisHours(Math.abs(hourAnalysisModel.totals.expectedGapToTarget))} short`
+                    : hourAnalysisModel.totals.expectedGapToTarget > 0
+                      ? `${formatHourAnalysisHours(hourAnalysisModel.totals.expectedGapToTarget)} surplus`
+                      : "Aligned"}
+                </strong>
+                <em>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} expected / {formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} target</em>
               </div>
-              <div className="hour-analysis-hire-card">
-                <div className="hour-analysis-decision-label">Role bottlenecks</div>
-                {hourAnalysisModel.totals.hiringRecommendations.length > 0 ? (
-                  <>
-                    <div className="hour-analysis-hire-list">
-                      {hourAnalysisModel.totals.hiringRecommendations.map((row) => (
-                        <div key={row.key} className="hour-analysis-hire-row">
-                          <div>
-                            <strong>{row.label}</strong>
-                            <span>{formatHourAnalysisHours(row.shortHours)} role hrs/wk short at preferred capacity</span>
-                          </div>
-                          <div className="hour-analysis-hire-count">
-                            {row.isFrontline ? `+${formatHourAnalysisHours(row.hireEquivalent)} FTE` : `+${formatHourAnalysisHours(row.shortHours)} hrs`}
-                          </div>
-                        </div>
-                      ))}
+              <div className="hour-analysis-capacity-legend">
+                <span><i className="is-floor" />Operational Floor</span>
+                <span><i className="is-buffer" />20% Buffer</span>
+              </div>
+            </div>
+            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
+              {hourAnalysisCapacityRows.map((row) => {
+                const isFrontline = row.key === "csr" || row.key === "pct";
+                const expected = normalizeHourAnalysisNumber(row.expected, 0);
+                const floor = normalizeHourAnalysisNumber(row.requiredWeekly, 0);
+                const target = normalizeHourAnalysisNumber(row.targetWeekly || floor, floor);
+                const maxWeekly = Math.max(expected, target, floor, 1) * 1.08;
+                const expectedPct = Math.max(1.5, Math.min(100, (expected / maxWeekly) * 100));
+                const floorPct = Math.max(0, Math.min(100, (floor / maxWeekly) * 100));
+                const targetPct = Math.max(floorPct, Math.min(100, (target / maxWeekly) * 100));
+                const shortToFloor = Math.max(0, floor - expected);
+                const surplusOverTarget = Math.max(0, expected - target);
+                const gapTone = shortToFloor > 0 ? "short" : surplusOverTarget > 0 ? "surplus" : "healthy";
+                const gapLabel = shortToFloor > 0
+                  ? `${formatHourAnalysisHours(shortToFloor)} short`
+                  : surplusOverTarget > 0
+                    ? `${formatHourAnalysisHours(surplusOverTarget)} surplus`
+                    : isFrontline
+                      ? "In buffer"
+                      : "At floor";
+                return (
+                  <div key={row.key} className={`hour-analysis-capacity-row is-${gapTone}`}>
+                    <div className="hour-analysis-capacity-role">
+                      <strong>{getHourAnalysisGroupShortLabel(row.key)}</strong>
+                      <span>{formatHourAnalysisHours(expected)} expected</span>
                     </div>
-                    <div className="hour-analysis-decision-copy">
-                      Add the next <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.recommendedPlanHours)} hrs/wk</strong> into these bottleneck roles first. That moves preferred capacity to <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.expectedAfterRecommendedPlan)} hrs/wk</strong> without adding avoidable surplus.
+                    <div className="hour-analysis-capacity-bar" aria-label={`${getHourAnalysisGroupShortLabel(row.key)} expected ${formatHourAnalysisHours(expected)} hours against ${formatHourAnalysisHours(floor)} operational floor`}>
+                      <div className="hour-analysis-capacity-buffer" style={{ left: `${floorPct}%`, width: `${Math.max(0, targetPct - floorPct)}%`, display: isFrontline ? "block" : "none" }} />
+                      <div className="hour-analysis-capacity-fill" style={{ width: `${expectedPct}%` }} />
+                      <div className="hour-analysis-capacity-floor" style={{ left: `${floorPct}%` }} />
+                      {isFrontline && <div className="hour-analysis-capacity-target" style={{ left: `${targetPct}%` }} />}
                     </div>
-                    <div className="hour-analysis-hire-footnote">
-                      Whole FT-only role coverage would be {hourAnalysisModel.totals.wholeRolePlanHeadcount} hires / {formatHourAnalysisHours(hourAnalysisModel.totals.wholeRolePlanHours)} hrs/wk, landing at {formatHourAnalysisHours(hourAnalysisModel.totals.expectedAfterWholeRolePlan)} hrs/wk. If that is above the healthy band, use part-time hires, change what-if roles, or raise hours for qualified people before accepting the overbuild.
+                    <div className="hour-analysis-capacity-numbers">
+                      <span>Floor {formatHourAnalysisHours(floor)}</span>
+                      {isFrontline ? <span>Buffer {formatHourAnalysisHours(target)}</span> : null}
                     </div>
-                  </>
-                ) : (
-                  <div className="hour-analysis-decision-copy">
-                    Preferred capacity already reaches the operating target. Do not add headcount unless a role-level gap or upcoming demand change is known.
+                    <div className="hour-analysis-capacity-gap">{gapLabel}</div>
                   </div>
-                )}
-              </div>
-            </div>
-            <div className="hour-analysis-flex-note">
-              Normal guidance uses dedicated role capacity. Cross-coverage is an emergency flex layer: General Managers, Assistant Managers, and Supervisors can cover Customer Service Representative and Pet Care Technician work, Customer Service Representatives can cover Pet Care Technician work, and Pet Care Technicians only cover Pet Care Technician work. Use that for bad weeks, not to hide a normal hiring gap.
-              {hourAnalysisModel.totals.roleSurplusRows.length > 0 ? ` Current surplus: ${hourAnalysisModel.totals.roleSurplusRows.map((row) => `${row.label} +${formatHourAnalysisHours(row.surplusHours)}`).join(", ")} hrs/wk.` : ""}
-            </div>
-            <div className="hour-analysis-capacity-standard">
-              <div className="hour-analysis-standard-copy">
-                <div className="hour-analysis-standard-eyebrow">Staffing standard</div>
-                <p>
-                  {`Labor Model lines define the operating floor by day and role. General Manager, Assistant Manager, and Supervisor targets equal that modeled floor. Customer Service Representative and Pet Care Technician targets use a frontline relief factor: staffed hours / (1 - ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}%). That means 100 required frontline hours need 125 preferred hours to absorb PTO, sick/call-outs, training, meetings, and other unavailable paid time.`}
-                </p>
-                <p>
-                  There is no universal 20% rule. NICE and SWPP support shrinkage/relief-factor math; BLS gives the absence baseline but excludes vacation and holidays; stable-scheduling research warns that overbuilt hourly rosters can create unstable hours and turnover.
-                </p>
-                <div className="hour-analysis-standard-sources" aria-label="Staffing capacity sources">
-                  {HOUR_ANALYSIS_STAFFING_SOURCES.map((source) => (
-                    <a key={source.href} href={source.href} target="_blank" rel="noreferrer">{source.label}</a>
-                  ))}
-                </div>
-              </div>
-              <div className="hour-analysis-standard-math">
-                <span>{HOUR_ANALYSIS_RESEARCH_TARGET_LABEL}</span>
-                <strong>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} hrs/wk</strong>
-                <em>{formatHourAnalysisHours(hourAnalysisModel.totals.capacityStandard.targetSurplus)} relief hrs over floor</em>
-                <span style={{ marginTop: 8 }}>Sensitivity band: {formatHourAnalysisHours(hourAnalysisModel.totals.healthyLowWeekly)}-{formatHourAnalysisHours(hourAnalysisModel.totals.healthyHighWeekly)}</span>
-              </div>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table className="hour-analysis-table" style={{ minWidth: 900 }}>
-                <thead>
-                  <tr>
-                    <th>Position Group</th>
-                    <th style={{ textAlign: "right" }}>Daily Avg Floor</th>
-                    <th style={{ textAlign: "right" }}>Weekly Floor</th>
-                    <th style={{ textAlign: "right" }}>Relief</th>
-                    <th style={{ textAlign: "right" }}>Target</th>
-                    <th style={{ textAlign: "right" }}>Preferred</th>
-                    <th style={{ textAlign: "right" }}>Gap</th>
-                    <th>Role Guidance</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hourAnalysisModel.weeklyRows.map((row) => (
-                    <tr key={row.key}>
-                      <td>{row.label}</td>
-                      <td style={{ textAlign: "right", fontWeight: 950 }}>
-                        {formatHourAnalysisHours(row.requiredDaily)}
-                      </td>
-                      <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(row.requiredWeekly)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 950 }}>{row.reliefPercent ? `${row.reliefPercent}%` : "None"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(row.targetWeekly)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 950, color: C.pri }}>{formatHourAnalysisHours(row.expected)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 950, color: row.expectedGapToTarget < 0 ? "#b45309" : "#047857" }}>
-                        {row.expectedGapToTarget < 0 ? `${formatHourAnalysisHours(Math.abs(row.expectedGapToTarget))} short` : `${formatHourAnalysisHours(row.expectedGapToTarget)} surplus`}
-                      </td>
-                      <td style={{ fontWeight: 900 }}>
-                        {row.hireDeficitHours > 0
-                          ? row.isFrontline
-                            ? `Recruit +${formatHourAnalysisHours(row.recommendedFullTimeEquivalent)} FTE`
-                            : `Schedule +${formatHourAnalysisHours(row.hireDeficitHours)} hrs`
-                          : "No hire"}
-                      </td>
-                      <td><Badge color={row.capacityStatus.tone} tip={row.capacityStatus.message}>{row.capacityStatus.label}</Badge></td>
-                    </tr>
-                  ))}
-                  <tr>
-                    <td style={{ fontWeight: 950 }}>Total</td>
-                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredDaily)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.requiredWeekly)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 950 }}>Mixed</td>
-                    <td style={{ textAlign: "right", fontWeight: 950 }}>{formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 950, color: C.pri }}>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 950, color: hourAnalysisModel.totals.expectedGapToTarget < 0 ? "#b45309" : "#047857" }}>
-                      {hourAnalysisModel.totals.expectedGapToTarget < 0 ? `${formatHourAnalysisHours(Math.abs(hourAnalysisModel.totals.expectedGapToTarget))} short` : `${formatHourAnalysisHours(hourAnalysisModel.totals.expectedGapToTarget)} surplus`}
-                    </td>
-                    <td style={{ fontWeight: 900 }}>
-                      {hourAnalysisModel.totals.recommendedPlanHeadcount > 0 ? `Add +${formatHourAnalysisHours(hourAnalysisModel.totals.recommendedPlanHours)} hrs` : "No hire"}
-                    </td>
-                    <td><Badge color={hourAnalysisModel.totals.capacityStatus.tone} tip={hourAnalysisModel.totals.capacityStatus.message}>{hourAnalysisModel.totals.capacityStatus.label}</Badge></td>
-                  </tr>
-                </tbody>
-              </table>
+                );
+              })}
             </div>
           </div>
 
           <div className="hour-analysis-card">
             <div className="hour-analysis-card-header">
               <div>
-                <h3 className="hour-analysis-card-title">Preferred Hours By Person</h3>
+                <h3 className="hour-analysis-card-title">Expected Hours By Person</h3>
                 <div className="hour-analysis-card-subtitle">Click a position to model a role movement. Override hours only when a person differs from the default.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -15006,7 +15415,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <th>Name</th>
                     <th>Position</th>
                     <th>Commitment</th>
-                    <th style={{ textAlign: "right" }}>Preferred Hours</th>
+                    <th style={{ textAlign: "right" }}>Expected Hours</th>
                     <th>Coverage Split</th>
                     <th>Justification</th>
                     <th style={{ width: 92 }}></th>
@@ -15064,7 +15473,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                       ? updateHourAnalysisWhatIfOverride(row.id, "expected", nextValue)
                                       : setHourAnalysisEmployeeOverride(row.employeeKey, "expected", nextValue)
                                   )}
-                                  ariaLabel={`${row.full_name || "Employee"} preferred weekly hours override`}
+                                  ariaLabel={`${row.full_name || "Employee"} expected weekly hours override`}
                                 />
                                 {canEditRoster && (
                                   <button
@@ -15182,11 +15591,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             {hourAnalysisLaborModelTab === LABOR_MODEL_SUMMARY_TAB ? (
               <div className="labor-model-summary-view">
                 <div className="labor-model-summary-cards">
-                  <div className="labor-model-metric-card is-primary">
-                    <span>Weekly Operating Floor</span>
-                    <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalWeekly)} hrs</strong>
-                    <em>Feeds Staffing Capacity immediately</em>
-                  </div>
                   <div className="labor-model-metric-card">
                     <span>Average Day</span>
                     <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.averageDaily)} hrs</strong>
@@ -15195,16 +15599,51 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                  <div className="labor-model-metric-card">
 	                    <span>Frontline Floor</span>
 	                    <strong>{formatHourAnalysisHours((hourAnalysisLaborModelSummary.roleWeekly.csr || 0) + (hourAnalysisLaborModelSummary.roleWeekly.pct || 0))} hrs</strong>
-	                    <em>Customer Service Representative + Pet Care Technician</em>
+	                    <em>CSR + PCT</em>
 	                  </div>
 	                  <div className="labor-model-metric-card is-marketing">
-	                    <span>Marketing</span>
+	                    <span>MKTG</span>
 	                    <strong>{formatHourAnalysisHours(hourAnalysisLaborModelSummary.totalMarketingWeekly || 0)} hrs</strong>
 	                    <em>Tracked separately from the operating floor</em>
 	                  </div>
 	                </div>
                 <div className="labor-model-summary-layout" style={{ marginTop: 12 }}>
-                  <LaborModelHoursLineGraph days={hourAnalysisLaborModelSummary.dayRows} />
+                  <div className="labor-model-summary-main">
+                    <LaborModelHoursLineGraph days={hourAnalysisLaborModelSummary.dayRows} />
+                    <div className="labor-model-panel">
+                      <div className="labor-model-panel-title">Hours By Day</div>
+                      <table className="labor-model-summary-table">
+                        <thead>
+                          <tr>
+                            <th>Day</th>
+                            <th>GM</th>
+                            <th>AM</th>
+                            <th>SUP</th>
+                            <th>CSR</th>
+                            <th>PCT</th>
+	                          <th>MKTG</th>
+	                          <th>Total</th>
+	                          <th>Peak</th>
+	                        </tr>
+                        </thead>
+                        <tbody>
+                          {hourAnalysisLaborModelSummary.dayRows.map((day) => (
+                            <tr key={day.key}>
+                              <td>{day.label}</td>
+                              <td>{formatHourAnalysisHours(day.roleHours.general_manager || 0)}</td>
+                              <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
+                              <td>{formatHourAnalysisHours(day.roleHours.csr || 0)}</td>
+                              <td>{formatHourAnalysisHours(day.roleHours.pct || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.marketingHours || 0)}</td>
+	                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
+	                            <td>{formatHourAnalysisHours(day.peakCoverage)}</td>
+	                          </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                   <div className="labor-model-panel">
                     <div className="labor-model-panel-title">Weekly Role Floors</div>
                     <table className="labor-model-summary-table">
@@ -15213,14 +15652,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           <th>Position</th>
                           <th>Floor</th>
                           <th>Target</th>
-                          <th>Preferred</th>
+                          <th>Expected</th>
                           <th>Gap</th>
                         </tr>
                       </thead>
                       <tbody>
                         {hourAnalysisModel.weeklyRows.map((row) => (
                           <tr key={row.key}>
-                            <td>{row.label}</td>
+                            <td>{getHourAnalysisGroupShortLabel(row.key)}</td>
                             <td>{formatHourAnalysisHours(row.requiredWeekly)}</td>
                             <td>{formatHourAnalysisHours(row.targetWeekly)}</td>
                             <td>{formatHourAnalysisHours(row.expected)}</td>
@@ -15231,47 +15670,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                </div>
-                <div className="labor-model-summary-grid">
-                  <div className="labor-model-panel">
-                    <div className="labor-model-panel-title">Hours By Day</div>
-                    <table className="labor-model-summary-table">
-                      <thead>
-                        <tr>
-                          <th>Day</th>
-                          <th>GM</th>
-                          <th>AM</th>
-                          <th>Supervisor</th>
-                          <th>CSR</th>
-                          <th>PCT</th>
-	                          <th>Marketing</th>
-	                          <th>Total</th>
-	                          <th>Peak</th>
-	                        </tr>
-                      </thead>
-                      <tbody>
-                        {hourAnalysisLaborModelSummary.dayRows.map((day) => (
-                          <tr key={day.key}>
-                            <td>{day.label}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.general_manager || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.assistant_manager || 0)}</td>
-	                            <td>{formatHourAnalysisHours(day.roleHours.supervisor || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.csr || 0)}</td>
-                            <td>{formatHourAnalysisHours(day.roleHours.pct || 0)}</td>
-	                            <td>{formatHourAnalysisHours(day.marketingHours || 0)}</td>
-	                            <td>{formatHourAnalysisHours(day.totalHours)}</td>
-	                            <td>{formatHourAnalysisHours(day.peakCoverage)}</td>
-	                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="labor-model-panel">
-                    <div className="labor-model-panel-title">How Hours Calculate</div>
-                    <div className="labor-model-summary-note" style={{ borderTop: 0 }}>
-	                      Time-slot weight is derived from the header range. Click once for a full operating cell, twice for a half cell, type MKTG for marketing, or type PCT, CSR, SUP, AM, or GM to bucket that cell to a different position.
-                    </div>
                   </div>
                 </div>
               </div>
@@ -15493,12 +15891,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             />
             <div>
               <div style={{ fontSize: 11, fontWeight: 750, color: C.textSec, marginBottom: 7, letterSpacing: 0, textTransform: "uppercase" }}>
-                Preferred Hours
+                Expected Hours
               </div>
               <HourAnalysisNumberInput
                 value={whatIfHourOverrides.expected ?? whatIfPreviewRange.expected ?? 0}
                 onCommit={(nextValue) => setWhatIfHourOverrides((prev) => ({ ...prev, expected: nextValue }))}
-                ariaLabel="What-if preferred weekly hours"
+                ariaLabel="What-if expected weekly hours"
                 style={{ width: 140, textAlign: "left" }}
               />
               <div style={{ marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
