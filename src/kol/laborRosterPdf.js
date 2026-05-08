@@ -3,9 +3,15 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const PAGE_WIDTH = 792;
 const PAGE_HEIGHT = 612;
-const MARGIN_X = 42;
-const FOOTER_Y = 32;
-const CONTENT_BOTTOM = 58;
+const MARGIN_X = 28;
+const FOOTER_Y = 20;
+const CONTENT_BOTTOM = 43;
+const CONTACT_NAME_SIZE = 12.2;
+const CONTACT_DETAIL_SIZE = 9.2;
+const CONTACT_DETAIL_LINE_GAP = 10.6;
+const DETAIL_GROUP_HEADER_HEIGHT = 24;
+const DETAIL_GROUP_BOTTOM_PAD = 5;
+const DETAIL_GROUP_INSET = 9;
 
 const BRAND = {
   gold: "#AF8D54",
@@ -272,7 +278,7 @@ function buildRosterGroups(rows = []) {
 
 function splitLargeGroups(groups, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  const maxRowsPerGroup = detailMode ? 6 : 8;
+  const maxRowsPerGroup = detailMode ? 4 : 8;
   return groups.flatMap((group) => {
     if (group.rows.length <= maxRowsPerGroup) return [group];
     const chunkSize = detailMode ? maxRowsPerGroup : Math.ceil(group.rows.length / 2);
@@ -305,14 +311,14 @@ function measureRosterRowHeight(row, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   if (!detailMode) return 16;
   const lineCount = Math.max(1, getDetailLines(row, options).length);
-  return Math.max(20.4, 14.6 + lineCount * 5.7);
+  return Math.max(34, 19.5 + lineCount * CONTACT_DETAIL_LINE_GAP);
 }
 
 function measureGroupHeight(group, options, fonts, width) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   if (!detailMode) return 31 + group.rows.length * 16 + 6;
   const rowHeight = group.rows.reduce((total, row) => total + measureRosterRowHeight(row, options), 0);
-  return 31 + rowHeight + 8;
+  return DETAIL_GROUP_HEADER_HEIGHT + rowHeight + DETAIL_GROUP_BOTTOM_PAD;
 }
 
 function drawLogo(page, logoImage, x, y, width) {
@@ -324,6 +330,7 @@ function drawLogo(page, logoImage, x, y, width) {
 
 function drawMasthead(page, payload, fonts, logoImage, options, pageNumber = 1) {
   const pageInnerWidth = PAGE_WIDTH - MARGIN_X * 2;
+  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   drawRule(page, MARGIN_X, PAGE_HEIGHT - 38, pageInnerWidth, 2.1, BRAND.gold);
 
   if (pageNumber > 1) {
@@ -343,6 +350,31 @@ function drawMasthead(page, payload, fonts, logoImage, options, pageNumber = 1) 
     });
     drawRule(page, MARGIN_X, PAGE_HEIGHT - 82, pageInnerWidth, 0.75, BRAND.line);
     return PAGE_HEIGHT - 104;
+  }
+
+  if (detailMode && !options.showMetrics && !options.showStaffingMatrix) {
+    drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 54, 108);
+    drawText(page, formatUpdatedLabel(payload.printDate), MARGIN_X + pageInnerWidth - 180, PAGE_HEIGHT - 46, {
+      font: fonts.body,
+      size: 7,
+      color: color(BRAND.bronze),
+      maxWidth: 180,
+      align: "right",
+    });
+    drawText(page, formatPosterTitle(payload.title), MARGIN_X, PAGE_HEIGHT - 86, {
+      font: fonts.headline,
+      size: 24.5,
+      color: color(BRAND.black),
+      maxWidth: 430,
+    });
+    page.drawRectangle({
+      x: MARGIN_X,
+      y: PAGE_HEIGHT - 104,
+      width: pageInnerWidth,
+      height: 1.4,
+      color: color(BRAND.gold),
+    });
+    return PAGE_HEIGHT - 118;
   }
 
   drawLogo(page, logoImage, MARGIN_X, PAGE_HEIGHT - 101, 168);
@@ -482,6 +514,8 @@ function drawMatrix(page, payload, fonts, startY) {
 function drawGroup(page, group, x, topY, width, fonts, options) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   const groupHeight = measureGroupHeight(group, options, fonts, width);
+  const headerHeight = detailMode ? DETAIL_GROUP_HEADER_HEIGHT : 25;
+  const inset = detailMode ? DETAIL_GROUP_INSET : 13;
   const bottomY = topY - groupHeight;
 
   drawBox(page, x, bottomY, width, groupHeight, {
@@ -490,47 +524,47 @@ function drawGroup(page, group, x, topY, width, fonts, options) {
     borderWidth: 0.55,
   });
   page.drawRectangle({ x, y: bottomY, width: 3, height: groupHeight, color: color(BRAND.gold) });
-  drawBox(page, x + 3, topY - 25, width - 3, 25, {
+  drawBox(page, x + 3, topY - headerHeight, width - 3, headerHeight, {
     fill: BRAND.ivory,
     border: BRAND.ivory,
     borderWidth: 0.2,
   });
-  drawTextInBox(page, group.label, x + 13, topY - 25, 25, {
+  drawTextInBox(page, group.label, x + inset, topY - headerHeight, headerHeight, {
     font: fonts.bodyBold,
-    size: 8.6,
+    size: detailMode ? 9.2 : 8.6,
     color: color(BRAND.blue),
-    maxWidth: width - 62,
+    maxWidth: width - inset - 45,
   });
-  drawTextInBox(page, `${group.rows.length}`, x + width - 37, topY - 25, 25, {
+  drawTextInBox(page, `${group.rows.length}`, x + width - 34, topY - headerHeight, headerHeight, {
     font: fonts.bodyBold,
-    size: 8.8,
+    size: detailMode ? 9 : 8.8,
     color: color(BRAND.gold),
     maxWidth: 22,
     align: "right",
   });
 
-  let y = detailMode ? topY - 25 : topY - 39;
+  let y = detailMode ? topY - headerHeight : topY - 39;
   group.rows.forEach((row, index) => {
     const rowHeight = measureRosterRowHeight(row, options);
     if (detailMode) y -= rowHeight;
-    if (index > 0) drawRule(page, x + 13, y + rowHeight - 0.85, width - 26, 0.38, "#ECE2D2");
+    if (index > 0) drawRule(page, x + inset, y + rowHeight - 0.85, width - inset * 2, 0.38, "#ECE2D2");
     const nameY = detailMode
-      ? y + rowHeight - 10.5
+      ? y + rowHeight - 14.6
       : baselineForBox(fonts.bodyBold, 7.9, y, rowHeight);
-    drawText(page, safeText(row.name, "Employee"), x + 13, nameY, {
+    drawText(page, safeText(row.name, "Employee"), x + inset, nameY, {
       font: fonts.bodyBold,
-      size: detailMode ? 7.3 : 7.9,
+      size: detailMode ? CONTACT_NAME_SIZE : 7.9,
       color: color(BRAND.black),
-      maxWidth: width - 26,
+      maxWidth: width - inset * 2,
     });
     if (detailMode) {
       const lines = getDetailLines(row, options);
       lines.forEach((line, lineIndex) => {
-        drawText(page, line, x + 13, y + rowHeight - 15.8 - lineIndex * 5.7, {
+        drawText(page, line, x + inset, y + rowHeight - 24.5 - lineIndex * CONTACT_DETAIL_LINE_GAP, {
           font: fonts.bodyLight,
-          size: 4.8,
+          size: CONTACT_DETAIL_SIZE,
           color: color(BRAND.bronze),
-          maxWidth: width - 26,
+          maxWidth: width - inset * 2,
         });
       });
     }
@@ -577,7 +611,7 @@ async function embedLogo(pdfDoc, assets = {}) {
 function drawRosterGroups(pdfDoc, firstPage, payload, fonts, logoImage, options, groups) {
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   const columnCount = 3;
-  const gap = detailMode ? 18 : 16;
+  const gap = detailMode ? 12 : 16;
   const columnWidth = (PAGE_WIDTH - MARGIN_X * 2 - gap * (columnCount - 1)) / columnCount;
   const pages = [firstPage];
   let page = firstPage;
