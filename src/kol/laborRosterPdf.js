@@ -139,6 +139,18 @@ function drawText(page, text, x, y, options = {}) {
   });
 }
 
+function baselineForBox(font, size, boxY, boxHeight) {
+  if (!font?.heightAtSize) return boxY + Math.max(0, (boxHeight - size) / 2);
+  const fullHeight = font.heightAtSize(size);
+  const ascenderHeight = font.heightAtSize(size, { descender: false });
+  const descenderHeight = Math.max(0, fullHeight - ascenderHeight);
+  return boxY + Math.max(0, (boxHeight - fullHeight) / 2) + descenderHeight;
+}
+
+function drawTextInBox(page, text, x, boxY, boxHeight, options = {}) {
+  drawText(page, text, x, baselineForBox(options.font, options.size || 8, boxY, boxHeight), options);
+}
+
 function wrapText(value, font, size, maxWidth, maxLines = 3) {
   const words = safeText(value).split(" ").filter(Boolean);
   const lines = [];
@@ -414,7 +426,7 @@ function drawMatrix(page, payload, fonts, startY) {
       border: BRAND.line,
       borderWidth: 0.35,
     });
-    drawText(page, header.toUpperCase(), xCursor + 5, y + 3.8, {
+    drawTextInBox(page, header.toUpperCase(), xCursor + 5, y, rowHeight, {
       font: fonts.bodyBold,
       size: 5.2,
       color: color(BRAND.bronze),
@@ -439,7 +451,7 @@ function drawMatrix(page, payload, fonts, startY) {
         border: BRAND.line,
         borderWidth: 0.35,
       });
-      drawText(page, String(value), xCursor + 5, y + 3.9, {
+      drawTextInBox(page, String(value), xCursor + 5, y, rowHeight, {
         font: index === values.length - 1 ? fonts.bodyBold : fonts.body,
         size: 5.7,
         color: color(index === values.length - 1 ? BRAND.blue : BRAND.bronze),
@@ -470,13 +482,13 @@ function drawGroup(page, group, x, topY, width, fonts, options) {
     border: BRAND.ivory,
     borderWidth: 0.2,
   });
-  drawText(page, group.label, x + 13, topY - 16.5, {
+  drawTextInBox(page, group.label, x + 13, topY - 25, 25, {
     font: fonts.bodyBold,
     size: 8.6,
     color: color(BRAND.blue),
     maxWidth: width - 62,
   });
-  drawText(page, `${group.rows.length}`, x + width - 37, topY - 16.5, {
+  drawTextInBox(page, `${group.rows.length}`, x + width - 37, topY - 25, 25, {
     font: fonts.bodyBold,
     size: 8.8,
     color: color(BRAND.gold),
@@ -486,8 +498,11 @@ function drawGroup(page, group, x, topY, width, fonts, options) {
 
   let y = topY - 39;
   group.rows.forEach((row, index) => {
-    if (index > 0) drawRule(page, x + 13, y + rowHeight - 5, width - 26, 0.38, "#ECE2D2");
-    drawText(page, safeText(row.name, "Employee"), x + 13, y + rowHeight - 9.8, {
+    if (index > 0) drawRule(page, x + 13, y + rowHeight - 0.85, width - 26, 0.38, "#ECE2D2");
+    const nameY = detailMode
+      ? y + rowHeight - 10.5
+      : baselineForBox(fonts.bodyBold, 7.9, y, rowHeight);
+    drawText(page, safeText(row.name, "Employee"), x + 13, nameY, {
       font: fonts.bodyBold,
       size: detailMode ? 7.3 : 7.9,
       color: color(BRAND.black),
