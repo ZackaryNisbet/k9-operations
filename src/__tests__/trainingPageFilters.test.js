@@ -2,12 +2,14 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLaborRosterFilters,
+  buildHourAnalysisCapacityRowVisualModel,
   buildLaborModulePanelKey,
   buildHourAnalysisModel,
   buildLaborModelCoverageValue,
   CAPACITY_PLANNING_VIEWS,
   clearHourAnalysisPlanningState,
   copyLaborModelBreakers,
+  formatHourAnalysisCapacityDelta,
   getLaborModelDefaultCoverageValueForRow,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
@@ -73,6 +75,88 @@ describe("applyLaborRosterFilters", () => {
     expect(normalizeCapacityPlanningView("legacy")).toBe("staffing-capacity");
     expect(buildLaborModulePanelKey({ tab: "hour-analysis", capacityPlanningView: "labor-model" })).toBe("hour-analysis:::labor-model");
     expect(buildLaborModulePanelKey({ tab: "hour-analysis", capacityPlanningView: "staffing-capacity" })).toBe("hour-analysis:::staffing-capacity");
+  });
+
+  it("renders Staffing Capacity before Headcount and uses neutral capacity variance copy", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const staffingHeading = '<h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>';
+    const headcountHeading = '<h3 className="hour-analysis-card-title">Headcount & Expected Hours</h3>';
+
+    expect(source.indexOf(staffingHeading)).toBeLessThan(source.indexOf(headcountHeading));
+    expect(source).toContain("Capacity Variance");
+    expect(source).not.toContain("Gross Position Gap");
+    expect(source).not.toContain("Expected hours measured against role targets from the Labor Model.");
+    expect(source).not.toContain("Floor target");
+    expect(source).not.toContain("20% Buffer Zone");
+    expect(source).not.toContain("hour-analysis-capacity-legend");
+    expect(source).not.toContain("<span>{visual.stateLabel}</span>");
+    expect(source).not.toContain("true 20% frontline buffer above the operational floor");
+    expect(source).toContain("CSR/PCT: +20% buffer");
+    expect(source).toContain("hourAnalysisCapacityLayoutColumns");
+    expect(source).toContain('"leadership" : "frontline"');
+  });
+
+  it("formats signed capacity delta hours for surplus, deficit, and aligned states", () => {
+    expect(formatHourAnalysisCapacityDelta(8.5)).toMatchObject({
+      value: "+8.5 hrs",
+      tone: "surplus",
+      label: "Surplus capacity",
+    });
+    expect(formatHourAnalysisCapacityDelta(-208.5)).toMatchObject({
+      value: "-208.5 hrs",
+      tone: "short",
+      label: "Short to target",
+    });
+    expect(formatHourAnalysisCapacityDelta(0)).toMatchObject({
+      value: "0 hrs",
+      tone: "even",
+      label: "Aligned",
+    });
+  });
+
+  it("builds Staffing Capacity row visuals with frontline buffer and signed tones", () => {
+    const frontlineDeficit = buildHourAnalysisCapacityRowVisualModel({
+      key: "csr",
+      expected: 20,
+      requiredWeekly: 20,
+      targetWeekly: 24,
+    });
+    const frontlineSurplus = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 60,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+    });
+    const adminSurplus = buildHourAnalysisCapacityRowVisualModel({
+      key: "general_manager",
+      expected: 12,
+      requiredWeekly: 10,
+      targetWeekly: 10,
+    });
+
+    expect(frontlineDeficit).toMatchObject({
+      roleLabel: "CSR",
+      isFrontline: true,
+      tone: "short",
+      deltaToTarget: -4,
+      delta: { value: "-4 hrs", tone: "short" },
+    });
+    expect(frontlineDeficit.bufferWidthPct).toBeGreaterThan(0);
+    expect(frontlineSurplus).toMatchObject({
+      roleLabel: "PCT",
+      isFrontline: true,
+      tone: "surplus",
+      deltaToTarget: 12,
+      delta: { value: "+12 hrs", tone: "surplus" },
+    });
+    expect(adminSurplus).toMatchObject({
+      roleLabel: "GM",
+      isFrontline: false,
+      tone: "surplus",
+      deltaToTarget: 2,
+      bufferWidthPct: 0,
+      delta: { value: "+2 hrs", tone: "surplus" },
+    });
   });
 
   it("defaults the roster employment status filter to active employees", () => {
@@ -237,14 +321,14 @@ describe("applyLaborRosterFilters", () => {
     expect(model.totals.whatIfTotal).toBe(15);
     expect(model.totals.projectedTotal).toBe(93);
     expect(model.totals.requiredWeekly).toBe(70);
-    expect(model.totals.targetWeekly).toBe(85);
+    expect(model.totals.targetWeekly).toBe(82);
     expect(model.laborModelSummary.totalWeekly).toBe(70);
     expect(model.laborModelSummary.totalMarketingWeekly).toBe(10);
     expect(model.laborModelSummary.dayRows.find((day) => day.key === "monday")).toMatchObject({ marketingHours: 10 });
     expect(model.weeklyRows.find((row) => row.key === "general_manager")).toMatchObject({ reliefPercent: 0, requiredWeekly: 10, targetWeekly: 10 });
-    expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 25 });
-    expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 50 });
-    expect(model.totals.capacityStatus.key).toBe("high");
+    expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 24 });
+    expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 48 });
+    expect(model.totals.capacityStatus.key).toBe("over_rostered");
     expect(model.totals.capacityStatus.message).toContain("Expected capacity");
     expect(model.rows.find((row) => row.employeeKey === "emp-pct-ft")).toMatchObject({
       isOverride: true,
