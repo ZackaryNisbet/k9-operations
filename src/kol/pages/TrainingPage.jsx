@@ -7515,28 +7515,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [hourAnalysisModel.weeklyRows]);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
   const laborModelCoveragePositionOptions = useMemo(() => {
-    const configuredOptions = approvedLaborPositionOptions.flatMap((option) => {
+    const configuredGroups = new Set(approvedLaborPositionOptions.flatMap((option) => {
       const groupKey = getHourAnalysisGroupKey({ position_title: option.value || option.label });
       const coverageOption = LABOR_MODEL_ROLE_COVERAGE_OPTIONS.find((item) => item.groupKey === groupKey);
-      if (!coverageOption) return [];
-      return [{
-        value: coverageOption.label,
-        label: `${option.label} (${coverageOption.label})`,
-      }];
-    });
-    const seen = new Set();
+      return coverageOption ? [coverageOption.groupKey] : [];
+    }));
+    const configuredOptions = LABOR_MODEL_ROLE_COVERAGE_OPTIONS
+      .filter((option) => configuredGroups.size === 0 || configuredGroups.has(option.groupKey))
+      .map((option) => ({
+        value: option.label,
+        label: `${getHourAnalysisGroupLabel(option.groupKey)} (${option.label})`,
+      }));
     return [
       { value: LABOR_MODEL_FULL_COVERAGE_VALUE, label: "Full shift" },
       { value: LABOR_MODEL_HALF_COVERAGE_VALUE, label: "Half shift" },
       ...configuredOptions,
       { value: LABOR_MODEL_MARKETING_COVERAGE_VALUE, label: "Marketing" },
       { value: "", label: "Clear" },
-    ].filter((option) => {
-      const key = `${option.value || ""}::${option.label || ""}`.trim().toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    ];
   }, [approvedLaborPositionOptions]);
   const hourAnalysisCommitmentOptions = useMemo(() => (
     LABOR_EMPLOYMENT_COMMITMENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))
