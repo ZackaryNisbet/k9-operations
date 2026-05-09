@@ -68,6 +68,22 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("labor-roster-table");
   });
 
+  it("keeps the inline new employee composer compact and active-only", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const composerStart = source.indexOf("New roster row");
+    const composerEnd = source.indexOf("Your first employee", composerStart);
+    const composerSource = source.slice(composerStart, composerEnd);
+
+    expect(composerStart).toBeGreaterThan(0);
+    expect(composerEnd).toBeGreaterThan(composerStart);
+    expect(composerSource).toContain("labor-roster-new-grid");
+    expect(composerSource).toContain("LaborCommitmentSegmentedPicker");
+    expect(composerSource).toContain("labor-roster-new-field is-commitment");
+    expect(composerSource).not.toContain("End Date");
+    expect(source).not.toContain("newRosterEmployeeEndDate");
+    expect(source).toContain("endDate: null,");
+  });
+
   it("adds a Capacity Planning subpage selector for Staffing Capacity and Labor Model", () => {
     expect(CAPACITY_PLANNING_VIEWS.map((view) => view.id)).toEqual(["staffing-capacity", "labor-model"]);
     expect(CAPACITY_PLANNING_VIEWS.map((view) => view.label)).toEqual(["Staffing Capacity", "Labor Model"]);
