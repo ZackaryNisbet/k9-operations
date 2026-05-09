@@ -541,6 +541,7 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain('aria-label="Set half duration"');
     expect(source).not.toContain("onTextChange={(targetRowId");
     expect(source).toContain("labor-model-cell-position-section");
+    expect(source).toContain("configuredGroups");
 
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
