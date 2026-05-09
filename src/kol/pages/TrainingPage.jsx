@@ -899,6 +899,37 @@ function LaborCommitmentBadge({ value, compact = false }) {
   );
 }
 
+function LaborCommitmentSegmentedPicker({ value, onChange }) {
+  const normalizedValue = readLaborEmploymentCommitment({ employment_commitment: value }) || "";
+  const options = [
+    ...LABOR_COMMITMENT_SELECT_OPTIONS.filter((option) => option.value),
+    ...LABOR_COMMITMENT_SELECT_OPTIONS.filter((option) => !option.value),
+  ];
+
+  return (
+    <div className="labor-commitment-picker" role="radiogroup" aria-label="Commitment">
+      {options.map((option) => {
+        const optionValue = option.value || "";
+        const isActive = normalizedValue === optionValue;
+        return (
+          <button
+            key={option.value || "unassigned"}
+            type="button"
+            role="radio"
+            aria-checked={isActive}
+            data-tone={option.value || "unassigned"}
+            className={`labor-commitment-picker-option${isActive ? " is-active" : ""}`}
+            onClick={() => onChange(optionValue)}
+          >
+            <span aria-hidden="true" className="labor-commitment-picker-dot" />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function HourAnalysisNumberInput({ value, onCommit, disabled, ariaLabel, className = "hour-analysis-number-input", style = {} }) {
   const formattedValue = formatHourAnalysisHours(value);
   const [draft, setDraft] = useState(formattedValue);
@@ -4095,7 +4126,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [newRosterEmployeeRole, setNewRosterEmployeeRole] = useState("");
   const [newRosterEmployeeCommitment, setNewRosterEmployeeCommitment] = useState("");
   const [newRosterEmployeeStartDate, setNewRosterEmployeeStartDate] = useState(todayStr());
-  const [newRosterEmployeeEndDate, setNewRosterEmployeeEndDate] = useState("");
   const [savingInlineLaborEmployee, setSavingInlineLaborEmployee] = useState(false);
   const [justCreatedLaborEmployeeId, setJustCreatedLaborEmployeeId] = useState(null);
   const [employeeRecordTab, setEmployeeRecordTab] = useState("training");
@@ -5887,7 +5917,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setNewRosterEmployeeRole("");
     setNewRosterEmployeeCommitment("");
     setNewRosterEmployeeStartDate(todayStr());
-    setNewRosterEmployeeEndDate("");
   }, []);
 
   const closeInlineLaborEmployeeComposer = useCallback(({ immediate = false } = {}) => {
@@ -6075,7 +6104,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       fullName,
       positionTitle: formatLaborPositionTitle(newRosterEmployeeRole),
       startDate: newRosterEmployeeStartDate,
-      endDate: newRosterEmployeeEndDate,
+      endDate: null,
       employmentCommitment: newRosterEmployeeCommitment,
       actorUserId,
       actorName,
@@ -6112,7 +6141,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     closeInlineLaborEmployeeComposer,
     laborLocationRef,
     refreshLaborData,
-    newRosterEmployeeEndDate,
     newRosterEmployeeEmail,
     newRosterEmployeeFirstName,
     newRosterEmployeeCommitment,
@@ -11310,6 +11338,148 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        .labor-roster-secondary-cell.is-empty {
 	          color: ${C.textMut};
 	        }
+	        .labor-roster-new-grid {
+	          display: grid;
+	          grid-template-columns: repeat(12, minmax(0, 1fr));
+	          gap: 10px;
+	          align-items: end;
+	        }
+	        .labor-roster-new-field {
+	          display: grid;
+	          gap: 6px;
+	          min-width: 0;
+	        }
+	        .labor-roster-new-field-label {
+	          font-size: 11px;
+	          font-weight: 800;
+	          color: ${C.textMut};
+	          text-transform: uppercase;
+	          letter-spacing: 0;
+	        }
+	        .labor-roster-new-field.is-first,
+	        .labor-roster-new-field.is-last,
+	        .labor-roster-new-field.is-phone {
+	          grid-column: span 2;
+	        }
+	        .labor-roster-new-field.is-email,
+	        .labor-roster-new-field.is-position {
+	          grid-column: span 3;
+	        }
+	        .labor-roster-new-field.is-commitment {
+	          grid-column: span 4;
+	        }
+	        .labor-roster-new-field.is-start {
+	          grid-column: span 2;
+	        }
+	        .labor-roster-new-actions {
+	          grid-column: span 6;
+	          display: flex;
+	          gap: 8px;
+	          justify-content: flex-end;
+	          flex-wrap: wrap;
+	          min-width: 0;
+	        }
+	        .labor-commitment-picker {
+	          display: grid;
+	          grid-template-columns: repeat(3, minmax(0, 1fr));
+	          gap: 4px;
+	          min-height: 45px;
+	          padding: 4px;
+	          border-radius: 12px;
+	          border: 1.5px solid ${C.border};
+	          background: rgba(255,255,255,0.92);
+	          box-sizing: border-box;
+	        }
+	        .labor-commitment-picker:focus-within {
+	          border-color: ${C.acc};
+	          box-shadow: 0 0 0 4px rgba(132,204,22,0.16);
+	        }
+	        .labor-commitment-picker-option {
+	          position: relative;
+	          min-width: 0;
+	          min-height: 35px;
+	          display: inline-flex;
+	          align-items: center;
+	          justify-content: center;
+	          gap: 6px;
+	          border: 1px solid transparent;
+	          border-radius: 8px;
+	          background: transparent;
+	          color: ${C.textSec};
+	          font-family: inherit;
+	          font-size: 12px;
+	          font-weight: 950;
+	          line-height: 1;
+	          white-space: nowrap;
+	          cursor: pointer;
+	          transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+	        }
+	        .labor-commitment-picker-option:hover {
+	          background: #f8fafc;
+	          color: ${C.text};
+	          transform: translateY(-1px);
+	        }
+	        .labor-commitment-picker-option.is-active {
+	          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+	        }
+	        .labor-commitment-picker-option.is-active[data-tone="full_time"] {
+	          border-color: #a7f3d0;
+	          background: #ecfdf5;
+	          color: #047857;
+	        }
+	        .labor-commitment-picker-option.is-active[data-tone="part_time"] {
+	          border-color: #bfdbfe;
+	          background: #eff6ff;
+	          color: #1d4ed8;
+	        }
+	        .labor-commitment-picker-option.is-active[data-tone="unassigned"] {
+	          border-color: #fed7aa;
+	          background: #fff7ed;
+	          color: #c2410c;
+	        }
+	        .labor-commitment-picker-dot {
+	          width: 6px;
+	          height: 6px;
+	          border-radius: 999px;
+	          background: currentColor;
+	          opacity: 0.45;
+	        }
+	        .labor-commitment-picker-option.is-active .labor-commitment-picker-dot {
+	          opacity: 1;
+	          box-shadow: 0 0 0 3px rgba(255,255,255,0.82);
+	        }
+	        @media (max-width: 1180px) {
+	          .labor-roster-new-field.is-first,
+	          .labor-roster-new-field.is-last,
+	          .labor-roster-new-field.is-phone,
+	          .labor-roster-new-field.is-email {
+	            grid-column: span 3;
+	          }
+	          .labor-roster-new-field.is-position {
+	            grid-column: span 5;
+	          }
+	          .labor-roster-new-field.is-commitment {
+	            grid-column: span 4;
+	          }
+	          .labor-roster-new-field.is-start {
+	            grid-column: span 3;
+	          }
+	          .labor-roster-new-actions {
+	            grid-column: span 12;
+	          }
+	        }
+	        @media (max-width: 760px) {
+	          .labor-roster-new-field.is-first,
+	          .labor-roster-new-field.is-last,
+	          .labor-roster-new-field.is-phone,
+	          .labor-roster-new-field.is-email,
+	          .labor-roster-new-field.is-position,
+	          .labor-roster-new-field.is-commitment,
+	          .labor-roster-new-field.is-start,
+	          .labor-roster-new-actions {
+	            grid-column: span 12;
+	          }
+	        }
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
@@ -14852,7 +15022,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           style={{
                             position: "relative",
                             overflow: "hidden",
-                            borderRadius: 20,
+                            borderRadius: 8,
                             border: `1px solid ${C.acc}55`,
                             background: "linear-gradient(135deg, rgba(132,204,22,0.14), rgba(20,83,45,0.08) 55%, rgba(255,255,255,0.92))",
                             boxShadow: "0 24px 50px rgba(20, 83, 45, 0.12)",
@@ -14887,9 +15057,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             </div>
                             <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
                           </div>
-	                          <div style={{ display: "grid", gridTemplateColumns: "minmax(132px, 1fr) minmax(132px, 1fr) minmax(148px, 1fr) minmax(210px, 1.3fr) minmax(190px, 1.15fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto", gap: 10, alignItems: "end" }}>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Name</span>
+	                          <div className="labor-roster-new-grid">
+                            <label className="labor-roster-new-field is-first">
+                              <span className="labor-roster-new-field-label">First Name</span>
                               <input
                                 ref={firstRosterNameInputRef}
                                 value={newRosterEmployeeFirstName}
@@ -14900,8 +15070,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Last Name</span>
+                            <label className="labor-roster-new-field is-last">
+                              <span className="labor-roster-new-field-label">Last Name</span>
                               <input
                                 value={newRosterEmployeeLastName}
                                 onChange={(event) => setNewRosterEmployeeLastName(event.target.value)}
@@ -14911,8 +15081,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Phone</span>
+                            <label className="labor-roster-new-field is-phone">
+                              <span className="labor-roster-new-field-label">Phone</span>
                               <input
                                 type="tel"
                                 value={fmtPhoneInput(newRosterEmployeePhone)}
@@ -14923,8 +15093,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Email</span>
+                            <label className="labor-roster-new-field is-email">
+                              <span className="labor-roster-new-field-label">Email</span>
                               <input
                                 type="email"
                                 value={newRosterEmployeeEmail}
@@ -14935,7 +15105,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-	                            <div>
+	                            <div className="labor-roster-new-field is-position">
                               <HourAnalysisAnimatedPicker
                                 label="Position Title"
                                 value={newRosterEmployeeRole}
@@ -14944,22 +15114,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 placeholder="Choose approved title"
                               />
 	                            </div>
-	                            <label style={{ display: "grid", gap: 6 }}>
-	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Commitment</span>
-	                              <select
+	                            <div className="labor-roster-new-field is-commitment">
+	                              <span className="labor-roster-new-field-label">Commitment</span>
+	                              <LaborCommitmentSegmentedPicker
 	                                value={newRosterEmployeeCommitment}
-	                                onChange={(event) => setNewRosterEmployeeCommitment(event.target.value)}
-	                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-	                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-	                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-	                              >
-	                                {LABOR_COMMITMENT_SELECT_OPTIONS.map((option) => (
-	                                  <option key={option.value || "unassigned"} value={option.value}>{option.label}</option>
-	                                ))}
-	                              </select>
-	                            </label>
-	                            <label style={{ display: "grid", gap: 6 }}>
-	                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Start Date</span>
+	                                onChange={setNewRosterEmployeeCommitment}
+	                              />
+	                            </div>
+	                            <label className="labor-roster-new-field is-start">
+	                              <span className="labor-roster-new-field-label">Start Date</span>
                               <input
                                 type="date"
                                 value={newRosterEmployeeStartDate}
@@ -14969,18 +15132,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
                               />
                             </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>End Date</span>
-                              <input
-                                type="date"
-                                value={newRosterEmployeeEndDate}
-                                onChange={(event) => setNewRosterEmployeeEndDate(event.target.value)}
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                            <div className="labor-roster-new-actions">
                               <button
                                 type="button"
                                 onClick={() => closeInlineLaborEmployeeComposer()}
@@ -15028,7 +15180,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             </div>
                           </div>
                           <div style={{ marginTop: 10, fontSize: 12, color: C.textMut }}>
-                            Active status is automatic. Leave End Date blank until the employee leaves. Phone and email appear directly in the roster.
+                            New employees start active. Phone and email appear directly in the roster.
                           </div>
                         </form>
                       </td>
