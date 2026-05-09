@@ -1323,6 +1323,17 @@ function LaborModelCoverageCell({
           >
             <I.Check />
           </button>
+          {active && (
+            <button
+              type="button"
+              className="labor-model-cell-tool is-delete"
+              aria-label="Clear coverage cell"
+              title="Clear coverage cell"
+              onClick={() => onPositionChange?.(rowId, columnIndex, "")}
+            >
+              <I.Trash />
+            </button>
+          )}
         </div>
       )}
       {positionOpen && !disabled && (
@@ -14485,6 +14496,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          background: #2563eb;
 	          border-color: #2563eb;
 	          color: #fff;
+	        }
+	        .labor-model-cell-tool.is-delete {
+	          color: #b91c1c;
+	        }
+	        .labor-model-cell-tool.is-delete:hover {
+	          background: #fee2e2;
+	          border-color: rgba(185, 28, 28, 0.28);
+	          color: #991b1b;
 	        }
 	        .labor-model-cell-position-panel {
 	          position: absolute;
