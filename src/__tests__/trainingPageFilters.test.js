@@ -11,6 +11,7 @@ import {
   copyLaborModelBreakers,
   formatHourAnalysisCapacityDelta,
   getLaborModelDefaultCoverageValueForRow,
+  getLaborModelCoverageDisplay,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
@@ -19,6 +20,7 @@ import {
   normalizeCapacityPlanningView,
   normalizeLaborModelBreakerSettings,
   normalizeLaborModelCoverageCell,
+  normalizeLaborModelRolePalette,
   normalizeHourAnalysisSettings,
   noteMatchesSearch,
   removeLaborModelColumnFromDay,
@@ -107,7 +109,13 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("hour-analysis-capacity-legend");
     expect(source).not.toContain("<span>{visual.stateLabel}</span>");
     expect(source).not.toContain("true 20% frontline buffer above the operational floor");
-    expect(source).toContain("CSR/PCT: +20% buffer");
+    expect(source).not.toContain("hour-analysis-capacity-expected-label");
+    expect(source).not.toContain("hour-analysis-capacity-marker-label");
+    expect(source).not.toContain("hour-analysis-capacity-detail-popover");
+    expect(source).toContain("hour-analysis-capacity-hover-zone is-expected");
+    expect(source).toContain("hour-analysis-capacity-cursor-tooltip");
+    expect(source).toContain("CSR/PCT: 15%-25% range");
+    expect(source).toContain("target range ${formatHourAnalysisHours(visual.targetLow)} to ${formatHourAnalysisHours(visual.targetHigh)} hours");
     expect(source).toContain("hourAnalysisCapacityLayoutColumns");
     expect(source).toContain('"leadership" : "frontline"');
   });
@@ -130,18 +138,42 @@ describe("applyLaborRosterFilters", () => {
     });
   });
 
-  it("builds Staffing Capacity row visuals with frontline buffer and signed tones", () => {
+  it("builds Staffing Capacity row visuals with frontline target range and signed tones", () => {
     const frontlineDeficit = buildHourAnalysisCapacityRowVisualModel({
       key: "csr",
       expected: 20,
       requiredWeekly: 20,
       targetWeekly: 24,
+      capacityStandard: {
+        healthyLowWeekly: 23,
+        targetWeekly: 24,
+        healthyHighWeekly: 25,
+        targetBufferPercent: 20,
+      },
     });
-    const frontlineSurplus = buildHourAnalysisCapacityRowVisualModel({
+    const frontlineInRange = buildHourAnalysisCapacityRowVisualModel({
       key: "pct",
-      expected: 60,
+      expected: 47,
       requiredWeekly: 40,
       targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+      },
+    });
+    const frontlineAboveRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 54,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+      },
     });
     const adminSurplus = buildHourAnalysisCapacityRowVisualModel({
       key: "general_manager",
@@ -155,15 +187,29 @@ describe("applyLaborRosterFilters", () => {
       isFrontline: true,
       tone: "short",
       deltaToTarget: -4,
-      delta: { value: "-4 hrs", tone: "short" },
+      deltaToRange: -3,
+      delta: { value: "-3 hrs", tone: "short", label: "Below target range" },
+      targetLow: 23,
+      targetHigh: 25,
     });
     expect(frontlineDeficit.bufferWidthPct).toBeGreaterThan(0);
-    expect(frontlineSurplus).toMatchObject({
+    expect(frontlineInRange).toMatchObject({
       roleLabel: "PCT",
       isFrontline: true,
-      tone: "surplus",
-      deltaToTarget: 12,
-      delta: { value: "+12 hrs", tone: "surplus" },
+      tone: "healthy",
+      deltaToTarget: -1,
+      deltaToRange: 0,
+      delta: { value: "In range", tone: "healthy", label: "Target range" },
+      targetLow: 46,
+      targetHigh: 50,
+    });
+    expect(frontlineAboveRange).toMatchObject({
+      roleLabel: "PCT",
+      isFrontline: true,
+      tone: "short",
+      deltaToTarget: 6,
+      deltaToRange: 4,
+      delta: { value: "+4 hrs", tone: "short", label: "Above target range" },
     });
     expect(adminSurplus).toMatchObject({
       roleLabel: "GM",
@@ -338,14 +384,16 @@ describe("applyLaborRosterFilters", () => {
     expect(model.totals.projectedTotal).toBe(93);
     expect(model.totals.requiredWeekly).toBe(70);
     expect(model.totals.targetWeekly).toBe(82);
+    expect(model.totals.healthyLowWeekly).toBe(79);
+    expect(model.totals.healthyHighWeekly).toBe(85);
     expect(model.laborModelSummary.totalWeekly).toBe(70);
     expect(model.laborModelSummary.totalMarketingWeekly).toBe(10);
     expect(model.laborModelSummary.dayRows.find((day) => day.key === "monday")).toMatchObject({ marketingHours: 10 });
-    expect(model.weeklyRows.find((row) => row.key === "general_manager")).toMatchObject({ reliefPercent: 0, requiredWeekly: 10, targetWeekly: 10 });
-    expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 24 });
-    expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 48 });
-    expect(model.totals.capacityStatus.key).toBe("over_rostered");
-    expect(model.totals.capacityStatus.message).toContain("Expected capacity");
+    expect(model.weeklyRows.find((row) => row.key === "general_manager")).toMatchObject({ reliefPercent: 0, requiredWeekly: 10, targetWeekly: 10, capacityStatus: { key: "admin_surplus" } });
+    expect(model.weeklyRows.find((row) => row.key === "csr")).toMatchObject({ reliefPercent: 20, requiredWeekly: 20, targetWeekly: 24, capacityStatus: { key: "above_range" } });
+    expect(model.weeklyRows.find((row) => row.key === "pct")).toMatchObject({ reliefPercent: 20, requiredWeekly: 40, targetWeekly: 48, capacityStatus: { key: "below_range" } });
+    expect(model.totals.capacityStatus.key).toBe("above_range");
+    expect(model.totals.capacityStatus.message).toContain("15-25% frontline target range");
     expect(model.rows.find((row) => row.employeeKey === "emp-pct-ft")).toMatchObject({
       isOverride: true,
       isMovement: true,
@@ -642,6 +690,7 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("onTextChange={(targetRowId");
     expect(source).toContain("labor-model-cell-position-section");
     expect(source).toContain("configuredGroups");
+    expect(source).toContain("labor-model-role-color-settings");
 
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
@@ -656,11 +705,28 @@ describe("applyLaborRosterFilters", () => {
     expect(getLaborModelDefaultCoverageValueForRow("pct")).toBe("PCT");
     expect(buildLaborModelCoverageValue({ duration: "half", rowGroupKey: "pct" })).toBe("0.5:PCT");
     expect(normalizeLaborModelCoverageCell("0.5:PCT")).toBe("0.5:PCT");
+    expect(getLaborModelCoverageDisplay("1", "csr")).toBe("CSR");
+    expect(getLaborModelCoverageDisplay("0.5", "csr")).toBe("CSR");
+    expect(getLaborModelCoverageDisplay("1", "pct")).toBe("PCT");
+    expect(getLaborModelCoverageDisplay("0.5:PCT", "csr")).toBe("PCT");
     expect(setLaborModelCoverageDuration("PCT", "pct", "half")).toBe("0.5:PCT");
     expect(setLaborModelCoverageDuration("0.5:PCT", "pct", "full")).toBe("PCT");
     expect(setLaborModelCoveragePosition("0.5:PCT", "pct", "GM")).toBe("0.5:GM");
     expect(setLaborModelCoveragePosition("0.5:GM", "pct", "PCT")).toBe("0.5:PCT");
     expect(setLaborModelCoveragePosition("PCT", "pct", "MKTG")).toBe("MKTG");
     expect(makeLaborModelCellKey("monday", "row-1", 2)).toBe("monday::row-1::2");
+
+    const roleColors = normalizeLaborModelRolePalette({
+      csr: "#123",
+      pct: { strong: "#0ea5e9", accent: "#38bdf8", soft: "#e0f2fe", text: "#0369a1" },
+    });
+    expect(roleColors.csr.strong).toBe("#112233");
+    expect(roleColors.csr.accent).toMatch(/^#[0-9a-f]{6}$/);
+    expect(roleColors.pct).toMatchObject({ strong: "#0ea5e9", accent: "#38bdf8", soft: "#e0f2fe", text: "#0369a1" });
+
+    const normalizedSettings = normalizeHourAnalysisSettings({
+      laborModelRoleColors: { csr: "#654321" },
+    });
+    expect(normalizedSettings.laborModelRoleColors.csr.strong).toBe("#654321");
   });
 });

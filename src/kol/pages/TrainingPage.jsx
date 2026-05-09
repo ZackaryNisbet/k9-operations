@@ -412,7 +412,8 @@ const HOUR_ANALYSIS_SPLIT_TARGET_OPTIONS = [
   { value: "pct", label: "Pet Care Technician floor" },
 ];
 const HOUR_ANALYSIS_FULL_TIME_HIRE_EQUIVALENT_HOURS = 35;
-const HOUR_ANALYSIS_RESEARCH_TARGET_LABEL = `${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief target`;
+const HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL = `${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% frontline target range`;
+const HOUR_ANALYSIS_RESEARCH_TARGET_LABEL = HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL;
 const HOUR_ANALYSIS_STAFFING_SOURCES = [
   { label: "NICE shrinkage staffing formula", href: "https://help.nice-incontact.com/content/workforcemanagement/staffingrequirementcalculations.htm" },
   { label: "BLS absence baseline", href: "https://www.bls.gov/cps/cpsaat47.htm" },
@@ -459,6 +460,18 @@ const LABOR_MODEL_ROLE_COVERAGE_OPTIONS = [
   { groupKey: "supervisor", label: "SUP", aliases: ["sup", "supervisor"] },
   { groupKey: "csr", label: "CSR", aliases: ["csr", "customer service representative", "customerservicerepresentative"] },
   { groupKey: "pct", label: "PCT", aliases: ["pct", "pet care technician", "petcaretechnician"] },
+];
+const LABOR_MODEL_ROLE_PALETTE = {
+  general_manager: { strong: "#14532d", accent: "#16a34a", soft: "#dcfce7", text: "#14532d" },
+  assistant_manager: { strong: "#3730a3", accent: "#6366f1", soft: "#e0e7ff", text: "#312e81" },
+  supervisor: { strong: "#92400e", accent: "#f59e0b", soft: "#fef3c7", text: "#78350f" },
+  csr: { strong: "#c2410c", accent: "#fb923c", soft: "#ffedd5", text: "#9a3412" },
+  pct: { strong: "#0e7490", accent: "#06b6d4", soft: "#cffafe", text: "#155e75" },
+  other: { strong: "#334155", accent: "#64748b", soft: "#e2e8f0", text: "#334155" },
+};
+const LABOR_MODEL_ROLE_COLOR_OPTIONS = [
+  ...LABOR_MODEL_ROLE_COVERAGE_OPTIONS.map((option) => ({ groupKey: option.groupKey, label: option.label })),
+  { groupKey: "other", label: "Other" },
 ];
 const LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP = new Map(
   LABOR_MODEL_ROLE_COVERAGE_OPTIONS.flatMap((option) => (
@@ -1217,6 +1230,7 @@ function LaborModelCoverageCell({
   conflict = false,
   bulkMode = false,
   positionOptions = LABOR_MODEL_GROUP_OPTIONS,
+  roleColors = null,
   rowGroupKey = "",
   rowId,
   columnIndex,
@@ -1230,12 +1244,14 @@ function LaborModelCoverageCell({
   const [positionReady, setPositionReady] = useState(false);
   const normalizedValue = normalizeLaborModelCoverageCell(value);
   const active = isLaborModelCoverageActive(normalizedValue);
-  const display = getLaborModelCoverageDisplay(normalizedValue);
   const kind = getLaborModelCoverageKind(normalizedValue);
   const nextClickValue = getLaborModelNextCoverageValue(normalizedValue, rowGroupKey);
   const fillValue = normalizedValue || LABOR_MODEL_FULL_COVERAGE_VALUE;
   const activeDuration = getLaborModelCoverageDuration(normalizedValue) || "full";
   const activeRoleOption = getLaborModelCoverageRoleOptionForCell(normalizedValue, rowGroupKey);
+  const display = getLaborModelCoverageDisplay(normalizedValue, rowGroupKey);
+  const roleClass = activeRoleOption?.groupKey ? ` role-${activeRoleOption.groupKey}` : "";
+  const roleStyle = activeRoleOption?.groupKey ? getLaborModelCoverageRoleStyle(activeRoleOption.groupKey, roleColors) : undefined;
   const durationOptions = [
     { value: "full", label: "Full shift" },
     { value: "half", label: "Half shift" },
@@ -1258,7 +1274,8 @@ function LaborModelCoverageCell({
 
   return (
     <div
-      className={`labor-model-coverage-cell-shell is-${kind}${active ? " is-active" : ""}${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}${saving ? " is-saving" : ""}${conflict ? " is-conflict" : ""}${bulkMode ? " is-bulk-mode" : ""}`}
+      className={`labor-model-coverage-cell-shell is-${kind}${active ? " is-active" : ""}${roleClass}${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}${saving ? " is-saving" : ""}${conflict ? " is-conflict" : ""}${bulkMode ? " is-bulk-mode" : ""}`}
+      style={roleStyle}
       onPointerEnter={() => {
         if (disabled) return;
         onEnter?.(rowId, columnIndex);
@@ -1267,7 +1284,7 @@ function LaborModelCoverageCell({
       <button
         type="button"
         disabled={disabled}
-        className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}${selected ? " is-selected" : ""}${conflict ? " is-conflict" : ""}`}
+        className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}${roleClass}${selected ? " is-selected" : ""}${conflict ? " is-conflict" : ""}`}
         title={active ? "Drag the handle to fill neighboring cells. Hover for coverage and select controls." : "Click to create coverage in this empty slot."}
         aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
         aria-pressed={active}
@@ -2014,6 +2031,76 @@ function getLaborModelCoverageRoleOptionForGroup(groupKey = "") {
   return LABOR_MODEL_ROLE_COVERAGE_OPTIONS.find((option) => option.groupKey === normalizedGroup) || null;
 }
 
+function normalizeLaborModelHexColor(value = "", fallback = "#334155") {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    return `#${raw.slice(1).split("").map((char) => `${char}${char}`).join("")}`.toLowerCase();
+  }
+  return fallback;
+}
+
+function mixLaborModelHexColor(base = "#334155", mix = "#ffffff", mixWeight = 0.5) {
+  const normalizedBase = normalizeLaborModelHexColor(base, "#334155").slice(1);
+  const normalizedMix = normalizeLaborModelHexColor(mix, "#ffffff").slice(1);
+  const clampedWeight = Math.max(0, Math.min(1, Number(mixWeight) || 0));
+  const channels = [0, 2, 4].map((index) => {
+    const baseValue = parseInt(normalizedBase.slice(index, index + 2), 16);
+    const mixValue = parseInt(normalizedMix.slice(index, index + 2), 16);
+    return Math.round(baseValue * (1 - clampedWeight) + mixValue * clampedWeight)
+      .toString(16)
+      .padStart(2, "0");
+  });
+  return `#${channels.join("")}`;
+}
+
+function buildLaborModelRolePalette(groupKey = "", primaryColor = "") {
+  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
+  const fallback = LABOR_MODEL_ROLE_PALETTE[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE.other;
+  const strong = normalizeLaborModelHexColor(primaryColor, fallback.strong);
+  return {
+    strong,
+    accent: mixLaborModelHexColor(strong, "#ffffff", 0.28),
+    soft: mixLaborModelHexColor(strong, "#ffffff", 0.86),
+    text: strong,
+  };
+}
+
+export function normalizeLaborModelRolePalette(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  return Object.fromEntries(Object.entries(LABOR_MODEL_ROLE_PALETTE).map(([groupKey, fallback]) => {
+    const camelKey = groupKey.replace(/_([a-z])/g, (_, char) => String(char || "").toUpperCase());
+    const rawValue = source[groupKey] || source[camelKey] || source[groupKey.replace(/_/g, "-")];
+    if (typeof rawValue === "string") {
+      return [groupKey, buildLaborModelRolePalette(groupKey, rawValue)];
+    }
+    if (!isObjectRow(rawValue)) return [groupKey, fallback];
+    const strong = normalizeLaborModelHexColor(rawValue.strong || rawValue.primary || rawValue.color, fallback.strong);
+    return [groupKey, {
+      strong,
+      accent: normalizeLaborModelHexColor(rawValue.accent, mixLaborModelHexColor(strong, "#ffffff", 0.28)),
+      soft: normalizeLaborModelHexColor(rawValue.soft, mixLaborModelHexColor(strong, "#ffffff", 0.86)),
+      text: normalizeLaborModelHexColor(rawValue.text, strong),
+    }];
+  }));
+}
+
+function getLaborModelRolePalette(groupKey = "", roleColors = null) {
+  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
+  const normalizedColors = isObjectRow(roleColors) ? normalizeLaborModelRolePalette(roleColors) : null;
+  return normalizedColors?.[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE.other;
+}
+
+function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
+  const palette = getLaborModelRolePalette(groupKey, roleColors);
+  return {
+    "--labor-model-cell-strong": palette.strong,
+    "--labor-model-cell-accent": palette.accent,
+    "--labor-model-cell-soft": palette.soft,
+    "--labor-model-cell-text": palette.text,
+  };
+}
+
 function parseLaborModelCoverageCompound(value = "") {
   const raw = String(value || "").trim();
   if (!raw || (!raw.includes(":") && !raw.includes("|"))) return null;
@@ -2158,14 +2245,15 @@ export function shouldCycleLaborModelCoveragePointer({ value = "", isFocused = f
   return false;
 }
 
-function getLaborModelCoverageDisplay(value = "") {
+export function getLaborModelCoverageDisplay(value = "", rowGroupKey = "") {
   const normalized = normalizeLaborModelCoverageCell(value);
-  if (normalized === LABOR_MODEL_FULL_COVERAGE_VALUE) return "";
-  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "1/2";
+  const roleOption = getLaborModelCoverageRoleOptionForCell(normalized, rowGroupKey);
+  if (normalized === LABOR_MODEL_FULL_COVERAGE_VALUE) return roleOption?.label || "";
+  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return roleOption?.label || "1/2";
   if (normalized.startsWith(`${LABOR_MODEL_HALF_COVERAGE_VALUE}:`)) {
-    const roleOption = getLaborModelCoverageExplicitRoleOption(normalized);
     return roleOption?.label || "1/2";
   }
+  if (roleOption) return roleOption.label;
   return normalized;
 }
 
@@ -2948,6 +3036,7 @@ function normalizeHourAnalysisThresholds(value = {}) {
 
 export function normalizeHourAnalysisSettings(value = {}) {
   const source = isObjectRow(value) ? value : {};
+  const laborModelSource = source.laborModel || source.labor_model || source.laborModelSettings || source.labor_model_settings;
   return {
     expectations: normalizeHourAnalysisExpectationMap(source.expectations),
     overrides: normalizeHourAnalysisOverrides(source.overrides),
@@ -2956,7 +3045,15 @@ export function normalizeHourAnalysisSettings(value = {}) {
     positionMovements: normalizeHourAnalysisPositionMovements(source.positionMovements || source.position_movements || source.movements || source.roleMovements || source.role_movements),
     whatIfRows: normalizeHourAnalysisWhatIfRows(source.whatIfRows || source.what_if_rows),
     thresholds: normalizeHourAnalysisThresholds(source.thresholds || source.coverage || source.capacity),
-    laborModel: normalizeHourAnalysisLaborModel(source.laborModel || source.labor_model || source.laborModelSettings || source.labor_model_settings),
+    laborModel: normalizeHourAnalysisLaborModel(laborModelSource),
+    laborModelRoleColors: normalizeLaborModelRolePalette(
+      source.laborModelRoleColors
+        || source.labor_model_role_colors
+        || source.roleColors
+        || source.role_colors
+        || laborModelSource?.roleColors
+        || laborModelSource?.role_colors
+    ),
     auditLog: normalizeHourAnalysisAuditLog(source.auditLog || source.audit_log),
   };
 }
@@ -3115,6 +3212,7 @@ function combineHourAnalysisCapacityStandards(rows = []) {
     acc.targetWeekly += standard.targetWeekly;
     acc.healthyHighWeekly += standard.healthyHighWeekly;
     acc.overRosteredWeekly += standard.overRosteredWeekly;
+    acc.hasTargetRange = acc.hasTargetRange || normalizeHourAnalysisNumber(standard.targetBufferPercent, 0) > 0;
     return acc;
   }, {
     floor: 0,
@@ -3122,6 +3220,7 @@ function combineHourAnalysisCapacityStandards(rows = []) {
     targetWeekly: 0,
     healthyHighWeekly: 0,
     overRosteredWeekly: 0,
+    hasTargetRange: false,
   });
   return {
     ...combined,
@@ -3134,10 +3233,10 @@ function combineHourAnalysisCapacityStandards(rows = []) {
     targetSurplus: normalizeHourAnalysisDelta(combined.targetWeekly - combined.floor),
     healthyHighSurplus: normalizeHourAnalysisDelta(combined.healthyHighWeekly - combined.floor),
     overRosteredSurplus: normalizeHourAnalysisDelta(combined.overRosteredWeekly - combined.floor),
-    targetBufferPercent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
-    healthyMinPercent: HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT,
-    healthyMaxPercent: HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT,
-    overRosteredPercent: HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT,
+    targetBufferPercent: combined.hasTargetRange ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0,
+    healthyMinPercent: combined.hasTargetRange ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0,
+    healthyMaxPercent: combined.hasTargetRange ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0,
+    overRosteredPercent: combined.hasTargetRange ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0,
     targetUtilization: combined.targetWeekly > 0 ? normalizeHourAnalysisNumber((combined.floor / combined.targetWeekly) * 100, 0) : 0,
   };
 }
@@ -3151,31 +3250,30 @@ function buildHourAnalysisCapacityStatus({ requiredWeekly = 0, targetWeekly = 0,
   const overRostered = normalizeHourAnalysisNumber(capacityStandard.overRosteredWeekly, healthyHigh);
   const expected = normalizeHourAnalysisNumber(capacity.expected, 0);
   const reliefPercent = normalizeHourAnalysisNumber(capacityStandard.targetBufferPercent, 0);
+  const hasTargetRange = reliefPercent > 0;
   if (required <= 0) {
     return { key: "unset", label: "No floor", tone: "default", message: "No Labor Model floor is assigned to this role." };
-  }
-  if (expected < required) {
-    return { key: "short", label: "Short", tone: "danger", message: `Expected capacity misses the operational floor by ${formatHourAnalysisHours(required - expected)} hrs/wk.` };
   }
   if (reliefPercent <= 0 && expected > required) {
     return { key: "admin_surplus", label: "Surplus", tone: "warning", message: `No relief buffer is applied to General Manager, Assistant Manager, or Supervisor coverage. Reassign ${formatHourAnalysisHours(expected - required)} hrs/wk to a floor split or reduce planned admin coverage.` };
   }
-  if (expected < healthyLow) {
-    return { key: "thin", label: "Thin reserve", tone: "warning", message: `Expected capacity covers the floor but is ${formatHourAnalysisHours(healthyLow - expected)} hrs/wk below the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% relief sensitivity case.` };
+  if (hasTargetRange && expected < healthyLow) {
+    const floorContext = expected < required ? "misses the operational floor and" : "covers the floor but";
+    return { key: "below_range", label: "Below range", tone: "danger", message: `Expected capacity ${floorContext} is ${formatHourAnalysisHours(healthyLow - expected)} hrs/wk below the ${HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL}.` };
+  }
+  if (hasTargetRange && expected > healthyHigh) {
+    return { key: "above_range", label: "Above range", tone: "danger", message: `Expected capacity is ${formatHourAnalysisHours(expected - healthyHigh)} hrs/wk above the ${HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL}. Rebalance before employees lose expected hours.` };
   }
   if (expected > overRostered) {
     return { key: "over_rostered", label: "Overbuilt", tone: "warning", message: `Expected capacity is ${formatHourAnalysisHours(expected - overRostered)} hrs/wk above the ${HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT}% relief sensitivity case. Freeze offers or rebalance hours before employees lose expected hours.` };
   }
-  if (expected > healthyHigh) {
-    return { key: "high", label: "High reserve", tone: "warning", message: `Expected capacity is ${formatHourAnalysisHours(expected - healthyHigh)} hrs/wk above the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity case. Confirm this is seasonal demand, not accidental overstaffing.` };
+  if (expected < required) {
+    return { key: "short", label: "Short", tone: "danger", message: `Expected capacity misses the operational floor by ${formatHourAnalysisHours(required - expected)} hrs/wk.` };
   }
-  if (expected < target) {
-    return { key: "healthy_low", label: "On target", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(target - expected)} hrs/wk below the planning case.` };
+  if (!hasTargetRange) {
+    return { key: "floor_aligned", label: "On floor", tone: "success", message: "Expected capacity matches the operational floor." };
   }
-  if (expected > target) {
-    return { key: "healthy_high", label: "On target", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(expected - target)} hrs/wk above the planning case.` };
-  }
-  return { key: "healthy", label: "On target", tone: "success", message: `Expected capacity lands on the ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief planning case.` };
+  return { key: "healthy", label: "In range", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL}.` };
 }
 
 export function formatHourAnalysisCapacityDelta(value = 0) {
@@ -3201,6 +3299,39 @@ export function formatHourAnalysisCapacityDelta(value = 0) {
   };
 }
 
+function formatHourAnalysisCapacityRangeDelta(expected = 0, standard = null) {
+  const capacityStandard = standard || buildHourAnalysisCapacityStandard(0);
+  const targetBufferPercent = normalizeHourAnalysisNumber(capacityStandard.targetBufferPercent, 0);
+  if (targetBufferPercent <= 0) {
+    return formatHourAnalysisCapacityDelta(normalizeHourAnalysisDelta(expected - normalizeHourAnalysisNumber(capacityStandard.targetWeekly, capacityStandard.floor)));
+  }
+  const healthyLow = normalizeHourAnalysisNumber(capacityStandard.healthyLowWeekly, 0);
+  const healthyHigh = normalizeHourAnalysisNumber(capacityStandard.healthyHighWeekly, healthyLow);
+  const value = normalizeHourAnalysisNumber(expected, 0);
+
+  if (healthyLow > 0 && value < healthyLow) {
+    const delta = normalizeHourAnalysisDelta(value - healthyLow);
+    return {
+      value: `-${formatHourAnalysisHours(Math.abs(delta))} hrs`,
+      tone: "short",
+      label: "Below target range",
+    };
+  }
+  if (healthyHigh > 0 && value > healthyHigh) {
+    const delta = normalizeHourAnalysisDelta(value - healthyHigh);
+    return {
+      value: `+${formatHourAnalysisHours(delta)} hrs`,
+      tone: "short",
+      label: "Above target range",
+    };
+  }
+  return {
+    value: "In range",
+    tone: "healthy",
+    label: "Target range",
+  };
+}
+
 function clampHourAnalysisPercent(value, min = 0, max = 100) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return min;
@@ -3211,16 +3342,38 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
   const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key);
   const expected = normalizeHourAnalysisNumber(row.expected, 0);
   const floor = normalizeHourAnalysisNumber(row.requiredWeekly, 0);
+  const capacityStandard = row.capacityStandard || buildHourAnalysisCapacityStandard(floor, isFrontline ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0);
   const target = normalizeHourAnalysisNumber(row.targetWeekly || floor, floor);
-  const deltaToTarget = normalizeHourAnalysisDelta(expected - target);
+  const targetLow = isFrontline ? normalizeHourAnalysisNumber(capacityStandard.healthyLowWeekly, target) : target;
+  const targetHigh = isFrontline ? normalizeHourAnalysisNumber(capacityStandard.healthyHighWeekly, targetLow) : target;
+  const targetMid = normalizeHourAnalysisNumber(target, floor);
+  const deltaToTarget = normalizeHourAnalysisDelta(expected - targetMid);
+  const deltaToRange = isFrontline
+    ? expected < targetLow
+      ? normalizeHourAnalysisDelta(expected - targetLow)
+      : expected > targetHigh
+        ? normalizeHourAnalysisDelta(expected - targetHigh)
+        : 0
+    : deltaToTarget;
   const deltaToFloor = normalizeHourAnalysisDelta(expected - floor);
-  const delta = formatHourAnalysisCapacityDelta(deltaToTarget);
-  const maxWeekly = Math.max(expected, target, floor, 1) * 1.1;
+  const delta = isFrontline ? formatHourAnalysisCapacityRangeDelta(expected, capacityStandard) : formatHourAnalysisCapacityDelta(deltaToTarget);
+  const maxWeekly = Math.max(expected, targetHigh, targetMid, floor, 1) * 1.1;
   const expectedPct = clampHourAnalysisPercent((expected / maxWeekly) * 100, 1.5, 100);
   const floorPct = clampHourAnalysisPercent((floor / maxWeekly) * 100);
-  const targetPct = clampHourAnalysisPercent((target / maxWeekly) * 100);
+  const targetPct = clampHourAnalysisPercent((targetMid / maxWeekly) * 100);
+  const targetLowPct = clampHourAnalysisPercent((targetLow / maxWeekly) * 100);
+  const targetHighPct = clampHourAnalysisPercent((targetHigh / maxWeekly) * 100);
   const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 89);
-  const tone = deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "healthy";
+  const rangeLabelPct = labelPct((targetLowPct + targetHighPct) / 2);
+  const tone = isFrontline
+    ? deltaToRange < 0 || deltaToRange > 0
+      ? "short"
+      : "healthy"
+    : deltaToTarget < 0
+      ? "short"
+      : deltaToTarget > 0
+        ? "surplus"
+        : "healthy";
 
   return {
     key: row.key || "",
@@ -3229,17 +3382,23 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     expected,
     floor,
     target,
+    targetLow,
+    targetHigh,
     deltaToTarget,
+    deltaToRange,
     deltaToFloor,
     tone,
     delta,
     expectedPct,
     floorPct,
     targetPct,
+    targetLowPct,
+    targetHighPct,
     floorLabelPct: labelPct(floorPct),
     targetLabelPct: labelPct(targetPct),
-    bufferLeftPct: floorPct,
-    bufferWidthPct: isFrontline ? Math.max(0, targetPct - floorPct) : 0,
+    targetRangeLabelPct: rangeLabelPct,
+    bufferLeftPct: isFrontline ? targetLowPct : floorPct,
+    bufferWidthPct: isFrontline ? Math.max(0, targetHighPct - targetLowPct) : 0,
   };
 }
 
@@ -4213,6 +4372,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborModelBreakerEditorDay, setLaborModelBreakerEditorDay] = useState("monday");
   const [laborModelBreakerCopyTargets, setLaborModelBreakerCopyTargets] = useState([]);
   const [hourAnalysisChangedKeys, setHourAnalysisChangedKeys] = useState(() => new Set());
+  const [hourAnalysisCapacityHover, setHourAnalysisCapacityHover] = useState(null);
   const [whatIfEmployeeName, setWhatIfEmployeeName] = useState("");
   const [whatIfPosition, setWhatIfPosition] = useState("");
   const [whatIfCommitment, setWhatIfCommitment] = useState("full_time");
@@ -7610,6 +7770,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     hourAnalysisCapacityRows.filter((row) => !HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
     hourAnalysisCapacityRows.filter((row) => HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
   ], [hourAnalysisCapacityRows]);
+  const updateHourAnalysisCapacityHover = useCallback((event, detail) => {
+    const bar = event.currentTarget.closest(".hour-analysis-capacity-bar");
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    const rawX = event.clientX - rect.left;
+    const rawY = event.clientY - rect.top;
+    const xPadding = Math.min(68, Math.max(18, rect.width / 2 - 4));
+    const x = rect.width <= 140
+      ? rect.width / 2
+      : Math.max(xPadding, Math.min(rect.width - xPadding, rawX));
+    const y = Math.max(10, Math.min(rect.height - 8, rawY));
+    setHourAnalysisCapacityHover({
+      ...detail,
+      x,
+      y,
+    });
+  }, []);
+  const clearHourAnalysisCapacityHover = useCallback(() => {
+    setHourAnalysisCapacityHover(null);
+  }, []);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
   const laborModelCoveragePositionOptions = useMemo(() => {
     const configuredGroups = new Set(approvedLaborPositionOptions.flatMap((option) => {
@@ -7656,7 +7836,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hourAnalysisTargetProgress = hourAnalysisModel.totals.targetWeekly > 0
     ? Math.max(0, Math.min(100, (hourAnalysisModel.totals.projectedExpected / hourAnalysisModel.totals.targetWeekly) * 100))
     : 0;
-  const hourAnalysisCapacityDelta = formatHourAnalysisCapacityDelta(hourAnalysisModel.totals.expectedGapToTarget);
+  const hourAnalysisCapacityDelta = formatHourAnalysisCapacityRangeDelta(
+    hourAnalysisModel.totals.projectedExpected,
+    hourAnalysisModel.totals.capacityStandard,
+  );
   const hourAnalysisDecision = useMemo(() => {
     const totals = hourAnalysisModel.totals;
     if (totals.hireDeficitHours > 0) {
@@ -7823,6 +8006,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           after: null,
         }),
         laborModel: nextLaborModel,
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateLaborModelRoleColor = useCallback((groupKey, colorValue) => {
+    const normalizedGroup = Object.prototype.hasOwnProperty.call(LABOR_MODEL_ROLE_PALETTE, groupKey)
+      ? groupKey
+      : "other";
+    const option = LABOR_MODEL_ROLE_COLOR_OPTIONS.find((item) => item.groupKey === normalizedGroup);
+    const roleLabel = option?.label || getHourAnalysisGroupLabel(normalizedGroup);
+    const nextPalette = buildLaborModelRolePalette(normalizedGroup, colorValue);
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const beforePalette = getLaborModelRolePalette(normalizedGroup, normalized.laborModelRoleColors);
+      if (beforePalette.strong === nextPalette.strong) return normalized;
+      markHourAnalysisChanged(["capacity", "labor-model", "labor-model-colors"]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "labor_model_role_color_changed",
+          entity_id: `labor-model-color:${normalizedGroup}`,
+          entity_label: `${roleLabel} Labor Model Color`,
+          summary: `Changed ${roleLabel} Labor Model color from ${beforePalette.strong} to ${nextPalette.strong}.`,
+          before: beforePalette.strong,
+          after: nextPalette.strong,
+        }),
+        laborModelRoleColors: {
+          ...normalized.laborModelRoleColors,
+          [normalizedGroup]: nextPalette,
+        },
       };
     });
   }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
@@ -11872,6 +12083,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-total.is-surplus {
           border-color: rgba(20, 83, 45, 0.24);
         }
+        .hour-analysis-capacity-total.is-healthy {
+          border-color: rgba(20, 83, 45, 0.28);
+          background: linear-gradient(135deg, rgba(236,253,245,0.96), #ffffff 66%);
+        }
         .hour-analysis-capacity-total strong {
           display: block;
           color: ${C.text};
@@ -11883,6 +12098,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           color: #b91c1c;
         }
         .hour-analysis-capacity-total.is-surplus strong {
+          color: #047857;
+        }
+        .hour-analysis-capacity-total.is-healthy strong {
           color: #047857;
         }
         .hour-analysis-capacity-buffer-note {
@@ -11916,7 +12134,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
         .hour-analysis-capacity-row {
           position: relative;
-          overflow: hidden;
+          overflow: visible;
           display: grid;
           gap: 5px;
           border: 1px solid ${C.borderLight};
@@ -11965,7 +12183,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(135deg, #ffffff 0%, rgba(240,253,244,0.82) 100%);
         }
         .hour-analysis-capacity-row.is-healthy {
-          border-color: rgba(20, 83, 45, 0.14);
+          border-color: rgba(20, 83, 45, 0.2);
+          background: linear-gradient(135deg, #ffffff 0%, rgba(240,253,244,0.82) 100%);
         }
         .hour-analysis-capacity-row-header {
           position: relative;
@@ -11995,7 +12214,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background:
             linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px) 0 0 / 20% 100%,
             linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-          overflow: hidden;
+          overflow: visible;
           box-shadow: inset 0 1px 2px rgba(15,23,42,0.04);
           transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
@@ -12051,11 +12270,35 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-row.is-healthy .hour-analysis-capacity-fill {
           background: linear-gradient(90deg, #0f766e, #14b8a6);
         }
-        .hour-analysis-capacity-expected-label,
-        .hour-analysis-capacity-marker-label,
+        .hour-analysis-capacity-hover-zone {
+          position: absolute;
+          z-index: 7;
+          background: transparent;
+          cursor: crosshair;
+        }
+        .hour-analysis-capacity-hover-zone.is-expected {
+          left: 0;
+          top: 12px;
+          height: 28px;
+          min-width: 24px;
+        }
+        .hour-analysis-capacity-hover-zone.is-marker {
+          top: 0;
+          bottom: 0;
+          width: 20px;
+          transform: translateX(-50%);
+          z-index: 8;
+        }
+        .hour-analysis-capacity-hover-zone.is-marker:hover {
+          background: linear-gradient(90deg, transparent, rgba(15,23,42,0.055), transparent);
+        }
+        .hour-analysis-capacity-hover-zone.is-target:hover {
+          background: linear-gradient(90deg, transparent, rgba(132,204,22,0.16), transparent);
+        }
+        .hour-analysis-capacity-cursor-tooltip,
         .hour-analysis-capacity-delta-float {
           position: absolute;
-          z-index: 5;
+          z-index: 12;
           border-radius: 999px;
           padding: 4px 6px;
           font-size: 10px;
@@ -12066,13 +12309,42 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           transition:
             transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
             background 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
             box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .hour-analysis-capacity-expected-label {
-          top: 6px;
-          left: 8px;
-          background: rgba(255,255,255,0.88);
-          color: ${C.text};
+        .hour-analysis-capacity-cursor-tooltip {
+          max-width: min(220px, calc(100% - 16px));
+          pointer-events: none;
+          transform: translate(-50%, calc(-100% - 10px));
+          background: rgba(15,23,42,0.94);
+          color: #ffffff;
+          box-shadow: 0 14px 28px rgba(15,23,42,0.22);
+        }
+        .hour-analysis-capacity-cursor-tooltip.is-short {
+          background: rgba(153, 27, 27, 0.95);
+        }
+        .hour-analysis-capacity-cursor-tooltip.is-surplus,
+        .hour-analysis-capacity-cursor-tooltip.is-healthy {
+          background: rgba(20, 83, 45, 0.95);
+        }
+        .hour-analysis-capacity-cursor-tooltip.is-floor {
+          background: rgba(15, 23, 42, 0.95);
+        }
+        .hour-analysis-capacity-cursor-tooltip.is-target {
+          background: rgba(63, 98, 18, 0.95);
+        }
+        .hour-analysis-capacity-cursor-tooltip span {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .hour-analysis-capacity-cursor-tooltip small {
+          display: block;
+          margin-top: 2px;
+          color: rgba(255,255,255,0.76);
+          font-size: 9px;
+          font-weight: 820;
+          line-height: 1;
         }
         .hour-analysis-capacity-marker {
           position: absolute;
@@ -12086,18 +12358,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
         .hour-analysis-capacity-marker.is-target {
           background: rgba(20, 83, 45, 0.46);
-        }
-        .hour-analysis-capacity-marker-label {
-          transform: translateX(-50%);
-          background: rgba(255,255,255,0.94);
-          color: ${C.text};
-        }
-        .hour-analysis-capacity-marker-label.is-floor {
-          top: 6px;
-        }
-        .hour-analysis-capacity-marker-label.is-target {
-          bottom: 5px;
-          color: #166534;
         }
         .hour-analysis-capacity-delta-float {
           right: 7px;
@@ -12113,13 +12373,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: rgba(236,253,245,0.95);
           color: #047857;
         }
-        .hour-analysis-capacity-row:hover .hour-analysis-capacity-expected-label,
+        .hour-analysis-capacity-delta-float.is-healthy {
+          background: rgba(236,253,245,0.95);
+          color: #047857;
+        }
         .hour-analysis-capacity-row:hover .hour-analysis-capacity-delta-float {
           transform: translateY(-1px);
-          box-shadow: 0 10px 22px rgba(15,23,42,0.12);
-        }
-        .hour-analysis-capacity-row:hover .hour-analysis-capacity-marker-label {
-          transform: translateX(-50%) translateY(-1px);
           box-shadow: 0 10px 22px rgba(15,23,42,0.12);
         }
         .hour-analysis-hire-list {
@@ -12488,6 +12747,123 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           color: ${C.textMut};
           font-size: 11px;
           font-weight: 950;
+        }
+        .labor-model-role-color-settings {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
+          border-radius: 8px;
+          border: 1px solid ${C.border};
+          background: linear-gradient(135deg, rgba(248,250,252,0.92), rgba(255,255,255,0.98));
+          animation: filterSlideIn 0.24s ease-out both;
+        }
+        .labor-model-role-color-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .labor-model-role-color-header strong,
+        .labor-model-role-color-header span {
+          display: block;
+        }
+        .labor-model-role-color-header strong {
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .labor-model-role-color-header span {
+          margin-top: 2px;
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 750;
+        }
+        .labor-model-role-color-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .labor-model-role-color-row {
+          display: grid;
+          grid-template-columns: minmax(42px, 0.7fr) minmax(76px, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          padding: 8px;
+          border-radius: 8px;
+          border: 1px solid color-mix(in srgb, var(--labor-model-cell-strong, ${C.pri}) 18%, ${C.borderLight});
+          background: color-mix(in srgb, var(--labor-model-cell-soft, #f8fafc) 54%, #ffffff);
+        }
+        .labor-model-role-color-sample {
+          height: 28px;
+          min-width: 0;
+          border-radius: 6px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 8px;
+          color: #fff;
+          background: linear-gradient(135deg, var(--labor-model-cell-strong, ${C.pri}), var(--labor-model-cell-accent, ${C.pri2}));
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+          overflow: hidden;
+        }
+        .labor-model-role-color-sample span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 10px;
+          font-weight: 950;
+        }
+        .labor-model-role-color-control {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 32px;
+          align-items: center;
+          gap: 6px;
+          color: var(--labor-model-cell-text, ${C.text});
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .labor-model-role-color-control > span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .labor-model-role-color-control input {
+          width: 32px;
+          height: 26px;
+          padding: 0;
+          border: 1px solid ${C.border};
+          border-radius: 6px;
+          background: #fff;
+          cursor: pointer;
+        }
+        .labor-model-role-color-reset {
+          width: 28px;
+          height: 28px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 7px;
+          background: rgba(255,255,255,0.84);
+          color: ${C.textMut};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 150ms ease;
+        }
+        .labor-model-role-color-reset svg {
+          width: 14px;
+          height: 14px;
+        }
+        .labor-model-role-color-reset:hover:not(:disabled) {
+          border-color: var(--labor-model-cell-strong, ${C.pri});
+          color: var(--labor-model-cell-strong, ${C.pri});
+          transform: translateY(-1px);
+        }
+        .labor-model-role-color-reset:disabled {
+          opacity: 0.38;
+          cursor: not-allowed;
         }
         .labor-position-add-row {
           display: grid;
@@ -13982,10 +14358,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           width: 100%;
           height: 28px;
           min-width: 0;
-          border: 1px solid #111827;
+          border: 1px solid rgba(203, 213, 225, 0.78);
 		          border-radius: 6px;
-		          background: #111827;
-		          color: rgba(255,255,255,0.86);
+		          background:
+                linear-gradient(135deg, rgba(248,250,252,0.96), rgba(241,245,249,0.82));
+		          color: rgba(71, 85, 105, 0.72);
           cursor: pointer;
           font-family: inherit;
           font-size: 9px;
@@ -14006,10 +14383,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           min-width: 0;
           overflow: hidden;
           text-overflow: clip;
+          border-radius: 999px;
+          padding: 1px 4px;
+          line-height: 1.05;
         }
 	        .labor-model-coverage-cell-button:hover {
-	          border-color: rgba(132, 204, 22, 0.6);
-	          background: #1f2937;
+	          border-color: rgba(100, 116, 139, 0.34);
+	          background:
+                linear-gradient(135deg, rgba(255,255,255,0.98), rgba(226,232,240,0.72));
 	        }
 	        .labor-model-coverage-cell-shell.is-selected .labor-model-coverage-cell-button,
 	        .labor-model-coverage-cell-button.is-selected {
@@ -14024,17 +14405,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          opacity: 0.78;
 	        }
 	        .labor-model-coverage-cell-button.is-active.is-full {
-	          border-color: rgba(20, 83, 45, 0.34);
-	          background: linear-gradient(135deg, #14532d, #166534);
-          color: transparent;
-	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 14px rgba(20, 83, 45, 0.12);
+	          border-color: color-mix(in srgb, var(--labor-model-cell-strong, #14532d) 34%, transparent);
+	          background: linear-gradient(135deg, var(--labor-model-cell-strong, #14532d), var(--labor-model-cell-accent, #16a34a));
+          color: #ffffff;
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 14px color-mix(in srgb, var(--labor-model-cell-strong, #14532d) 18%, transparent);
 	        }
 	        .labor-model-coverage-cell-button.is-active.is-half {
-	          border-color: rgba(20, 83, 45, 0.3);
-	          background: linear-gradient(90deg, #14532d 0 52%, rgba(240,253,244,0.96) 52% 100%);
-	          color: ${C.pri};
-	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 6px 14px rgba(20, 83, 45, 0.1);
+	          border-color: color-mix(in srgb, var(--labor-model-cell-strong, #14532d) 30%, transparent);
+	          background: linear-gradient(90deg, var(--labor-model-cell-strong, #14532d) 0 52%, var(--labor-model-cell-soft, rgba(240,253,244,0.96)) 52% 100%);
+	          color: var(--labor-model-cell-text, ${C.pri});
+	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 6px 14px color-mix(in srgb, var(--labor-model-cell-strong, #14532d) 15%, transparent);
 	        }
+        .labor-model-coverage-cell-button.is-active.is-half span {
+          max-width: calc(100% - 4px);
+          background: rgba(255,255,255,0.86);
+          box-shadow: 0 1px 0 rgba(255,255,255,0.64);
+        }
 	        .labor-model-coverage-cell-button.is-active.is-marketing {
 	          border-color: rgba(14, 116, 144, 0.34);
 	          background: linear-gradient(135deg, #0f766e, #0284c7);
@@ -14042,10 +14428,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 6px 14px rgba(14, 116, 144, 0.14);
 	        }
         .labor-model-coverage-cell-button.is-active.is-role {
-          border-color: rgba(234, 88, 12, 0.34);
-          background: linear-gradient(135deg, #fff7ed, #fed7aa);
-          color: #9a3412;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.62), 0 6px 14px rgba(234, 88, 12, 0.13);
+          border-color: color-mix(in srgb, var(--labor-model-cell-strong, #c2410c) 34%, transparent);
+          background: linear-gradient(135deg, var(--labor-model-cell-strong, #c2410c), var(--labor-model-cell-accent, #fb923c));
+          color: #ffffff;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.62), 0 6px 14px color-mix(in srgb, var(--labor-model-cell-strong, #c2410c) 13%, transparent);
         }
 		        .labor-model-coverage-cell-button.is-active:focus {
 		          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 0 0 3px rgba(20, 83, 45, 0.16);
@@ -14510,7 +14896,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-capacity-total::after,
             .hour-analysis-capacity-row,
             .hour-analysis-capacity-row::after,
-            .hour-analysis-capacity-fill::after { animation: none; }
+            .hour-analysis-capacity-fill::after,
+            .labor-model-role-color-settings { animation: none; }
 	          .labor-tab-indicator,
 	          .labor-view-switcher-indicator,
 	          .labor-tab-button,
@@ -14567,14 +14954,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .hour-analysis-capacity-buffer-note { justify-self: start; }
           .hour-analysis-capacity-row-header { align-items: flex-start; }
           .hour-analysis-capacity-bar { height: 52px; }
-          .hour-analysis-capacity-expected-label { top: 8px; }
           .hour-analysis-capacity-fill { top: 24px; }
+          .hour-analysis-capacity-hover-zone.is-expected { top: 16px; }
           .hour-analysis-capacity-delta-float { top: 8px; right: 8px; }
-          .hour-analysis-capacity-marker-label.is-floor { top: 6px; }
-          .hour-analysis-capacity-marker-label.is-target { bottom: 8px; }
           .hour-analysis-capacity-standard { grid-template-columns: 1fr; }
           .hour-analysis-capacity-grid { grid-template-columns: 1fr; }
           .hour-analysis-card-header { align-items: flex-start; flex-direction: column; }
+          .labor-model-role-color-grid { grid-template-columns: 1fr; }
           .labor-model-shell.is-page .labor-model-tabs {
             grid-template-columns: repeat(4, minmax(0, 1fr));
             grid-auto-rows: minmax(38px, auto);
@@ -15962,7 +16348,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <strong>{hourAnalysisCapacityDelta.value}</strong>
               </div>
               <div className="hour-analysis-capacity-buffer-note">
-                CSR/PCT: +20% buffer
+                CSR/PCT: 15%-25% range
               </div>
             </div>
             <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
@@ -15971,10 +16357,42 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   {columnRows.map((row) => {
                     const visual = buildHourAnalysisCapacityRowVisualModel(row);
                     const rowIndex = hourAnalysisCapacityRows.findIndex((item) => item.key === row.key);
+                    const expectedHover = {
+                      rowKey: row.key,
+                      label: "Expected",
+                      value: `${formatHourAnalysisHours(visual.expected)} hrs`,
+                      caption: "planned weekly hours",
+                      tone: visual.delta.tone,
+                    };
+                    const floorHover = {
+                      rowKey: row.key,
+                      label: "Operational floor",
+                      value: `${formatHourAnalysisHours(visual.floor)} hrs`,
+                      caption: "minimum weekly coverage",
+                      tone: "floor",
+                    };
+                    const targetLowHover = {
+                      rowKey: row.key,
+                      label: "Lower bound",
+                      value: `${formatHourAnalysisHours(visual.targetLow)} hrs`,
+                      caption: `${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% above floor`,
+                      tone: "target",
+                    };
+                    const targetHighHover = {
+                      rowKey: row.key,
+                      label: "Upper bound",
+                      value: `${formatHourAnalysisHours(visual.targetHigh)} hrs`,
+                      caption: `${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% above floor`,
+                      tone: "target",
+                    };
+                    const activeHover = hourAnalysisCapacityHover?.rowKey === row.key ? hourAnalysisCapacityHover : null;
                     return (
                       <div
                         key={row.key}
                         className={`hour-analysis-capacity-row is-${visual.tone}`}
+                        tabIndex={0}
+                        onPointerLeave={clearHourAnalysisCapacityHover}
+                        onBlur={clearHourAnalysisCapacityHover}
                         style={{ "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms` }}
                       >
                         <div className="hour-analysis-capacity-row-header">
@@ -15984,7 +16402,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         </div>
                         <div
                           className="hour-analysis-capacity-bar"
-                          aria-label={`${visual.roleLabel} expected ${formatHourAnalysisHours(visual.expected)} hours, floor ${formatHourAnalysisHours(visual.floor)} hours, target ${formatHourAnalysisHours(visual.target)} hours, variance ${visual.delta.value}`}
+                          aria-label={`${visual.roleLabel} expected ${formatHourAnalysisHours(visual.expected)} hours, floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.isFrontline ? `target range ${formatHourAnalysisHours(visual.targetLow)} to ${formatHourAnalysisHours(visual.targetHigh)} hours` : `target ${formatHourAnalysisHours(visual.target)} hours`}, variance ${visual.delta.value}`}
                         >
                           {visual.isFrontline && (
                             <div
@@ -15993,24 +16411,57 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             />
                           )}
                           <div className="hour-analysis-capacity-fill" style={{ width: `${visual.expectedPct}%` }} />
-                          <span className="hour-analysis-capacity-expected-label">
-                            Expected {formatHourAnalysisHours(visual.expected)}
-                          </span>
                           <div className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
-                          <span className="hour-analysis-capacity-marker-label is-floor" style={{ left: `${visual.floorLabelPct}%` }}>
-                            Floor {formatHourAnalysisHours(visual.floor)}
-                          </span>
                           {visual.isFrontline && (
                             <>
-                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
-                              <span className="hour-analysis-capacity-marker-label is-target" style={{ left: `${visual.targetLabelPct}%` }}>
-                                Target {formatHourAnalysisHours(visual.target)}
-                              </span>
+                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetLowPct}%` }} />
+                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetHighPct}%` }} />
+                            </>
+                          )}
+                          <div
+                            className="hour-analysis-capacity-hover-zone is-expected"
+                            style={{ width: `${visual.expectedPct}%` }}
+                            onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, expectedHover)}
+                            onPointerMove={(event) => updateHourAnalysisCapacityHover(event, expectedHover)}
+                            aria-hidden="true"
+                          />
+                          <div
+                            className="hour-analysis-capacity-hover-zone is-marker is-floor"
+                            style={{ left: `${visual.floorPct}%` }}
+                            onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, floorHover)}
+                            onPointerMove={(event) => updateHourAnalysisCapacityHover(event, floorHover)}
+                            aria-hidden="true"
+                          />
+                          {visual.isFrontline && (
+                            <>
+                              <div
+                                className="hour-analysis-capacity-hover-zone is-marker is-target"
+                                style={{ left: `${visual.targetLowPct}%` }}
+                                onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, targetLowHover)}
+                                onPointerMove={(event) => updateHourAnalysisCapacityHover(event, targetLowHover)}
+                                aria-hidden="true"
+                              />
+                              <div
+                                className="hour-analysis-capacity-hover-zone is-marker is-target"
+                                style={{ left: `${visual.targetHighPct}%` }}
+                                onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, targetHighHover)}
+                                onPointerMove={(event) => updateHourAnalysisCapacityHover(event, targetHighHover)}
+                                aria-hidden="true"
+                              />
                             </>
                           )}
                           <span className={`hour-analysis-capacity-delta-float is-${visual.delta.tone}`}>
                             {visual.delta.value}
                           </span>
+                          {activeHover && (
+                            <span
+                              className={`hour-analysis-capacity-cursor-tooltip is-${activeHover.tone}`}
+                              style={{ left: `${activeHover.x}px`, top: `${activeHover.y}px` }}
+                            >
+                              <span>{activeHover.label} {activeHover.value}</span>
+                              {activeHover.caption ? <small>{activeHover.caption}</small> : null}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
@@ -16453,18 +16904,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                      </div>
 		                    )}
 		                    {canEditRoster && (
-		                      <button
-		                        type="button"
-		                        className="labor-model-settings-button"
-		                        onClick={() => {
-		                          setLaborModelBreakerEditorDay(activeHourAnalysisLaborModelDayKey);
-		                          setLaborModelBreakerCopyTargets([]);
-		                          setShowLaborModelBreakerSettings(true);
-		                        }}
-		                      >
-		                        <I.Settings />
-		                        <span>Grey Bars</span>
-		                      </button>
+		                      <>
+		                        <button
+		                          type="button"
+		                          className="labor-model-settings-button"
+		                          onClick={() => setShowHierarchyManager(true)}
+		                        >
+		                          <I.Settings />
+		                          <span>Settings</span>
+		                        </button>
+		                        <button
+		                          type="button"
+		                          className="labor-model-settings-button"
+		                          onClick={() => {
+		                            setLaborModelBreakerEditorDay(activeHourAnalysisLaborModelDayKey);
+		                            setLaborModelBreakerCopyTargets([]);
+		                            setShowLaborModelBreakerSettings(true);
+		                          }}
+		                        >
+		                          <I.Settings />
+		                          <span>Grey Bars</span>
+		                        </button>
+		                      </>
 		                    )}
 		                  </div>
 		                </div>
@@ -16584,6 +17045,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                                    conflict={cellConflict}
 		                                    bulkMode={selectedLaborModelCellCount > 0}
 		                                    positionOptions={laborModelCoveragePositionOptions}
+		                                    roleColors={hourAnalysisSettings.laborModelRoleColors}
 		                                    rowGroupKey={row.group_key}
 		                                    rowId={row.id}
 		                                    columnIndex={columnIndex}
@@ -16856,6 +17318,51 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
               Approved titles are the only positions shown in movement and what-if pickers. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Capacity Planning use this order until a manager chooses another sort.
+            </div>
+            <div className="labor-model-role-color-settings">
+              <div className="labor-model-role-color-header">
+                <div>
+                  <strong>Labor Model Colors</strong>
+                  <span>Grid role colors. Auto-saved.</span>
+                </div>
+              </div>
+              <div className="labor-model-role-color-grid">
+                {LABOR_MODEL_ROLE_COLOR_OPTIONS.map((option) => {
+                  const palette = getLaborModelRolePalette(option.groupKey, hourAnalysisSettings.laborModelRoleColors);
+                  const defaultPalette = LABOR_MODEL_ROLE_PALETTE[option.groupKey] || LABOR_MODEL_ROLE_PALETTE.other;
+                  const isDefaultColor = palette.strong === defaultPalette.strong;
+                  return (
+                    <div
+                      key={option.groupKey}
+                      className="labor-model-role-color-row"
+                      style={getLaborModelCoverageRoleStyle(option.groupKey, hourAnalysisSettings.laborModelRoleColors)}
+                    >
+                      <div className="labor-model-role-color-sample">
+                        <span>{option.label}</span>
+                      </div>
+                      <label className="labor-model-role-color-control">
+                        <span>{option.label}</span>
+                        <input
+                          type="color"
+                          value={palette.strong}
+                          aria-label={`${option.label} labor model color`}
+                          onChange={(event) => updateLaborModelRoleColor(option.groupKey, event.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="labor-model-role-color-reset"
+                        onClick={() => updateLaborModelRoleColor(option.groupKey, defaultPalette.strong)}
+                        disabled={isDefaultColor}
+                        aria-label={`Reset ${option.label} labor model color`}
+                        title="Reset color"
+                      >
+                        <I.RefreshCw />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             <div className="labor-position-add-row">
               <input
