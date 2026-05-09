@@ -691,8 +691,11 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("labor-model-cell-position-section");
     expect(source).toContain("configuredGroups");
     expect(source).toContain("labor-model-role-color-settings");
-    expect(source).toContain('aria-label="Clear coverage cell"');
+    expect(source).toContain("Clear coverage cell");
+    expect(source).toContain("Clear selected coverage cells");
+    expect(source).toContain("Choose coverage position for selected cells");
     expect(source).toContain("labor-model-cell-tool is-delete");
+    expect(source).not.toContain("labor-model-bulk-toolbar");
 
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
