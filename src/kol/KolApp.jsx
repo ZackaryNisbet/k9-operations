@@ -125,18 +125,19 @@ LITE_SLUG_TO_PAGE.training = "training";
 LITE_SLUG_TO_PAGE["client-management"] = "client-management";
 
 const LITE_LABOR_TAB_SLUGS = {
-  home: "",
+  home: "roster",
   training: "training",
   "performance-reviews": "performance-reviews",
   templates: "templates",
   attendance: "attendance",
   interviews: "interviews",
   notes: "notes",
-  "hour-analysis": "hour-analysis",
-  "labor-model": "labor-model",
+  "hour-analysis": "capacity-planning",
+  "labor-model": "capacity-planning/labor-model",
 };
 const LITE_LABOR_SLUG_TO_TAB = {
   home: "home",
+  roster: "home",
   training: "training",
   "performance-reviews": "performance-reviews",
   templates: "templates",
@@ -144,7 +145,8 @@ const LITE_LABOR_SLUG_TO_TAB = {
   interviews: "interviews",
   notes: "notes",
   "hour-analysis": "hour-analysis",
-  "labor-model": "labor-model",
+  "capacity-planning": "hour-analysis",
+  "labor-model": "hour-analysis",
 };
 
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
@@ -156,13 +158,14 @@ function buildLiteUrl(locSlug, pg, prms, dataRef) {
     const laborTab = prms?.laborTab || "";
     const tabSlug = LITE_LABOR_TAB_SLUGS[laborTab] ?? "";
     const laborBase = `${LITE_BASE}/${locSlug}/labor`;
-    if (!laborTab || laborTab === "home" || !tabSlug) return laborBase;
+    if (!laborTab || !tabSlug) return laborBase;
     if (laborTab === "interviews") {
       if (prms?.interviewId) return `${laborBase}/interviews/${encodeURIComponent(prms.interviewId)}`;
       if (prms?.interviewView === "config") return `${laborBase}/interviews/config`;
       return `${laborBase}/interviews`;
     }
     if (laborTab === "attendance" && prms?.attendanceView === "summary") return `${laborBase}/attendance/summary`;
+    if (laborTab === "hour-analysis" && prms?.capacityPlanningView === "labor-model") return `${laborBase}/capacity-planning/labor-model`;
     return `${laborBase}/${tabSlug}`;
   }
   if (pg === "client-detail" && prms?.clientId && dataRef) {
@@ -241,6 +244,9 @@ function parseLiteUrl(pathname, dataRef) {
     }
     if (laborTab === "attendance" && parts[3] === "summary") {
       params.attendanceView = "summary";
+    }
+    if (laborTab === "hour-analysis") {
+      params.capacityPlanningView = parts[3] === "labor-model" || tabSlug === "labor-model" ? "labor-model" : "staffing-capacity";
     }
     return { locSlug, page: "training", params };
   }
