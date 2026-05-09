@@ -4,9 +4,11 @@ import {
   applyLaborRosterFilters,
   buildLaborModulePanelKey,
   buildHourAnalysisModel,
+  buildLaborModelCoverageValue,
   CAPACITY_PLANNING_VIEWS,
   clearHourAnalysisPlanningState,
   copyLaborModelBreakers,
+  getLaborModelDefaultCoverageValueForRow,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
@@ -14,10 +16,13 @@ import {
   makeLaborModelCellKey,
   normalizeCapacityPlanningView,
   normalizeLaborModelBreakerSettings,
+  normalizeLaborModelCoverageCell,
   normalizeHourAnalysisSettings,
   noteMatchesSearch,
   removeLaborModelColumnFromDay,
   safeTrainingProgress,
+  setLaborModelCoverageDuration,
+  setLaborModelCoveragePosition,
   shouldCycleLaborModelCoveragePointer,
   toObjectRows,
   updateLaborModelBreakersForDay,
@@ -530,16 +535,31 @@ describe("applyLaborRosterFilters", () => {
     expect(normalizedSettings.laborModel.breakers.days.friday.map((bar) => bar.label)).toEqual(["9a", "3:30p"]);
   });
 
-  it("keeps active labor model cells editable on first click", () => {
+  it("keeps labor model cells classification-only with row-aware default roles", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).not.toContain('aria-label="Set half duration"');
+    expect(source).not.toContain("onTextChange={(targetRowId");
+    expect(source).toContain("labor-model-cell-position-section");
+
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
-    expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: true })).toBe(true);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: true })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: false })).toBe(false);
-    expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: true })).toBe(true);
+    expect(shouldCycleLaborModelCoveragePointer({ value: "0.5", isFocused: true })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: false })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: true })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: false })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: true })).toBe(false);
+
+    expect(getLaborModelDefaultCoverageValueForRow("pct")).toBe("PCT");
+    expect(buildLaborModelCoverageValue({ duration: "half", rowGroupKey: "pct" })).toBe("0.5:PCT");
+    expect(normalizeLaborModelCoverageCell("0.5:PCT")).toBe("0.5:PCT");
+    expect(setLaborModelCoverageDuration("PCT", "pct", "half")).toBe("0.5:PCT");
+    expect(setLaborModelCoverageDuration("0.5:PCT", "pct", "full")).toBe("PCT");
+    expect(setLaborModelCoveragePosition("0.5:PCT", "pct", "GM")).toBe("0.5:GM");
+    expect(setLaborModelCoveragePosition("0.5:GM", "pct", "PCT")).toBe("0.5:PCT");
+    expect(setLaborModelCoveragePosition("PCT", "pct", "MKTG")).toBe("MKTG");
     expect(makeLaborModelCellKey("monday", "row-1", 2)).toBe("monday::row-1::2");
   });
 });
