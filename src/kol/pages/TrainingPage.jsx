@@ -1186,32 +1186,35 @@ function LaborModelCoverageCell({
   conflict = false,
   bulkMode = false,
   positionOptions = LABOR_MODEL_GROUP_OPTIONS,
+  rowGroupKey = "",
   rowId,
   columnIndex,
-  onStart,
+  onCreate,
   onFillStart,
   onEnter,
-  onTextChange,
   onPositionChange,
-  onSplit,
   onToggleSelected,
 }) {
-  const inputRef = useRef(null);
-  const skipBlurCommitRef = useRef(false);
-  const [isEditing, setIsEditing] = useState(false);
   const [positionOpen, setPositionOpen] = useState(false);
   const [positionReady, setPositionReady] = useState(false);
-  const [draft, setDraft] = useState("");
   const normalizedValue = normalizeLaborModelCoverageCell(value);
   const active = isLaborModelCoverageActive(normalizedValue);
   const display = getLaborModelCoverageDisplay(normalizedValue);
   const kind = getLaborModelCoverageKind(normalizedValue);
-  const nextClickValue = getLaborModelNextCoverageValue(normalizedValue);
+  const nextClickValue = getLaborModelNextCoverageValue(normalizedValue, rowGroupKey);
   const fillValue = normalizedValue || LABOR_MODEL_FULL_COVERAGE_VALUE;
-
-  useEffect(() => {
-    if (!isEditing) setDraft(display);
-  }, [display, isEditing]);
+  const activeDuration = getLaborModelCoverageDuration(normalizedValue) || "full";
+  const activeRoleOption = getLaborModelCoverageRoleOptionForCell(normalizedValue, rowGroupKey);
+  const durationOptions = [
+    { value: "full", label: "Full shift" },
+    { value: "half", label: "Half shift" },
+  ];
+  const positionChoices = positionOptions.filter((option) => {
+    const normalizedOption = normalizeLaborModelCoverageCell(option.value);
+    return normalizedOption
+      && normalizedOption !== LABOR_MODEL_FULL_COVERAGE_VALUE
+      && normalizedOption !== LABOR_MODEL_HALF_COVERAGE_VALUE;
+  });
 
   useEffect(() => {
     if (!positionOpen) {
@@ -1222,18 +1225,6 @@ function LaborModelCoverageCell({
     return () => window.clearTimeout(timer);
   }, [positionOpen]);
 
-  const commitDraft = useCallback((nextDraft = draft) => {
-    if (String(nextDraft || "") === display) {
-      setIsEditing(false);
-      setDraft(display);
-      return;
-    }
-    const normalizedDraft = normalizeLaborModelCoverageCell(nextDraft);
-    setIsEditing(false);
-    setDraft(getLaborModelCoverageDisplay(normalizedDraft));
-    onTextChange?.(rowId, columnIndex, normalizedDraft);
-  }, [columnIndex, display, draft, onTextChange, rowId]);
-
   return (
     <div
       className={`labor-model-coverage-cell-shell is-${kind}${active ? " is-active" : ""}${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}${saving ? " is-saving" : ""}${conflict ? " is-conflict" : ""}${bulkMode ? " is-bulk-mode" : ""}`}
@@ -1242,59 +1233,20 @@ function LaborModelCoverageCell({
         onEnter?.(rowId, columnIndex);
       }}
     >
-      <input
-        ref={inputRef}
-        type="text"
-        maxLength={8}
+      <button
+        type="button"
         disabled={disabled}
-        className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}${isEditing ? " is-editing" : ""}${selected ? " is-selected" : ""}${conflict ? " is-conflict" : ""}`}
-        value={isEditing ? draft : display}
-        title={active ? "Drag the handle to fill neighboring cells. Hover for position, half, and select controls." : "Click to create coverage in this empty slot."}
+        className={`labor-model-coverage-cell-button${active ? " is-active" : ""} is-${kind}${selected ? " is-selected" : ""}${conflict ? " is-conflict" : ""}`}
+        title={active ? "Drag the handle to fill neighboring cells. Hover for coverage and select controls." : "Click to create coverage in this empty slot."}
         aria-label={`Coverage cell ${rowId || "row"} ${columnIndex + 1}`}
-        onPointerDown={(event) => {
-          if (disabled || event.button !== 0) return;
-          const isFocused = inputRef.current === document.activeElement;
-          if (isEditing && draft !== display) return;
-          if (!shouldCycleLaborModelCoveragePointer({ value: normalizedValue, isFocused })) return;
-          event.preventDefault();
-          onStart?.(rowId, columnIndex, nextClickValue);
+        aria-pressed={active}
+        onClick={() => {
+          if (disabled || !shouldCycleLaborModelCoveragePointer({ value: normalizedValue })) return;
+          onCreate?.(rowId, columnIndex, nextClickValue);
         }}
-        onFocus={(event) => {
-          const target = event.currentTarget;
-          setIsEditing(true);
-          setDraft(display);
-          window.requestAnimationFrame(() => target.select());
-        }}
-        onBlur={() => {
-          if (skipBlurCommitRef.current) {
-            skipBlurCommitRef.current = false;
-            return;
-          }
-          commitDraft();
-        }}
-        onChange={(event) => setDraft(event.target.value.toUpperCase().slice(0, 8))}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            skipBlurCommitRef.current = true;
-            setIsEditing(false);
-            setDraft(display);
-            event.currentTarget.blur();
-            return;
-          }
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commitDraft();
-            skipBlurCommitRef.current = true;
-            event.currentTarget.blur();
-            return;
-          }
-          if (event.key === " " && !String(draft || "").trim()) {
-            event.preventDefault();
-            onTextChange?.(rowId, columnIndex, getLaborModelNextCoverageValue(normalizedValue));
-          }
-        }}
-      />
+      >
+        <span>{display}</span>
+      </button>
       {!disabled && (
         <div
           className="labor-model-cell-toolbar"
@@ -1315,15 +1267,6 @@ function LaborModelCoverageCell({
           </button>
           <button
             type="button"
-            className="labor-model-cell-tool"
-            aria-label="Set half duration"
-            title="Set half duration"
-            onClick={() => onSplit?.(rowId, columnIndex, normalizedValue === LABOR_MODEL_HALF_COVERAGE_VALUE ? LABOR_MODEL_FULL_COVERAGE_VALUE : LABOR_MODEL_HALF_COVERAGE_VALUE)}
-          >
-            <span>1/2</span>
-          </button>
-          <button
-            type="button"
             className={`labor-model-cell-tool is-select${selected ? " is-selected" : ""}`}
             aria-label={selected ? "Deselect cell" : "Select cell"}
             aria-pressed={selected}
@@ -1340,11 +1283,34 @@ function LaborModelCoverageCell({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
-          <div className="hour-analysis-picker-heading">Coverage</div>
-          <div className="hour-analysis-picker-options">
-            {positionOptions.map((option, index) => {
+          <div className="labor-model-cell-position-section">
+            <div className="hour-analysis-picker-heading">Duration</div>
+            <div className="hour-analysis-picker-options">
+              {durationOptions.map((option, index) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`hour-analysis-picker-option${activeDuration === option.value && active ? " is-active" : ""}`}
+                  style={{ animation: positionReady ? `filterChipIn 0.25s ease-out ${index * 0.025}s both` : "none" }}
+                  onClick={() => {
+                    onPositionChange?.(rowId, columnIndex, setLaborModelCoverageDuration(normalizedValue, rowGroupKey, option.value));
+                    setPositionOpen(false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="labor-model-cell-position-section">
+            <div className="hour-analysis-picker-heading">Position</div>
+            <div className="hour-analysis-picker-options">
+            {positionChoices.map((option, index) => {
               const optionValue = normalizeLaborModelCoverageCell(option.value);
-              const activeOption = optionValue === normalizedValue;
+              const optionRole = getLaborModelCoverageExplicitRoleOption(optionValue) || getLaborModelCoverageRoleOption(optionValue);
+              const activeOption = optionValue === LABOR_MODEL_MARKETING_COVERAGE_VALUE
+                ? normalizedValue === LABOR_MODEL_MARKETING_COVERAGE_VALUE
+                : Boolean(activeRoleOption && optionRole && activeRoleOption.groupKey === optionRole.groupKey);
               return (
                 <button
                   key={`${option.value}-${index}`}
@@ -1352,7 +1318,7 @@ function LaborModelCoverageCell({
                   className={`hour-analysis-picker-option${activeOption ? " is-active" : ""}`}
                   style={{ animation: positionReady ? `filterChipIn 0.25s ease-out ${index * 0.025}s both` : "none" }}
                   onClick={() => {
-                    onPositionChange?.(rowId, columnIndex, option.value);
+                    onPositionChange?.(rowId, columnIndex, setLaborModelCoveragePosition(normalizedValue, rowGroupKey, option.value));
                     setPositionOpen(false);
                   }}
                 >
@@ -1360,6 +1326,22 @@ function LaborModelCoverageCell({
                 </button>
               );
             })}
+            </div>
+          </div>
+          <div className="labor-model-cell-position-section">
+            <div className="hour-analysis-picker-heading">Actions</div>
+            <div className="hour-analysis-picker-options">
+              <button
+                type="button"
+                className="hour-analysis-picker-option is-reset"
+                onClick={() => {
+                  onPositionChange?.(rowId, columnIndex, "");
+                  setPositionOpen(false);
+                }}
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1996,9 +1978,49 @@ function getLaborModelCoverageRoleOption(value = "") {
   return LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias) || LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias.replace(/\s+/g, "")) || null;
 }
 
-function normalizeLaborModelCoverageCell(value = "") {
+function getLaborModelCoverageRoleOptionForGroup(groupKey = "") {
+  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
+  return LABOR_MODEL_ROLE_COVERAGE_OPTIONS.find((option) => option.groupKey === normalizedGroup) || null;
+}
+
+function parseLaborModelCoverageCompound(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw || (!raw.includes(":") && !raw.includes("|"))) return null;
+  const parts = raw.split(/[:|]/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  let duration = "full";
+  let roleOption = null;
+  let isMarketing = false;
+  parts.forEach((part) => {
+    const normalized = part.toLowerCase();
+    if (LABOR_MODEL_MARKETING_TOKENS.has(normalized)) {
+      isMarketing = true;
+      return;
+    }
+    if (["0.5", ".5", "1/2", "1⁄2", "half", "h"].includes(normalized)) {
+      duration = "half";
+      return;
+    }
+    const nextRoleOption = getLaborModelCoverageRoleOption(part);
+    if (nextRoleOption) {
+      roleOption = nextRoleOption;
+      return;
+    }
+    if (LEGACY_LABOR_MODEL_ACTIVE_TOKENS.has(normalized) || normalized === "full") {
+      duration = "full";
+      return;
+    }
+  });
+  if (isMarketing) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
+  if (roleOption) return duration === "half" ? `${LABOR_MODEL_HALF_COVERAGE_VALUE}:${roleOption.label}` : roleOption.label;
+  return duration === "half" ? LABOR_MODEL_HALF_COVERAGE_VALUE : LABOR_MODEL_FULL_COVERAGE_VALUE;
+}
+
+export function normalizeLaborModelCoverageCell(value = "") {
   const raw = String(value || "").trim();
   if (!raw || raw === "-") return "";
+  const compound = parseLaborModelCoverageCompound(raw);
+  if (compound) return compound;
   const normalized = raw.toLowerCase();
   if (LABOR_MODEL_MARKETING_TOKENS.has(normalized)) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
   if (["0.5", ".5", "1/2", "1⁄2", "half", "h"].includes(normalized)) return LABOR_MODEL_HALF_COVERAGE_VALUE;
@@ -2025,6 +2047,7 @@ function isLaborModelMarketingCoverage(value = "") {
 function getLaborModelCoverageKind(value = "") {
   const normalized = normalizeLaborModelCoverageCell(value);
   if (!normalized) return "empty";
+  if (normalized.startsWith(`${LABOR_MODEL_HALF_COVERAGE_VALUE}:`)) return "half";
   if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "half";
   if (normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return "marketing";
   if (getLaborModelCoverageRoleOption(normalized)) return "role";
@@ -2042,18 +2065,65 @@ function getLaborModelCoverageMarketingWeight(value = "") {
   return isLaborModelMarketingCoverage(value) ? 1 : 0;
 }
 
-function getLaborModelNextCoverageValue(value = "") {
+function getLaborModelCoverageExplicitRoleOption(value = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized || normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return null;
+  if (normalized.includes(":")) {
+    const roleToken = normalized.split(":").find((part) => getLaborModelCoverageRoleOption(part));
+    return getLaborModelCoverageRoleOption(roleToken);
+  }
+  return getLaborModelCoverageRoleOption(normalized);
+}
+
+function getLaborModelCoverageRoleOptionForCell(value = "", rowGroupKey = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized || normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return null;
+  return getLaborModelCoverageExplicitRoleOption(normalized) || getLaborModelCoverageRoleOptionForGroup(rowGroupKey);
+}
+
+function getLaborModelCoverageDuration(value = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized) return "";
+  return getLaborModelCoverageKind(normalized) === "half" ? "half" : "full";
+}
+
+export function buildLaborModelCoverageValue({ duration = "full", roleValue = "", rowGroupKey = "" } = {}) {
+  const normalizedDuration = duration === "half" ? "half" : "full";
+  const roleOption = getLaborModelCoverageRoleOption(roleValue) || getLaborModelCoverageRoleOptionForGroup(rowGroupKey);
+  if (!roleOption) return normalizedDuration === "half" ? LABOR_MODEL_HALF_COVERAGE_VALUE : LABOR_MODEL_FULL_COVERAGE_VALUE;
+  return normalizedDuration === "half" ? `${LABOR_MODEL_HALF_COVERAGE_VALUE}:${roleOption.label}` : roleOption.label;
+}
+
+export function getLaborModelDefaultCoverageValueForRow(rowGroupKey = "") {
+  return buildLaborModelCoverageValue({ duration: "full", rowGroupKey });
+}
+
+export function setLaborModelCoverageDuration(value = "", rowGroupKey = "", duration = "full") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized) return buildLaborModelCoverageValue({ duration, rowGroupKey });
+  if (normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return normalized;
+  const roleOption = getLaborModelCoverageRoleOptionForCell(normalized, rowGroupKey);
+  return buildLaborModelCoverageValue({ duration, roleValue: roleOption?.label, rowGroupKey });
+}
+
+export function setLaborModelCoveragePosition(value = "", rowGroupKey = "", positionValue = "") {
+  const normalizedPosition = normalizeLaborModelCoverageCell(positionValue);
+  if (!normalizedPosition) return "";
+  if (normalizedPosition === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
+  const duration = getLaborModelCoverageDuration(value) || "full";
+  const roleOption = getLaborModelCoverageExplicitRoleOption(normalizedPosition) || getLaborModelCoverageRoleOption(normalizedPosition);
+  return buildLaborModelCoverageValue({ duration, roleValue: roleOption?.label, rowGroupKey });
+}
+
+function getLaborModelNextCoverageValue(value = "", rowGroupKey = "") {
   const kind = getLaborModelCoverageKind(value);
-  if (kind === "empty") return LABOR_MODEL_FULL_COVERAGE_VALUE;
-  if (kind === "full") return LABOR_MODEL_HALF_COVERAGE_VALUE;
-  if (kind === "half") return "";
+  if (kind === "empty") return getLaborModelDefaultCoverageValueForRow(rowGroupKey);
   return "";
 }
 
 export function shouldCycleLaborModelCoveragePointer({ value = "", isFocused = false } = {}) {
   const kind = getLaborModelCoverageKind(value);
   if (kind === "empty") return true;
-  if (kind === "full" || kind === "half") return Boolean(isFocused);
   return false;
 }
 
@@ -2061,13 +2131,17 @@ function getLaborModelCoverageDisplay(value = "") {
   const normalized = normalizeLaborModelCoverageCell(value);
   if (normalized === LABOR_MODEL_FULL_COVERAGE_VALUE) return "";
   if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "1/2";
+  if (normalized.startsWith(`${LABOR_MODEL_HALF_COVERAGE_VALUE}:`)) {
+    const roleOption = getLaborModelCoverageExplicitRoleOption(normalized);
+    return roleOption?.label || "1/2";
+  }
   return normalized;
 }
 
 function getLaborModelCoverageOperatingGroupKey(value = "", row = {}) {
   const kind = getLaborModelCoverageKind(value);
   if (kind === "empty" || kind === "marketing") return "";
-  const roleOption = getLaborModelCoverageRoleOption(value);
+  const roleOption = getLaborModelCoverageExplicitRoleOption(value);
   if (roleOption) return roleOption.groupKey;
   return normalizeLaborModelGroupKey(row.group_key, row);
 }
@@ -13542,10 +13616,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           height: 28px;
           min-width: 0;
           border: 1px solid #111827;
-          border-radius: 6px;
+		          border-radius: 6px;
 		          background: #111827;
 		          color: rgba(255,255,255,0.86);
-          caret-color: ${C.pri};
           cursor: pointer;
           font-family: inherit;
           font-size: 9px;
@@ -13556,11 +13629,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           overflow: hidden;
           text-overflow: clip;
           outline: none;
+          padding: 0 3px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
 	          transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, color 120ms ease;
 	        }
-        .labor-model-coverage-cell-button::selection {
-          background: rgba(132, 204, 22, 0.28);
-          color: ${C.text};
+        .labor-model-coverage-cell-button span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: clip;
         }
 	        .labor-model-coverage-cell-button:hover {
 	          border-color: rgba(132, 204, 22, 0.6);
@@ -13601,13 +13679,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(135deg, #fff7ed, #fed7aa);
           color: #9a3412;
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.62), 0 6px 14px rgba(234, 88, 12, 0.13);
-        }
-	        .labor-model-coverage-cell-button.is-editing {
-	          border-color: rgba(20, 83, 45, 0.3);
-	          background: #fff;
-	          color: ${C.text};
-          cursor: text;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(20, 83, 45, 0.12);
         }
 		        .labor-model-coverage-cell-button.is-active:focus {
 		          box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 0 0 3px rgba(20, 83, 45, 0.16);
@@ -13676,6 +13747,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          text-align: left;
 	          animation: filterSlideIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 	        }
+        .labor-model-cell-position-section + .labor-model-cell-position-section {
+          margin-top: 10px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(226, 232, 240, 0.85);
+        }
 		        .labor-model-fill-handle {
 		          position: absolute;
 		          top: 5px;
@@ -16149,14 +16225,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                                    conflict={cellConflict}
 		                                    bulkMode={selectedLaborModelCellCount > 0}
 		                                    positionOptions={laborModelCoveragePositionOptions}
+		                                    rowGroupKey={row.group_key}
 		                                    rowId={row.id}
 		                                    columnIndex={columnIndex}
-		                                    onStart={(targetRowId, targetColumnIndex, nextValue) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
+		                                    onCreate={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
 		                                    onFillStart={(targetRowId, targetColumnIndex, fillValue) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, fillValue)}
 		                                    onEnter={(targetRowId, targetColumnIndex) => enterLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
-		                                    onTextChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
 		                                    onPositionChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
-		                                    onSplit={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
 		                                    onToggleSelected={(targetRowId, targetColumnIndex) => toggleLaborModelCellSelection(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
 		                                  />
 		                                </td>
