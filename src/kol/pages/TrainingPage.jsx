@@ -3048,7 +3048,7 @@ function calculateHourAnalysisRecommendedTarget(requiredWeekly = 0, reservePerce
   const reserve = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reservePercent, HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT)));
   if (required <= 0) return 0;
   if (reserve <= 0) return required;
-  return normalizeHourAnalysisNumber(required / (1 - (reserve / 100)), 0);
+  return normalizeHourAnalysisNumber(required * (1 + (reserve / 100)), 0);
 }
 
 function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
@@ -3145,6 +3145,71 @@ function buildHourAnalysisCapacityStatus({ requiredWeekly = 0, targetWeekly = 0,
     return { key: "healthy_high", label: "On target", tone: "success", message: `Expected capacity is inside the ${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% relief sensitivity band and is ${formatHourAnalysisHours(expected - target)} hrs/wk above the planning case.` };
   }
   return { key: "healthy", label: "On target", tone: "success", message: `Expected capacity lands on the ${HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT}% frontline relief planning case.` };
+}
+
+export function formatHourAnalysisCapacityDelta(value = 0) {
+  const delta = normalizeHourAnalysisDelta(value);
+  if (delta > 0) {
+    return {
+      value: `+${formatHourAnalysisHours(delta)} hrs`,
+      tone: "surplus",
+      label: "Surplus capacity",
+    };
+  }
+  if (delta < 0) {
+    return {
+      value: `-${formatHourAnalysisHours(Math.abs(delta))} hrs`,
+      tone: "short",
+      label: "Short to target",
+    };
+  }
+  return {
+    value: "0 hrs",
+    tone: "even",
+    label: "Aligned",
+  };
+}
+
+function clampHourAnalysisPercent(value, min = 0, max = 100) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return min;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
+  const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key);
+  const expected = normalizeHourAnalysisNumber(row.expected, 0);
+  const floor = normalizeHourAnalysisNumber(row.requiredWeekly, 0);
+  const target = normalizeHourAnalysisNumber(row.targetWeekly || floor, floor);
+  const deltaToTarget = normalizeHourAnalysisDelta(expected - target);
+  const deltaToFloor = normalizeHourAnalysisDelta(expected - floor);
+  const delta = formatHourAnalysisCapacityDelta(deltaToTarget);
+  const maxWeekly = Math.max(expected, target, floor, 1) * 1.1;
+  const expectedPct = clampHourAnalysisPercent((expected / maxWeekly) * 100, 1.5, 100);
+  const floorPct = clampHourAnalysisPercent((floor / maxWeekly) * 100);
+  const targetPct = clampHourAnalysisPercent((target / maxWeekly) * 100);
+  const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 89);
+  const tone = deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "healthy";
+
+  return {
+    key: row.key || "",
+    roleLabel: getHourAnalysisGroupShortLabel(row.key),
+    isFrontline,
+    expected,
+    floor,
+    target,
+    deltaToTarget,
+    deltaToFloor,
+    tone,
+    delta,
+    expectedPct,
+    floorPct,
+    targetPct,
+    floorLabelPct: labelPct(floorPct),
+    targetLabelPct: labelPct(targetPct),
+    bufferLeftPct: floorPct,
+    bufferWidthPct: isFrontline ? Math.max(0, targetPct - floorPct) : 0,
+  };
 }
 
 export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) {
@@ -7513,6 +7578,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter((row) => preferredOrder.has(row.key))
       .sort((left, right) => preferredOrder.get(left.key) - preferredOrder.get(right.key));
   }, [hourAnalysisModel.weeklyRows]);
+  const hourAnalysisCapacityLayoutColumns = useMemo(() => [
+    hourAnalysisCapacityRows.filter((row) => !HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
+    hourAnalysisCapacityRows.filter((row) => HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
+  ], [hourAnalysisCapacityRows]);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
   const laborModelCoveragePositionOptions = useMemo(() => {
     const configuredGroups = new Set(approvedLaborPositionOptions.flatMap((option) => {
@@ -7559,6 +7628,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hourAnalysisTargetProgress = hourAnalysisModel.totals.targetWeekly > 0
     ? Math.max(0, Math.min(100, (hourAnalysisModel.totals.projectedExpected / hourAnalysisModel.totals.targetWeekly) * 100))
     : 0;
+  const hourAnalysisCapacityDelta = formatHourAnalysisCapacityDelta(hourAnalysisModel.totals.expectedGapToTarget);
   const hourAnalysisDecision = useMemo(() => {
     const totals = hourAnalysisModel.totals;
     if (totals.hireDeficitHours > 0) {
@@ -11582,174 +11652,305 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(90deg, ${C.pri}, #16a34a);
           transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
         }
+        @keyframes hourAnalysisCapacityRowIn {
+          from { opacity: 0; transform: translate3d(0, 10px, 0); filter: blur(4px); }
+          to { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+        }
+        @keyframes hourAnalysisCapacityShimmer {
+          from { transform: translateX(-135%); }
+          to { transform: translateX(135%); }
+        }
+        @keyframes hourAnalysisCapacityFillGlimmer {
+          from { left: -58px; }
+          to { left: 100%; }
+        }
         .hour-analysis-capacity-dashboard {
           display: grid;
-          grid-template-columns: minmax(240px, 0.32fr) minmax(0, 1fr);
-          gap: 12px;
-          padding: 15px 16px 10px;
-          align-items: end;
+          grid-template-columns: minmax(150px, 0.18fr) minmax(0, 1fr);
+          gap: 10px;
+          padding: 10px 16px 6px;
+          align-items: center;
         }
         .hour-analysis-capacity-total {
+          position: relative;
+          overflow: hidden;
+          display: inline-flex;
+          align-items: center;
           border: 1px solid rgba(20, 83, 45, 0.2);
           border-radius: 8px;
-          background: linear-gradient(135deg, rgba(240,253,244,0.92), #ffffff 64%);
-          padding: 11px 12px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.94), #ffffff 64%);
+          padding: 10px 12px;
+          min-height: 44px;
           min-width: 0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 16px 30px rgba(15, 23, 42, 0.04);
+        }
+        .hour-analysis-capacity-total::after,
+        .hour-analysis-capacity-row::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,0.52) 44%, transparent 76%);
+          opacity: 0.42;
+          transform: translateX(-135%);
+          animation: hourAnalysisCapacityShimmer 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
         }
         .hour-analysis-capacity-total.is-short {
-          border-color: rgba(180, 83, 9, 0.24);
-          background: linear-gradient(135deg, rgba(255,247,237,0.95), #ffffff 64%);
+          border-color: rgba(185, 28, 28, 0.24);
+          background: linear-gradient(135deg, rgba(254,242,242,0.96), #ffffff 66%);
         }
         .hour-analysis-capacity-total.is-surplus {
           border-color: rgba(20, 83, 45, 0.24);
         }
-        .hour-analysis-capacity-total span,
-        .hour-analysis-capacity-legend span {
-          color: ${C.textMut};
-          font-size: 10px;
-          font-weight: 950;
-          line-height: 1;
-          text-transform: uppercase;
-        }
         .hour-analysis-capacity-total strong {
           display: block;
-          margin-top: 6px;
           color: ${C.text};
           font-size: 25px;
           font-weight: 950;
           line-height: 1;
         }
         .hour-analysis-capacity-total.is-short strong {
-          color: #b45309;
+          color: #b91c1c;
         }
-        .hour-analysis-capacity-total em {
-          display: block;
-          margin-top: 6px;
-          color: ${C.textMut};
+        .hour-analysis-capacity-total.is-surplus strong {
+          color: #047857;
+        }
+        .hour-analysis-capacity-buffer-note {
+          align-self: center;
+          justify-self: end;
+          max-width: 220px;
+          border: 1px solid rgba(20, 83, 45, 0.12);
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.78), #ffffff 72%);
+          color: ${C.textSec};
+          padding: 8px 10px;
           font-size: 11px;
-          font-style: normal;
-          font-weight: 800;
-          line-height: 1.2;
-        }
-        .hour-analysis-capacity-legend {
-          display: inline-flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 16px;
-          flex-wrap: wrap;
-          padding-bottom: 4px;
-        }
-        .hour-analysis-capacity-legend i {
-          display: inline-block;
-          width: 18px;
-          height: 8px;
-          margin-right: 7px;
-          border-radius: 999px;
-          vertical-align: middle;
-        }
-        .hour-analysis-capacity-legend i.is-floor {
-          width: 2px;
-          height: 16px;
-          border-radius: 0;
-          background: ${C.text};
-        }
-        .hour-analysis-capacity-legend i.is-buffer {
-          background: rgba(132, 204, 22, 0.28);
+          font-weight: 900;
+          line-height: 1;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.86);
         }
         .hour-analysis-capacity-visual {
           display: grid;
-          gap: 9px;
-          padding: 0 16px 16px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 7px;
+          padding: 0 16px 11px;
+          align-items: start;
+        }
+        .hour-analysis-capacity-column {
+          display: grid;
+          gap: 7px;
+          min-width: 0;
         }
         .hour-analysis-capacity-visual.is-recent-change {
           animation: hourAnalysisChangePulse 760ms cubic-bezier(0.22, 1, 0.36, 1);
         }
         .hour-analysis-capacity-row {
+          position: relative;
+          overflow: hidden;
           display: grid;
-          grid-template-columns: 92px minmax(220px, 1fr) minmax(146px, auto) minmax(88px, auto);
-          gap: 12px;
-          align-items: center;
+          gap: 5px;
           border: 1px solid ${C.borderLight};
           border-radius: 8px;
-          background: #fff;
-          padding: 10px 12px;
+          background: linear-gradient(135deg, #ffffff 0%, #fbfdff 100%);
+          padding: 7px 8px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 8px 18px rgba(15, 23, 42, 0.035);
+          cursor: default;
+          animation: hourAnalysisCapacityRowIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          animation-delay: var(--capacity-row-delay, 0ms);
+          transition:
+            transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            background 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-row:hover {
+          transform: translateY(-2px) scale(1.006);
+          border-color: rgba(20, 83, 45, 0.5);
+          outline: 2px solid rgba(20, 83, 45, 0.22);
+          outline-offset: 2px;
+          background: linear-gradient(135deg, #ffffff 0%, rgba(240,253,244,0.9) 100%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.94), 0 18px 34px rgba(15, 23, 42, 0.13);
+        }
+        .hour-analysis-capacity-row.is-short:hover {
+          border-color: rgba(185, 28, 28, 0.46);
+          outline-color: rgba(185, 28, 28, 0.2);
+          background: linear-gradient(135deg, #ffffff 0%, rgba(254,242,242,0.95) 100%);
+        }
+        .hour-analysis-capacity-row:hover::after {
+          opacity: 0.68;
+          animation-duration: 1.4s;
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-role strong {
+          color: ${C.pri};
+        }
+        .hour-analysis-capacity-row.is-short:hover .hour-analysis-capacity-role strong {
+          color: #991b1b;
+        }
+        .hour-analysis-capacity-row.is-short {
+          border-color: rgba(185, 28, 28, 0.2);
+          background: linear-gradient(135deg, #ffffff 0%, rgba(254,242,242,0.76) 100%);
+        }
+        .hour-analysis-capacity-row.is-surplus {
+          border-color: rgba(20, 83, 45, 0.2);
+          background: linear-gradient(135deg, #ffffff 0%, rgba(240,253,244,0.82) 100%);
+        }
+        .hour-analysis-capacity-row.is-healthy {
+          border-color: rgba(20, 83, 45, 0.14);
+        }
+        .hour-analysis-capacity-row-header {
+          position: relative;
+          z-index: 2;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .hour-analysis-capacity-role {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          min-width: 0;
         }
         .hour-analysis-capacity-role strong {
-          display: block;
           color: ${C.text};
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 950;
           line-height: 1;
         }
-        .hour-analysis-capacity-role span,
-        .hour-analysis-capacity-numbers span {
-          display: block;
-          margin-top: 4px;
-          color: ${C.textMut};
-          font-size: 10.5px;
-          font-weight: 850;
-          line-height: 1.15;
-          white-space: nowrap;
-        }
         .hour-analysis-capacity-bar {
           position: relative;
-          height: 34px;
+          z-index: 2;
+          height: 44px;
           border: 1px solid #d8e4d4;
-          border-radius: 4px;
+          border-radius: 7px;
           background:
-            linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px) 0 0 / 25% 100%,
-            #f8fafc;
+            linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px) 0 0 / 20% 100%,
+            linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
           overflow: hidden;
+          box-shadow: inset 0 1px 2px rgba(15,23,42,0.04);
+          transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-bar {
+          border-color: rgba(20,83,45,0.34);
+          box-shadow: inset 0 1px 2px rgba(15,23,42,0.05), 0 9px 24px rgba(20,83,45,0.12);
+        }
+        .hour-analysis-capacity-row.is-short:hover .hour-analysis-capacity-bar {
+          border-color: rgba(185,28,28,0.34);
+          box-shadow: inset 0 1px 2px rgba(15,23,42,0.05), 0 9px 24px rgba(185,28,28,0.1);
         }
         .hour-analysis-capacity-buffer {
           position: absolute;
           top: 0;
           bottom: 0;
-          background: rgba(132, 204, 22, 0.24);
-          border-left: 1px solid rgba(20, 83, 45, 0.2);
+          background:
+            repeating-linear-gradient(135deg, rgba(132,204,22,0.16) 0 7px, rgba(132,204,22,0.28) 7px 14px);
+          border-left: 1px solid rgba(20, 83, 45, 0.18);
+          border-right: 1px solid rgba(20, 83, 45, 0.16);
         }
         .hour-analysis-capacity-fill {
           position: absolute;
           left: 0;
-          top: 7px;
-          bottom: 7px;
-          border-radius: 0 4px 4px 0;
-          background: linear-gradient(90deg, #14532d, #3f6212);
-          box-shadow: 0 0 0 1px rgba(20,83,45,0.08);
-          transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+          top: 20px;
+          height: 12px;
+          border-radius: 0 999px 999px 0;
+          background: linear-gradient(90deg, #14532d, #22c55e);
+          box-shadow: 0 0 0 1px rgba(20,83,45,0.08), 0 8px 18px rgba(20,83,45,0.12);
+          overflow: hidden;
+          transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .hour-analysis-capacity-floor,
-        .hour-analysis-capacity-target {
+        .hour-analysis-capacity-fill::after {
+          content: "";
+          position: absolute;
+          top: -8px;
+          bottom: -8px;
+          left: -58px;
+          width: 42px;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.72), transparent);
+          transform: skewX(-18deg);
+          animation: hourAnalysisCapacityFillGlimmer 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-fill::after {
+          animation-duration: 1.25s;
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-fill {
+          filter: saturate(1.12);
+        }
+        .hour-analysis-capacity-row.is-short .hour-analysis-capacity-fill {
+          background: linear-gradient(90deg, #991b1b, #ef4444);
+          box-shadow: 0 0 0 1px rgba(185,28,28,0.09), 0 8px 18px rgba(185,28,28,0.13);
+        }
+        .hour-analysis-capacity-row.is-healthy .hour-analysis-capacity-fill {
+          background: linear-gradient(90deg, #0f766e, #14b8a6);
+        }
+        .hour-analysis-capacity-expected-label,
+        .hour-analysis-capacity-marker-label,
+        .hour-analysis-capacity-delta-float {
+          position: absolute;
+          z-index: 5;
+          border-radius: 999px;
+          padding: 4px 6px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          white-space: nowrap;
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08);
+          transition:
+            transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            background 180ms cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-expected-label {
+          top: 6px;
+          left: 8px;
+          background: rgba(255,255,255,0.88);
+          color: ${C.text};
+        }
+        .hour-analysis-capacity-marker {
           position: absolute;
           top: -1px;
           bottom: -1px;
+          z-index: 4;
           width: 2px;
           background: ${C.text};
           transform: translateX(-1px);
+          transition: left 420ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .hour-analysis-capacity-target {
-          background: rgba(20, 83, 45, 0.38);
+        .hour-analysis-capacity-marker.is-target {
+          background: rgba(20, 83, 45, 0.46);
         }
-        .hour-analysis-capacity-gap {
-          justify-self: end;
-          min-width: 74px;
-          border-radius: 999px;
-          padding: 6px 8px;
-          background: #ecfdf5;
-          color: #047857;
-          font-size: 10.5px;
-          font-weight: 950;
-          line-height: 1;
-          text-align: center;
-          white-space: nowrap;
+        .hour-analysis-capacity-marker-label {
+          transform: translateX(-50%);
+          background: rgba(255,255,255,0.94);
+          color: ${C.text};
         }
-        .hour-analysis-capacity-row.is-short .hour-analysis-capacity-gap {
-          background: #fff7ed;
-          color: #b45309;
+        .hour-analysis-capacity-marker-label.is-floor {
+          top: 6px;
         }
-        .hour-analysis-capacity-row.is-surplus .hour-analysis-capacity-gap {
-          background: #fef2f2;
+        .hour-analysis-capacity-marker-label.is-target {
+          bottom: 5px;
+          color: #166534;
+        }
+        .hour-analysis-capacity-delta-float {
+          right: 7px;
+          top: 6px;
+          background: rgba(248,250,252,0.94);
+          color: ${C.text};
+        }
+        .hour-analysis-capacity-delta-float.is-short {
+          background: rgba(254,242,242,0.95);
           color: #b91c1c;
+        }
+        .hour-analysis-capacity-delta-float.is-surplus {
+          background: rgba(236,253,245,0.95);
+          color: #047857;
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-expected-label,
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-delta-float {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 22px rgba(15,23,42,0.12);
+        }
+        .hour-analysis-capacity-row:hover .hour-analysis-capacity-marker-label {
+          transform: translateX(-50%) translateY(-1px);
+          box-shadow: 0 10px 22px rgba(15,23,42,0.12);
         }
         .hour-analysis-hire-list {
           display: grid;
@@ -14135,7 +14336,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-split-panel,
             .hour-analysis-position-panel,
             .hour-analysis-picker-option,
-            .hour-analysis-audit-row { animation: none; }
+            .hour-analysis-audit-row,
+            .hour-analysis-capacity-total::after,
+            .hour-analysis-capacity-row,
+            .hour-analysis-capacity-row::after,
+            .hour-analysis-capacity-fill::after { animation: none; }
 	          .labor-tab-indicator,
 	          .labor-view-switcher-indicator,
 	          .labor-tab-button,
@@ -14150,7 +14355,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-split-trigger,
             .hour-analysis-position-trigger,
             .hour-analysis-picker-option,
-            .hour-analysis-progress-fill { transition: none; }
+            .hour-analysis-progress-fill,
+            .hour-analysis-capacity-fill,
+            .hour-analysis-capacity-marker { transition: none; }
 	        }
 	        @media (max-width: 880px) {
 	          .labor-page-shell { padding: 14px 8px 28px; }
@@ -14186,9 +14393,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .hour-analysis-roster-summary { grid-template-columns: 1fr; }
           .hour-analysis-decision-grid { grid-template-columns: 1fr; }
           .hour-analysis-capacity-dashboard { grid-template-columns: 1fr; }
-          .hour-analysis-capacity-row { grid-template-columns: 72px minmax(170px, 1fr); }
-          .hour-analysis-capacity-numbers,
-          .hour-analysis-capacity-gap { justify-self: start; }
+          .hour-analysis-capacity-visual { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-buffer-note { justify-self: start; }
+          .hour-analysis-capacity-row-header { align-items: flex-start; }
+          .hour-analysis-capacity-bar { height: 52px; }
+          .hour-analysis-capacity-expected-label { top: 8px; }
+          .hour-analysis-capacity-fill { top: 24px; }
+          .hour-analysis-capacity-delta-float { top: 8px; right: 8px; }
+          .hour-analysis-capacity-marker-label.is-floor { top: 6px; }
+          .hour-analysis-capacity-marker-label.is-target { bottom: 8px; }
           .hour-analysis-capacity-standard { grid-template-columns: 1fr; }
           .hour-analysis-capacity-grid { grid-template-columns: 1fr; }
           .hour-analysis-card-header { align-items: flex-start; flex-direction: column; }
@@ -15589,6 +15802,75 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div className="hour-analysis-card">
             <div className="hour-analysis-card-header">
               <div>
+                <h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>
+              </div>
+            </div>
+            <div className="hour-analysis-capacity-dashboard">
+              <div className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
+                <strong>{hourAnalysisCapacityDelta.value}</strong>
+              </div>
+              <div className="hour-analysis-capacity-buffer-note">
+                CSR/PCT: +20% buffer
+              </div>
+            </div>
+            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
+              {hourAnalysisCapacityLayoutColumns.map((columnRows, columnIndex) => (
+                <div className="hour-analysis-capacity-column" key={columnIndex === 0 ? "leadership" : "frontline"}>
+                  {columnRows.map((row) => {
+                    const visual = buildHourAnalysisCapacityRowVisualModel(row);
+                    const rowIndex = hourAnalysisCapacityRows.findIndex((item) => item.key === row.key);
+                    return (
+                      <div
+                        key={row.key}
+                        className={`hour-analysis-capacity-row is-${visual.tone}`}
+                        style={{ "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms` }}
+                      >
+                        <div className="hour-analysis-capacity-row-header">
+                          <div className="hour-analysis-capacity-role">
+                            <strong>{visual.roleLabel}</strong>
+                          </div>
+                        </div>
+                        <div
+                          className="hour-analysis-capacity-bar"
+                          aria-label={`${visual.roleLabel} expected ${formatHourAnalysisHours(visual.expected)} hours, floor ${formatHourAnalysisHours(visual.floor)} hours, target ${formatHourAnalysisHours(visual.target)} hours, variance ${visual.delta.value}`}
+                        >
+                          {visual.isFrontline && (
+                            <div
+                              className="hour-analysis-capacity-buffer"
+                              style={{ left: `${visual.bufferLeftPct}%`, width: `${visual.bufferWidthPct}%` }}
+                            />
+                          )}
+                          <div className="hour-analysis-capacity-fill" style={{ width: `${visual.expectedPct}%` }} />
+                          <span className="hour-analysis-capacity-expected-label">
+                            Expected {formatHourAnalysisHours(visual.expected)}
+                          </span>
+                          <div className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
+                          <span className="hour-analysis-capacity-marker-label is-floor" style={{ left: `${visual.floorLabelPct}%` }}>
+                            Floor {formatHourAnalysisHours(visual.floor)}
+                          </span>
+                          {visual.isFrontline && (
+                            <>
+                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
+                              <span className="hour-analysis-capacity-marker-label is-target" style={{ left: `${visual.targetLabelPct}%` }}>
+                                Target {formatHourAnalysisHours(visual.target)}
+                              </span>
+                            </>
+                          )}
+                          <span className={`hour-analysis-capacity-delta-float is-${visual.delta.tone}`}>
+                            {visual.delta.value}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="hour-analysis-card">
+            <div className="hour-analysis-card-header">
+              <div>
                 <h3 className="hour-analysis-card-title">Headcount & Expected Hours</h3>
                 <div className="hour-analysis-card-subtitle">Active roster and planning rows by role and commitment.</div>
               </div>
@@ -15710,77 +15992,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </tr>
                 </tbody>
               </table>
-            </div>
-          </div>
-
-          <div className="hour-analysis-card">
-            <div className="hour-analysis-card-header">
-              <div>
-                <h3 className="hour-analysis-card-title">Staffing Capacity</h3>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <Badge color={hourAnalysisModel.totals.capacityStatus.tone}>
-                  {hourAnalysisModel.totals.capacityStatus.label}
-                </Badge>
-              </div>
-            </div>
-            <div className="hour-analysis-capacity-dashboard">
-              <div className={`hour-analysis-capacity-total${hourAnalysisModel.totals.expectedGapToTarget < 0 ? " is-short" : hourAnalysisModel.totals.expectedGapToTarget > 0 ? " is-surplus" : " is-even"}`}>
-                <span>Gross Position Gap</span>
-                <strong>
-                  {hourAnalysisModel.totals.expectedGapToTarget < 0
-                    ? `${formatHourAnalysisHours(Math.abs(hourAnalysisModel.totals.expectedGapToTarget))} short`
-                    : hourAnalysisModel.totals.expectedGapToTarget > 0
-                      ? `${formatHourAnalysisHours(hourAnalysisModel.totals.expectedGapToTarget)} surplus`
-                      : "Aligned"}
-                </strong>
-                <em>{formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} expected / {formatHourAnalysisHours(hourAnalysisModel.totals.targetWeekly)} target</em>
-              </div>
-              <div className="hour-analysis-capacity-legend">
-                <span><i className="is-floor" />Operational Floor</span>
-                <span><i className="is-buffer" />20% Buffer</span>
-              </div>
-            </div>
-            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
-              {hourAnalysisCapacityRows.map((row) => {
-                const isFrontline = row.key === "csr" || row.key === "pct";
-                const expected = normalizeHourAnalysisNumber(row.expected, 0);
-                const floor = normalizeHourAnalysisNumber(row.requiredWeekly, 0);
-                const target = normalizeHourAnalysisNumber(row.targetWeekly || floor, floor);
-                const maxWeekly = Math.max(expected, target, floor, 1) * 1.08;
-                const expectedPct = Math.max(1.5, Math.min(100, (expected / maxWeekly) * 100));
-                const floorPct = Math.max(0, Math.min(100, (floor / maxWeekly) * 100));
-                const targetPct = Math.max(floorPct, Math.min(100, (target / maxWeekly) * 100));
-                const shortToFloor = Math.max(0, floor - expected);
-                const surplusOverTarget = Math.max(0, expected - target);
-                const gapTone = shortToFloor > 0 ? "short" : surplusOverTarget > 0 ? "surplus" : "healthy";
-                const gapLabel = shortToFloor > 0
-                  ? `${formatHourAnalysisHours(shortToFloor)} short`
-                  : surplusOverTarget > 0
-                    ? `${formatHourAnalysisHours(surplusOverTarget)} surplus`
-                    : isFrontline
-                      ? "In buffer"
-                      : "At floor";
-                return (
-                  <div key={row.key} className={`hour-analysis-capacity-row is-${gapTone}`}>
-                    <div className="hour-analysis-capacity-role">
-                      <strong>{getHourAnalysisGroupShortLabel(row.key)}</strong>
-                      <span>{formatHourAnalysisHours(expected)} expected</span>
-                    </div>
-                    <div className="hour-analysis-capacity-bar" aria-label={`${getHourAnalysisGroupShortLabel(row.key)} expected ${formatHourAnalysisHours(expected)} hours against ${formatHourAnalysisHours(floor)} operational floor`}>
-                      <div className="hour-analysis-capacity-buffer" style={{ left: `${floorPct}%`, width: `${Math.max(0, targetPct - floorPct)}%`, display: isFrontline ? "block" : "none" }} />
-                      <div className="hour-analysis-capacity-fill" style={{ width: `${expectedPct}%` }} />
-                      <div className="hour-analysis-capacity-floor" style={{ left: `${floorPct}%` }} />
-                      {isFrontline && <div className="hour-analysis-capacity-target" style={{ left: `${targetPct}%` }} />}
-                    </div>
-                    <div className="hour-analysis-capacity-numbers">
-                      <span>Floor {formatHourAnalysisHours(floor)}</span>
-                      {isFrontline ? <span>Buffer {formatHourAnalysisHours(target)}</span> : null}
-                    </div>
-                    <div className="hour-analysis-capacity-gap">{gapLabel}</div>
-                  </div>
-                );
-              })}
             </div>
           </div>
 
