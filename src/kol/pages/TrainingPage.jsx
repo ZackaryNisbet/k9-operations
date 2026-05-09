@@ -1229,6 +1229,7 @@ function LaborModelCoverageCell({
   saving = false,
   conflict = false,
   bulkMode = false,
+  selectedCount = 0,
   positionOptions = LABOR_MODEL_GROUP_OPTIONS,
   roleColors = null,
   rowGroupKey = "",
@@ -1252,6 +1253,7 @@ function LaborModelCoverageCell({
   const display = getLaborModelCoverageDisplay(normalizedValue, rowGroupKey);
   const roleClass = activeRoleOption?.groupKey ? ` role-${activeRoleOption.groupKey}` : "";
   const roleStyle = activeRoleOption?.groupKey ? getLaborModelCoverageRoleStyle(activeRoleOption.groupKey, roleColors) : undefined;
+  const appliesToSelection = selected && selectedCount > 1;
   const durationOptions = [
     { value: "full", label: "Full shift" },
     { value: "half", label: "Half shift" },
@@ -1307,8 +1309,8 @@ function LaborModelCoverageCell({
           <button
             type="button"
             className="labor-model-cell-tool"
-            aria-label="Choose coverage position"
-            title="Choose coverage position"
+            aria-label={appliesToSelection ? "Choose coverage position for selected cells" : "Choose coverage position"}
+            title={appliesToSelection ? "Choose coverage position for selected cells" : "Choose coverage position"}
             onClick={() => setPositionOpen((prev) => !prev)}
           >
             <I.Tag />
@@ -1327,9 +1329,9 @@ function LaborModelCoverageCell({
             <button
               type="button"
               className="labor-model-cell-tool is-delete"
-              aria-label="Clear coverage cell"
-              title="Clear coverage cell"
-              onClick={() => onPositionChange?.(rowId, columnIndex, "")}
+              aria-label={appliesToSelection ? "Clear selected coverage cells" : "Clear coverage cell"}
+              title={appliesToSelection ? "Clear selected coverage cells" : "Clear coverage cell"}
+              onClick={() => onPositionChange?.(rowId, columnIndex, "", { type: "clear" })}
             >
               <I.Trash />
             </button>
@@ -1352,7 +1354,7 @@ function LaborModelCoverageCell({
                   className={`hour-analysis-picker-option${activeDuration === option.value && active ? " is-active" : ""}`}
                   style={{ animation: positionReady ? `filterChipIn 0.25s ease-out ${index * 0.025}s both` : "none" }}
                   onClick={() => {
-                    onPositionChange?.(rowId, columnIndex, setLaborModelCoverageDuration(normalizedValue, rowGroupKey, option.value));
+                    onPositionChange?.(rowId, columnIndex, setLaborModelCoverageDuration(normalizedValue, rowGroupKey, option.value), { type: "duration", duration: option.value });
                     setPositionOpen(false);
                   }}
                 >
@@ -1377,7 +1379,7 @@ function LaborModelCoverageCell({
                   className={`hour-analysis-picker-option${activeOption ? " is-active" : ""}`}
                   style={{ animation: positionReady ? `filterChipIn 0.25s ease-out ${index * 0.025}s both` : "none" }}
                   onClick={() => {
-                    onPositionChange?.(rowId, columnIndex, setLaborModelCoveragePosition(normalizedValue, rowGroupKey, option.value));
+                    onPositionChange?.(rowId, columnIndex, setLaborModelCoveragePosition(normalizedValue, rowGroupKey, option.value), { type: "position", positionValue: option.value });
                     setPositionOpen(false);
                   }}
                 >
@@ -1394,7 +1396,7 @@ function LaborModelCoverageCell({
                 type="button"
                 className="hour-analysis-picker-option is-reset"
                 onClick={() => {
-                  onPositionChange?.(rowId, columnIndex, "");
+                  onPositionChange?.(rowId, columnIndex, "", { type: "clear" });
                   setPositionOpen(false);
                 }}
               >
@@ -8087,13 +8089,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return next;
     });
   }, []);
-  const clearSelectedLaborModelCells = useCallback(() => {
-    setSelectedLaborModelCells(new Set());
-  }, []);
-  const updateSelectedLaborModelCells = useCallback((value) => {
+  const updateSelectedLaborModelCells = useCallback((value, action = null) => {
     const selectedKeys = [...selectedLaborModelCells];
     if (selectedKeys.length === 0) return;
-    const after = normalizeLaborModelCoverageCell(value);
+    const defaultAfter = normalizeLaborModelCoverageCell(value);
     mutateHourAnalysisLaborModel((model) => {
       const normalizedModel = normalizeHourAnalysisLaborModel(model);
       const nextDays = { ...normalizedModel.days };
@@ -8108,6 +8107,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const row = day?.rows?.find((item) => item.id === rowId);
         if (!day || !row || columnIndex < 0 || columnIndex >= day.columns.length) return;
         const current = String(row.coverage[columnIndex] || "").trim();
+        const after = action?.type === "duration"
+          ? setLaborModelCoverageDuration(current, row.group_key, action.duration)
+          : action?.type === "position"
+            ? setLaborModelCoveragePosition(current, row.group_key, action.positionValue)
+            : action?.type === "clear"
+              ? ""
+              : defaultAfter;
         if (current === after) return;
         before.push({
           day_key: normalizedDay,
@@ -8136,12 +8142,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           entity_label: "Labor Model bulk edit",
           summary: `Changed ${before.length} selected Labor Model cell${before.length === 1 ? "" : "s"}.`,
           before,
-          after,
+          after: action || defaultAfter,
         },
       };
     });
     setSelectedLaborModelCells(new Set());
   }, [mutateHourAnalysisLaborModel, selectedLaborModelCells]);
+  const updateHourAnalysisLaborModelCellOrSelection = useCallback((dayKey, rowId, columnIndex, value, action = null) => {
+    const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
+    const cellKey = makeLaborModelCellKey(normalizedDay, rowId, columnIndex);
+    if (selectedLaborModelCells.has(cellKey)) {
+      updateSelectedLaborModelCells(value, action);
+      return;
+    }
+    updateHourAnalysisLaborModelCell(normalizedDay, rowId, columnIndex, value);
+  }, [selectedLaborModelCells, updateHourAnalysisLaborModelCell, updateSelectedLaborModelCells]);
   const updateHourAnalysisLaborModelRow = useCallback((dayKey, rowId, updates = {}) => {
     const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
     mutateHourAnalysisLaborModel((model) => {
@@ -14033,8 +14048,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 8px;
           flex-wrap: wrap;
         }
-        .labor-model-settings-button,
-        .labor-model-bulk-toolbar button {
+        .labor-model-settings-button {
           min-height: 32px;
           display: inline-flex;
           align-items: center;
@@ -14051,29 +14065,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           cursor: pointer;
           transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
         }
-        .labor-model-settings-button:hover,
-        .labor-model-bulk-toolbar button:hover {
+        .labor-model-settings-button:hover {
           background: #f8fafc;
           border-color: #b8c5d5;
           color: ${C.pri};
           transform: translateY(-1px);
-        }
-        .labor-model-bulk-toolbar {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          border: 1px solid rgba(20, 83, 45, 0.2);
-          border-radius: 10px;
-          background: rgba(240, 253, 244, 0.92);
-          padding: 5px;
-          box-shadow: 0 12px 24px rgba(20, 83, 45, 0.1);
-        }
-        .labor-model-bulk-toolbar span {
-          padding: 0 7px;
-          color: ${C.pri};
-          font-size: 11px;
-          font-weight: 950;
-          white-space: nowrap;
         }
 	        .labor-model-grid-title {
 	          color: ${C.text};
@@ -16913,15 +16909,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                    )}
 		                  </div>
 		                  <div className="labor-model-grid-actions">
-		                    {selectedLaborModelCellCount > 0 && (
-		                      <div className="labor-model-bulk-toolbar">
-		                        <span>{selectedLaborModelCellCount} selected</span>
-		                        <button type="button" onClick={() => updateSelectedLaborModelCells(LABOR_MODEL_FULL_COVERAGE_VALUE)}>Full</button>
-		                        <button type="button" onClick={() => updateSelectedLaborModelCells(LABOR_MODEL_HALF_COVERAGE_VALUE)}>Half</button>
-		                        <button type="button" onClick={() => updateSelectedLaborModelCells("")}>Clear</button>
-		                        <button type="button" onClick={clearSelectedLaborModelCells}>Done</button>
-		                      </div>
-		                    )}
 		                    {canEditRoster && (
 		                      <>
 		                        <button
@@ -17063,6 +17050,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                                    saving={savingHourAnalysis}
 		                                    conflict={cellConflict}
 		                                    bulkMode={selectedLaborModelCellCount > 0}
+		                                    selectedCount={selectedLaborModelCellCount}
 		                                    positionOptions={laborModelCoveragePositionOptions}
 		                                    roleColors={hourAnalysisSettings.laborModelRoleColors}
 		                                    rowGroupKey={row.group_key}
@@ -17071,7 +17059,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                                    onCreate={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
 		                                    onFillStart={(targetRowId, targetColumnIndex, fillValue) => startLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, fillValue)}
 		                                    onEnter={(targetRowId, targetColumnIndex) => enterLaborModelCoverageDrag(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
-		                                    onPositionChange={(targetRowId, targetColumnIndex, nextValue) => updateHourAnalysisLaborModelCell(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue)}
+		                                    onPositionChange={(targetRowId, targetColumnIndex, nextValue, action) => updateHourAnalysisLaborModelCellOrSelection(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex, nextValue, action)}
 		                                    onToggleSelected={(targetRowId, targetColumnIndex) => toggleLaborModelCellSelection(activeHourAnalysisLaborModelDayKey, targetRowId, targetColumnIndex)}
 		                                  />
 		                                </td>
