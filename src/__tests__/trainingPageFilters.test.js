@@ -4,15 +4,23 @@ import {
   applyLaborRosterFilters,
   buildLaborModulePanelKey,
   buildHourAnalysisModel,
+  CAPACITY_PLANNING_VIEWS,
   clearHourAnalysisPlanningState,
+  copyLaborModelBreakers,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
   isTrainingRecordForEmployee,
+  LABOR_MANAGEMENT_TABS,
+  makeLaborModelCellKey,
+  normalizeCapacityPlanningView,
+  normalizeLaborModelBreakerSettings,
   normalizeHourAnalysisSettings,
   noteMatchesSearch,
+  removeLaborModelColumnFromDay,
   safeTrainingProgress,
   shouldCycleLaborModelCoveragePointer,
   toObjectRows,
+  updateLaborModelBreakersForDay,
 } from "../kol/pages/TrainingPage.jsx";
 import { isLaborEmployeeActive } from "../kol/trainingData.js";
 
@@ -30,6 +38,36 @@ describe("applyLaborRosterFilters", () => {
 
     expect(firstDetailBranchIndex).toBeGreaterThan(0);
     expect(remainingHookIndex).toBe(-1);
+  });
+
+  it("renames labor navigation to Roster and Capacity Planning routes", () => {
+    const kolAppSource = readFileSync(new URL("../kol/KolApp.jsx", import.meta.url), "utf8");
+
+    expect(LABOR_MANAGEMENT_TABS.find((tab) => tab.id === "home")).toMatchObject({ label: "Roster" });
+    expect(LABOR_MANAGEMENT_TABS.find((tab) => tab.id === "hour-analysis")).toMatchObject({ label: "Capacity Planning" });
+    expect(kolAppSource).toContain('home: "roster"');
+    expect(kolAppSource).toContain('"hour-analysis": "capacity-planning"');
+    expect(kolAppSource).toContain('"labor-model": "capacity-planning/labor-model"');
+  });
+
+  it("removes duplicate roster summary/output controls from the Roster source", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).not.toContain("Staffing Matrix");
+    expect(source).not.toContain("Roster Output");
+    expect(source).not.toContain("Download Roster PDF");
+    expect((source.match(/Roster PDF/g) || []).length).toBe(1);
+    expect(source).toContain("labor-roster-action-bar");
+    expect(source).toContain("labor-roster-table");
+  });
+
+  it("adds a Capacity Planning subpage selector for Staffing Capacity and Labor Model", () => {
+    expect(CAPACITY_PLANNING_VIEWS.map((view) => view.id)).toEqual(["staffing-capacity", "labor-model"]);
+    expect(CAPACITY_PLANNING_VIEWS.map((view) => view.label)).toEqual(["Staffing Capacity", "Labor Model"]);
+    expect(normalizeCapacityPlanningView("labor-model")).toBe("labor-model");
+    expect(normalizeCapacityPlanningView("legacy")).toBe("staffing-capacity");
+    expect(buildLaborModulePanelKey({ tab: "hour-analysis", capacityPlanningView: "labor-model" })).toBe("hour-analysis:::labor-model");
+    expect(buildLaborModulePanelKey({ tab: "hour-analysis", capacityPlanningView: "staffing-capacity" })).toBe("hour-analysis:::staffing-capacity");
   });
 
   it("defaults the roster employment status filter to active employees", () => {
@@ -118,8 +156,8 @@ describe("applyLaborRosterFilters", () => {
   });
 
   it("keeps interview detail state out of the labor panel remount key", () => {
-    expect(buildLaborModulePanelKey({ tab: "interviews", interviewView: "records", attendanceView: "summary" })).toBe("interviews:records:");
-    expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary");
+    expect(buildLaborModulePanelKey({ tab: "interviews", interviewView: "records", attendanceView: "summary" })).toBe("interviews:records::");
+    expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary:");
   });
 
   it("builds hour analysis from active roster rows, expected-hour defaults, overrides, and what-if rows", () => {
@@ -215,7 +253,7 @@ describe("applyLaborRosterFilters", () => {
     expect(model.whatIfRows[0]).toMatchObject({ full_name: "Candidate One", groupKey: "csr", preferredHours: 15 });
   });
 
-  it("clears Hour Analysis planning state without wiping Expected Hours preferences", () => {
+  it("clears Capacity Planning scenario state without wiping Expected Hours preferences", () => {
     const settings = normalizeHourAnalysisSettings({
       expectations: {
         csr: { full_time: 32, part_time: 18 },
@@ -424,6 +462,74 @@ describe("applyLaborRosterFilters", () => {
     expect(monday.totalHours).toBe(1.3);
   });
 
+  it("deletes a labor model slot by merging the adjacent time range without leaving validation gaps", () => {
+    const day = {
+      day_key: "monday",
+      columns: [
+        { id: "slot-1", label: "11a-12p", hours: 1 },
+        { id: "slot-2", label: "12-12:30p", hours: 0.5 },
+        { id: "slot-3", label: "12:30-1p", hours: 0.5 },
+      ],
+      rows: [
+        {
+          id: "csr-mid",
+          group_key: "csr",
+          role_label: "CSR mid",
+          break_enabled: false,
+          coverage: ["1", "0.5", ""],
+        },
+      ],
+    };
+
+    const result = removeLaborModelColumnFromDay(day, 1, "monday");
+
+    expect(result.error).toBe("");
+    expect(result.removedColumn).toMatchObject({ label: "12-12:30p" });
+    expect(result.day.columns.map((column) => column.label)).toEqual(["11a-12:30p", "12:30-1p"]);
+    expect(result.day.rows[0].coverage).toEqual(["1", ""]);
+    const model = buildHourAnalysisModel({
+      settings: normalizeHourAnalysisSettings({
+        laborModel: {
+          days: {
+            monday: result.day,
+            tuesday: { day_key: "tuesday", columns: [{ id: "t", label: "1-2p", hours: 1 }], rows: [] },
+            wednesday: { day_key: "wednesday", columns: [{ id: "w", label: "1-2p", hours: 1 }], rows: [] },
+            thursday: { day_key: "thursday", columns: [{ id: "th", label: "1-2p", hours: 1 }], rows: [] },
+            friday: { day_key: "friday", columns: [{ id: "f", label: "1-2p", hours: 1 }], rows: [] },
+            saturday: { day_key: "saturday", columns: [{ id: "s", label: "1-2p", hours: 1 }], rows: [] },
+            sunday: { day_key: "sunday", columns: [{ id: "su", label: "1-2p", hours: 1 }], rows: [] },
+          },
+        },
+      }),
+      rosterRows: [],
+    });
+    const monday = model.laborModelSummary.dayRows.find((row) => row.key === "monday");
+
+    expect(monday.columnValidation.valid).toBe(true);
+  });
+
+  it("persists and copies configurable labor model grey bars by day", () => {
+    const settings = normalizeLaborModelBreakerSettings({
+      days: {
+        monday: [{ minutes: 6 * 60 }, { time: "1p" }, { label: "7p" }, { time: "8p" }],
+        tuesday: [],
+      },
+    });
+
+    expect(settings.days.monday.map((bar) => bar.minutes)).toEqual([360, 780, 1140, 1200]);
+    expect(settings.days.tuesday).toEqual([]);
+
+    const updated = updateLaborModelBreakersForDay(settings, "wednesday", [{ time: "9a" }, { time: "3:30p" }]);
+    expect(updated.days.wednesday.map((bar) => bar.minutes)).toEqual([540, 930]);
+
+    const copied = copyLaborModelBreakers(updated, "wednesday", ["thursday", "friday"]);
+    expect(copied.days.thursday.map((bar) => bar.minutes)).toEqual([540, 930]);
+    expect(copied.days.friday.map((bar) => bar.minutes)).toEqual([540, 930]);
+
+    const normalizedSettings = normalizeHourAnalysisSettings({ laborModel: { breakers: copied } });
+    expect(normalizedSettings.laborModel.breakers.days.friday.map((bar) => bar.label)).toEqual(["9a", "3:30p"]);
+  });
+
   it("keeps active labor model cells editable on first click", () => {
     expect(shouldCycleLaborModelCoveragePointer({ value: "", isFocused: false })).toBe(true);
     expect(shouldCycleLaborModelCoveragePointer({ value: "1", isFocused: false })).toBe(false);
@@ -434,5 +540,6 @@ describe("applyLaborRosterFilters", () => {
     expect(shouldCycleLaborModelCoveragePointer({ value: "MKTG", isFocused: true })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: false })).toBe(false);
     expect(shouldCycleLaborModelCoveragePointer({ value: "PCT", isFocused: true })).toBe(false);
+    expect(makeLaborModelCellKey("monday", "row-1", 2)).toBe("monday::row-1::2");
   });
 });

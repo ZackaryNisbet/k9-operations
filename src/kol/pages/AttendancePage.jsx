@@ -1389,7 +1389,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
 
             {rosterRows.length === 0 ? (
-              <EmptyState title="No labor employees yet" subtitle="Create an employee here or from Labor Home to start tracking attendance." />
+              <EmptyState title="No labor employees yet" subtitle="Create an employee here or from Labor Roster to start tracking attendance." />
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
