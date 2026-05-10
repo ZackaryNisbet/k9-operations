@@ -29,8 +29,12 @@ import {
 import {
   assignInventoryCatalogSortOrder,
   buildInventoryCatalogGroups,
+  getInventoryCategorySuggestions,
+  getInventorySubcategorySuggestions,
   inventorySectionId,
+  moveInventoryCatalogItem,
   moveInventoryCategory,
+  renameInventorySubcategory,
 } from "./inventoryCatalog";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -59,7 +63,12 @@ const INVENTORY_VIEW_HEADERS = ["Product", "GL Code", "Par", "On Hand", "In Tran
 const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 
 function catalogSortPayload(items) {
-  return (items || []).map((item) => ({ id: item.id, sort_order: item.sort_order }));
+  return (items || []).map((item) => ({
+    id: item.id,
+    category: item.category || "",
+    subcategory: item.subcategory || "",
+    sort_order: item.sort_order,
+  }));
 }
 
 function normalizeCatalogNumber(value, integer = false) {
@@ -618,7 +627,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
 
 const EditModeItemRow = React.memo(function EditModeItemRow({
   item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragOverIdx, itemIdx, onToggleActive, onOpenDetails,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
 }) {
   const [hovered, setHovered] = useState(false);
   const editRef = useRef(null);
@@ -710,8 +719,8 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
       <div
         draggable
         onDragStart={e => onDragStart(e, item.id)}
-        onDragOver={e => onDragOver(e, itemIdx)}
-        onDrop={e => onDrop(e)}
+        onDragOver={e => onDragOver(e, { ...targetContext, targetItemId: item.id })}
+        onDrop={e => onDrop(e, { ...targetContext, targetItemId: item.id })}
         onDragEnd={onDragEnd}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -721,7 +730,7 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
           gap: 8,
           alignItems: "center",
           padding: "8px 16px",
-          borderTop: dragOverIdx === itemIdx ? `2px solid ${C.pri}` : "none",
+          borderTop: dragOverKey === item.id ? `2px solid ${C.pri}` : "none",
           borderBottom: `1px solid ${C.borderLight}`,
           background: hovered ? C.surfaceHover : !item.is_active ? C.bg + "80" : C.surface,
           opacity: item.is_active ? 1 : 0.5,
@@ -805,10 +814,12 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
 
 // ─── Add Item Row (Edit Mode) ────────────────────────────────────────────────
 
-function AddItemRow({ category, subcategory, onAdd }) {
+function AddItemRow({ category, subcategory, onAdd, onDragOver, onDrop, isDragOver }) {
   return (
     <button
       onClick={() => onAdd(category, subcategory)}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       style={{
         width: "100%",
         display: "flex",
@@ -816,10 +827,10 @@ function AddItemRow({ category, subcategory, onAdd }) {
         justifyContent: "center",
         gap: 8,
         padding: "10px 16px",
-        border: `1.5px dashed ${C.border}`,
+        border: `1.5px dashed ${isDragOver ? C.pri : C.border}`,
         borderRadius: 0,
-        background: "transparent",
-        color: C.textMut,
+        background: isDragOver ? C.priLt : "transparent",
+        color: isDragOver ? C.pri : C.textMut,
         fontSize: 12,
         fontWeight: 500,
         fontFamily: "inherit",
@@ -834,12 +845,77 @@ function AddItemRow({ category, subcategory, onAdd }) {
   );
 }
 
+function SubcategoryHeader({ category, subcategory, catalogEditMode, onRenameSubcategory, onDragOver, onDrop, isDragOver }) {
+  const [draft, setDraft] = useState(subcategory);
+
+  useEffect(() => {
+    setDraft(subcategory);
+  }, [subcategory]);
+
+  const commitRename = () => {
+    const nextName = draft.trim();
+    if (!nextName || nextName === subcategory) {
+      setDraft(subcategory);
+      return;
+    }
+    onRenameSubcategory(category, subcategory, nextName);
+  };
+
+  if (!subcategory) return null;
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      style={{
+        padding: "6px 16px",
+        background: isDragOver ? C.priLt : C.bg + "80",
+        borderBottom: `1px solid ${isDragOver ? C.pri + "55" : C.borderLight}`,
+        transition: "background 0.15s, border-color 0.15s",
+      }}
+    >
+      {catalogEditMode ? (
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={e => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              setDraft(subcategory);
+              e.currentTarget.blur();
+            }
+          }}
+          style={{
+            width: "min(320px, 100%)",
+            padding: "4px 6px",
+            borderRadius: 7,
+            border: `1.5px solid ${C.border}`,
+            background: C.surface,
+            color: C.textSec,
+            fontSize: 11,
+            fontWeight: 800,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+            fontFamily: "inherit",
+            outline: "none",
+          }}
+        />
+      ) : (
+        <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          {subcategory}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Category Section ─────────────────────────────────────────────────────────
 
 function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
   catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
-  onOpenCatalogItem, onRenameCategory, onMoveCategory, categoryIndex, categoryCount,
+  onOpenCatalogItem, onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState(category);
@@ -978,15 +1054,21 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
       </div>
 
       {/* Items by Subcategory */}
-      {!collapsed && subcategories.map((sub, si) => (
+      {!collapsed && subcategories.map((sub, si) => {
+        const subDropKey = `${category}\u0000${sub.name}\u0000end`;
+        const headerDropKey = `${category}\u0000${sub.name}\u0000header`;
+        const dropContext = { category, subcategory: sub.name };
+        return (
         <div key={si}>
-          {sub.name && (
-            <div style={{ padding: "6px 16px", background: C.bg + "80", borderBottom: `1px solid ${C.borderLight}` }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                {sub.name}
-              </span>
-            </div>
-          )}
+          <SubcategoryHeader
+            category={category}
+            subcategory={sub.name}
+            catalogEditMode={catalogEditMode}
+            onRenameSubcategory={onRenameSubcategory}
+            onDragOver={e => onDragOver(e, { ...dropContext, dropKey: headerDropKey, position: "before" })}
+            onDrop={e => onDrop(e, { ...dropContext, position: "before" })}
+            isDragOver={dragState.overKey === headerDropKey}
+          />
           {catalogEditMode ? (
             <>
               {sub.items.map((item, idx) => (
@@ -1001,15 +1083,22 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
                   onToggleExpand={onToggleExpand}
                   onDragStart={onDragStart}
                   onDragOver={onDragOver}
-                  onDrop={(e) => onDrop(e, sub.items)}
+                  onDrop={onDrop}
                   onDragEnd={onDragEnd}
-                  dragOverIdx={dragState.overIdx}
-                  itemIdx={idx}
+                  dragOverKey={dragState.overKey}
+                  targetContext={dropContext}
                   onToggleActive={onToggleCatalogActive}
                   onOpenDetails={onOpenCatalogItem}
                 />
               ))}
-              <AddItemRow category={category} subcategory={sub.name} onAdd={onAddCatalogItem} />
+              <AddItemRow
+                category={category}
+                subcategory={sub.name}
+                onAdd={onAddCatalogItem}
+                onDragOver={e => onDragOver(e, { ...dropContext, dropKey: subDropKey, position: "after" })}
+                onDrop={e => onDrop(e, { ...dropContext, position: "after" })}
+                isDragOver={dragState.overKey === subDropKey}
+              />
             </>
           ) : (
             sub.items.map(item => (
@@ -1027,7 +1116,8 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
             ))
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1122,7 +1212,7 @@ function InventorySectionNav({ groups, counts, catalogEditMode, onAddProduct }) 
   );
 }
 
-function CatalogItemModal({ mode, item, defaults, categories, subcategories, onClose, onSave, saving }) {
+function CatalogItemModal({ mode, item, defaults, catalogItems, categories, subcategories, onClose, onSave, saving }) {
   const [form, setForm] = useState(() => ({
     item_name: item?.item_name || defaults?.item_name || "",
     gl_account: item?.gl_account || defaults?.gl_account || "",
@@ -1137,6 +1227,10 @@ function CatalogItemModal({ mode, item, defaults, categories, subcategories, onC
   const [showError, setShowError] = useState(false);
   const categoryListId = `inventory-category-list-${item?.id || "new"}`;
   const subcategoryListId = `inventory-subcategory-list-${item?.id || "new"}`;
+  const visibleSubcategories = useMemo(() => {
+    const scoped = getInventorySubcategorySuggestions(catalogItems, form.category);
+    return scoped.length > 0 ? scoped : subcategories;
+  }, [catalogItems, form.category, subcategories]);
 
   const setField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -1197,7 +1291,7 @@ function CatalogItemModal({ mode, item, defaults, categories, subcategories, onC
         {categories.map((category) => <option key={category} value={category} />)}
       </datalist>
       <datalist id={subcategoryListId}>
-        {subcategories.map((subcategory) => <option key={subcategory} value={subcategory} />)}
+        {visibleSubcategories.map((subcategory) => <option key={subcategory} value={subcategory} />)}
       </datalist>
       <div style={{ display: "grid", gap: 16 }}>
         <div style={{ padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textSec }}>
@@ -1265,10 +1359,13 @@ function AddAdhocModal({ onClose, onSave, categories }) {
     onClose();
   };
 
-  const catOptions = Array.from(new Set(categories.filter(Boolean))).map(c => ({ value: c, label: c }));
+  const categoryListId = "inventory-adhoc-category-list";
 
   return (
     <Modal title="Add Ad-hoc Item" onClose={onClose}>
+      <datalist id={categoryListId}>
+        {categories.map((category) => <option key={category} value={category} />)}
+      </datalist>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
           <Inp label="Item Name" value={form.item_name} onChange={v => setForm(f => ({ ...f, item_name: v }))} placeholder="e.g. Paper Towels" required />
@@ -1278,15 +1375,13 @@ function AddAdhocModal({ onClose, onSave, categories }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>Category</div>
-            <select
+            <input
               value={form.category}
+              list={categoryListId}
               onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+              placeholder="Category"
               style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: form.category ? C.text : C.textMut, background: C.surface, outline: "none" }}
-            >
-              <option value="">Select category...</option>
-              {catOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              <option value="__other__">Other</option>
-            </select>
+            />
           </div>
 
           <div>
@@ -2086,7 +2181,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [catalogItemSaving, setCatalogItemSaving] = useState(false);
-  const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
+  const [dragState, setDragState] = useState({ draggingId: null, overKey: null });
   const currentCycleRef = useRef(thisWeekStart);
 
   // ── Refs ──
@@ -2550,7 +2645,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       for (const update of updates) {
         await supabase
           .from("inventory_catalog")
-          .update({ sort_order: update.sort_order, updated_at: new Date().toISOString() })
+          .update({
+            category: update.category,
+            subcategory: update.subcategory,
+            sort_order: update.sort_order,
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", update.id);
       }
       setCatalogSaveStatus("saved");
@@ -2594,7 +2694,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           .select()
           .single();
         if (error) throw error;
-        setCatalogItems(prev => prev.map(item => item.id === updatedItem.id ? updatedItem : item));
+        const normalized = assignInventoryCatalogSortOrder(catalogItems.map(item => item.id === updatedItem.id ? updatedItem : item));
+        setCatalogItems(normalized);
+        await persistCatalogSortOrder(normalized);
       } else {
         const maxSort = catalogItems.reduce((max, item) => Math.max(max, Number(item.sort_order || 0)), 0);
         const { data: newItem, error } = await supabase
@@ -2608,7 +2710,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           .select()
           .single();
         if (error) throw error;
-        setCatalogItems(prev => assignInventoryCatalogSortOrder([...prev, newItem]));
+        const normalized = assignInventoryCatalogSortOrder([...catalogItems, newItem]);
+        setCatalogItems(normalized);
+        await persistCatalogSortOrder(normalized);
       }
       setCatalogItemModal(null);
       setCatalogSaveStatus("saved");
@@ -2622,7 +2726,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     } finally {
       setCatalogItemSaving(false);
     }
-  }, [addGlobalToast, canEditCatalog, catalogItemModal, catalogItems, locationId]);
+  }, [addGlobalToast, canEditCatalog, catalogItemModal, catalogItems, locationId, persistCatalogSortOrder]);
 
   const handleRenameCategory = useCallback(async (oldCategory, nextCategory) => {
     if (!canEditCatalog) {
@@ -2660,6 +2764,41 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }
   }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
 
+  const handleRenameSubcategory = useCallback(async (category, oldSubcategory, nextSubcategory) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    const cleanNext = nextSubcategory.trim();
+    const cleanOld = oldSubcategory.trim();
+    if (!cleanNext || cleanNext === cleanOld) return;
+
+    const affectedIds = catalogItems
+      .filter(item => (item.category || "Uncategorized") === category && (item.subcategory || "") === cleanOld)
+      .map(item => item.id);
+    if (affectedIds.length === 0) return;
+
+    const normalized = renameInventorySubcategory(catalogItems, category, cleanOld, cleanNext);
+    setCatalogItems(normalized);
+    setCatalogSaveStatus("saving");
+    try {
+      const { error } = await supabase
+        .from("inventory_catalog")
+        .update({ subcategory: cleanNext, updated_at: new Date().toISOString() })
+        .in("id", affectedIds);
+      if (error) throw error;
+      await persistCatalogSortOrder(normalized);
+      setCatalogSaveStatus("saved");
+      setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Subcategory renamed." });
+    } catch (err) {
+      console.error("Rename subcategory error:", err);
+      setCatalogSaveStatus("error");
+      setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to rename subcategory." });
+    }
+  }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
+
   const handleMoveCategory = useCallback((category, direction) => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
@@ -2673,45 +2812,36 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   // ── Drag and drop reorder ──
   const handleDragStart = useCallback((e, itemId) => {
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", itemId);
     setDragState(prev => ({ ...prev, draggingId: itemId }));
   }, []);
 
-  const handleDragOver = useCallback((e, idx) => {
+  const handleDragOver = useCallback((e, target = {}) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setDragState(prev => ({ ...prev, overIdx: idx }));
+    const overKey = target.dropKey || target.targetItemId || null;
+    setDragState(prev => ({ ...prev, overKey }));
   }, []);
 
-  const handleDrop = useCallback(async (e, subcatItems) => {
+  const handleDrop = useCallback(async (e, target = {}) => {
     e.preventDefault();
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
-      setDragState({ draggingId: null, overIdx: null });
+      setDragState({ draggingId: null, overKey: null });
       return;
     }
-    const { draggingId, overIdx } = dragState;
-    if (!draggingId || overIdx == null) { setDragState({ draggingId: null, overIdx: null }); return; }
+    const draggingId = dragState.draggingId || e.dataTransfer.getData("text/plain");
+    if (!draggingId) { setDragState({ draggingId: null, overKey: null }); return; }
+    if (target.targetItemId === draggingId) { setDragState({ draggingId: null, overKey: null }); return; }
 
-    const fromIdx = subcatItems.findIndex(i => i.id === draggingId);
-    if (fromIdx === -1 || fromIdx === overIdx) { setDragState({ draggingId: null, overIdx: null }); return; }
-
-    const reordered = [...subcatItems];
-    const [moved] = reordered.splice(fromIdx, 1);
-    // After removing the dragged item, indices shift — adjust target if dragging down
-    const targetIdx = fromIdx < overIdx ? overIdx - 1 : overIdx;
-    reordered.splice(targetIdx, 0, moved);
-
-    const localRanks = new Map(reordered.map((item, i) => [item.id, (i + 1) * 10]));
-    const nextItems = assignInventoryCatalogSortOrder(catalogItems.map(item => (
-      localRanks.has(item.id) ? { ...item, sort_order: localRanks.get(item.id) } : item
-    )));
+    const nextItems = moveInventoryCatalogItem(catalogItems, draggingId, target);
     setCatalogItems(nextItems);
-    setDragState({ draggingId: null, overIdx: null });
+    setDragState({ draggingId: null, overKey: null });
     void persistCatalogSortOrder(nextItems);
   }, [addGlobalToast, canEditCatalog, catalogItems, dragState, persistCatalogSortOrder]);
 
   const handleDragEnd = useCallback(() => {
-    setDragState({ draggingId: null, overIdx: null });
+    setDragState({ draggingId: null, overKey: null });
   }, []);
 
   // ── Keyboard navigation ──
@@ -3058,11 +3188,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
-    Array.from(new Set(catalogItems.map(i => i.category).filter(Boolean))).sort(),
+    getInventoryCategorySuggestions(catalogItems),
     [catalogItems]
   );
   const allSubcategories = useMemo(() =>
-    Array.from(new Set(catalogItems.map(i => i.subcategory).filter(Boolean))).sort(),
+    getInventorySubcategorySuggestions(catalogItems),
     [catalogItems]
   );
 
@@ -3512,6 +3642,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     onAddCatalogItem={openAddCatalogItem}
                     onOpenCatalogItem={openEditCatalogItem}
                     onRenameCategory={handleRenameCategory}
+                    onRenameSubcategory={handleRenameSubcategory}
                     onMoveCategory={handleMoveCategory}
                     categoryIndex={index}
                     categoryCount={filteredGrouped.length}
@@ -3678,6 +3809,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           mode={catalogItemModal.mode}
           item={catalogItemModal.item}
           defaults={catalogItemModal.defaults}
+          catalogItems={catalogItems}
           categories={allCategories}
           subcategories={allSubcategories}
           onClose={() => setCatalogItemModal(null)}

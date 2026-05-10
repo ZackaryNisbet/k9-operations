@@ -23,6 +23,27 @@ export function getInventorySubcategoryName(item) {
   return cleanText(item?.subcategory);
 }
 
+export function getInventoryCategorySuggestions(items = []) {
+  return getInventoryCategoryOrder(items).filter(Boolean);
+}
+
+export function getInventorySubcategorySuggestions(items = [], category = "") {
+  const categoryName = cleanText(category);
+  const source = categoryName
+    ? (items || []).filter((item) => getInventoryCategoryName(item) === categoryName)
+    : (items || []);
+  const ranks = new Map();
+  source.forEach((item) => {
+    const subcategory = getInventorySubcategoryName(item);
+    if (!subcategory) return;
+    const rank = sortValue(item);
+    if (!ranks.has(subcategory) || rank < ranks.get(subcategory)) ranks.set(subcategory, rank);
+  });
+  return Array.from(ranks.keys()).sort((left, right) => (
+    (ranks.get(left) ?? MAX_SORT) - (ranks.get(right) ?? MAX_SORT)
+  ) || alphaCompare(left, right));
+}
+
 function buildRankMaps(items = []) {
   const categoryRanks = new Map();
   const subcategoryRanks = new Map();
@@ -135,6 +156,63 @@ export function moveInventoryCategory(items = [], category, direction) {
   const [moved] = nextOrder.splice(fromIndex, 1);
   nextOrder.splice(toIndex, 0, moved);
   return assignInventoryCatalogSortOrder(items, nextOrder);
+}
+
+export function renameInventorySubcategory(items = [], category, oldSubcategory, nextSubcategory) {
+  const categoryName = cleanText(category) || FALLBACK_CATEGORY;
+  const oldName = cleanText(oldSubcategory);
+  const nextName = cleanText(nextSubcategory);
+  if (oldName === nextName) return assignInventoryCatalogSortOrder(items);
+
+  return assignInventoryCatalogSortOrder((items || []).map((item) => (
+    getInventoryCategoryName(item) === categoryName && getInventorySubcategoryName(item) === oldName
+      ? { ...item, subcategory: nextName }
+      : item
+  )));
+}
+
+export function moveInventoryCatalogItem(items = [], itemId, target = {}) {
+  const targetCategoryName = cleanText(target.category) || FALLBACK_CATEGORY;
+  const targetSubcategoryName = cleanText(target.subcategory);
+  const targetItemId = target.targetItemId || null;
+  const position = target.position === "after" ? "after" : "before";
+  const ordered = assignInventoryCatalogSortOrder(items);
+  const moving = ordered.find((item) => item?.id === itemId);
+  if (!moving) return ordered;
+
+  const moved = {
+    ...moving,
+    category: targetCategoryName === FALLBACK_CATEGORY ? "" : targetCategoryName,
+    subcategory: targetSubcategoryName,
+  };
+  const withoutMoving = ordered.filter((item) => item?.id !== itemId);
+  let insertIndex = withoutMoving.length;
+
+  if (targetItemId && targetItemId !== itemId) {
+    const targetIndex = withoutMoving.findIndex((item) => item?.id === targetItemId);
+    if (targetIndex >= 0) insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+  } else {
+    const lastSubcategoryIndex = withoutMoving.reduce((latest, item, index) => (
+      getInventoryCategoryName(item) === targetCategoryName && getInventorySubcategoryName(item) === targetSubcategoryName
+        ? index
+        : latest
+    ), -1);
+    if (lastSubcategoryIndex >= 0) {
+      insertIndex = lastSubcategoryIndex + 1;
+    } else {
+      const lastCategoryIndex = withoutMoving.reduce((latest, item, index) => (
+        getInventoryCategoryName(item) === targetCategoryName ? index : latest
+      ), -1);
+      if (lastCategoryIndex >= 0) insertIndex = lastCategoryIndex + 1;
+    }
+  }
+
+  const next = [...withoutMoving];
+  next.splice(insertIndex, 0, moved);
+  return next.map((item, index) => ({
+    ...item,
+    sort_order: (index + 1) * SORT_STEP,
+  }));
 }
 
 export function inventorySectionId(category) {

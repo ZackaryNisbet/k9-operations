@@ -3,7 +3,11 @@ import {
   assignInventoryCatalogSortOrder,
   buildInventoryCatalogGroups,
   getInventoryCategoryOrder,
+  getInventoryCategorySuggestions,
+  getInventorySubcategorySuggestions,
+  moveInventoryCatalogItem,
   moveInventoryCategory,
+  renameInventorySubcategory,
 } from "../kol/pages/inventoryCatalog";
 
 const catalog = [
@@ -38,5 +42,32 @@ describe("inventory catalog helpers", () => {
     const moved = moveInventoryCategory(catalog, "Enticements", -1);
     expect(getInventoryCategoryOrder(moved)).toEqual(["Medical", "Enticements", "Cleaning"]);
     expect(moved.map((item) => item.id)).toEqual(["d", "c", "a", "b"]);
+  });
+
+  it("builds category and subcategory suggestions from existing catalog values", () => {
+    expect(getInventoryCategorySuggestions(catalog)).toEqual(["Medical", "Cleaning", "Enticements"]);
+    expect(getInventorySubcategorySuggestions(catalog, "Cleaning")).toEqual(["Chemicals", "Tools"]);
+  });
+
+  it("renames every item in a subcategory within a category", () => {
+    const renamed = renameInventorySubcategory(catalog, "Cleaning", "Chemicals", "Sanitation");
+    expect(renamed.find((item) => item.id === "a")).toMatchObject({ subcategory: "Sanitation" });
+    expect(renamed.find((item) => item.id === "b")).toMatchObject({ subcategory: "Tools" });
+  });
+
+  it("moves catalog items across sections and updates their grouping", () => {
+    const moved = moveInventoryCatalogItem(catalog, "a", {
+      category: "Medical",
+      subcategory: "First Aid",
+      targetItemId: "d",
+      position: "after",
+    });
+
+    expect(moved.map((item) => item.id)).toEqual(["d", "a", "b", "c"]);
+    expect(moved.find((item) => item.id === "a")).toMatchObject({
+      category: "Medical",
+      subcategory: "First Aid",
+      sort_order: 20,
+    });
   });
 });
