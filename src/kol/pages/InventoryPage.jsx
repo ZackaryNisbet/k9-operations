@@ -1212,7 +1212,227 @@ function InventorySectionNav({ groups, counts, catalogEditMode, onAddProduct }) 
   );
 }
 
-function CatalogItemModal({ mode, item, defaults, catalogItems, categories, subcategories, onClose, onSave, saving }) {
+function InventoryTaxonomySelect({
+  label,
+  value,
+  options = [],
+  onChange,
+  createLabel,
+  placeholder,
+  disabled = false,
+}) {
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState("");
+  const ref = useRef(null);
+  const cleanOptions = useMemo(() => (
+    Array.from(new Set((options || []).map((option) => String(option || "").trim()).filter(Boolean)))
+  ), [options]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handler = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) {
+        setOpen(false);
+        setCreating(false);
+        setDraft("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const commitCreate = () => {
+    const nextValue = draft.trim();
+    if (!nextValue) return;
+    onChange(nextValue);
+    setOpen(false);
+    setCreating(false);
+    setDraft("");
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>{label}</div>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => !disabled && setOpen((prev) => !prev)}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setOpen(true);
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setOpen(false);
+            setCreating(false);
+            setDraft("");
+          }
+        }}
+        style={{
+          width: "100%",
+          minHeight: 45,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          padding: "10px 12px",
+          borderRadius: 9,
+          border: `1.5px solid ${open ? C.pri : C.border}`,
+          background: disabled ? C.bg : C.surface,
+          color: value ? C.text : C.textMut,
+          fontSize: 13,
+          fontWeight: 600,
+          fontFamily: "inherit",
+          textAlign: "left",
+          outline: "none",
+          boxShadow: open ? `0 0 0 4px ${C.pri}14` : "none",
+          cursor: disabled ? "default" : "pointer",
+          transition: "border 0.16s, box-shadow 0.16s, transform 0.16s",
+          opacity: disabled ? 0.65 : 1,
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || placeholder}</span>
+        <span style={{ color: C.textMut, display: "flex", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.18s cubic-bezier(0.22,1,0.36,1)" }}>
+          <I.ChevronDown />
+        </span>
+      </button>
+      {open && !disabled && (
+        <div
+          className="inventory-taxonomy-menu"
+          role="listbox"
+          aria-label={label}
+          style={{
+            position: "absolute",
+            zIndex: 80,
+            top: "calc(100% + 8px)",
+            left: 0,
+            right: 0,
+            borderRadius: 14,
+            border: `1px solid ${C.border}`,
+            background: C.surface,
+            boxShadow: "0 18px 44px rgba(15, 23, 42, 0.18)",
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ maxHeight: 220, overflowY: "auto", padding: 6 }}>
+            {cleanOptions.length === 0 && (
+              <div style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: C.textMut }}>
+                No saved options yet
+              </div>
+            )}
+            {cleanOptions.map((option, index) => {
+              const selected = option === value;
+              return (
+                <button
+                  type="button"
+                  key={option}
+                  className="inventory-taxonomy-option"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => {
+                    onChange(option);
+                    setOpen(false);
+                    setCreating(false);
+                    setDraft("");
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "10px 11px",
+                    border: "none",
+                    borderRadius: 10,
+                    background: selected ? C.priLt : "transparent",
+                    color: selected ? C.pri : C.text,
+                    fontSize: 13,
+                    fontWeight: selected ? 800 : 650,
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    animationDelay: `${Math.min(index * 18, 120)}ms`,
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{option}</span>
+                  {selected && <span style={{ display: "flex", color: C.pri }}><I.Check /></span>}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ padding: 8, borderTop: `1px solid ${C.borderLight}`, background: C.bg }}>
+            {creating ? (
+              <div className="inventory-taxonomy-create" style={{ display: "flex", gap: 8 }}>
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={event => setDraft(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === "Enter") commitCreate();
+                    if (event.key === "Escape") {
+                      setCreating(false);
+                      setDraft("");
+                    }
+                  }}
+                  placeholder={createLabel}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: "9px 10px",
+                    borderRadius: 9,
+                    border: `1.5px solid ${C.pri}45`,
+                    background: C.surface,
+                    color: C.text,
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={commitCreate}
+                  style={{ padding: "0 12px", borderRadius: 9, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" }}
+                >
+                  Add
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "9px 10px",
+                  borderRadius: 10,
+                  border: `1px dashed ${C.pri}55`,
+                  background: C.surface,
+                  color: C.pri,
+                  fontSize: 12,
+                  fontWeight: 850,
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                }}
+              >
+                <I.Plus /> {createLabel}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onClose, onSave, saving }) {
   const [form, setForm] = useState(() => ({
     item_name: item?.item_name || defaults?.item_name || "",
     gl_account: item?.gl_account || defaults?.gl_account || "",
@@ -1225,16 +1445,23 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, subc
     unit_price: item?.unit_price ?? defaults?.unit_price ?? "",
   }));
   const [showError, setShowError] = useState(false);
-  const categoryListId = `inventory-category-list-${item?.id || "new"}`;
-  const subcategoryListId = `inventory-subcategory-list-${item?.id || "new"}`;
   const visibleSubcategories = useMemo(() => {
-    const scoped = getInventorySubcategorySuggestions(catalogItems, form.category);
-    return scoped.length > 0 ? scoped : subcategories;
-  }, [catalogItems, form.category, subcategories]);
+    if (!form.category.trim()) return [];
+    return getInventorySubcategorySuggestions(catalogItems, form.category);
+  }, [catalogItems, form.category]);
 
   const setField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     if (field === "item_name" && showError && value.trim()) setShowError(false);
+  };
+
+  const setCategoryValue = (nextCategory) => {
+    const scopedSubcategories = getInventorySubcategorySuggestions(catalogItems, nextCategory);
+    setForm((prev) => ({
+      ...prev,
+      category: nextCategory,
+      subcategory: scopedSubcategories.includes(prev.subcategory) ? prev.subcategory : "",
+    }));
   };
 
   const fieldStyle = {
@@ -1287,20 +1514,29 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, subc
 
   return (
     <Modal title={mode === "edit" ? "Edit Product" : "Add Product"} onClose={onClose}>
-      <datalist id={categoryListId}>
-        {categories.map((category) => <option key={category} value={category} />)}
-      </datalist>
-      <datalist id={subcategoryListId}>
-        {visibleSubcategories.map((subcategory) => <option key={subcategory} value={subcategory} />)}
-      </datalist>
       <div style={{ display: "grid", gap: 16 }}>
         <div style={{ padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textSec }}>
           Product name is the only required field.
         </div>
         {renderField("Product Name", "item_name", { autoFocus: true, placeholder: "Product name" })}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          {renderField("Category", "category", { list: categoryListId, placeholder: "Category" })}
-          {renderField("Subcategory", "subcategory", { list: subcategoryListId, placeholder: "Subcategory" })}
+          <InventoryTaxonomySelect
+            label="Category"
+            value={form.category}
+            options={categories}
+            onChange={setCategoryValue}
+            createLabel="Create new category"
+            placeholder="Select category"
+          />
+          <InventoryTaxonomySelect
+            label="Subcategory"
+            value={form.subcategory}
+            options={visibleSubcategories}
+            onChange={(value) => setField("subcategory", value)}
+            createLabel="Create new subcategory"
+            placeholder={form.category ? "Select subcategory" : "Choose category first"}
+            disabled={!form.category.trim()}
+          />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           {renderField("GL Code", "gl_account", { placeholder: "GL code" })}
@@ -1359,13 +1595,8 @@ function AddAdhocModal({ onClose, onSave, categories }) {
     onClose();
   };
 
-  const categoryListId = "inventory-adhoc-category-list";
-
   return (
     <Modal title="Add Ad-hoc Item" onClose={onClose}>
-      <datalist id={categoryListId}>
-        {categories.map((category) => <option key={category} value={category} />)}
-      </datalist>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
           <Inp label="Item Name" value={form.item_name} onChange={v => setForm(f => ({ ...f, item_name: v }))} placeholder="e.g. Paper Towels" required />
@@ -1373,16 +1604,14 @@ function AddAdhocModal({ onClose, onSave, categories }) {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>Category</div>
-            <input
-              value={form.category}
-              list={categoryListId}
-              onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-              placeholder="Category"
-              style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: form.category ? C.text : C.textMut, background: C.surface, outline: "none" }}
-            />
-          </div>
+          <InventoryTaxonomySelect
+            label="Category"
+            value={form.category}
+            options={categories}
+            onChange={(value) => setForm(f => ({ ...f, category: value }))}
+            createLabel="Create new category"
+            placeholder="Select category"
+          />
 
           <div>
             <Inp
@@ -2266,8 +2495,36 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           from { opacity: 0; transform: translateY(12px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes invTaxonomyMenuIn {
+          from { opacity: 0; transform: translateY(-8px) scale(0.98); filter: blur(4px); }
+          to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        @keyframes invTaxonomyOptionIn {
+          from { opacity: 0; transform: translateX(-6px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes invTaxonomyCreateIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
         .inv-fade-in { animation: invFadeIn 0.35s cubic-bezier(0.22,1,0.36,1) both; }
         .inv-row-hover:hover { background: ${C.surfaceHover} !important; }
+        .inventory-taxonomy-menu {
+          transform-origin: top center;
+          animation: invTaxonomyMenuIn 0.18s cubic-bezier(0.22,1,0.36,1) both;
+        }
+        .inventory-taxonomy-option {
+          animation: invTaxonomyOptionIn 0.18s cubic-bezier(0.22,1,0.36,1) both;
+          transition: background 0.14s, color 0.14s, transform 0.14s;
+        }
+        .inventory-taxonomy-option:hover {
+          background: ${C.priLt} !important;
+          color: ${C.pri} !important;
+          transform: translateX(2px);
+        }
+        .inventory-taxonomy-create {
+          animation: invTaxonomyCreateIn 0.16s cubic-bezier(0.22,1,0.36,1) both;
+        }
         .inventory-workspace {
           display: grid;
           grid-template-columns: 220px minmax(0, 1fr);
@@ -3191,10 +3448,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     getInventoryCategorySuggestions(catalogItems),
     [catalogItems]
   );
-  const allSubcategories = useMemo(() =>
-    getInventorySubcategorySuggestions(catalogItems),
-    [catalogItems]
-  );
 
   // ── Render ──
   return (
@@ -3811,7 +4064,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           defaults={catalogItemModal.defaults}
           catalogItems={catalogItems}
           categories={allCategories}
-          subcategories={allSubcategories}
           onClose={() => setCatalogItemModal(null)}
           onSave={handleSaveCatalogItem}
           saving={catalogItemSaving}
