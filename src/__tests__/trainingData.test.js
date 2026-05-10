@@ -482,6 +482,7 @@ describe("trainingData helpers", () => {
   });
 
   it("builds labor dashboard metrics using active employee and compliance rules", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
     const metrics = buildLaborDashboardMetrics({
       rosterSnapshot: [
         {
@@ -507,19 +508,19 @@ describe("trainingData helpers", () => {
           position_title: "Supervisor",
           employment_commitment: "full_time",
           start_date: "2026-01-01",
-          end_date: "2026-04-10",
+          end_date: new Date(Date.now() - 10 * dayMs).toISOString().slice(0, 10),
           open_training_record_count: 0,
           completed_training_record_count: 1,
         },
       ],
       employeeNotes: [
         { id: "n1", created_at: new Date().toISOString() },
-        { id: "n2", created_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString() },
+        { id: "n2", created_at: new Date(Date.now() - 10 * dayMs).toISOString() },
       ],
       attendanceIncidents: [
         { id: "a1", labor_employee_id: "e1", incident_date: new Date().toISOString().slice(0, 10) },
         { id: "a2", labor_employee_id: "e3", incident_date: new Date().toISOString().slice(0, 10) },
-        { id: "a3", labor_employee_id: "e1", incident_date: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) },
+        { id: "a3", labor_employee_id: "e1", incident_date: new Date(Date.now() - 45 * dayMs).toISOString().slice(0, 10) },
       ],
     });
 
