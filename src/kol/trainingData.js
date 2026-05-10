@@ -25,6 +25,16 @@ export const PCT_READINESS_STATUS_OPTIONS = [
   { value: "waived", label: "Waived", itemStatus: "waived", tone: "neutral" },
 ];
 
+export const PCT_READINESS_GAP_STATUSES = new Set([
+  "not_started",
+  "demonstrated",
+  "needs_coaching",
+  "blocked",
+  "retest_required",
+  "needs_follow_up",
+  "incomplete",
+]);
+
 const PCT_READINESS_STATUS_BY_VALUE = Object.fromEntries(
   PCT_READINESS_STATUS_OPTIONS.map((option) => [option.value, option])
 );
@@ -44,6 +54,8 @@ export function normalizePctReadinessStatus(value = "") {
   if (normalized === "verified_qualified" || normalized === "qualified" || normalized === "complete" || normalized === "passed") return "verified";
   if (normalized === "in_progress" || normalized === "demo" || normalized === "demonstrate") return "demonstrated";
   if (normalized === "needs_follow_up" || normalized === "needs_review" || normalized === "coaching") return "needs_coaching";
+  if (normalized === "retest" || normalized === "retest_required") return "retest_required";
+  if (normalized === "incomplete" || normalized === "missing") return "incomplete";
   if (PCT_READINESS_STATUS_BY_VALUE[normalized]) return normalized;
   return "not_started";
 }
@@ -136,8 +148,6 @@ export function buildPctReadinessCellUpdateArgs({
   recordId,
   templateItemId,
   readinessStatus = "not_started",
-  demonstratedBy = "",
-  verifiedBy = "",
   comment = "",
   actorUserId = null,
   actorName = null,
@@ -146,12 +156,132 @@ export function buildPctReadinessCellUpdateArgs({
     p_record_id: recordId,
     p_template_item_id: templateItemId,
     p_readiness_status: normalizePctReadinessStatus(readinessStatus),
-    p_demonstrated_by: String(demonstratedBy || "").trim() || null,
-    p_verified_by: String(verifiedBy || "").trim() || null,
+    p_demonstrated_by: null,
+    p_verified_by: null,
     p_comment: String(comment || "").trim() || null,
     p_actor_user_id: normalizeOptionalUuid(actorUserId),
     p_actor_name: String(actorName || "").trim() || null,
   };
+}
+
+export function isPctReadinessGapStatus(status = "") {
+  const normalized = normalizePctReadinessStatus(status);
+  return PCT_READINESS_GAP_STATUSES.has(normalized);
+}
+
+export function buildPctReadinessCategoryHotspots({
+  sections = [],
+  records = [],
+  cells = {},
+} = {}) {
+  const recordRows = Array.isArray(records) ? records.filter(Boolean) : [];
+  const cellMap = cells && typeof cells === "object" ? cells : {};
+  if (recordRows.length === 0) return [];
+
+  return (Array.isArray(sections) ? sections : [])
+    .map((section) => {
+      const items = Array.isArray(section?.items) ? section.items.filter(Boolean) : [];
+      const totalCells = items.length * recordRows.length;
+      if (totalCells === 0) return null;
+
+      let gapCells = 0;
+      const affectedRecordIds = new Set();
+      const statusCounts = {};
+
+      recordRows.forEach((record) => {
+        let recordHasGap = false;
+        items.forEach((item) => {
+          const cell = cellMap[`${record.id}:${item.id}`] || {};
+          const status = normalizePctReadinessStatus(
+            cell.readiness_status
+            || cell.metadata?.pct_readiness_status
+            || cell.status
+            || cell.item_status
+            || "not_started"
+          );
+          statusCounts[status] = (statusCounts[status] || 0) + 1;
+          if (isPctReadinessGapStatus(status)) {
+            gapCells += 1;
+            recordHasGap = true;
+          }
+        });
+        if (recordHasGap) affectedRecordIds.add(record.id);
+      });
+
+      return {
+        id: section.id,
+        sectionId: section.id,
+        category: section.title || "Category",
+        taskCount: items.length,
+        traineeCount: recordRows.length,
+        affectedTraineeCount: affectedRecordIds.size,
+        gapCells,
+        totalCells,
+        gapRate: totalCells > 0 ? gapCells / totalCells : 0,
+        gapPercent: totalCells > 0 ? Math.round((gapCells / totalCells) * 100) : 0,
+        statusCounts,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (
+      b.gapRate - a.gapRate
+      || b.affectedTraineeCount - a.affectedTraineeCount
+      || b.gapCells - a.gapCells
+      || String(a.category).localeCompare(String(b.category))
+    ));
+}
+
+export function reconcilePctReadinessLegacyActorName(employees = [], rawName = "") {
+  const classification = classifyPctReadinessVerifierValue(rawName);
+  if (classification.kind !== "person") {
+    return { status: classification.kind === "note" ? "note" : "blank", originalName: classification.value, employee: null };
+  }
+
+  const originalName = classification.value;
+  const normalizedCompact = normalizePctReadinessText(originalName).replace(/\s+/g, "");
+  const employeeRows = Array.isArray(employees) ? employees.filter(Boolean) : [];
+  const employeeScore = (employee) => (isLaborEmployeeActive(employee) ? 0 : 1);
+  const findBest = (predicate) => employeeRows
+    .filter(predicate)
+    .sort((a, b) => employeeScore(a) - employeeScore(b) || String(a.full_name || "").localeCompare(String(b.full_name || "")))[0] || null;
+
+  const aliasMatch = (() => {
+    if (["angelinad", "anglelinad", "angleinad"].includes(normalizedCompact)) {
+      return findBest((employee) => normalizePctReadinessText(employee.full_name || employee.name || "").startsWith("angelina d"));
+    }
+    if (["zachc", "zackc"].includes(normalizedCompact)) {
+      return findBest((employee) => {
+        const normalized = normalizePctReadinessText(employee.full_name || employee.name || "");
+        return normalized.includes("zach") && normalized.includes("cruz");
+      });
+    }
+    if (normalizedCompact === "juliaz") {
+      return findBest((employee) => normalizePctReadinessText(employee.full_name || employee.name || "").startsWith("julia "));
+    }
+    return null;
+  })();
+
+  if (aliasMatch) {
+    return { status: "matched", originalName, employee: aliasMatch, matchMethod: "known_alias" };
+  }
+
+  const words = normalizePctReadinessText(originalName).split(/\s+/).filter(Boolean);
+  if (words.length === 2 && words[1].length === 1) {
+    const firstName = words[0];
+    const lastInitial = words[1];
+    const initialMatch = findBest((employee) => {
+      const employeeWords = normalizePctReadinessText(employee.full_name || employee.name || "").split(/\s+/).filter(Boolean);
+      return employeeWords[0] === firstName && employeeWords.some((word, index) => index > 0 && word.startsWith(lastInitial));
+    });
+    if (initialMatch) return { status: "matched", originalName, employee: initialMatch, matchMethod: "first_name_last_initial" };
+  }
+
+  const exactMatch = matchPctReadinessEmployeeByName(employeeRows, originalName);
+  if (exactMatch.status === "matched") {
+    return { status: "matched", originalName, employee: exactMatch.employee, matchMethod: "exact_name" };
+  }
+
+  return { status: "unmatched", originalName, employee: null, matchMethod: "unresolved" };
 }
 
 export function isPctReadinessTemplate(template = {}) {
