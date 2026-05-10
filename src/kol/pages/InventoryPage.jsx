@@ -58,7 +58,7 @@ function clampPositive(val) {
 }
 
 const INVENTORY_VIEW_COLS = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
-const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 120px";
+const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 150px";
 const INVENTORY_VIEW_HEADERS = ["Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
 const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 
@@ -558,7 +558,20 @@ function AdhocItemRow({ item, isReadOnly, canEditCounts, canMarkOrdered, onUpdat
 
 // ─── Item Detail Drawer (Edit Mode) ──────────────────────────────────────────
 
-const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, onToggleActive }) {
+const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, catalogItems, categories, onChange, onChangeFields, onToggleActive }) {
+  const visibleSubcategories = useMemo(() => (
+    item.category ? getInventorySubcategorySuggestions(catalogItems, item.category) : []
+  ), [catalogItems, item.category]);
+
+  const setCategoryValue = (nextCategory) => {
+    const scopedSubcategories = getInventorySubcategorySuggestions(catalogItems, nextCategory);
+    const nextUpdates = { category: nextCategory };
+    if (!scopedSubcategories.includes(item.subcategory || "")) {
+      nextUpdates.subcategory = "";
+    }
+    onChangeFields(nextUpdates);
+  };
+
   const fieldStyle = {
     fontSize: 12,
     padding: "6px 8px",
@@ -593,12 +606,25 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
           <input value={item.vendor_link || ""} onChange={e => onChange("vendor_link", e.target.value)} placeholder="https://..." style={{ ...fieldStyle, fontSize: 11 }} />
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Category</div>
-          <input value={item.category || ""} onChange={e => onChange("category", e.target.value)} placeholder="Category" style={fieldStyle} />
+          <InventoryTaxonomySelect
+            label="Category"
+            value={item.category || ""}
+            options={categories}
+            onChange={setCategoryValue}
+            createLabel="Create new category"
+            placeholder="Select category"
+          />
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Subcategory</div>
-          <input value={item.subcategory || ""} onChange={e => onChange("subcategory", e.target.value)} placeholder="Subcategory" style={fieldStyle} />
+          <InventoryTaxonomySelect
+            label="Subcategory"
+            value={item.subcategory || ""}
+            options={visibleSubcategories}
+            onChange={(value) => onChange("subcategory", value)}
+            createLabel="Create new subcategory"
+            placeholder={item.category ? "Select subcategory" : "Choose category first"}
+            disabled={!item.category}
+          />
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -627,7 +653,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
 
 const EditModeItemRow = React.memo(function EditModeItemRow({
   item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
+  onCatalogFieldsChange, catalogItems, categories, onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
 }) {
   const [hovered, setHovered] = useState(false);
   const editRef = useRef(null);
@@ -784,7 +810,37 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
         </div>
 
         {/* Row actions */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 6,
+          position: "sticky",
+          right: 0,
+          zIndex: 4,
+          background: hovered ? C.surfaceHover : !item.is_active ? C.bg : C.surface,
+          paddingLeft: 6,
+        }}>
+          <button
+            type="button"
+            onClick={() => onToggleExpand(isExpanded ? null : item.id)}
+            title={isExpanded ? "Hide row dropdown editors" : "Show row dropdown editors"}
+            style={{
+              width: 30,
+              height: 30,
+              background: isExpanded ? C.priLt : hovered ? C.priLt : C.bg,
+              border: `1px solid ${isExpanded || hovered ? C.pri + "30" : C.borderLight}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              padding: 0,
+              color: isExpanded || hovered ? C.pri : C.textMut,
+              transition: "all 0.15s",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}
+          >
+            <I.ChevronDown />
+          </button>
           <button
             type="button"
             onClick={() => onOpenDetails(item)}
@@ -831,7 +887,10 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
       {isExpanded && (
         <ItemDetailDrawer
           item={item}
+          catalogItems={catalogItems}
+          categories={categories}
           onChange={(field, val) => onCatalogChange(item.id, field, val)}
+          onChangeFields={(updates) => onCatalogFieldsChange(item.id, updates)}
           onToggleActive={() => onToggleActive(item.id, item.is_active, item.item_name)}
         />
       )}
@@ -940,7 +999,7 @@ function SubcategoryHeader({ category, subcategory, catalogEditMode, onRenameSub
 // ─── Category Section ─────────────────────────────────────────────────────────
 
 function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
-  catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
+  catalogEditMode, editingField, onEditField, onCatalogChange, onCatalogFieldsChange, catalogItems, categories, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
   onOpenCatalogItem, onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
 }) {
@@ -1106,6 +1165,9 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
                   editingField={editingField}
                   onEditField={onEditField}
                   onCatalogChange={onCatalogChange}
+                  onCatalogFieldsChange={onCatalogFieldsChange}
+                  catalogItems={catalogItems}
+                  categories={categories}
                   expandedEditId={expandedEditId}
                   onToggleExpand={onToggleExpand}
                   onDragStart={onDragStart}
@@ -1459,7 +1521,7 @@ function InventoryTaxonomySelect({
   );
 }
 
-function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onClose, onSave, saving }) {
+function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onClose, onSave, onToggleActive, saving }) {
   const [form, setForm] = useState(() => ({
     item_name: item?.item_name || defaults?.item_name || "",
     gl_account: item?.gl_account || defaults?.gl_account || "",
@@ -1576,11 +1638,27 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onCl
         </div>
         {renderField("Unit Cost", "unit_price", { type: "number", min: "0", step: "0.01", placeholder: "0.00" })}
 
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            {mode === "edit" && item?.id && (
+              <Btn
+                variant={item.is_active ? "danger" : "success"}
+                onClick={async () => {
+                  const changed = await onToggleActive?.(item.id, item.is_active, item.item_name);
+                  if (changed) onClose();
+                }}
+                disabled={saving}
+              >
+                {item.is_active ? "Remove Product" : "Restore Product"}
+              </Btn>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
           <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
           <Btn variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? "Saving..." : mode === "edit" ? "Save Product" : "Add Product"}
           </Btn>
+          </div>
         </div>
       </div>
     </Modal>
@@ -2867,22 +2945,26 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }, 1500);
   }, []);
 
-  const handleCatalogFieldChange = useCallback((itemId, field, value) => {
+  const handleCatalogFieldsChange = useCallback((itemId, updates) => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
       return;
     }
-    setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, [field]: value } : i));
-    saveCatalogField(itemId, { [field]: value });
+    setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, ...updates } : i));
+    saveCatalogField(itemId, updates);
   }, [addGlobalToast, canEditCatalog, saveCatalogField]);
+
+  const handleCatalogFieldChange = useCallback((itemId, field, value) => {
+    handleCatalogFieldsChange(itemId, { [field]: value });
+  }, [handleCatalogFieldsChange]);
 
   const handleToggleCatalogActive = useCallback(async (itemId, currentActive, itemName = "this product") => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
-      return;
+      return false;
     }
     if (currentActive && !window.confirm(`Remove ${itemName} from active inventory? Historical counts will be kept.`)) {
-      return;
+      return false;
     }
     const newActive = !currentActive;
     setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: newActive } : i));
@@ -2896,12 +2978,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setCatalogSaveStatus("saved");
       setTimeout(() => setCatalogSaveStatus("idle"), 2200);
       if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Product restored." : "Product removed from active inventory." });
+      return true;
     } catch (err) {
       console.error("Toggle active error:", err);
       setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: currentActive } : i));
       setCatalogSaveStatus("error");
       setTimeout(() => setCatalogSaveStatus("idle"), 3000);
       if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to update product." });
+      return false;
     }
   }, [addGlobalToast, canEditCatalog]);
 
@@ -3483,6 +3567,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     getInventoryCategorySuggestions(catalogItems),
     [catalogItems]
   );
+  const showCatalogEditControls = !isReadOnly && canEditCatalog;
 
   // ── Render ──
   return (
@@ -3522,7 +3607,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 Schedule
               </Btn>
             )}
-            {!isReadOnly && canEditCatalog && (
+            {showCatalogEditControls && (
               catalogEditMode ? (
                 <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
                   Done Editing
@@ -3590,6 +3675,51 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           </div>
         </div>
       </div>
+
+      {/* ── Week Navigation + Controls ── */}
+      {showCatalogEditControls && (
+        <div
+          style={{
+            position: "fixed",
+            right: 22,
+            bottom: 22,
+            zIndex: 300,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: 8,
+            borderRadius: 12,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            boxShadow: "0 12px 28px rgba(15,23,42,0.18)",
+          }}
+        >
+          {catalogEditMode && (
+            <button
+              onClick={() => openAddCatalogItem("", "")}
+              title="Add product"
+              style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${C.info}25`, background: C.infoLt, color: C.info, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <I.Plus />
+            </button>
+          )}
+          <Btn
+            variant={catalogEditMode ? "success" : "secondary"}
+            size="sm"
+            icon={catalogEditMode ? <I.Check /> : <I.Edit />}
+            onClick={() => {
+              if (catalogEditMode) {
+                setCatalogEditMode(false);
+                loadData();
+              } else {
+                setCatalogEditMode(true);
+              }
+            }}
+          >
+            {catalogEditMode ? "Done Editing" : "Edit Catalog"}
+          </Btn>
+        </div>
+      )}
 
       {/* ── Week Navigation + Controls ── */}
       <Card style={{ marginBottom: 16, padding: "14px 20px" }}>
@@ -3919,6 +4049,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     editingField={editingField}
                     onEditField={setEditingField}
                     onCatalogChange={handleCatalogFieldChange}
+                    onCatalogFieldsChange={handleCatalogFieldsChange}
+                    catalogItems={catalogItems}
+                    categories={allCategories}
                     expandedEditId={expandedEditId}
                     onToggleExpand={setExpandedEditId}
                     onDragStart={handleDragStart}
@@ -4101,6 +4234,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           categories={allCategories}
           onClose={() => setCatalogItemModal(null)}
           onSave={handleSaveCatalogItem}
+          onToggleActive={handleToggleCatalogActive}
           saving={catalogItemSaving}
         />
       )}
