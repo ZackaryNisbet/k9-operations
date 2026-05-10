@@ -58,7 +58,7 @@ function clampPositive(val) {
 }
 
 const INVENTORY_VIEW_COLS = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
-const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 44px";
+const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 120px";
 const INVENTORY_VIEW_HEADERS = ["Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
 const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 
@@ -615,7 +615,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
               cursor: "pointer", transition: "all 0.15s",
             }}
           >
-            {item.is_active ? <><I.X /> Deactivate</> : <><I.Check /> Activate</>}
+            {item.is_active ? <><I.X /> Remove Product</> : <><I.Check /> Restore Product</>}
           </button>
         </div>
       </div>
@@ -627,7 +627,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
 
 const EditModeItemRow = React.memo(function EditModeItemRow({
   item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive,
 }) {
   const [hovered, setHovered] = useState(false);
   const editRef = useRef(null);
@@ -783,29 +783,56 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
           {"\u2014"}
         </div>
 
-        {/* Edit details */}
-        <button
-          onClick={() => onOpenDetails(item)}
-          title="Edit product details"
-          style={{
-            background: hovered ? C.priLt : C.bg,
-            border: `1px solid ${hovered ? C.pri + "30" : C.borderLight}`,
-            borderRadius: 8,
-            cursor: "pointer",
-            padding: 6,
-            color: hovered ? C.pri : C.textMut,
-            transition: "all 0.15s",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <I.Pencil />
-        </button>
+        {/* Row actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => onToggleExpand(isExpanded ? null : item.id)}
+            title={isExpanded ? "Hide product details" : "Show product details"}
+            style={{
+              width: 30,
+              height: 30,
+              background: isExpanded ? C.priLt : hovered ? C.priLt : C.bg,
+              border: `1px solid ${isExpanded || hovered ? C.pri + "30" : C.borderLight}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              padding: 0,
+              color: isExpanded || hovered ? C.pri : C.textMut,
+              transition: "all 0.15s",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <I.Pencil />
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleActive(item.id, item.is_active, item.item_name)}
+            title={item.is_active ? "Remove product from active inventory" : "Restore product"}
+            style={{
+              minWidth: 76,
+              height: 30,
+              background: item.is_active ? C.danLt : C.sucLt,
+              border: `1px solid ${item.is_active ? C.dan + "35" : C.suc + "35"}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              padding: "0 8px",
+              color: item.is_active ? C.dan : C.suc,
+              fontSize: 11,
+              fontWeight: 800,
+              fontFamily: "inherit",
+              transition: "all 0.15s",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+            }}
+          >
+            {item.is_active ? <><I.X /> Remove</> : <><I.Check /> Restore</>}
+          </button>
+        </div>
       </div>
       {isExpanded && (
         <ItemDetailDrawer
           item={item}
           onChange={(field, val) => onCatalogChange(item.id, field, val)}
-          onToggleActive={() => onToggleActive(item.id, item.is_active)}
+          onToggleActive={() => onToggleActive(item.id, item.is_active, item.item_name)}
         />
       )}
     </>
@@ -915,7 +942,7 @@ function SubcategoryHeader({ category, subcategory, catalogEditMode, onRenameSub
 function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
   catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
-  onOpenCatalogItem, onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
+  onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState(category);
@@ -1088,7 +1115,6 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
                   dragOverKey={dragState.overKey}
                   targetContext={dropContext}
                   onToggleActive={onToggleCatalogActive}
-                  onOpenDetails={onOpenCatalogItem}
                 />
               ))}
               <AddItemRow
@@ -2849,9 +2875,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     saveCatalogField(itemId, { [field]: value });
   }, [addGlobalToast, canEditCatalog, saveCatalogField]);
 
-  const handleToggleCatalogActive = useCallback(async (itemId, currentActive) => {
+  const handleToggleCatalogActive = useCallback(async (itemId, currentActive, itemName = "this product") => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    if (currentActive && !window.confirm(`Remove ${itemName} from active inventory? Historical counts will be kept.`)) {
       return;
     }
     const newActive = !currentActive;
@@ -2865,11 +2894,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       if (error) throw error;
       setCatalogSaveStatus("saved");
       setTimeout(() => setCatalogSaveStatus("idle"), 2200);
-      if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Item activated." : "Item deactivated." });
+      if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Product restored." : "Product removed from active inventory." });
     } catch (err) {
       console.error("Toggle active error:", err);
+      setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: currentActive } : i));
       setCatalogSaveStatus("error");
       setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to update product." });
     }
   }, [addGlobalToast, canEditCatalog]);
 
@@ -2885,14 +2916,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         subcategory: subcategory || "",
       },
     });
-  }, [addGlobalToast, canEditCatalog]);
-
-  const openEditCatalogItem = useCallback((item) => {
-    if (!canEditCatalog) {
-      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
-      return;
-    }
-    setCatalogItemModal({ mode: "edit", item });
   }, [addGlobalToast, canEditCatalog]);
 
   const persistCatalogSortOrder = useCallback(async (orderedItems) => {
@@ -3352,12 +3375,15 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       addGlobalToast?.("You do not have permission to mark inventory on hand.", "error");
       return;
     }
+    if (!window.confirm("Remove this ad-hoc item from this inventory count?")) return;
     try {
       const { error } = await supabase.from("inventory_adhoc_items").delete().eq("id", itemId);
       if (error) throw error;
       setAdhocItems(prev => prev.filter(item => item.id !== itemId));
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "Ad-hoc item removed." });
     } catch (err) {
       console.error("Adhoc delete error:", err);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: err.message || "Failed to remove ad-hoc item." });
     }
   }, [addGlobalToast, canEditCounts]);
 
@@ -3893,7 +3919,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     dragState={dragState}
                     onToggleCatalogActive={handleToggleCatalogActive}
                     onAddCatalogItem={openAddCatalogItem}
-                    onOpenCatalogItem={openEditCatalogItem}
                     onRenameCategory={handleRenameCategory}
                     onRenameSubcategory={handleRenameSubcategory}
                     onMoveCategory={handleMoveCategory}
