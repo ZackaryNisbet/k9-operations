@@ -24,7 +24,6 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import { summarizeAuthFailure } from './authRuntime';
 import Login from './Login';
-import SignupPage from './SignupPage';
 import App from './App';
 import LiteApp from './kol/KolApp';
 import BookingPage from './BookingPage';
@@ -187,7 +186,6 @@ function Root() {
   if (isBookingPage) return <BookingPage />;
   if (isPublicLink) return <PublicPage />;
   if (isWelcomePage) return <LandingPage />;
-  if (isSignupPage) return <SignupPage />;
   if (isPublicPricing) return <LandingPage />;
 
   const { user, profile, loading, authStatus, authError, retryBootstrap, needsPasswordSet, updatePassword } = useAuth();
@@ -264,7 +262,7 @@ function Root() {
   // Not logged in
   if (!user) {
     // Show login page at /login, landing page everywhere else
-    if (isLoginPage) return <Login />;
+    if (isLoginPage || isSignupPage) return <Login />;
     return <LandingPage />;
   }
 
@@ -275,7 +273,7 @@ function Root() {
         <div style={{ width: '100%', maxWidth: 420, background: '#166534', borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#F0F2F5', fontFamily: "'Outfit', sans-serif" }}>K9 Operations</div>
-            <div style={{ fontSize: 11, color: '#84CC16', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>The Operating System for Pet Care</div>
+            <div style={{ fontSize: 11, color: '#84CC16', fontWeight: 600, letterSpacing: '0.04em', marginTop: 4 }}>The operating system for pet care facilities</div>
           </div>
 
           {pwSuccess ? (
@@ -326,7 +324,7 @@ function Root() {
 
   // Logged-in user hitting landing page or login -> continue to Lite after
   // any required first-login password setup has been handled.
-  if (isLandingPage || isLoginPage) {
+  if (isLandingPage || isLoginPage || isSignupPage) {
     return <LiteApp />;
   }
 

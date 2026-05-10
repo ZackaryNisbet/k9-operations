@@ -42,8 +42,8 @@ export default function PricingPage({ nav, onSelectPlan }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        // User not logged in — redirect to signup
-        window.location.href = `/signup`;
+        // User not logged in — self-serve signup is disabled for now.
+        window.location.href = `/login`;
         return;
       }
 

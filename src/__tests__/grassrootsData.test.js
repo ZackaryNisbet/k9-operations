@@ -6,7 +6,10 @@ import {
   getGrassrootsActivityCount,
   getGrassrootsDefaultFilters,
   getGrassrootsNextDate,
+  getGrassrootsPrimaryEventDate,
   groupGrassrootsHistory,
+  normalizeGrassrootsEventDates,
+  normalizeGrassrootsStatus,
   normalizeLegacyGrassrootsTracker,
 } from "../kol/grassrootsData.js";
 
@@ -79,9 +82,28 @@ describe("grassrootsData", () => {
       ],
     };
 
-    expect(applyGrassrootsFilters(rows, activities, { status: { op: "is", val: "closing" } }).map((row) => row.id)).toEqual(["b"]);
+    expect(applyGrassrootsFilters(rows, activities, { status: { op: "is", val: "booked" } }).map((row) => row.id)).toEqual(["b"]);
     expect(applyGrassrootsFilters(rows, activities, { activity_count: { op: ">=", val: "2" } }).map((row) => row.id)).toEqual(["b"]);
     expect(getGrassrootsActivityCount(rows[1], activities)).toBe(2);
+  });
+
+  it("normalizes old and new event statuses to the three current statuses", () => {
+    expect(normalizeGrassrootsStatus("Outreach")).toBe("identified");
+    expect(normalizeGrassrootsStatus("Corresponding")).toBe("corresponding");
+    expect(normalizeGrassrootsStatus("Closing")).toBe("booked");
+    expect(normalizeGrassrootsStatus("Active")).toBe("booked");
+  });
+
+  it("normalizes non-consecutive event dates with independent times", () => {
+    const target = {
+      event_dates: [
+        { event_date: "2026-06-12", start_time: "09:00", end_time: "12:00" },
+        { event_date: "2026-06-10", start_time: "14:00", end_time: "16:30" },
+      ],
+    };
+
+    expect(normalizeGrassrootsEventDates(target).map((row) => row.event_date)).toEqual(["2026-06-10", "2026-06-12"]);
+    expect(getGrassrootsPrimaryEventDate(target)).toBe("2026-06-10");
   });
 
   it("filters drops by business category", () => {
