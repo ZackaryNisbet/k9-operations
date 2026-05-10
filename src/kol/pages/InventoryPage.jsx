@@ -627,7 +627,7 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, 
 
 const EditModeItemRow = React.memo(function EditModeItemRow({
   item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
 }) {
   const [hovered, setHovered] = useState(false);
   const editRef = useRef(null);
@@ -787,17 +787,17 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
           <button
             type="button"
-            onClick={() => onToggleExpand(isExpanded ? null : item.id)}
-            title={isExpanded ? "Hide product details" : "Show product details"}
+            onClick={() => onOpenDetails(item)}
+            title="Edit product details"
             style={{
               width: 30,
               height: 30,
-              background: isExpanded ? C.priLt : hovered ? C.priLt : C.bg,
-              border: `1px solid ${isExpanded || hovered ? C.pri + "30" : C.borderLight}`,
+              background: hovered ? C.priLt : C.bg,
+              border: `1px solid ${hovered ? C.pri + "30" : C.borderLight}`,
               borderRadius: 8,
               cursor: "pointer",
               padding: 0,
-              color: isExpanded || hovered ? C.pri : C.textMut,
+              color: hovered ? C.pri : C.textMut,
               transition: "all 0.15s",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
@@ -942,7 +942,7 @@ function SubcategoryHeader({ category, subcategory, catalogEditMode, onRenameSub
 function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
   catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
   onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
-  onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
+  onOpenCatalogItem, onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState(category);
@@ -1115,6 +1115,7 @@ function CategorySection({ category, subcategories, counts, isReadOnly, canEditC
                   dragOverKey={dragState.overKey}
                   targetContext={dropContext}
                   onToggleActive={onToggleCatalogActive}
+                  onOpenDetails={onOpenCatalogItem}
                 />
               ))}
               <AddItemRow
@@ -2918,6 +2919,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     });
   }, [addGlobalToast, canEditCatalog]);
 
+  const openEditCatalogItem = useCallback((item) => {
+    if (!canEditCatalog) {
+      addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
+      return;
+    }
+    setCatalogItemModal({ mode: "edit", item });
+  }, [addGlobalToast, canEditCatalog]);
+
   const persistCatalogSortOrder = useCallback(async (orderedItems) => {
     const updates = catalogSortPayload(orderedItems);
     setCatalogSaveStatus("saving");
@@ -3919,6 +3928,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     dragState={dragState}
                     onToggleCatalogActive={handleToggleCatalogActive}
                     onAddCatalogItem={openAddCatalogItem}
+                    onOpenCatalogItem={openEditCatalogItem}
                     onRenameCategory={handleRenameCategory}
                     onRenameSubcategory={handleRenameSubcategory}
                     onMoveCategory={handleMoveCategory}
