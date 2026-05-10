@@ -28,6 +28,8 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
   const primaryLocations = locs.filter(l => !l.isEnterprise && !l.isPOS && !l.isDemoLink);
   const current = locs.find(l => l.id === currentLocation) || primaryLocations[0] || locs[0];
   const isEnterprise = current?.isEnterprise;
+  const hasLocations = locs.length > 0 && !!current;
+  const currentName = current?.name || "Loading location...";
   const locations = primaryLocations;
   const posLocations = locs.filter(l => l.isPOS);
   const demoLinks = locs.filter(l => l.isDemoLink);
@@ -35,9 +37,9 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
   if (collapsed) {
     return (
       <div style={{ padding: "0 4px", width: "100%" }}>
-        <button onClick={() => setOpen(!open)} title={current.name}
-          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
-          {isEnterprise ? "\u2605" : current.name.slice(0, 2).toUpperCase()}
+        <button onClick={() => hasLocations && setOpen(!open)} title={currentName} disabled={!hasLocations}
+          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.15)" : "rgba(255,255,255,0.06)", cursor: hasLocations ? "pointer" : "default", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box", opacity: hasLocations ? 1 : 0.7 }}>
+          {isEnterprise ? "\u2605" : currentName.slice(0, 2).toUpperCase()}
         </button>
       </div>
     );
@@ -45,13 +47,13 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
   return (
     <div style={{ padding: "0 4px", position: "relative", width: "100%" }}>
-      <button ref={btnRef} onClick={() => setOpen(!open)}
-        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
+      <button ref={btnRef} onClick={() => hasLocations && setOpen(!open)} disabled={!hasLocations}
+        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.06)", cursor: hasLocations ? "pointer" : "default", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box", opacity: hasLocations ? 1 : 0.7 }}>
         <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(132,204,22,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
-          {isEnterprise ? "\u2605" : current.name.slice(0, 1)}
+          {isEnterprise ? "\u2605" : currentName.slice(0, 1)}
         </div>
         <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{current.name}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentName}</div>
           <div style={{ fontSize: 9, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
         </div>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(132,204,22,0.5)" strokeWidth="2.5" strokeLinecap="round"
