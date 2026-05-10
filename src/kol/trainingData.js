@@ -1337,8 +1337,16 @@ function toDateOnly(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function daysAgoDateOnly(asOf, days) {
+  const source = asOf instanceof Date && !Number.isNaN(asOf.getTime()) ? asOf : new Date();
+  const date = new Date(source.getFullYear(), source.getMonth(), source.getDate(), 12);
+  date.setDate(date.getDate() - days);
+  return date;
+}
+
 export function buildLaborDashboardMetrics({ rosterSnapshot = [], employeeNotes = [], attendanceIncidents = [] }) {
   const now = new Date();
+  const thirtyDaysAgoDateOnly = daysAgoDateOnly(now, 30);
   const dayMs = 24 * 60 * 60 * 1000;
   const cleanRosterSnapshot = rosterSnapshot.filter((row) => row && typeof row === "object");
   const cleanEmployeeNotes = employeeNotes.filter((note) => note && typeof note === "object");
@@ -1356,15 +1364,15 @@ export function buildLaborDashboardMetrics({ rosterSnapshot = [], employeeNotes 
   const attendanceMarkCount30d = cleanAttendanceIncidents.filter((incident) => {
     if (activeEmployeeIds.size > 0 && !activeEmployeeIds.has(incident?.labor_employee_id)) return false;
     const incidentDate = toDateOnly(incident?.incident_date);
-    return incidentDate && now - incidentDate <= 30 * dayMs;
+    return incidentDate && incidentDate >= thirtyDaysAgoDateOnly;
   }).length;
   const newHireCount30d = activeRows.filter((row) => {
     const startDate = toDateOnly(row.start_date);
-    return startDate && now - startDate <= 30 * dayMs;
+    return startDate && startDate >= thirtyDaysAgoDateOnly;
   }).length;
   const terminationCount30d = cleanRosterSnapshot.filter((row) => {
     const endDate = toDateOnly(row.end_date);
-    return endDate && now - endDate <= 30 * dayMs;
+    return endDate && endDate >= thirtyDaysAgoDateOnly;
   }).length;
   const activeTraineeCount = activeRows.filter((row) => Number(row.open_training_record_count || 0) > 0).length;
   const trainingComplianceNumerator = activeRows.filter((row) => {
