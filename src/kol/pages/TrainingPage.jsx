@@ -29,6 +29,7 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildUpdateLaborEmployeeRpcArgs,
+  buildPctReadinessCategoryHotspots,
   buildPctReadinessCellUpdateArgs,
   buildPctReadinessEmployeeOptions,
   buildUpdateTrainingRecordConfigArgs,
@@ -116,14 +117,15 @@ const PCT_READINESS_STATUS_STYLES = {
 const TRAINING_VIEW_OPTIONS = [
   { id: "board", label: "Team Readiness Board", subtitle: "PCT skills by employee" },
   { id: "records", label: "Records", subtitle: "Active and completed training records" },
+  { id: "history", label: "History", subtitle: "Training audit trail" },
 ];
 
 const DEFAULT_PCT_READINESS_FILTERS = {
   employee: "",
   task: "",
+  category: "",
   showGapsOnly: false,
   showNeedsCoaching: false,
-  showRecentlyStarted: false,
 };
 
 export const LABOR_MANAGEMENT_TABS = [
@@ -4385,7 +4387,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessLoaded, setPctReadinessLoaded] = useState(false);
   const [pctReadinessError, setPctReadinessError] = useState("");
   const [pctReadinessFilters, setPctReadinessFilters] = useState(DEFAULT_PCT_READINESS_FILTERS);
+  const [showPctReadinessFilterPanel, setShowPctReadinessFilterPanel] = useState(false);
+  const [pctReadinessFilterPickerReady, setPctReadinessFilterPickerReady] = useState(false);
   const [pctReadinessCollapsedSections, setPctReadinessCollapsedSections] = useState({});
+  const [activePctReadinessSectionId, setActivePctReadinessSectionId] = useState("");
+  const [hoveredPctReadinessSectionId, setHoveredPctReadinessSectionId] = useState("");
+  const [selectedPctReadinessRecordId, setSelectedPctReadinessRecordId] = useState("");
   const [pctReadinessCellEditor, setPctReadinessCellEditor] = useState(null);
   const [pctReadinessEditorStatus, setPctReadinessEditorStatus] = useState("not_started");
   const [pctReadinessEditorDemonstratedBy, setPctReadinessEditorDemonstratedBy] = useState("");
@@ -4439,6 +4446,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pendingEmployeeRecordTabRef = useRef("");
   const hourAnalysisLoadedSnapshotRef = useRef("");
   const hourAnalysisSaveTimerRef = useRef(null);
+  const pctReadinessScrollRef = useRef(null);
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -4911,6 +4919,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPctReadinessLoaded(false);
     setPctReadinessError("");
     setNewPctReadinessEmployeeId("");
+    setSelectedPctReadinessRecordId("");
+    setActivePctReadinessSectionId("");
   }, [laborLocationRef]);
 
   useEffect(() => {
@@ -4926,10 +4936,29 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [loadPctReadinessBoard, tab, trainingView]);
 
   useEffect(() => {
-    if (tab === "home" || tab === "performance-reviews" || tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
+    if (!laborLocationRef || tab !== "training") return undefined;
+    const reloadBoard = () => {
+      setPctReadinessLoaded(false);
+      loadPctReadinessBoard(true);
+      if (trainingView === "history") loadSupportBundle(true);
+    };
+    const channel = supabase
+      .channel(`pct-readiness-live-${laborLocationRef}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "training_records", filter: `location_id=eq.${laborLocationRef}` }, reloadBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_item_results" }, reloadBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_notes" }, reloadBoard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_events" }, reloadBoard)
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [laborLocationRef, loadPctReadinessBoard, loadSupportBundle, tab, trainingView]);
+
+  useEffect(() => {
+    if (tab === "home" || tab === "performance-reviews" || tab === "notes" || (tab === "training" && trainingView === "history") || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
       loadSupportBundle();
     }
-  }, [loadSupportBundle, selectedLaborEmployeeId, selectedReviewInstanceId, tab]);
+  }, [loadSupportBundle, selectedLaborEmployeeId, selectedReviewInstanceId, tab, trainingView]);
 
   useEffect(() => {
     setEmployeeRecordTab(pendingEmployeeRecordTabRef.current || "training");
@@ -5316,13 +5345,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pctReadinessCells = useMemo(() => (
     isObjectRow(pctReadinessBoard?.cells) ? pctReadinessBoard.cells : {}
   ), [pctReadinessBoard]);
-  const selectedEmployeePctReadinessRecord = useMemo(() => {
-    if (!selectedLaborEmployeeView?.id) return null;
-    return pctReadinessRecords.find((record) => record.labor_employee_id === selectedLaborEmployeeView.id) || null;
-  }, [pctReadinessRecords, selectedLaborEmployeeView]);
-  const selectedEmployeePctReadinessProfile = useMemo(() => {
-    if (!selectedEmployeePctReadinessRecord) return null;
-    const recordId = selectedEmployeePctReadinessRecord.id;
+  const buildPctReadinessEmployeeProfile = useCallback((record) => {
+    if (!record) return null;
+    const recordId = record.id;
     const categoryRows = pctReadinessSections.map((section) => {
       const sectionItems = toObjectRows(section.items);
       const cells = sectionItems.map((item) => pctReadinessCells[`${recordId}:${item.id}`]).filter(Boolean);
@@ -5350,13 +5375,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       })
     ));
     return {
-      record: selectedEmployeePctReadinessRecord,
+      record,
       categoryRows,
       gaps: taskRows.filter((row) => !["verified", "waived"].includes(row.status)),
       coachingNotes: taskRows.filter((row) => row.status === "needs_coaching" || row.cell.latest_note),
       taskRows,
     };
-  }, [pctReadinessCells, pctReadinessSections, selectedEmployeePctReadinessRecord]);
+  }, [pctReadinessCells, pctReadinessSections]);
+  const selectedEmployeePctReadinessRecord = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return null;
+    return pctReadinessRecords.find((record) => record.labor_employee_id === selectedLaborEmployeeView.id) || null;
+  }, [pctReadinessRecords, selectedLaborEmployeeView]);
+  const selectedEmployeePctReadinessProfile = useMemo(() => {
+    return buildPctReadinessEmployeeProfile(selectedEmployeePctReadinessRecord);
+  }, [buildPctReadinessEmployeeProfile, selectedEmployeePctReadinessRecord]);
+  const pctReadinessEmployeeBoardRecord = useMemo(() => (
+    selectedPctReadinessRecordId
+      ? pctReadinessRecords.find((record) => record.id === selectedPctReadinessRecordId) || null
+      : null
+  ), [pctReadinessRecords, selectedPctReadinessRecordId]);
+  const pctReadinessEmployeeBoardProfile = useMemo(() => (
+    buildPctReadinessEmployeeProfile(pctReadinessEmployeeBoardRecord)
+  ), [buildPctReadinessEmployeeProfile, pctReadinessEmployeeBoardRecord]);
   const pctReadinessAvailableEmployees = useMemo(() => (
     Array.isArray(pctReadinessBoard?.available_employees) ? pctReadinessBoard.available_employees : []
   ), [pctReadinessBoard]);
@@ -5381,22 +5421,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     })),
   ]), [pctReadinessRecords]);
   const filteredPctReadinessRecords = useMemo(() => {
-    const now = Date.now();
     return pctReadinessRecords.filter((record) => {
       if (pctReadinessFilters.employee && record.labor_employee_id !== pctReadinessFilters.employee) return false;
-      if (pctReadinessFilters.showRecentlyStarted) {
-        const startDate = record.employee?.start_date || record.hire_date || record.training_start_date;
-        const startTime = startDate ? new Date(`${startDate}T12:00:00`).getTime() : NaN;
-        if (!Number.isFinite(startTime) || now - startTime > 45 * 24 * 60 * 60 * 1000) return false;
-      }
       return true;
     });
-  }, [pctReadinessFilters.employee, pctReadinessFilters.showRecentlyStarted, pctReadinessRecords]);
+  }, [pctReadinessFilters.employee, pctReadinessRecords]);
   const filteredPctReadinessSections = useMemo(() => {
     const taskQuery = String(pctReadinessFilters.task || "").trim().toLowerCase();
     const visibleRecordIds = new Set(filteredPctReadinessRecords.map((record) => record.id));
     return pctReadinessSections
       .map((section) => {
+        if (pctReadinessFilters.category && section.id !== pctReadinessFilters.category) {
+          return { ...section, items: [] };
+        }
         const sectionTitle = String(section.title || "");
         const sectionMatches = taskQuery && sectionTitle.toLowerCase().includes(taskQuery);
         const itemsForSection = toObjectRows(section.items).filter((item) => {
@@ -5419,14 +5456,50 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [
     filteredPctReadinessRecords,
     pctReadinessCells,
+    pctReadinessFilters.category,
     pctReadinessFilters.showGapsOnly,
     pctReadinessFilters.showNeedsCoaching,
     pctReadinessFilters.task,
     pctReadinessSections,
   ]);
+  const pctReadinessGapHotspots = useMemo(() => (
+    buildPctReadinessCategoryHotspots({
+      sections: pctReadinessSections,
+      records: pctReadinessRecords,
+      cells: pctReadinessCells,
+    })
+  ), [pctReadinessCells, pctReadinessRecords, pctReadinessSections]);
+  const pctReadinessTopHotspot = pctReadinessGapHotspots[0] || null;
+  const pctReadinessFilterCount = [
+    pctReadinessFilters.employee,
+    pctReadinessFilters.task,
+    pctReadinessFilters.category,
+    pctReadinessFilters.showGapsOnly,
+    pctReadinessFilters.showNeedsCoaching,
+  ].filter(Boolean).length;
+  const pctReadinessCategoryFilterOptions = useMemo(() => ([
+    { value: "", label: "All categories" },
+    ...pctReadinessSections.map((section) => ({ value: section.id, label: section.title || "Category" })),
+  ]), [pctReadinessSections]);
   const pctReadinessImportReport = useMemo(() => (
     isObjectRow(pctReadinessBoard?.import_report) ? pctReadinessBoard.import_report : {}
   ), [pctReadinessBoard]);
+  const trainingHistoryRows = useMemo(() => (
+    toObjectRows(allTrainingEvents)
+      .map((event) => {
+        const record = recordMap[event.record_id] || {};
+        const item = event.template_item_id ? getItemById(event.template_item_id) : null;
+        const employee = laborEmployeeMap[record.labor_employee_id] || {};
+        return {
+          ...event,
+          record,
+          item,
+          employeeName: employee.full_name || record.employee_full_name || "Unknown employee",
+          summary: item?.label || record.template_name_snapshot || String(event.event_type || "Training event").replace(/_/g, " "),
+        };
+      })
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  ), [allTrainingEvents, getItemById, laborEmployeeMap, recordMap]);
 
   // Template stats: section and item counts per template
   const templateStats = useMemo(() => {
@@ -7107,6 +7180,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setShowRecordConfig(false);
     setPreviewTemplateId(null);
     setPreviewTemplateVersionId(null);
+    setSelectedPctReadinessRecordId("");
   }, [addGlobalToast]);
 
   const updatePctReadinessFilter = useCallback((key, value) => {
@@ -7115,7 +7189,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const clearPctReadinessFilters = useCallback(() => {
     setPctReadinessFilters(DEFAULT_PCT_READINESS_FILTERS);
+    setActivePctReadinessSectionId("");
   }, []);
+
+  const scrollToPctReadinessSection = useCallback((sectionId) => {
+    if (!sectionId || typeof window === "undefined") return;
+    window.setTimeout(() => {
+      const container = pctReadinessScrollRef.current;
+      const target = container?.querySelector?.(`[data-pct-section-id="${sectionId}"]`);
+      if (!container || !target) return;
+      container.scrollTo({
+        top: Math.max(0, target.offsetTop - 76),
+        behavior: "smooth",
+      });
+    }, 40);
+  }, []);
+
+  const jumpToPctReadinessSection = useCallback((sectionId, { filter = false } = {}) => {
+    if (!sectionId) return;
+    if (filter) updatePctReadinessFilter("category", sectionId);
+    setActivePctReadinessSectionId(sectionId);
+    scrollToPctReadinessSection(sectionId);
+  }, [scrollToPctReadinessSection, updatePctReadinessFilter]);
+
+  const handlePctReadinessMatrixScroll = useCallback(() => {
+    const container = pctReadinessScrollRef.current;
+    if (!container) return;
+    const sectionRows = Array.from(container.querySelectorAll("[data-pct-section-id]"));
+    const current = sectionRows
+      .filter((row) => row.offsetTop <= container.scrollTop + 96)
+      .at(-1) || sectionRows[0];
+    const sectionId = current?.getAttribute("data-pct-section-id") || "";
+    if (sectionId && sectionId !== activePctReadinessSectionId) {
+      setActivePctReadinessSectionId(sectionId);
+    }
+  }, [activePctReadinessSectionId]);
 
   const openPctReadinessCellEditor = useCallback((record, item, section) => {
     const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
@@ -7144,8 +7252,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         recordId: pctReadinessCellEditor.record.id,
         templateItemId: pctReadinessCellEditor.item.id,
         readinessStatus: pctReadinessEditorStatus,
-        demonstratedBy: pctReadinessEditorDemonstratedBy,
-        verifiedBy: pctReadinessEditorVerifiedBy,
         comment: pctReadinessEditorComment,
         actorUserId,
         actorName,
@@ -7169,9 +7275,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     loadPctReadinessBoard,
     pctReadinessCellEditor,
     pctReadinessEditorComment,
-    pctReadinessEditorDemonstratedBy,
     pctReadinessEditorStatus,
-    pctReadinessEditorVerifiedBy,
     refreshLaborData,
   ]);
 
@@ -10813,6 +10917,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <ProgressBar percent={selectedEmployeePctReadinessProfile.record.progress_percent} />
                       <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 4 }}>{Math.round(safeTrainingProgress(selectedEmployeePctReadinessProfile.record.progress_percent))}% ready</div>
                     </div>
+                    <Btn
+                      variant="primary"
+                      size="sm"
+                      icon={<I.Eye />}
+                      onClick={() => {
+                        setSelectedPctReadinessRecordId(selectedEmployeePctReadinessProfile.record.id);
+                        setSelectedLaborEmployeeId(null);
+                        setSelectedLaborEmployeeSeed(null);
+                        setSelectedReviewInstanceId(null);
+                        setTab("training");
+                        setTrainingView("board");
+                      }}
+                    >
+                      Open Board View
+                    </Btn>
                     <Btn
                       variant="secondary"
                       size="sm"
@@ -16236,11 +16355,125 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </Card>
               ) : null}
 
+              {pctReadinessEmployeeBoardProfile ? (
+                <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+                  <div style={{ padding: 18, borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt} 0%, #fff 76%)` }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: 0, marginBottom: 5 }}>Single Trainee Readiness Board</div>
+                        <div style={{ fontSize: 24, fontWeight: 950, color: C.text }}>{pctReadinessEmployeeBoardProfile.record.employee_full_name || "Employee"}</div>
+                        <div style={{ fontSize: 12, color: C.textMut, fontWeight: 800, marginTop: 5 }}>
+                          Start Date: {formatLaborDate(pctReadinessEmployeeBoardProfile.record.employee?.start_date || pctReadinessEmployeeBoardProfile.record.training_start_date) || "Not set"}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        <div style={{ minWidth: 170 }}>
+                          <ProgressBar percent={pctReadinessEmployeeBoardProfile.record.progress_percent} />
+                          <div style={{ marginTop: 5, fontSize: 12, fontWeight: 900, color: C.textMut }}>{Math.round(safeTrainingProgress(pctReadinessEmployeeBoardProfile.record.progress_percent))}% ready</div>
+                        </div>
+                        <Btn
+                          variant="secondary"
+                          size="sm"
+                          icon={<I.Eye />}
+                          onClick={() => openLaborEmployeeProfile(
+                            pctReadinessEmployeeBoardProfile.record.labor_employee_id,
+                            pctReadinessEmployeeBoardProfile.record.employee || {
+                              id: pctReadinessEmployeeBoardProfile.record.labor_employee_id,
+                              full_name: pctReadinessEmployeeBoardProfile.record.employee_full_name,
+                            },
+                            { recordTab: "training" },
+                          )}
+                        >
+                          View Profile
+                        </Btn>
+                        <Btn variant="ghost" size="sm" icon={<I.Back />} onClick={() => setSelectedPctReadinessRecordId("")}>Team Board</Btn>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ padding: 18 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 16 }}>
+                      {pctReadinessEmployeeBoardProfile.categoryRows.map((category) => (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() => jumpToPctReadinessSection(category.id)}
+                          style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 7 }}>{category.title}</div>
+                          <ProgressBar percent={category.percent} />
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+                            <span>{category.percent}%</span>
+                            {category.needsCoachingCount > 0 ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span> : <span>{category.verifiedCount}/{category.total}</span>}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Open Gaps</div>
+                        {pctReadinessEmployeeBoardProfile.gaps.length === 0 ? (
+                          <div style={{ fontSize: 12, color: C.textMut }}>No active gaps.</div>
+                        ) : pctReadinessEmployeeBoardProfile.gaps.slice(0, 10).map((row) => (
+                          <div key={`single-gap-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
+                            <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.item.label}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+                        <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Coaching / Comments</div>
+                        {pctReadinessEmployeeBoardProfile.coachingNotes.length === 0 ? (
+                          <div style={{ fontSize: 12, color: C.textMut }}>No coaching comments.</div>
+                        ) : pctReadinessEmployeeBoardProfile.coachingNotes.slice(0, 10).map((row) => (
+                          <div key={`single-coach-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
+                            <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.cell.latest_note || getPctReadinessStatusPresentation(row.status).label}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ maxHeight: "62vh", overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr>
+                            <th style={employeeDetailTableHeaderStyle}>Category</th>
+                            <th style={employeeDetailTableHeaderStyle}>Task / Skill</th>
+                            <th style={employeeDetailTableHeaderStyle}>Status</th>
+                            <th style={employeeDetailTableHeaderStyle}>Actor / Comment</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pctReadinessEmployeeBoardProfile.taskRows.map((row) => {
+                            const presentation = getPctReadinessStatusPresentation(row.status);
+                            const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                            return (
+                              <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
+                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec, lineHeight: 1.45, verticalAlign: "top" }}>{row.item.label}</td>
+                                <td style={{ padding: "9px 12px", verticalAlign: "top", width: 190 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
+                                    style={{ display: "inline-flex", gap: 6, alignItems: "center", padding: "6px 9px", borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                  >
+                                    {style.icon} {presentation.label}
+                                  </button>
+                                </td>
+                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
+                                  {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </Card>
+              ) : (
+              <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 16 }}>
                 <MetricCard
-                  label="Active PCT Trainees"
+                  label="Active Trainees"
                   value={pctReadinessBoard?.summary?.total_active_pct_trainees ?? pctReadinessRecords.length}
-                  helper="Current readiness records"
                   color={C.pri}
                 />
                 <MetricCard
@@ -16252,20 +16485,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <MetricCard
                   label="Needs Coaching"
                   value={pctReadinessBoard?.summary?.needs_coaching_count ?? 0}
-                  helper="Cells with coaching status"
                   color={C.warn}
                 />
-                <MetricCard
-                  label="Weakest Gaps"
-                  value={toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps).length}
-                  helper={toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps)[0]?.category || "No gaps loaded"}
-                  color={C.text}
-                />
+                <button
+                  type="button"
+                  onClick={() => pctReadinessTopHotspot && jumpToPctReadinessSection(pctReadinessTopHotspot.sectionId, { filter: true })}
+                  disabled={!pctReadinessTopHotspot}
+                  style={{ border: "none", padding: 0, background: "transparent", fontFamily: "inherit", textAlign: "left", cursor: pctReadinessTopHotspot ? "pointer" : "default" }}
+                >
+                  <MetricCard
+                    label="Training Gap Hotspot"
+                    value={pctReadinessTopHotspot ? `${pctReadinessTopHotspot.gapPercent}%` : "—"}
+                    helper={pctReadinessTopHotspot ? `${pctReadinessTopHotspot.category} · ${pctReadinessTopHotspot.affectedTraineeCount} trainee${pctReadinessTopHotspot.affectedTraineeCount === 1 ? "" : "s"}` : "No active gaps"}
+                    color={C.text}
+                  />
+                </button>
               </div>
 
               <Card style={{ padding: 14, marginBottom: 16 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, alignItems: "end" }}>
-                  <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 240 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Role / Template</div>
                     <CustomSelect
                       value="pct_team_readiness_board"
@@ -16274,45 +16513,133 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       options={[{ value: "pct_team_readiness_board", label: "PCT Team Readiness Board" }]}
                     />
                   </div>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee</div>
-                    <CustomSelect
-                      value={pctReadinessFilters.employee}
-                      onChange={(value) => updatePctReadinessFilter("employee", value)}
-                      options={pctReadinessEmployeeFilterOptions}
-                      placeholder="All employees"
-                      searchable
-                    />
-                  </div>
-                  <Inp
-                    label="Task or Category"
-                    value={pctReadinessFilters.task}
-                    onChange={(value) => updatePctReadinessFilter("task", value)}
-                    placeholder="Search readiness tasks"
-                  />
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                    <Btn variant="ghost" size="sm" icon={<I.RefreshCw />} onClick={() => loadPctReadinessBoard(true)} disabled={pctReadinessLoading}>Refresh</Btn>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+                    <Btn
+                      variant={showPctReadinessFilterPanel || pctReadinessFilterCount > 0 ? "secondary" : "ghost"}
+                      size="sm"
+                      icon={<I.Filter />}
+                      onClick={() => {
+                        setShowPctReadinessFilterPanel((current) => !current);
+                        setPctReadinessFilterPickerReady(false);
+                        window.setTimeout(() => setPctReadinessFilterPickerReady(true), 10);
+                      }}
+                    >
+                      Filter{pctReadinessFilterCount > 0 ? ` (${pctReadinessFilterCount})` : ""}
+                    </Btn>
                     <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={() => setShowPctReadinessNewRecord(true)}>Add Trainee</Btn>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
-                  <Inp label="Show gaps only" type="checkbox" value={pctReadinessFilters.showGapsOnly} onChange={(value) => updatePctReadinessFilter("showGapsOnly", value)} />
-                  <Inp label="Show needs coaching" type="checkbox" value={pctReadinessFilters.showNeedsCoaching} onChange={(value) => updatePctReadinessFilter("showNeedsCoaching", value)} />
-                  <Inp label="Recently started" type="checkbox" value={pctReadinessFilters.showRecentlyStarted} onChange={(value) => updatePctReadinessFilter("showRecentlyStarted", value)} />
-                  <Btn variant="ghost" size="sm" onClick={clearPctReadinessFilters}>Clear</Btn>
-                  {pctReadinessImportReport?.canonical_task_count ? (
-                    <span style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
-                      Imported {pctReadinessImportReport.canonical_task_count} tasks from {pctReadinessImportReport.source_workbook_name || "workbook"}
-                    </span>
-                  ) : null}
-                </div>
+                {showPctReadinessFilterPanel && (
+                  <div style={{ marginTop: 14, padding: 14, borderRadius: 12, border: `1.5px solid ${C.borderLight}`, background: C.surfaceHover, animation: "filterSlideIn 0.18s ease-out" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, alignItems: "end" }}>
+                      <div style={{ animation: pctReadinessFilterPickerReady ? "filterChipIn 0.18s ease-out both" : "none" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee</div>
+                        <CustomSelect
+                          value={pctReadinessFilters.employee}
+                          onChange={(value) => updatePctReadinessFilter("employee", value)}
+                          options={pctReadinessEmployeeFilterOptions}
+                          placeholder="All employees"
+                          searchable
+                        />
+                      </div>
+                      <div style={{ animation: pctReadinessFilterPickerReady ? "filterChipIn 0.2s ease-out 0.03s both" : "none" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Category</div>
+                        <CustomSelect
+                          value={pctReadinessFilters.category}
+                          onChange={(value) => {
+                            updatePctReadinessFilter("category", value);
+                            if (value) jumpToPctReadinessSection(value);
+                          }}
+                          options={pctReadinessCategoryFilterOptions}
+                          placeholder="All categories"
+                          searchable
+                        />
+                      </div>
+                      <div style={{ animation: pctReadinessFilterPickerReady ? "filterChipIn 0.22s ease-out 0.06s both" : "none" }}>
+                        <Inp
+                          label="Task or Category"
+                          value={pctReadinessFilters.task}
+                          onChange={(value) => updatePctReadinessFilter("task", value)}
+                          placeholder="Search readiness tasks"
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+                      <Inp label="Show gaps only" type="checkbox" value={pctReadinessFilters.showGapsOnly} onChange={(value) => updatePctReadinessFilter("showGapsOnly", value)} />
+                      <Inp label="Show needs coaching" type="checkbox" value={pctReadinessFilters.showNeedsCoaching} onChange={(value) => updatePctReadinessFilter("showNeedsCoaching", value)} />
+                      <Btn variant="ghost" size="sm" onClick={clearPctReadinessFilters}>Clear</Btn>
+                      <span style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Board updates after saves and realtime changes.</span>
+                    </div>
+                  </div>
+                )}
               </Card>
 
               {pctReadinessRecords.length === 0 && !pctReadinessLoading ? (
                 <EmptyState icon="ClipboardCheck" title="No PCT readiness records yet" subtitle="Add a trainee to start the board." />
               ) : (
-                <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
-                  <div style={{ overflow: "auto", maxHeight: "68vh" }}>
+                <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8, position: "relative" }}>
+                  <div
+                    aria-label="Category navigator"
+                    style={{
+                      position: "absolute",
+                      top: 72,
+                      right: 8,
+                      bottom: 12,
+                      zIndex: 8,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "center",
+                      gap: 5,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {filteredPctReadinessSections.map((section) => {
+                      const selected = activePctReadinessSectionId === section.id || pctReadinessFilters.category === section.id;
+                      const hovered = hoveredPctReadinessSectionId === section.id;
+                      return (
+                        <button
+                          key={section.id}
+                          type="button"
+                          onMouseEnter={() => setHoveredPctReadinessSectionId(section.id)}
+                          onMouseLeave={() => setHoveredPctReadinessSectionId("")}
+                          onClick={() => jumpToPctReadinessSection(section.id)}
+                          title={section.title}
+                          aria-label={`Jump to ${section.title}`}
+                          style={{
+                            width: selected || hovered ? 72 : 34,
+                            height: 6,
+                            borderRadius: 999,
+                            border: "none",
+                            background: selected ? C.pri : hovered ? C.acc : "#CBD5E1",
+                            cursor: "pointer",
+                            pointerEvents: "auto",
+                            transition: "width 160ms ease, background 160ms ease",
+                            position: "relative",
+                          }}
+                        >
+                          {hovered && (
+                            <span style={{
+                              position: "absolute",
+                              right: 82,
+                              top: "50%",
+                              transform: "translateY(-50%)",
+                              padding: "5px 8px",
+                              borderRadius: 8,
+                              background: C.text,
+                              color: "#fff",
+                              fontSize: 10.5,
+                              fontWeight: 800,
+                              whiteSpace: "nowrap",
+                              boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
+                            }}>
+                              {section.title}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div ref={pctReadinessScrollRef} onScroll={handlePctReadinessMatrixScroll} style={{ overflow: "auto", maxHeight: "68vh", paddingRight: 42 }}>
                     <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
                       <thead>
                         <tr>
@@ -16346,13 +16673,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             >
                               <button
                                 type="button"
-                                onClick={() => openLaborEmployeeProfile(record.labor_employee_id, record.employee || { id: record.labor_employee_id, full_name: record.employee_full_name }, { recordTab: "training" })}
+                                onClick={() => setSelectedPctReadinessRecordId(record.id)}
                                 style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontFamily: "inherit", fontSize: 12, fontWeight: 900, textAlign: "left", cursor: "pointer", lineHeight: 1.25 }}
                               >
                                 {record.employee_full_name || "Employee"}
                               </button>
                               <div style={{ fontSize: 10.5, color: C.textMut, fontWeight: 700, marginTop: 4, textTransform: "none" }}>
-                                {record.employee?.start_date ? formatLaborDate(record.employee.start_date) : "No start date"}
+                                {record.employee?.start_date ? `Start Date: ${formatLaborDate(record.employee.start_date)}` : "Start Date: Not set"}
                               </div>
                               <div style={{ marginTop: 6 }}>
                                 <ProgressBar percent={record.progress_percent} />
@@ -16367,7 +16694,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           const collapsed = pctReadinessCollapsedSections[section.id] === true;
                           return (
                             <React.Fragment key={section.id}>
-                              <tr>
+                              <tr data-pct-section-id={section.id}>
                                 <td
                                   colSpan={filteredPctReadinessRecords.length + 1}
                                   style={{
@@ -16463,19 +16790,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </Card>
               )}
 
-              {toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps).length > 0 && (
+              {pctReadinessGapHotspots.length > 0 && (
                 <Card style={{ padding: 16, marginTop: 16 }}>
-                  <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>Weakest Task / Category Gaps</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>Gap Hotspots by Category</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                    {toObjectRows(pctReadinessBoard.summary.weakest_task_gaps).map((gap) => (
-                      <div key={gap.template_item_id || gap.label} style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff" }}>
+                    {pctReadinessGapHotspots.slice(0, 6).map((gap) => (
+                      <button
+                        key={gap.sectionId}
+                        type="button"
+                        onClick={() => jumpToPctReadinessSection(gap.sectionId, { filter: true })}
+                        style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff", textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}
+                      >
                         <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 4 }}>{gap.category || "Category"}</div>
-                        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{gap.label}</div>
-                        <div style={{ fontSize: 11, color: C.warn, fontWeight: 900, marginTop: 8 }}>{gap.gap_count} gap{Number(gap.gap_count) === 1 ? "" : "s"}</div>
-                      </div>
+                        <div style={{ fontSize: 22, color: C.warn, fontWeight: 950, lineHeight: 1 }}>{gap.gapPercent}%</div>
+                        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 8 }}>
+                          {gap.gapCells}/{gap.totalCells} task cells need work · {gap.affectedTraineeCount} trainee{gap.affectedTraineeCount === 1 ? "" : "s"}
+                        </div>
+                      </button>
                     ))}
                   </div>
                 </Card>
+              )}
+              </>
               )}
             </>
           )}
@@ -16534,6 +16870,46 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </Card>
               )}
             </>
+          )}
+
+          {trainingView === "history" && (
+            <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+              <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Training History</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Create, update, import, link, and reconciliation events from training records.</div>
+                </div>
+                <Badge color={trainingHistoryRows.length > 0 ? "info" : "default"}>{trainingHistoryRows.length} events</Badge>
+              </div>
+              {trainingHistoryRows.length === 0 ? (
+                <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No training history has been logged yet.</div>
+              ) : (
+                <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeaderStyle}>When</th>
+                        <th style={tableHeaderStyle}>Employee</th>
+                        <th style={tableHeaderStyle}>Action</th>
+                        <th style={tableHeaderStyle}>Record / Task</th>
+                        <th style={tableHeaderStyle}>Actor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trainingHistoryRows.map((event) => (
+                        <tr key={event.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatTrainingTimestamp(event.created_at)}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 180 }}>{event.employeeName}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 170 }}>{String(event.event_type || "training_event").replace(/_/g, " ")}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 260, lineHeight: 1.45 }}>{event.summary}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{event.actor_name || "Staff"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
           )}
         </div>
       )}
@@ -18165,9 +18541,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 options={PCT_READINESS_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
               />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-              <Inp label="Demonstrated By" value={pctReadinessEditorDemonstratedBy} onChange={setPctReadinessEditorDemonstratedBy} placeholder="Trainer name" />
-              <Inp label="Verified By" value={pctReadinessEditorVerifiedBy} onChange={setPctReadinessEditorVerifiedBy} placeholder="Verifier name" />
+            <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 5 }}>Actor Attribution</div>
+              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45 }}>
+                This update will be stamped as <strong style={{ color: C.text }}>{actorName}</strong> from the logged-in account. Imported workbook names remain visible as historical data only.
+              </div>
+              {(pctReadinessCellEditor.cell?.demonstrated_by || pctReadinessCellEditor.cell?.verified_by) && (
+                <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+                  Legacy import: {pctReadinessCellEditor.cell?.verified_by || pctReadinessCellEditor.cell?.demonstrated_by}
+                </div>
+              )}
             </div>
             <Inp
               label="Comment"

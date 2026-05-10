@@ -66,11 +66,12 @@ export const GRASSROOTS_CATEGORY_BY_DB = Object.fromEntries(
 );
 
 export const GRASSROOTS_STATUS_OPTIONS = [
-  { value: "outreach", label: "Outreach" },
+  { value: "identified", label: "Identified" },
   { value: "corresponding", label: "Corresponding" },
-  { value: "closing", label: "Closing" },
-  { value: "active", label: "Active" },
+  { value: "booked", label: "Booked" },
 ];
+
+export const GRASSROOTS_EVENT_TYPE_OPTIONS = ["B2C", "B2B"];
 
 export const GRASSROOTS_BUSINESS_CATEGORY_OPTIONS = [
   "Veterinarian",
@@ -164,8 +165,62 @@ export function getGrassrootsActivityType(category) {
 }
 
 export function getGrassrootsStatusLabel(value) {
-  const found = GRASSROOTS_STATUS_OPTIONS.find((option) => option.value === value);
-  return found?.label || "Outreach";
+  const normalized = normalizeGrassrootsStatus(value);
+  const found = GRASSROOTS_STATUS_OPTIONS.find((option) => option.value === normalized);
+  return found?.label || "Identified";
+}
+
+export function normalizeGrassrootsStatus(value) {
+  const normalized = normalizeKey(value).replace(/\s+/g, "_");
+  if (["outreach", "identified", "new", "lead"].includes(normalized)) return "identified";
+  if (["corresponding", "correspondence", "contacted"].includes(normalized)) return "corresponding";
+  if (["closing", "active", "booked", "officially_booked"].includes(normalized)) return "booked";
+  return "identified";
+}
+
+export function normalizeGrassrootsEventType(value = "") {
+  const normalized = String(value || "").trim().toUpperCase();
+  return GRASSROOTS_EVENT_TYPE_OPTIONS.includes(normalized) ? normalized : "";
+}
+
+function parseTime(value) {
+  const text = stringValue(value);
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(text) ? text : "";
+}
+
+export function normalizeGrassrootsEventDates(target = {}) {
+  const sourceDates = Array.isArray(target.event_dates)
+    ? target.event_dates
+    : Array.isArray(target.details?.event_dates)
+      ? target.details.event_dates
+      : [];
+  const normalizedDates = sourceDates
+    .map((row, index) => ({
+      id: row?.id || `event_date_${index + 1}`,
+      event_date: parseDate(row?.event_date || row?.date),
+      start_time: parseTime(row?.start_time || row?.startTime),
+      end_time: parseTime(row?.end_time || row?.endTime),
+      sequence_order: Number.isFinite(Number(row?.sequence_order)) ? Number(row.sequence_order) : index + 1,
+    }))
+    .filter((row) => row.event_date);
+
+  if (normalizedDates.length > 0) {
+    return normalizedDates.sort((a, b) => a.event_date.localeCompare(b.event_date) || a.sequence_order - b.sequence_order);
+  }
+
+  const fallbackDate = parseDate(target.event_start_date || target.event_date);
+  if (!fallbackDate) return [];
+  return [{
+    id: "event_date_1",
+    event_date: fallbackDate,
+    start_time: parseTime(target.event_start_time || target.event_time),
+    end_time: parseTime(target.event_end_time),
+    sequence_order: 1,
+  }];
+}
+
+export function getGrassrootsPrimaryEventDate(target = {}) {
+  return normalizeGrassrootsEventDates(target)[0]?.event_date || target.event_start_date || "";
 }
 
 export function makeBlankGrassrootsTarget(category = "events") {
@@ -181,7 +236,7 @@ export function makeBlankGrassrootsTarget(category = "events") {
     contact_source: "",
     contact_email: "",
     contact_phone: "",
-    status: "outreach",
+    status: "identified",
     is_active: true,
     business_category: "",
     drop_category: "",
@@ -195,6 +250,8 @@ export function makeBlankGrassrootsTarget(category = "events") {
     event_end_date: "",
     event_time: "",
     event_type: "",
+    event_dates: [],
+    is_multi_day_event: false,
     expected_audience: "",
     leads_captured: isEvent ? 0 : "",
     cost: "",
@@ -238,13 +295,18 @@ function normalizeLegacyTarget(category, row, index) {
       event_start_date: parseDate(row.startDate),
       event_end_date: parseDate(row.endDate),
       event_time: normalizeText(row.time),
-      event_type: normalizeText(row.type),
+      event_type: normalizeGrassrootsEventType(row.type),
       expected_audience: parseInteger(row.expectedAudience) ?? "",
       leads_captured: parseInteger(row.leadsCaptured) ?? "",
       cost: parseDecimal(row.cost) ?? "",
       cpl: parseDecimal(row.cpl) ?? "",
       contact_source: normalizeText(row.contact),
-      status: normalizeText(row.officiallyBooked).toLowerCase().startsWith("y") ? "active" : "outreach",
+      status: normalizeText(row.officiallyBooked).toLowerCase().startsWith("y") ? "booked" : "identified",
+      event_dates: normalizeGrassrootsEventDates({
+        event_start_date: parseDate(row.startDate),
+        event_end_date: parseDate(row.endDate),
+        event_time: normalizeText(row.time),
+      }),
     };
   }
 
@@ -318,8 +380,7 @@ export function normalizeLegacyDropTargets(rows = []) {
 }
 
 function cleanStatus(value) {
-  const normalized = normalizeKey(value).replace(/\s+/g, "_");
-  return GRASSROOTS_STATUS_OPTIONS.some((option) => option.value === normalized) ? normalized : "outreach";
+  return normalizeGrassrootsStatus(value);
 }
 
 export function groupGrassrootsActivities(activities = []) {
@@ -424,7 +485,8 @@ export function applyGrassrootsFilters(targets = [], activitiesByTarget = {}, fi
     }
 
     if (["initial_contact_date", "last_contact_date", "event_start_date", "event_end_date"].includes(key)) {
-      return matchDate(target[key], op, val, today);
+      const sourceDate = key === "event_start_date" ? getGrassrootsPrimaryEventDate(target) : target[key];
+      return matchDate(sourceDate, op, val, today);
     }
 
     if (["local_employees", "us_employees", "expected_audience", "leads_captured", "cost", "cpl"].includes(key)) {
@@ -432,8 +494,10 @@ export function applyGrassrootsFilters(targets = [], activitiesByTarget = {}, fi
     }
 
     if (key === "status") {
-      if (op === "is") return target.status === val;
-      if (op === "isNot") return target.status !== val;
+      const status = normalizeGrassrootsStatus(target.status);
+      const filterStatus = normalizeGrassrootsStatus(val);
+      if (op === "is") return status === filterStatus;
+      if (op === "isNot") return status !== filterStatus;
       return true;
     }
 

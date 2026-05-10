@@ -8,6 +8,7 @@ import {
   buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
   buildPctReadinessCellUpdateArgs,
+  buildPctReadinessCategoryHotspots,
   buildPctReadinessEmployeeOptions,
   getLaborEmploymentCommitmentLabel,
   getLaborRosterPositionGroup,
@@ -22,6 +23,7 @@ import {
   normalizePctReadinessText,
   normalizePctWorkbookStatus,
   normalizeLaborEmploymentCommitment,
+  reconcilePctReadinessLegacyActorName,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
 } from "../kol/trainingData";
@@ -207,7 +209,7 @@ describe("trainingData helpers", () => {
     });
   });
 
-  it("builds PCT readiness cell update RPC args", () => {
+  it("builds PCT readiness cell update RPC args without client-provided trainer names", () => {
     expect(
       buildPctReadinessCellUpdateArgs({
         recordId: "record-1",
@@ -223,11 +225,65 @@ describe("trainingData helpers", () => {
       p_record_id: "record-1",
       p_template_item_id: "item-1",
       p_readiness_status: "verified",
-      p_demonstrated_by: "Allison D",
-      p_verified_by: "Zach C",
+      p_demonstrated_by: null,
+      p_verified_by: null,
       p_comment: "Great now",
       p_actor_user_id: null,
       p_actor_name: "Skyler",
+    });
+  });
+
+  it("normalizes category gap hotspots by category size", () => {
+    const sections = [
+      { id: "small", title: "Daycare", items: [{ id: "s1" }] },
+      { id: "large", title: "Bathing", items: [{ id: "l1" }, { id: "l2" }, { id: "l3" }, { id: "l4" }] },
+    ];
+    const records = [{ id: "r1" }, { id: "r2" }];
+    const cells = {
+      "r1:s1": { readiness_status: "needs_coaching" },
+      "r2:s1": { readiness_status: "verified" },
+      "r1:l1": { readiness_status: "not_started" },
+      "r1:l2": { readiness_status: "not_started" },
+      "r1:l3": { readiness_status: "verified" },
+      "r1:l4": { readiness_status: "verified" },
+      "r2:l1": { readiness_status: "verified" },
+      "r2:l2": { readiness_status: "verified" },
+      "r2:l3": { readiness_status: "verified" },
+      "r2:l4": { readiness_status: "verified" },
+    };
+
+    expect(buildPctReadinessCategoryHotspots({ sections, records, cells })[0]).toMatchObject({
+      sectionId: "small",
+      category: "Daycare",
+      gapCells: 1,
+      totalCells: 2,
+      affectedTraineeCount: 1,
+      gapPercent: 50,
+    });
+  });
+
+  it("reconciles legacy workbook trainer names to canonical employees and preserves notes", () => {
+    const employees = [
+      { id: "angelina", full_name: "Angelina DeAugestine", employment_status: "active" },
+      { id: "zach", full_name: "Zach Cruz", employment_status: "active" },
+      { id: "julia", full_name: "Julia Zane", employment_status: "inactive" },
+    ];
+
+    expect(reconcilePctReadinessLegacyActorName(employees, "Angelina D")).toMatchObject({
+      status: "matched",
+      employee: { id: "angelina" },
+    });
+    expect(reconcilePctReadinessLegacyActorName(employees, "Zach  C")).toMatchObject({
+      status: "matched",
+      employee: { id: "zach" },
+    });
+    expect(reconcilePctReadinessLegacyActorName(employees, "Julia Z")).toMatchObject({
+      status: "matched",
+      employee: { id: "julia" },
+    });
+    expect(reconcilePctReadinessLegacyActorName(employees, "needs to be more on top of it")).toMatchObject({
+      status: "note",
+      employee: null,
     });
   });
 

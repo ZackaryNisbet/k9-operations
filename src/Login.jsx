@@ -163,7 +163,18 @@ export default function Login() {
       <style>{`
         * { box-sizing: border-box; }
         body { margin: 0; }
-        input::placeholder { color: ${C.textMut}; }
+        .sr-only {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
+        }
+        input::placeholder { color: #94A3B8; }
         input:focus {
           border-color: ${C.pri} !important;
           box-shadow: 0 0 0 3px rgba(20,83,45,0.1) !important;
@@ -207,16 +218,16 @@ export default function Login() {
           {/* Logo — K9 Operations Pit Bull Mark */}
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <div style={{ margin: '0 auto 14px', display: 'flex', justifyContent: 'center' }}>
-              <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: 56 }} />
+              <img src="/k9_mark.svg" alt="K9 Operations mark" style={{ height: 92, width: 'auto' }} />
             </div>
             <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: '-0.02em' }}>
               K9 Operations
             </div>
             <div style={{
               fontSize: 11, color: C.acc, fontWeight: 700,
-              letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 5,
+              letterSpacing: 0, textTransform: 'none', marginTop: 5,
             }}>
-              The Operating System for Pet Care
+              The operating system for pet care facilities
             </div>
           </div>
 
@@ -251,15 +262,17 @@ export default function Login() {
 
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Email</label>
+                  <label className="sr-only" htmlFor="login-email">Email</label>
                   <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                    id="login-email" aria-label="Email" placeholder="Email"
                     style={inputStyle} autoComplete="email" required />
                 </div>
                 {mode !== 'forgot' && (
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Password</label>
+                    <label className="sr-only" htmlFor="login-password">Password</label>
                     <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                      placeholder="Enter your password" style={inputStyle} autoComplete="current-password" required />
+                      id="login-password" aria-label="Password" placeholder="Password"
+                      style={inputStyle} autoComplete="current-password" required />
                   </div>
                 )}
                 {error && (
@@ -286,10 +299,6 @@ export default function Login() {
                     style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>
                     Forgot your password?
                   </button>
-                  <div style={{ marginTop: 12 }}>
-                    <span style={{ fontSize: 13, color: C.textMut }}>Don't have an account? </span>
-                    <a href="/signup" style={{ fontSize: 13, color: C.pri, fontWeight: 600, textDecoration: 'none' }}>Sign Up</a>
-                  </div>
                 </div>
               )}
 

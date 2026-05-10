@@ -7,6 +7,7 @@ import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
+  GRASSROOTS_EVENT_TYPE_OPTIONS,
   GRASSROOTS_FILTER_OP_LABELS,
   GRASSROOTS_STATUS_OPTIONS,
   applyGrassrootsFilters,
@@ -18,10 +19,14 @@ import {
   getGrassrootsCategoryConfig,
   getGrassrootsDefaultFilters,
   getGrassrootsNextDate,
+  getGrassrootsPrimaryEventDate,
   getGrassrootsStatusLabel,
   compareGrassrootsHistoryDesc,
   groupGrassrootsActivities,
   makeBlankGrassrootsTarget,
+  normalizeGrassrootsEventDates,
+  normalizeGrassrootsEventType,
+  normalizeGrassrootsStatus,
 } from "../grassrootsData";
 import { normalizeOptionalUuid } from "../trainingData";
 
@@ -47,18 +52,48 @@ const HISTORY_EVENT_LABELS = {
   drop_logged: "Drop",
 };
 
+const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
+let googlePlacesScriptPromise = null;
+
+function loadGooglePlacesScript() {
+  if (!GOOGLE_PLACES_API_KEY || typeof document === "undefined") return Promise.resolve(false);
+  if (window.google?.maps?.places) return Promise.resolve(true);
+  if (googlePlacesScriptPromise) return googlePlacesScriptPromise;
+  googlePlacesScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-k9-google-places]");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(true), { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.k9GooglePlaces = "true";
+    script.onload = () => resolve(true);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  }).catch((error) => {
+    console.warn("Google Places autocomplete unavailable", error);
+    return false;
+  });
+  return googlePlacesScriptPromise;
+}
+
 const FIELD_CONFIGS = {
   events: [
     { key: "organizer", label: "Organizer", placeholder: "Organizer" },
-    { key: "event_start_date", label: "Start Date", type: "date" },
-    { key: "event_end_date", label: "End Date", type: "date" },
-    { key: "event_time", label: "Time", placeholder: "Time" },
-    { key: "event_type", label: "Type", placeholder: "Type" },
+    { key: "address", label: "Address", placeholder: "Event address" },
+    { key: "event_start_date", label: "Date", type: "date" },
+    { key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS, placeholder: "Type" },
     { key: "expected_audience", label: "Expected Audience", type: "number", placeholder: "Expected audience" },
     { key: "leads_captured", label: "Leads Captured", type: "number", placeholder: "Leads captured" },
     { key: "cost", label: "Cost", type: "number", placeholder: "Cost" },
     { key: "cpl", label: "CPL", type: "computed", placeholder: "CPL" },
-    { key: "contact_source", label: "Contact", placeholder: "Contact" },
+    { key: "first_name", label: "Contact Name", placeholder: "Contact name" },
+    { key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" },
+    { key: "contact_phone", label: "Contact Number", placeholder: "Contact number" },
     { key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" },
   ],
   drops: [
@@ -111,8 +146,8 @@ const BASE_FILTER_FIELDS = [
 
 const CATEGORY_FILTER_FIELDS = {
   events: [
-    { section: "Event", key: "event_start_date", label: "Event Date", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
-    { section: "Event", key: "event_type", label: "Event Type", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
+    { section: "Event", key: "event_start_date", label: "Date", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
+    { section: "Event", key: "event_type", label: "Type", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_EVENT_TYPE_OPTIONS },
     { section: "Event", key: "leads_captured", label: "Leads Captured", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
   ],
   drops: [
@@ -198,9 +233,15 @@ function buildTargetPayload(draft, locationId, actor) {
   const leadsCaptured = parseNumberField(draft.leads_captured);
   const cost = parseNumberField(draft.cost);
   const businessCategory = String(draft.business_category || draft.drop_category || "").trim();
-  const cpl = getGrassrootsCategoryConfig(draft.category).id === "events"
+  const categoryConfig = getGrassrootsCategoryConfig(draft.category);
+  const isEvent = categoryConfig.id === "events";
+  const eventDates = isEvent ? normalizeGrassrootsEventDates(draft) : [];
+  const firstEventDate = eventDates[0] || null;
+  const lastEventDate = eventDates[eventDates.length - 1] || null;
+  const cpl = isEvent
     ? calculateGrassrootsCpl(cost, leadsCaptured)
     : parseNumberField(draft.cpl);
+  const details = draft.details && typeof draft.details === "object" ? draft.details : {};
 
   return {
     location_id: locationId,
@@ -210,10 +251,10 @@ function buildTargetPayload(draft, locationId, actor) {
     organizer: String(draft.organizer || "").trim() || null,
     first_name: String(draft.first_name || "").trim() || null,
     last_name: String(draft.last_name || "").trim() || null,
-    contact_source: String(draft.contact_source || "").trim() || null,
+    contact_source: String(draft.contact_source || draft.first_name || "").trim() || null,
     contact_email: String(draft.contact_email || "").trim() || null,
     contact_phone: String(draft.contact_phone || "").trim() || null,
-    status: draft.status || "outreach",
+    status: normalizeGrassrootsStatus(draft.status),
     is_active: draft.is_active !== false,
     business_category: businessCategory || null,
     drop_category: businessCategory || null,
@@ -223,15 +264,19 @@ function buildTargetPayload(draft, locationId, actor) {
     initial_contact_date: draft.initial_contact_date || null,
     last_contact_date: draft.last_contact_date || null,
     next_contact_date: draft.next_contact_date || null,
-    event_start_date: draft.event_start_date || null,
-    event_end_date: draft.event_end_date || null,
-    event_time: String(draft.event_time || "").trim() || null,
-    event_type: String(draft.event_type || "").trim() || null,
+    event_start_date: firstEventDate?.event_date || draft.event_start_date || null,
+    event_end_date: (draft.is_multi_day_event || eventDates.length > 1) ? (lastEventDate?.event_date || null) : null,
+    event_time: firstEventDate?.start_time && firstEventDate?.end_time
+      ? `${firstEventDate.start_time}-${firstEventDate.end_time}`
+      : firstEventDate?.start_time || String(draft.event_time || "").trim() || null,
+    event_type: normalizeGrassrootsEventType(draft.event_type) || null,
     expected_audience: expectedAudience,
     leads_captured: leadsCaptured,
     cost,
     cpl,
-    details: draft.details && typeof draft.details === "object" ? draft.details : {},
+    details: isEvent
+      ? { ...details, event_dates: eventDates, is_multi_day_event: Boolean(draft.is_multi_day_event || eventDates.length > 1) }
+      : details,
     updated_by_user_id: actor.userId,
     updated_by_name: actor.name,
     ...(draft.isDraft ? { created_by_user_id: actor.userId, created_by_name: actor.name } : {}),
@@ -239,6 +284,7 @@ function buildTargetPayload(draft, locationId, actor) {
 }
 
 function buildEditorDraft(target) {
+  const eventDates = normalizeGrassrootsEventDates(target);
   return {
     ...makeBlankGrassrootsTarget(getGrassrootsCategoryConfig(target.category).id),
     ...target,
@@ -250,18 +296,22 @@ function buildEditorDraft(target) {
     leads_captured: target.leads_captured ?? "",
     cost: target.cost ?? "",
     cpl: target.cpl ?? "",
+    event_type: normalizeGrassrootsEventType(target.event_type) || target.event_type || "",
+    event_dates: eventDates,
+    is_multi_day_event: Boolean(target.details?.is_multi_day_event || eventDates.length > 1),
     isDraft: false,
   };
 }
 
 function StatusPicker({ value, onChange }) {
+  const normalizedValue = normalizeGrassrootsStatus(value);
   return (
     <div>
       <Label>Status</Label>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
         {GRASSROOTS_STATUS_OPTIONS.map((option, index) => {
-          const active = value === option.value;
-          const color = ["#2563EB", "#7C3AED", "#D97706", C.suc][index] || C.pri;
+          const active = normalizedValue === option.value;
+          const color = ["#2563EB", "#7C3AED", C.suc][index] || C.pri;
           return (
             <button
               key={option.value}
@@ -422,6 +472,123 @@ function FieldEditor({ field, value, onChange }) {
   );
 }
 
+function GooglePlacesAddressInput({ value, onChange }) {
+  const inputRef = useRef(null);
+  const autocompleteRef = useRef(null);
+  const [placesReady, setPlacesReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGooglePlacesScript().then((ready) => {
+      if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
+      setPlacesReady(true);
+      autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
+        fields: ["formatted_address", "name"],
+        types: ["address"],
+        componentRestrictions: { country: "us" },
+      });
+      autocompleteRef.current.addListener("place_changed", () => {
+        const place = autocompleteRef.current?.getPlace?.();
+        const address = place?.formatted_address || inputRef.current?.value || "";
+        onChange(address);
+      });
+    });
+    return () => {
+      cancelled = true;
+      if (autocompleteRef.current && window.google?.maps?.event) {
+        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  }, [onChange]);
+
+  return (
+    <label style={{ display: "block" }}>
+      <Label>Address</Label>
+      <input
+        ref={inputRef}
+        value={value || ""}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={GOOGLE_PLACES_API_KEY ? "Start typing an address..." : "Event address"}
+        style={{ ...INPUT_STYLE, background: C.bg }}
+      />
+      <div style={{ marginTop: 5, fontSize: 10.5, color: C.textMut, fontWeight: 700 }}>
+        {GOOGLE_PLACES_API_KEY ? (placesReady ? "Google Places suggestions enabled" : "Manual entry works while suggestions load") : "Manual address entry"}
+      </div>
+    </label>
+  );
+}
+
+function EventDateEditor({ draft, onChange }) {
+  const initialRows = () => {
+    if (Array.isArray(draft.event_dates) && draft.event_dates.length > 0) return draft.event_dates;
+    const normalized = normalizeGrassrootsEventDates(draft);
+    return normalized.length > 0 ? normalized : [{ id: "event_date_1", event_date: "", start_time: "", end_time: "", sequence_order: 1 }];
+  };
+  const rows = initialRows();
+  const multiDay = Boolean(draft.is_multi_day_event || rows.length > 1);
+  const emitRows = (nextRows, nextMultiDay = multiDay) => {
+    const prepared = nextRows.map((row, index) => ({
+      ...row,
+      id: row.id || `event_date_${index + 1}`,
+      sequence_order: index + 1,
+    }));
+    onChange("event_dates", prepared);
+    onChange("is_multi_day_event", nextMultiDay);
+    onChange("event_start_date", prepared[0]?.event_date || "");
+    onChange("event_end_date", nextMultiDay ? (prepared.at(-1)?.event_date || "") : "");
+    onChange("event_time", prepared[0]?.start_time || "");
+  };
+  const updateRow = (index, key, value) => {
+    const nextRows = rows.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row);
+    emitRows(nextRows);
+  };
+  const visibleRows = multiDay ? rows : rows.slice(0, 1);
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <Label>Date</Label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: C.textSec, fontWeight: 800 }}>
+          <input
+            type="checkbox"
+            checked={multiDay}
+            onChange={(event) => emitRows(event.target.checked && rows.length === 1 ? [...rows, { id: `event_date_${Date.now()}`, event_date: "", start_time: "", end_time: "", sequence_order: 2 }] : rows.slice(0, 1), event.target.checked)}
+            style={{ accentColor: C.pri }}
+          />
+          Multi-day
+        </label>
+      </div>
+      {visibleRows.map((row, index) => (
+        <div key={row.id || index} style={{ display: "grid", gridTemplateColumns: multiDay ? "minmax(150px, 1fr) 120px 120px 34px" : "minmax(150px, 1fr) 120px 120px", gap: 8, alignItems: "center" }}>
+          <input type="date" value={row.event_date || ""} onChange={(event) => updateRow(index, "event_date", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+          <input type="time" value={row.start_time || ""} onChange={(event) => updateRow(index, "start_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+          <input type="time" value={row.end_time || ""} onChange={(event) => updateRow(index, "end_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+          {multiDay && (
+            <button
+              type="button"
+              onClick={() => emitRows(rows.filter((_, rowIndex) => rowIndex !== index))}
+              disabled={rows.length <= 1}
+              aria-label="Remove date"
+              style={{ width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${C.borderLight}`, background: "#fff", color: C.textMut, cursor: rows.length > 1 ? "pointer" : "default", display: "grid", placeItems: "center" }}
+            >
+              <I.X />
+            </button>
+          )}
+        </div>
+      ))}
+      {multiDay && (
+        <button
+          type="button"
+          onClick={() => emitRows([...rows, { id: `event_date_${Date.now()}`, event_date: "", start_time: "", end_time: "", sequence_order: rows.length + 1 }])}
+          style={{ width: "fit-content", padding: "7px 12px", borderRadius: 9, border: `1.5px dashed ${C.pri}`, background: "transparent", color: C.pri, fontSize: 12, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <I.Plus /> Add date
+        </button>
+      )}
+    </div>
+  );
+}
+
 function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCancel, onDelete }) {
   const categoryId = categoryConfig.id;
   const fields = FIELD_CONFIGS[categoryId] || [];
@@ -431,7 +598,7 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
   };
 
   return (
-    <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)" }}>
+    <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.22s ease-out" }}>
       <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt} 0%, #fff 70%)` }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
           <div>
@@ -456,16 +623,33 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
           value={draft.name}
           onChange={(value) => onChange("name", value)}
         />
-        {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "outreach"} onChange={(value) => onChange("status", value)} />}
+        {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "identified"} onChange={(value) => onChange("status", value)} />}
         <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />
-        {fields.map((field) => (
-          <FieldEditor
-            key={field.key}
-            field={field}
-            value={getFieldValue(field)}
-            onChange={(value) => onChange(field.key, value)}
-          />
-        ))}
+        {categoryId === "events" ? (
+          <>
+            <GooglePlacesAddressInput value={draft.address} onChange={(value) => onChange("address", value)} />
+            <EventDateEditor draft={draft} onChange={onChange} />
+            <FieldEditor field={{ key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS }} value={draft.event_type} onChange={(value) => onChange("event_type", value)} />
+            <FieldEditor field={{ key: "organizer", label: "Organizer", placeholder: "Organizer" }} value={draft.organizer} onChange={(value) => onChange("organizer", value)} />
+            <FieldEditor field={{ key: "expected_audience", label: "Expected Audience", type: "number", placeholder: "Expected audience" }} value={draft.expected_audience} onChange={(value) => onChange("expected_audience", value)} />
+            <FieldEditor field={{ key: "leads_captured", label: "Leads Captured", type: "number", placeholder: "Leads captured" }} value={draft.leads_captured} onChange={(value) => onChange("leads_captured", value)} />
+            <FieldEditor field={{ key: "cost", label: "Cost", type: "number", placeholder: "Cost" }} value={draft.cost} onChange={(value) => onChange("cost", value)} />
+            <FieldEditor field={{ key: "cpl", label: "CPL", type: "computed", placeholder: "—" }} value={getFieldValue({ key: "cpl" }) || "—"} onChange={() => {}} />
+            <FieldEditor field={{ key: "first_name", label: "Contact Name", placeholder: "Contact name" }} value={draft.first_name} onChange={(value) => onChange("first_name", value)} />
+            <FieldEditor field={{ key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" }} value={draft.contact_email} onChange={(value) => onChange("contact_email", value)} />
+            <FieldEditor field={{ key: "contact_phone", label: "Contact Number", placeholder: "Contact number" }} value={draft.contact_phone} onChange={(value) => onChange("contact_phone", value)} />
+            <FieldEditor field={{ key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" }} value={draft.proposal} onChange={(value) => onChange("proposal", value)} />
+          </>
+        ) : (
+          fields.map((field) => (
+            <FieldEditor
+              key={field.key}
+              field={field}
+              value={getFieldValue(field)}
+              onChange={(value) => onChange(field.key, value)}
+            />
+          ))
+        )}
       </div>
       {!draft.isDraft && (
         <div style={{ padding: "12px 18px 16px", borderTop: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "flex-end" }}>
@@ -480,15 +664,15 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
 
 function StatusBadge({ status }) {
   const colors = {
-    outreach: C.info,
+    identified: C.info,
     corresponding: "#7C3AED",
-    closing: C.warn,
-    active: C.suc,
+    booked: C.suc,
   };
-  const color = colors[status] || C.textMut;
+  const normalizedStatus = normalizeGrassrootsStatus(status);
+  const color = colors[normalizedStatus] || C.textMut;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 10, background: `${color}12`, color, border: `1px solid ${color}30`, fontSize: 11, fontWeight: 900 }}>
-      {getGrassrootsStatusLabel(status)}
+      {getGrassrootsStatusLabel(normalizedStatus)}
     </span>
   );
 }
@@ -648,7 +832,7 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, can
     target.address,
     [target.first_name, target.last_name].filter(Boolean).join(" "),
     target.contact_source,
-    target.event_start_date ? `Event ${fmtDate(target.event_start_date)}` : "",
+    getGrassrootsPrimaryEventDate(target) ? `Event ${fmtDate(getGrassrootsPrimaryEventDate(target))}` : "",
   ].filter(Boolean).slice(0, 2).join(" • ");
 
   return (
@@ -773,7 +957,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
     setLoading(true);
     setSchemaMissing(false);
-    const [targetResult, activityResult, historyResult] = await Promise.all([
+    const [targetResult, activityResult, historyResult, eventDateResult] = await Promise.all([
       supabase
         .from("grassroots_targets")
         .select("*")
@@ -789,10 +973,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .select("*")
         .eq("location_id", locationId)
         .order("event_at", { ascending: false }),
+      supabase
+        .from("grassroots_event_dates")
+        .select("*")
+        .eq("location_id", locationId)
+        .order("event_date", { ascending: true }),
     ]);
 
-    if (targetResult.error || activityResult.error || historyResult.error) {
-      const error = targetResult.error || activityResult.error || historyResult.error;
+    const eventDateTableMissing = eventDateResult.error?.code === "42P01" || eventDateResult.error?.code === "PGRST205";
+    if (targetResult.error || activityResult.error || historyResult.error || (eventDateResult.error && !eventDateTableMissing)) {
+      const error = targetResult.error || activityResult.error || historyResult.error || eventDateResult.error;
       if (error?.code === "42P01" || /grassroots_/.test(error?.message || "")) {
         setSchemaMissing(true);
       } else {
@@ -806,7 +996,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return;
     }
 
-    setTargets(targetResult.data || []);
+    const eventDatesByTarget = (eventDateTableMissing ? [] : (eventDateResult.data || [])).reduce((acc, row) => {
+      if (!row.target_id) return acc;
+      if (!acc[row.target_id]) acc[row.target_id] = [];
+      acc[row.target_id].push(row);
+      return acc;
+    }, {});
+    setTargets((targetResult.data || []).map((target) => ({
+      ...target,
+      status: normalizeGrassrootsStatus(target.status),
+      event_type: normalizeGrassrootsEventType(target.event_type) || target.event_type,
+      event_dates: eventDatesByTarget[target.id] || normalizeGrassrootsEventDates(target),
+    })));
     setActivities(activityResult.data || []);
     setHistory(historyResult.data || []);
     setLoading(false);
@@ -859,6 +1060,26 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setEditDraft(null);
   };
 
+  const persistEventDatesForTarget = async (targetId, draft) => {
+    if (!targetId || getGrassrootsCategoryConfig(draft.category).id !== "events") return { error: null };
+    const eventDates = normalizeGrassrootsEventDates(draft);
+    const deleteResult = await supabase.from("grassroots_event_dates").delete().eq("target_id", targetId);
+    if (deleteResult.error) return deleteResult;
+    if (eventDates.length === 0) return { error: null };
+    return supabase.from("grassroots_event_dates").insert(eventDates.map((row, index) => ({
+      location_id: locationId,
+      target_id: targetId,
+      event_date: row.event_date,
+      start_time: row.start_time || null,
+      end_time: row.end_time || null,
+      sequence_order: index + 1,
+      created_by_user_id: actor.userId,
+      created_by_name: actor.name,
+      updated_by_user_id: actor.userId,
+      updated_by_name: actor.name,
+    })));
+  };
+
   const saveDraft = async () => {
     if (!canEditTargets) {
       toast("You do not have permission to edit grassroots rows", "error");
@@ -868,6 +1089,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (!draft || !locationId) return;
     if (!String(draft.name || "").trim()) {
       toast(`${activeConfig.nameLabel} is required`, "error");
+      return;
+    }
+    if (getGrassrootsCategoryConfig(draft.category).id === "events" && normalizeGrassrootsEventDates(draft).length === 0) {
+      toast("Event date is required", "error");
       return;
     }
     setSavingDraft(true);
@@ -884,7 +1109,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       toast(error.message || "Failed to save row", "error");
       return;
     }
-    setTargets((prev) => draft.isDraft ? [data, ...prev] : prev.map((target) => (target.id === data.id ? data : target)));
+    const eventDateWrite = await persistEventDatesForTarget(data.id, draft);
+    if (eventDateWrite.error) {
+      console.error("Failed to save grassroots event dates", eventDateWrite.error);
+      setSaveState("error");
+      toast(eventDateWrite.error.message || "Failed to save event dates", "error");
+      return;
+    }
+    const dataWithDates = { ...data, event_dates: normalizeGrassrootsEventDates(draft) };
+    setTargets((prev) => draft.isDraft ? [dataWithDates, ...prev] : prev.map((target) => (target.id === data.id ? dataWithDates : target)));
     closeEditor();
     await loadGrassroots();
     setSaveState("saved");
@@ -1086,6 +1319,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         @keyframes grassrootsSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
         @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
         @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
+        @keyframes grassrootsComposerIn { from { opacity:0; transform:translateY(-10px) scale(0.985); } to { opacity:1; transform:translateY(0) scale(1); } }
       `}</style>
       <div style={{
         display: "flex",
@@ -1130,7 +1364,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             Filter{filterCount > 0 ? ` (${filterCount})` : ""}
           </Btn>
           <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
-            Add Row
+            Add {activeConfig.singular}
           </Btn>
         </div>
       </div>
@@ -1365,7 +1599,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
               <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
               <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
-              {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add Row</Btn>}
+              {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add {activeConfig.singular}</Btn>}
             </Card>
           ) : (
             <>
