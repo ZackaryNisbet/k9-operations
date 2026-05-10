@@ -7,11 +7,20 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
+  buildPctReadinessCellUpdateArgs,
+  buildPctReadinessEmployeeOptions,
   getLaborEmploymentCommitmentLabel,
   getLaborRosterPositionGroup,
+  getPctReadinessStatusPresentation,
+  hasActivePctReadinessRecord,
+  matchPctReadinessEmployeeByName,
   buildUpdateLaborEmployeeRpcArgs,
   buildTrainingTemplateScopeClause,
+  classifyPctReadinessVerifierValue,
   groupLaborEmployeeNotes,
+  normalizePctReadinessStatus,
+  normalizePctReadinessText,
+  normalizePctWorkbookStatus,
   normalizeLaborEmploymentCommitment,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
@@ -139,6 +148,143 @@ describe("trainingData helpers", () => {
     expect(getLaborEmploymentCommitmentLabel("full_time")).toBe("Full-Time");
     expect(getLaborEmploymentCommitmentLabel("part_time", { short: true })).toBe("PT");
     expect(getLaborEmploymentCommitmentLabel(null)).toBe("Unassigned");
+  });
+
+  it("normalizes PCT readiness task text and status labels", () => {
+    expect(normalizePctReadinessText("  Verified / Qualified!! ")).toBe("verified qualified");
+    expect(normalizePctReadinessStatus("Verified / Qualified")).toBe("verified");
+    expect(normalizePctReadinessStatus("needs follow up")).toBe("needs_coaching");
+    expect(getPctReadinessStatusPresentation("qualified")).toMatchObject({
+      value: "verified",
+      label: "Verified / Qualified",
+      itemStatus: "complete",
+    });
+  });
+
+  it("maps workbook checkbox and verifier values into readiness statuses", () => {
+    expect(
+      normalizePctWorkbookStatus({
+        checkboxStatus: true,
+        demonstratedBy: "Angelina D",
+        verifierValue: "Zach C",
+      })
+    ).toMatchObject({
+      readinessStatus: "verified",
+      itemStatus: "complete",
+      demonstratedBy: "Angelina D",
+      verifiedBy: "Zach C",
+      noteText: "",
+    });
+
+    expect(
+      normalizePctWorkbookStatus({
+        checkboxStatus: true,
+        demonstratedBy: "Angelina D",
+        verifierValue: "",
+      })
+    ).toMatchObject({
+      readinessStatus: "demonstrated",
+      itemStatus: "in_progress",
+    });
+
+    expect(
+      normalizePctWorkbookStatus({
+        checkboxStatus: false,
+        verifierValue: "moves too fast quality is not great",
+      })
+    ).toMatchObject({
+      readinessStatus: "needs_coaching",
+      itemStatus: "needs_coaching",
+      noteText: "moves too fast quality is not great",
+    });
+  });
+
+  it("classifies verifier names separately from coaching notes", () => {
+    expect(classifyPctReadinessVerifierValue("Allison D.")).toEqual({ kind: "person", value: "Allison D." });
+    expect(classifyPctReadinessVerifierValue("not making notes via walkie")).toEqual({
+      kind: "note",
+      value: "not making notes via walkie",
+    });
+  });
+
+  it("builds PCT readiness cell update RPC args", () => {
+    expect(
+      buildPctReadinessCellUpdateArgs({
+        recordId: "record-1",
+        templateItemId: "item-1",
+        readinessStatus: "Verified / Qualified",
+        demonstratedBy: " Allison D ",
+        verifiedBy: " Zach C ",
+        comment: "  Great now ",
+        actorUserId: "not-a-uuid",
+        actorName: " Skyler ",
+      })
+    ).toEqual({
+      p_record_id: "record-1",
+      p_template_item_id: "item-1",
+      p_readiness_status: "verified",
+      p_demonstrated_by: "Allison D",
+      p_verified_by: "Zach C",
+      p_comment: "Great now",
+      p_actor_user_id: null,
+      p_actor_name: "Skyler",
+    });
+  });
+
+  it("matches workbook trainee names against labor employees by normalized name", () => {
+    const employees = [
+      { id: "e1", full_name: "Michael Duprey" },
+      { id: "e2", full_name: "Emily George" },
+    ];
+    expect(matchPctReadinessEmployeeByName(employees, "Michael Duprey ")).toMatchObject({
+      status: "matched",
+      employee: { id: "e1" },
+    });
+    expect(matchPctReadinessEmployeeByName(employees, "Missing Person")).toMatchObject({
+      status: "unmatched",
+      matches: [],
+    });
+  });
+
+  it("prevents duplicate active PCT readiness options and sorts by recent start date", () => {
+    const employees = [
+      { id: "old", full_name: "Old Employee", employment_status: "active", start_date: "2024-01-01" },
+      { id: "new", full_name: "New Employee", employment_status: "active", start_date: "2026-04-01" },
+      { id: "inactive", full_name: "Inactive Employee", employment_status: "inactive", start_date: "2026-05-01" },
+      { id: "existing", full_name: "Existing Employee", employment_status: "active", start_date: "2026-03-01" },
+    ];
+    const records = [
+      {
+        id: "r1",
+        labor_employee_id: "existing",
+        template_name_snapshot: "PCT Team Readiness Board",
+        overall_status: "in_progress",
+      },
+    ];
+
+    expect(hasActivePctReadinessRecord(records, "existing")).toBe(false);
+
+    const uuidExisting = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const uuidRecords = [
+      {
+        id: "r2",
+        labor_employee_id: uuidExisting,
+        template_name_snapshot: "PCT Team Readiness Board",
+        overall_status: "in_progress",
+      },
+    ];
+    expect(hasActivePctReadinessRecord(uuidRecords, uuidExisting)).toBe(true);
+
+    const options = buildPctReadinessEmployeeOptions({
+      employees: [
+        employees[0],
+        employees[1],
+        employees[2],
+        { ...employees[3], id: uuidExisting },
+      ],
+      records: uuidRecords,
+    });
+    expect(options.map((option) => option.value)).toEqual(["new", "old"]);
   });
 
   it("groups leadership, supervisor, CSR, PCT, and other roster positions", () => {
