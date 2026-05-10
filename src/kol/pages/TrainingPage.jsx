@@ -29,6 +29,8 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildUpdateLaborEmployeeRpcArgs,
+  buildPctReadinessCellUpdateArgs,
+  buildPctReadinessEmployeeOptions,
   buildUpdateTrainingRecordConfigArgs,
   buildTrainingTemplateScopeClause,
   formatLaborAttachmentFileSize,
@@ -37,6 +39,7 @@ import {
   getLaborEmploymentCommitmentLabel,
   getLaborAttachmentPreviewKind,
   getLaborRosterPositionGroup,
+  getPctReadinessStatusPresentation,
   groupLaborEmployeeDocumentsByNote,
   groupLaborEmployeeNotes,
   groupTrainingNotes,
@@ -45,7 +48,9 @@ import {
   isLaborEmployeeNoteDeleted,
   isLaborEmployeeDocumentDeleted,
   isLaborEmployeeActive,
+  normalizePctReadinessStatus,
   normalizeOptionalUuid,
+  PCT_READINESS_STATUS_OPTIONS,
   readLaborEmploymentCommitment,
   readLaborEmployeeContactValue,
   resolveTrainingLocationId,
@@ -97,6 +102,28 @@ const ITEM_STATUS_COLORS = {
   needs_coaching: { bg: "#FEF3C7", text: "#D97706" },
   blocked: { bg: "#F1F5F9", text: "#94A3B8" },
   waived: { bg: "#F1F5F9", text: "#94A3B8" },
+};
+
+const PCT_READINESS_STATUS_STYLES = {
+  not_started: { bg: "#F8FAFC", text: "#64748B", border: "#E2E8F0", icon: "O" },
+  demonstrated: { bg: "#E0F2FE", text: "#0369A1", border: "#BAE6FD", icon: "D" },
+  verified: { bg: "#DCFCE7", text: "#15803D", border: "#BBF7D0", icon: "OK" },
+  needs_coaching: { bg: "#FEF3C7", text: "#B45309", border: "#FDE68A", icon: "!" },
+  blocked: { bg: "#FEE2E2", text: "#B91C1C", border: "#FECACA", icon: "X" },
+  waived: { bg: "#F1F5F9", text: "#475569", border: "#CBD5E1", icon: "W" },
+};
+
+const TRAINING_VIEW_OPTIONS = [
+  { id: "board", label: "Team Readiness Board", subtitle: "PCT skills by employee" },
+  { id: "records", label: "Records", subtitle: "Active and completed training records" },
+];
+
+const DEFAULT_PCT_READINESS_FILTERS = {
+  employee: "",
+  task: "",
+  showGapsOnly: false,
+  showNeedsCoaching: false,
+  showRecentlyStarted: false,
 };
 
 export const LABOR_MANAGEMENT_TABS = [
@@ -4352,6 +4379,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [noteSearchText, setNoteSearchText] = useState("");
   const [rosterSort, setRosterSort] = useState(LABOR_DEFAULT_SORT);
   const [trainingSort, setTrainingSort] = useState(LABOR_DEFAULT_SORT);
+  const [trainingView, setTrainingView] = useState("board");
+  const [pctReadinessBoard, setPctReadinessBoard] = useState(null);
+  const [pctReadinessLoading, setPctReadinessLoading] = useState(false);
+  const [pctReadinessLoaded, setPctReadinessLoaded] = useState(false);
+  const [pctReadinessError, setPctReadinessError] = useState("");
+  const [pctReadinessFilters, setPctReadinessFilters] = useState(DEFAULT_PCT_READINESS_FILTERS);
+  const [pctReadinessCollapsedSections, setPctReadinessCollapsedSections] = useState({});
+  const [pctReadinessCellEditor, setPctReadinessCellEditor] = useState(null);
+  const [pctReadinessEditorStatus, setPctReadinessEditorStatus] = useState("not_started");
+  const [pctReadinessEditorDemonstratedBy, setPctReadinessEditorDemonstratedBy] = useState("");
+  const [pctReadinessEditorVerifiedBy, setPctReadinessEditorVerifiedBy] = useState("");
+  const [pctReadinessEditorComment, setPctReadinessEditorComment] = useState("");
+  const [savingPctReadinessCell, setSavingPctReadinessCell] = useState(false);
+  const [showPctReadinessNewRecord, setShowPctReadinessNewRecord] = useState(false);
+  const [newPctReadinessEmployeeId, setNewPctReadinessEmployeeId] = useState("");
+  const [creatingPctReadinessRecord, setCreatingPctReadinessRecord] = useState(false);
   const [performanceReviewSort, setPerformanceReviewSort] = useState(LABOR_DEFAULT_SORT);
   const [hourAnalysisPersonSort, setHourAnalysisPersonSort] = useState(LABOR_DEFAULT_SORT);
   const [showHierarchyManager, setShowHierarchyManager] = useState(false);
@@ -4840,13 +4883,47 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await loadTrainingBundle(true, laborLocationRef || null);
   }, [laborLocationRef, loadTrainingBundle]);
 
+  const loadPctReadinessBoard = useCallback(async (force = false) => {
+    if (!laborLocationRef || (!force && (pctReadinessLoaded || pctReadinessLoading))) return;
+    setPctReadinessLoading(true);
+    setPctReadinessError("");
+    try {
+      const { data: boardData, error } = await supabase.rpc("get_pct_readiness_board", {
+        p_location_ref: laborLocationRef,
+        p_actor_user_id: actorUserId,
+      });
+      if (error) throw error;
+      setPctReadinessBoard(boardData || null);
+      setPctReadinessLoaded(true);
+    } catch (error) {
+      console.error("PCT readiness board load error:", error);
+      setPctReadinessError(error?.message || "Failed to load Team Readiness Board");
+      addGlobalToast?.("Failed to load Team Readiness Board", "error");
+    } finally {
+      setPctReadinessLoading(false);
+    }
+  }, [actorUserId, addGlobalToast, laborLocationRef, pctReadinessLoaded, pctReadinessLoading]);
+
   useEffect(() => { loadCoreData(); }, [loadCoreData]);
+
+  useEffect(() => {
+    setPctReadinessBoard(null);
+    setPctReadinessLoaded(false);
+    setPctReadinessError("");
+    setNewPctReadinessEmployeeId("");
+  }, [laborLocationRef]);
 
   useEffect(() => {
     if (tab === "training" || tab === "performance-reviews" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
       loadTrainingBundle();
     }
   }, [loadTrainingBundle, previewTemplateId, selectedRecordId, selectedReviewInstanceId, showNewRecord, tab]);
+
+  useEffect(() => {
+    if (tab === "training" && trainingView === "board") {
+      loadPctReadinessBoard();
+    }
+  }, [loadPctReadinessBoard, tab, trainingView]);
 
   useEffect(() => {
     if (tab === "home" || tab === "performance-reviews" || tab === "notes" || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
@@ -5229,6 +5306,127 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       label: `${employee.full_name} (${formatLaborPositionTitle(employee.position_title) || "Employee"})`,
     }));
   }, [laborEmployees, rosterSnapshot]);
+
+  const pctReadinessSections = useMemo(() => (
+    Array.isArray(pctReadinessBoard?.sections) ? pctReadinessBoard.sections : []
+  ), [pctReadinessBoard]);
+  const pctReadinessRecords = useMemo(() => (
+    Array.isArray(pctReadinessBoard?.records) ? pctReadinessBoard.records : []
+  ), [pctReadinessBoard]);
+  const pctReadinessCells = useMemo(() => (
+    isObjectRow(pctReadinessBoard?.cells) ? pctReadinessBoard.cells : {}
+  ), [pctReadinessBoard]);
+  const selectedEmployeePctReadinessRecord = useMemo(() => {
+    if (!selectedLaborEmployeeView?.id) return null;
+    return pctReadinessRecords.find((record) => record.labor_employee_id === selectedLaborEmployeeView.id) || null;
+  }, [pctReadinessRecords, selectedLaborEmployeeView]);
+  const selectedEmployeePctReadinessProfile = useMemo(() => {
+    if (!selectedEmployeePctReadinessRecord) return null;
+    const recordId = selectedEmployeePctReadinessRecord.id;
+    const categoryRows = pctReadinessSections.map((section) => {
+      const sectionItems = toObjectRows(section.items);
+      const cells = sectionItems.map((item) => pctReadinessCells[`${recordId}:${item.id}`]).filter(Boolean);
+      const verifiedCount = cells.filter((cell) => ["verified", "waived"].includes(normalizePctReadinessStatus(cell.readiness_status))).length;
+      const needsCoachingCount = cells.filter((cell) => normalizePctReadinessStatus(cell.readiness_status) === "needs_coaching").length;
+      const total = sectionItems.length;
+      return {
+        id: section.id,
+        title: section.title,
+        verifiedCount,
+        needsCoachingCount,
+        total,
+        percent: total > 0 ? Math.round((verifiedCount / total) * 100) : 0,
+      };
+    });
+    const taskRows = pctReadinessSections.flatMap((section) => (
+      toObjectRows(section.items).map((item) => {
+        const cell = pctReadinessCells[`${recordId}:${item.id}`] || {};
+        return {
+          section,
+          item,
+          cell,
+          status: normalizePctReadinessStatus(cell.readiness_status || cell.status),
+        };
+      })
+    ));
+    return {
+      record: selectedEmployeePctReadinessRecord,
+      categoryRows,
+      gaps: taskRows.filter((row) => !["verified", "waived"].includes(row.status)),
+      coachingNotes: taskRows.filter((row) => row.status === "needs_coaching" || row.cell.latest_note),
+      taskRows,
+    };
+  }, [pctReadinessCells, pctReadinessSections, selectedEmployeePctReadinessRecord]);
+  const pctReadinessAvailableEmployees = useMemo(() => (
+    Array.isArray(pctReadinessBoard?.available_employees) ? pctReadinessBoard.available_employees : []
+  ), [pctReadinessBoard]);
+  const pctReadinessNewEmployeeOptions = useMemo(() => (
+    buildPctReadinessEmployeeOptions({
+      employees: pctReadinessAvailableEmployees,
+      records: pctReadinessRecords,
+      excludeExistingReadinessRecords: true,
+    }).map((option) => ({
+      ...option,
+      label: `${option.label} (${formatLaborDate(option.employee?.start_date || option.employee?.first_shift_date) || "No start date"})`,
+    }))
+  ), [pctReadinessAvailableEmployees, pctReadinessRecords]);
+  const selectedNewPctReadinessEmployee = useMemo(() => (
+    pctReadinessAvailableEmployees.find((employee) => employee.id === newPctReadinessEmployeeId) || null
+  ), [newPctReadinessEmployeeId, pctReadinessAvailableEmployees]);
+  const pctReadinessEmployeeFilterOptions = useMemo(() => ([
+    { value: "", label: "All employees" },
+    ...pctReadinessRecords.map((record) => ({
+      value: record.labor_employee_id || record.id,
+      label: record.employee_full_name || "Employee",
+    })),
+  ]), [pctReadinessRecords]);
+  const filteredPctReadinessRecords = useMemo(() => {
+    const now = Date.now();
+    return pctReadinessRecords.filter((record) => {
+      if (pctReadinessFilters.employee && record.labor_employee_id !== pctReadinessFilters.employee) return false;
+      if (pctReadinessFilters.showRecentlyStarted) {
+        const startDate = record.employee?.start_date || record.hire_date || record.training_start_date;
+        const startTime = startDate ? new Date(`${startDate}T12:00:00`).getTime() : NaN;
+        if (!Number.isFinite(startTime) || now - startTime > 45 * 24 * 60 * 60 * 1000) return false;
+      }
+      return true;
+    });
+  }, [pctReadinessFilters.employee, pctReadinessFilters.showRecentlyStarted, pctReadinessRecords]);
+  const filteredPctReadinessSections = useMemo(() => {
+    const taskQuery = String(pctReadinessFilters.task || "").trim().toLowerCase();
+    const visibleRecordIds = new Set(filteredPctReadinessRecords.map((record) => record.id));
+    return pctReadinessSections
+      .map((section) => {
+        const sectionTitle = String(section.title || "");
+        const sectionMatches = taskQuery && sectionTitle.toLowerCase().includes(taskQuery);
+        const itemsForSection = toObjectRows(section.items).filter((item) => {
+          const itemLabel = String(item.label || "");
+          if (taskQuery && !sectionMatches && !itemLabel.toLowerCase().includes(taskQuery)) return false;
+          if (pctReadinessFilters.showGapsOnly || pctReadinessFilters.showNeedsCoaching) {
+            const matchingCells = Object.values(pctReadinessCells).filter((cell) => (
+              cell?.template_item_id === item.id && visibleRecordIds.has(cell.record_id)
+            ));
+            if (pctReadinessFilters.showNeedsCoaching) {
+              return matchingCells.some((cell) => normalizePctReadinessStatus(cell?.readiness_status) === "needs_coaching");
+            }
+            return matchingCells.some((cell) => !["verified", "waived"].includes(normalizePctReadinessStatus(cell?.readiness_status)));
+          }
+          return true;
+        });
+        return { ...section, items: itemsForSection };
+      })
+      .filter((section) => section.items.length > 0);
+  }, [
+    filteredPctReadinessRecords,
+    pctReadinessCells,
+    pctReadinessFilters.showGapsOnly,
+    pctReadinessFilters.showNeedsCoaching,
+    pctReadinessFilters.task,
+    pctReadinessSections,
+  ]);
+  const pctReadinessImportReport = useMemo(() => (
+    isObjectRow(pctReadinessBoard?.import_report) ? pctReadinessBoard.import_report : {}
+  ), [pctReadinessBoard]);
 
   // Template stats: section and item counts per template
   const templateStats = useMemo(() => {
@@ -6910,6 +7108,99 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPreviewTemplateId(null);
     setPreviewTemplateVersionId(null);
   }, [addGlobalToast]);
+
+  const updatePctReadinessFilter = useCallback((key, value) => {
+    setPctReadinessFilters((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const clearPctReadinessFilters = useCallback(() => {
+    setPctReadinessFilters(DEFAULT_PCT_READINESS_FILTERS);
+  }, []);
+
+  const openPctReadinessCellEditor = useCallback((record, item, section) => {
+    const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+    const readinessStatus = normalizePctReadinessStatus(cell.readiness_status || cell.status);
+    setPctReadinessCellEditor({ record, item, section, cell });
+    setPctReadinessEditorStatus(readinessStatus);
+    setPctReadinessEditorDemonstratedBy(cell.demonstrated_by || cell.metadata?.demonstrated_by_name || "");
+    setPctReadinessEditorVerifiedBy(cell.verified_by || cell.metadata?.verified_by_name || "");
+    setPctReadinessEditorComment("");
+  }, [pctReadinessCells]);
+
+  const closePctReadinessCellEditor = useCallback(() => {
+    setPctReadinessCellEditor(null);
+    setPctReadinessEditorStatus("not_started");
+    setPctReadinessEditorDemonstratedBy("");
+    setPctReadinessEditorVerifiedBy("");
+    setPctReadinessEditorComment("");
+    setSavingPctReadinessCell(false);
+  }, []);
+
+  const handleSavePctReadinessCell = useCallback(async () => {
+    if (!pctReadinessCellEditor?.record?.id || !pctReadinessCellEditor?.item?.id) return;
+    setSavingPctReadinessCell(true);
+    try {
+      const args = buildPctReadinessCellUpdateArgs({
+        recordId: pctReadinessCellEditor.record.id,
+        templateItemId: pctReadinessCellEditor.item.id,
+        readinessStatus: pctReadinessEditorStatus,
+        demonstratedBy: pctReadinessEditorDemonstratedBy,
+        verifiedBy: pctReadinessEditorVerifiedBy,
+        comment: pctReadinessEditorComment,
+        actorUserId,
+        actorName,
+      });
+      const { error } = await supabase.rpc("update_pct_readiness_cell", args);
+      if (error) throw error;
+      await loadPctReadinessBoard(true);
+      await refreshLaborData({ includeTraining: true, includeSupport: true });
+      closePctReadinessCellEditor();
+      addGlobalToast?.("Readiness cell updated", "success");
+    } catch (error) {
+      console.error("PCT readiness cell save error:", error);
+      addGlobalToast?.(error?.message || "Failed to update readiness cell", "error");
+      setSavingPctReadinessCell(false);
+    }
+  }, [
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    closePctReadinessCellEditor,
+    loadPctReadinessBoard,
+    pctReadinessCellEditor,
+    pctReadinessEditorComment,
+    pctReadinessEditorDemonstratedBy,
+    pctReadinessEditorStatus,
+    pctReadinessEditorVerifiedBy,
+    refreshLaborData,
+  ]);
+
+  const handleCreatePctReadinessRecord = useCallback(async () => {
+    if (!newPctReadinessEmployeeId) {
+      addGlobalToast?.("Choose an employee for the readiness board", "error");
+      return;
+    }
+    setCreatingPctReadinessRecord(true);
+    try {
+      const { error } = await supabase.rpc("create_pct_readiness_record", {
+        p_labor_employee_id: newPctReadinessEmployeeId,
+        p_location_ref: laborLocationRef,
+        p_actor_user_id: actorUserId,
+        p_actor_name: actorName,
+      });
+      if (error) throw error;
+      setShowPctReadinessNewRecord(false);
+      setNewPctReadinessEmployeeId("");
+      await loadPctReadinessBoard(true);
+      await refreshLaborData({ includeTraining: true, includeSupport: true });
+      addGlobalToast?.("Trainee added to Team Readiness Board", "success");
+    } catch (error) {
+      console.error("PCT readiness record create error:", error);
+      addGlobalToast?.(error?.message || "Failed to add trainee", "error");
+    } finally {
+      setCreatingPctReadinessRecord(false);
+    }
+  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, loadPctReadinessBoard, newPctReadinessEmployeeId, refreshLaborData]);
 
   const handleAddEmployeeNote = useCallback(async () => {
     if (!canAccessEmployeeNotes) {
@@ -10508,6 +10799,108 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
         {employeeRecordTab === "training" && (
           <>
+            {selectedEmployeePctReadinessProfile && (
+              <Card style={{ padding: 18, marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>Team Readiness Board</div>
+                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
+                      {selectedEmployeePctReadinessProfile.record.required_item_completed_count || 0}/{selectedEmployeePctReadinessProfile.record.required_item_count || 0} verified or waived
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <div style={{ minWidth: 150 }}>
+                      <ProgressBar percent={selectedEmployeePctReadinessProfile.record.progress_percent} />
+                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 4 }}>{Math.round(safeTrainingProgress(selectedEmployeePctReadinessProfile.record.progress_percent))}% ready</div>
+                    </div>
+                    <Btn
+                      variant="secondary"
+                      size="sm"
+                      icon={<I.Back />}
+                      onClick={() => {
+                        setSelectedLaborEmployeeId(null);
+                        setSelectedLaborEmployeeSeed(null);
+                        setSelectedReviewInstanceId(null);
+                        setTab("training");
+                        setTrainingView("board");
+                      }}
+                    >
+                      Back to Board
+                    </Btn>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+                  {selectedEmployeePctReadinessProfile.categoryRows.map((category) => (
+                    <div key={category.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff" }}>
+                      <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 6 }}>{category.title}</div>
+                      <ProgressBar percent={category.percent} />
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+                        <span>{category.percent}%</span>
+                        {category.needsCoachingCount > 0 ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span> : <span>{category.verifiedCount}/{category.total}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 14 }}>
+                  <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Active Gaps</div>
+                    {selectedEmployeePctReadinessProfile.gaps.length === 0 ? (
+                      <div style={{ fontSize: 12, color: C.textMut }}>No active gaps.</div>
+                    ) : selectedEmployeePctReadinessProfile.gaps.slice(0, 8).map((row) => (
+                      <div key={`gap-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
+                        <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.item.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Coaching Notes</div>
+                    {selectedEmployeePctReadinessProfile.coachingNotes.length === 0 ? (
+                      <div style={{ fontSize: 12, color: C.textMut }}>No coaching notes on the readiness board.</div>
+                    ) : selectedEmployeePctReadinessProfile.coachingNotes.slice(0, 8).map((row) => (
+                      <div key={`coach-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
+                        <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.cell.latest_note || getPctReadinessStatusPresentation(row.status).label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ maxHeight: 360, overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={employeeDetailTableHeaderStyle}>Category</th>
+                        <th style={employeeDetailTableHeaderStyle}>Task</th>
+                        <th style={employeeDetailTableHeaderStyle}>Status</th>
+                        <th style={employeeDetailTableHeaderStyle}>Comment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedEmployeePctReadinessProfile.taskRows.map((row) => {
+                        const presentation = getPctReadinessStatusPresentation(row.status);
+                        const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                        return (
+                          <tr key={row.item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.text, fontWeight: 800, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
+                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, lineHeight: 1.45, verticalAlign: "top" }}>{row.item.label}</td>
+                            <td style={{ padding: "10px 12px", verticalAlign: "top", width: 160 }}>
+                              <span style={{ display: "inline-flex", gap: 6, alignItems: "center", padding: "5px 8px", borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900 }}>
+                                {style.icon} {presentation.label}
+                              </span>
+                            </td>
+                            <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
+                              {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+
             <Card style={{ padding: 18, marginBottom: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
                 <div>
@@ -11278,6 +11671,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             >
               <I.Settings />
             </button>
+          )}
+          {trainingView === "board" && (
+            <Btn variant="secondary" icon={<I.Plus />} onClick={() => setShowPctReadinessNewRecord(true)}>Add Trainee</Btn>
           )}
           <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowNewRecord(true); }}>New Training Record</Btn>
         </div>
@@ -15818,59 +16214,326 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "training" && canUseLaborTab("training") && (
         <div>
+          <LaborViewSwitcher
+            value={trainingView}
+            onChange={setTrainingView}
+            options={TRAINING_VIEW_OPTIONS}
+          />
           {trainingBundleLoading && !trainingBundleLoaded ? (
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading training records…</Card>
           ) : null}
-          <SectionHeader title="Active Training Records" count={activeRecords.length}>
-            <LaborSortControl
-              sort={trainingSort}
-              defaultSort={LABOR_DEFAULT_SORT}
-              columns={LABOR_TRAINING_SORT_COLUMNS}
-              onChange={setTrainingSort}
-            />
-          </SectionHeader>
-          {activeRecords.length === 0 ? (
-            <EmptyState icon="GraduationCap" title="No active records" subtitle="Create a new training record to get started" />
-          ) : (
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>
-                  <th style={tableHeaderStyle}>Employee</th>
-                  <th style={tableHeaderStyle}>Position</th>
-                  <th style={tableHeaderStyle}>Training Plan</th>
-                  <th style={tableHeaderStyle}>Progress</th>
-                  <th style={tableHeaderStyle}>Status</th>
-                  <th style={tableHeaderStyle}>Target</th>
-                </tr></thead>
-                <tbody>{sortedActiveRecords.map(r => <RecordRow key={r.id} rec={r} />)}</tbody>
-              </table>
-            </Card>
+          {trainingView === "board" && (
+            <>
+              {pctReadinessLoading && !pctReadinessLoaded ? (
+                <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading Team Readiness Board...</Card>
+              ) : null}
+              {pctReadinessError ? (
+                <Card style={{ padding: 18, marginBottom: 16, borderColor: C.danLt, background: C.danLt }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.dan }}>{pctReadinessError}</div>
+                  <Btn variant="secondary" size="sm" icon={<I.RefreshCw />} style={{ marginTop: 10 }} onClick={() => loadPctReadinessBoard(true)}>
+                    Retry
+                  </Btn>
+                </Card>
+              ) : null}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 16 }}>
+                <MetricCard
+                  label="Active PCT Trainees"
+                  value={pctReadinessBoard?.summary?.total_active_pct_trainees ?? pctReadinessRecords.length}
+                  helper="Current readiness records"
+                  color={C.pri}
+                />
+                <MetricCard
+                  label="Average Readiness"
+                  value={`${Math.round(Number(pctReadinessBoard?.summary?.average_readiness || 0))}%`}
+                  helper="Verified or waived tasks"
+                  color={C.suc}
+                />
+                <MetricCard
+                  label="Needs Coaching"
+                  value={pctReadinessBoard?.summary?.needs_coaching_count ?? 0}
+                  helper="Cells with coaching status"
+                  color={C.warn}
+                />
+                <MetricCard
+                  label="Weakest Gaps"
+                  value={toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps).length}
+                  helper={toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps)[0]?.category || "No gaps loaded"}
+                  color={C.text}
+                />
+              </div>
+
+              <Card style={{ padding: 14, marginBottom: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, alignItems: "end" }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Role / Template</div>
+                    <CustomSelect
+                      value="pct_team_readiness_board"
+                      onChange={() => {}}
+                      disabled
+                      options={[{ value: "pct_team_readiness_board", label: "PCT Team Readiness Board" }]}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee</div>
+                    <CustomSelect
+                      value={pctReadinessFilters.employee}
+                      onChange={(value) => updatePctReadinessFilter("employee", value)}
+                      options={pctReadinessEmployeeFilterOptions}
+                      placeholder="All employees"
+                      searchable
+                    />
+                  </div>
+                  <Inp
+                    label="Task or Category"
+                    value={pctReadinessFilters.task}
+                    onChange={(value) => updatePctReadinessFilter("task", value)}
+                    placeholder="Search readiness tasks"
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                    <Btn variant="ghost" size="sm" icon={<I.RefreshCw />} onClick={() => loadPctReadinessBoard(true)} disabled={pctReadinessLoading}>Refresh</Btn>
+                    <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={() => setShowPctReadinessNewRecord(true)}>Add Trainee</Btn>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+                  <Inp label="Show gaps only" type="checkbox" value={pctReadinessFilters.showGapsOnly} onChange={(value) => updatePctReadinessFilter("showGapsOnly", value)} />
+                  <Inp label="Show needs coaching" type="checkbox" value={pctReadinessFilters.showNeedsCoaching} onChange={(value) => updatePctReadinessFilter("showNeedsCoaching", value)} />
+                  <Inp label="Recently started" type="checkbox" value={pctReadinessFilters.showRecentlyStarted} onChange={(value) => updatePctReadinessFilter("showRecentlyStarted", value)} />
+                  <Btn variant="ghost" size="sm" onClick={clearPctReadinessFilters}>Clear</Btn>
+                  {pctReadinessImportReport?.canonical_task_count ? (
+                    <span style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
+                      Imported {pctReadinessImportReport.canonical_task_count} tasks from {pctReadinessImportReport.source_workbook_name || "workbook"}
+                    </span>
+                  ) : null}
+                </div>
+              </Card>
+
+              {pctReadinessRecords.length === 0 && !pctReadinessLoading ? (
+                <EmptyState icon="ClipboardCheck" title="No PCT readiness records yet" subtitle="Add a trainee to start the board." />
+              ) : (
+                <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+                  <div style={{ overflow: "auto", maxHeight: "68vh" }}>
+                    <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                      <thead>
+                        <tr>
+                          <th
+                            style={{
+                              ...tableHeaderStyle,
+                              position: "sticky",
+                              left: 0,
+                              top: 0,
+                              zIndex: 4,
+                              minWidth: 320,
+                              background: "#fff",
+                              boxShadow: `1px 0 0 ${C.border}`,
+                            }}
+                          >
+                            Task / Skill
+                          </th>
+                          {filteredPctReadinessRecords.map((record) => (
+                            <th
+                              key={record.id}
+                              style={{
+                                ...tableHeaderStyle,
+                                position: "sticky",
+                                top: 0,
+                                zIndex: 3,
+                                minWidth: 156,
+                                maxWidth: 180,
+                                background: "#fff",
+                                verticalAlign: "bottom",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => openLaborEmployeeProfile(record.labor_employee_id, record.employee || { id: record.labor_employee_id, full_name: record.employee_full_name }, { recordTab: "training" })}
+                                style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontFamily: "inherit", fontSize: 12, fontWeight: 900, textAlign: "left", cursor: "pointer", lineHeight: 1.25 }}
+                              >
+                                {record.employee_full_name || "Employee"}
+                              </button>
+                              <div style={{ fontSize: 10.5, color: C.textMut, fontWeight: 700, marginTop: 4, textTransform: "none" }}>
+                                {record.employee?.start_date ? formatLaborDate(record.employee.start_date) : "No start date"}
+                              </div>
+                              <div style={{ marginTop: 6 }}>
+                                <ProgressBar percent={record.progress_percent} />
+                                <div style={{ fontSize: 10.5, color: C.textMut, marginTop: 3, fontWeight: 800 }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</div>
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPctReadinessSections.map((section) => {
+                          const collapsed = pctReadinessCollapsedSections[section.id] === true;
+                          return (
+                            <React.Fragment key={section.id}>
+                              <tr>
+                                <td
+                                  colSpan={filteredPctReadinessRecords.length + 1}
+                                  style={{
+                                    position: "sticky",
+                                    left: 0,
+                                    zIndex: 2,
+                                    background: C.surfaceHover,
+                                    borderBottom: `1px solid ${C.border}`,
+                                    padding: 0,
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setPctReadinessCollapsedSections((prev) => ({ ...prev, [section.id]: !collapsed }))}
+                                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: "10px 12px", fontFamily: "inherit", cursor: "pointer", textAlign: "left" }}
+                                  >
+                                    <span style={{ display: "inline-flex", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 160ms ease" }}><I.ChevronDown /></span>
+                                    <span style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{section.title}</span>
+                                    <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>{section.items.length} task{section.items.length === 1 ? "" : "s"}</span>
+                                  </button>
+                                </td>
+                              </tr>
+                              {!collapsed && section.items.map((item) => (
+                                <tr key={item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                                  <td
+                                    style={{
+                                      position: "sticky",
+                                      left: 0,
+                                      zIndex: 1,
+                                      minWidth: 320,
+                                      maxWidth: 420,
+                                      background: "#fff",
+                                      boxShadow: `1px 0 0 ${C.borderLight}`,
+                                      padding: "10px 12px",
+                                      fontSize: 12,
+                                      fontWeight: 750,
+                                      color: C.text,
+                                      lineHeight: 1.45,
+                                      verticalAlign: "top",
+                                    }}
+                                  >
+                                    {item.label}
+                                  </td>
+                                  {filteredPctReadinessRecords.map((record) => {
+                                    const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+                                    const presentation = getPctReadinessStatusPresentation(cell.readiness_status || cell.status);
+                                    const statusStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                                    return (
+                                      <td key={`${record.id}:${item.id}`} style={{ padding: 7, minWidth: 156, borderBottom: `1px solid ${C.borderLight}`, background: "#fff", verticalAlign: "top" }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => openPctReadinessCellEditor(record, item, section)}
+                                          title={`${record.employee_full_name || "Employee"} - ${item.label}`}
+                                          style={{
+                                            width: "100%",
+                                            minHeight: 54,
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            alignItems: "flex-start",
+                                            justifyContent: "center",
+                                            gap: 4,
+                                            border: `1px solid ${statusStyle.border}`,
+                                            borderRadius: 8,
+                                            background: statusStyle.bg,
+                                            color: statusStyle.text,
+                                            fontFamily: "inherit",
+                                            padding: "7px 8px",
+                                            cursor: "pointer",
+                                            textAlign: "left",
+                                          }}
+                                        >
+                                          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 900, lineHeight: 1.1 }}>
+                                            <span style={{ minWidth: 20 }}>{statusStyle.icon}</span>
+                                            <span>{presentation.label}</span>
+                                          </span>
+                                          {(cell.latest_note || cell.demonstrated_by || cell.verified_by) && (
+                                            <span style={{ fontSize: 10.5, color: statusStyle.text, opacity: 0.78, lineHeight: 1.25 }}>
+                                              {cell.latest_note ? "Comment" : cell.verified_by || cell.demonstrated_by}
+                                            </span>
+                                          )}
+                                        </button>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
+
+              {toObjectRows(pctReadinessBoard?.summary?.weakest_task_gaps).length > 0 && (
+                <Card style={{ padding: 16, marginTop: 16 }}>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>Weakest Task / Category Gaps</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                    {toObjectRows(pctReadinessBoard.summary.weakest_task_gaps).map((gap) => (
+                      <div key={gap.template_item_id || gap.label} style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff" }}>
+                        <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 4 }}>{gap.category || "Category"}</div>
+                        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{gap.label}</div>
+                        <div style={{ fontSize: 11, color: C.warn, fontWeight: 900, marginTop: 8 }}>{gap.gap_count} gap{Number(gap.gap_count) === 1 ? "" : "s"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </>
           )}
-          <div style={{ height: 20 }} />
-          <SectionHeader title="Completed Training Records" count={completedRecords.length}>
-            <LaborSortControl
-              sort={trainingSort}
-              defaultSort={LABOR_DEFAULT_SORT}
-              columns={LABOR_TRAINING_SORT_COLUMNS}
-              onChange={setTrainingSort}
-            />
-          </SectionHeader>
-          {completedRecords.length === 0 ? (
-            <EmptyState icon="CheckCircle" title="No completed records" subtitle="Completed training records will appear here" />
-          ) : (
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>
-                  <th style={tableHeaderStyle}>Employee</th>
-                  <th style={tableHeaderStyle}>Position</th>
-                  <th style={tableHeaderStyle}>Training Plan</th>
-                  <th style={tableHeaderStyle}>Progress</th>
-                  <th style={tableHeaderStyle}>Status</th>
-                  <th style={tableHeaderStyle}>Target</th>
-                </tr></thead>
-                <tbody>{sortedCompletedRecords.map((record) => <RecordRow key={record.id} rec={record} />)}</tbody>
-              </table>
-            </Card>
+
+          {trainingView === "records" && (
+            <>
+              <SectionHeader title="Active Training Records" count={activeRecords.length}>
+                <LaborSortControl
+                  sort={trainingSort}
+                  defaultSort={LABOR_DEFAULT_SORT}
+                  columns={LABOR_TRAINING_SORT_COLUMNS}
+                  onChange={setTrainingSort}
+                />
+              </SectionHeader>
+              {activeRecords.length === 0 ? (
+                <EmptyState icon="GraduationCap" title="No active records" subtitle="Create a new training record to get started" />
+              ) : (
+                <Card style={{ padding: 0, overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr>
+                      <th style={tableHeaderStyle}>Employee</th>
+                      <th style={tableHeaderStyle}>Position</th>
+                      <th style={tableHeaderStyle}>Training Plan</th>
+                      <th style={tableHeaderStyle}>Progress</th>
+                      <th style={tableHeaderStyle}>Status</th>
+                      <th style={tableHeaderStyle}>Target</th>
+                    </tr></thead>
+                    <tbody>{sortedActiveRecords.map(r => <RecordRow key={r.id} rec={r} />)}</tbody>
+                  </table>
+                </Card>
+              )}
+              <div style={{ height: 20 }} />
+              <SectionHeader title="Completed Training Records" count={completedRecords.length}>
+                <LaborSortControl
+                  sort={trainingSort}
+                  defaultSort={LABOR_DEFAULT_SORT}
+                  columns={LABOR_TRAINING_SORT_COLUMNS}
+                  onChange={setTrainingSort}
+                />
+              </SectionHeader>
+              {completedRecords.length === 0 ? (
+                <EmptyState icon="CheckCircle" title="No completed records" subtitle="Completed training records will appear here" />
+              ) : (
+                <Card style={{ padding: 0, overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr>
+                      <th style={tableHeaderStyle}>Employee</th>
+                      <th style={tableHeaderStyle}>Position</th>
+                      <th style={tableHeaderStyle}>Training Plan</th>
+                      <th style={tableHeaderStyle}>Progress</th>
+                      <th style={tableHeaderStyle}>Status</th>
+                      <th style={tableHeaderStyle}>Target</th>
+                    </tr></thead>
+                    <tbody>{sortedCompletedRecords.map((record) => <RecordRow key={record.id} rec={record} />)}</tbody>
+                  </table>
+                </Card>
+              )}
+            </>
           )}
         </div>
       )}
@@ -17437,6 +18100,91 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <Btn variant="ghost" onClick={() => setShowHierarchyManager(false)}>Cancel</Btn>
               <Btn variant="primary" onClick={saveHierarchy} disabled={savingHierarchy}>
                 {savingHierarchy ? "Saving…" : "Save Labor Settings"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {canUseLaborTab("training") && showPctReadinessNewRecord && (
+        <Modal title="Add PCT Readiness Trainee" onClose={() => { setShowPctReadinessNewRecord(false); setNewPctReadinessEmployeeId(""); }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee</div>
+              <CustomSelect
+                value={newPctReadinessEmployeeId}
+                onChange={setNewPctReadinessEmployeeId}
+                options={pctReadinessNewEmployeeOptions}
+                placeholder="Select active employee"
+                searchable
+              />
+            </div>
+            {selectedNewPctReadinessEmployee ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surfaceHover }}>
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0 }}>Name</div>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginTop: 4 }}>{selectedNewPctReadinessEmployee.full_name}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0 }}>Role</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.textSec, marginTop: 4 }}>{formatLaborPositionTitle(selectedNewPctReadinessEmployee.position_title) || "Employee"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0 }}>Start Date</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.textSec, marginTop: 4 }}>{formatLaborDate(selectedNewPctReadinessEmployee.start_date || selectedNewPctReadinessEmployee.first_shift_date) || "Not set"}</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5 }}>
+                Active employees are sorted by most recent start date. Employees already on this readiness board are hidden.
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+              <Btn variant="ghost" onClick={() => { setShowPctReadinessNewRecord(false); setNewPctReadinessEmployeeId(""); }}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleCreatePctReadinessRecord} disabled={creatingPctReadinessRecord || !newPctReadinessEmployeeId}>
+                {creatingPctReadinessRecord ? "Adding..." : "Add Trainee"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {canUseLaborTab("training") && pctReadinessCellEditor && (
+        <Modal title="Update Readiness Cell" onClose={closePctReadinessCellEditor}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surfaceHover }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{pctReadinessCellEditor.record?.employee_full_name || "Employee"}</div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 5, lineHeight: 1.45 }}>{pctReadinessCellEditor.item?.label}</div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>{pctReadinessCellEditor.section?.title}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Status</div>
+              <CustomSelect
+                value={pctReadinessEditorStatus}
+                onChange={(value) => setPctReadinessEditorStatus(normalizePctReadinessStatus(value))}
+                options={PCT_READINESS_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <Inp label="Demonstrated By" value={pctReadinessEditorDemonstratedBy} onChange={setPctReadinessEditorDemonstratedBy} placeholder="Trainer name" />
+              <Inp label="Verified By" value={pctReadinessEditorVerifiedBy} onChange={setPctReadinessEditorVerifiedBy} placeholder="Verifier name" />
+            </div>
+            <Inp
+              label="Comment"
+              type="textarea"
+              rows={3}
+              value={pctReadinessEditorComment}
+              onChange={setPctReadinessEditorComment}
+              placeholder="Optional coaching note or context"
+            />
+            <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+              {pctReadinessCellEditor.cell?.updated_at ? `Last updated ${formatTrainingTimestamp(pctReadinessCellEditor.cell.updated_at)}` : "No prior update timestamp"}
+              {pctReadinessCellEditor.cell?.latest_note ? ` - Latest comment: ${pctReadinessCellEditor.cell.latest_note}` : ""}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+              <Btn variant="ghost" onClick={closePctReadinessCellEditor}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleSavePctReadinessCell} disabled={savingPctReadinessCell}>
+                {savingPctReadinessCell ? "Saving..." : "Save Cell"}
               </Btn>
             </div>
           </div>

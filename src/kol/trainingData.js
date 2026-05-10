@@ -14,6 +14,202 @@ export const COMPLETED_TRAINING_RECORD_STATUSES = [
   "archived",
 ];
 
+export const PCT_READINESS_TEMPLATE_SLUG = "pct_team_readiness_board";
+
+export const PCT_READINESS_STATUS_OPTIONS = [
+  { value: "not_started", label: "Not Started", itemStatus: "not_started", tone: "muted" },
+  { value: "demonstrated", label: "Demonstrated", itemStatus: "in_progress", tone: "info" },
+  { value: "verified", label: "Verified / Qualified", itemStatus: "complete", tone: "success" },
+  { value: "needs_coaching", label: "Needs Coaching", itemStatus: "needs_coaching", tone: "warning" },
+  { value: "blocked", label: "Blocked", itemStatus: "blocked", tone: "danger" },
+  { value: "waived", label: "Waived", itemStatus: "waived", tone: "neutral" },
+];
+
+const PCT_READINESS_STATUS_BY_VALUE = Object.fromEntries(
+  PCT_READINESS_STATUS_OPTIONS.map((option) => [option.value, option])
+);
+
+export function normalizePctReadinessText(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizePctReadinessStatus(value = "") {
+  const normalized = normalizePctReadinessText(value).replace(/\s+/g, "_");
+  if (normalized === "verified_qualified" || normalized === "qualified" || normalized === "complete" || normalized === "passed") return "verified";
+  if (normalized === "in_progress" || normalized === "demo" || normalized === "demonstrate") return "demonstrated";
+  if (normalized === "needs_follow_up" || normalized === "needs_review" || normalized === "coaching") return "needs_coaching";
+  if (PCT_READINESS_STATUS_BY_VALUE[normalized]) return normalized;
+  return "not_started";
+}
+
+export function getPctReadinessStatusPresentation(value = "") {
+  const normalized = normalizePctReadinessStatus(value);
+  return PCT_READINESS_STATUS_BY_VALUE[normalized] || PCT_READINESS_STATUS_BY_VALUE.not_started;
+}
+
+export function classifyPctReadinessVerifierValue(value = "") {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  if (!text) return { kind: "blank", value: "" };
+  const lower = text.toLowerCase();
+  const noteSignals = [
+    "not ",
+    "need",
+    "struggle",
+    "quality",
+    "walkie",
+    "moves",
+    "too fast",
+    "slow",
+    "work on",
+    "because",
+    "lacks",
+  ];
+  if (noteSignals.some((signal) => lower.includes(signal))) {
+    return { kind: "note", value: text };
+  }
+  if (text.length > 34 || /[!?]/.test(text) || /[.,;:]\s+\w{4,}/.test(text)) {
+    return { kind: "note", value: text };
+  }
+  const words = text.replace(/\./g, "").replace(/-/g, " ").split(/\s+/).filter(Boolean);
+  const looksLikeName = words.length >= 1
+    && words.length <= 4
+    && words.every((word) => /^[A-Za-z][A-Za-z']*$/.test(word));
+  return looksLikeName ? { kind: "person", value: text } : { kind: "note", value: text };
+}
+
+export function normalizePctWorkbookStatus({
+  checkboxStatus = null,
+  demonstratedBy = "",
+  verifierValue = "",
+} = {}) {
+  const checked = checkboxStatus === true
+    || ["true", "yes", "y", "1", "complete", "completed"].includes(String(checkboxStatus || "").trim().toLowerCase());
+  const verifier = classifyPctReadinessVerifierValue(verifierValue);
+  const demoName = String(demonstratedBy || "").trim();
+
+  if (verifier.kind === "note") {
+    return {
+      readinessStatus: "needs_coaching",
+      itemStatus: "needs_coaching",
+      demonstratedBy: demoName,
+      verifiedBy: "",
+      noteText: verifier.value,
+    };
+  }
+
+  if (checked && verifier.kind === "person") {
+    return {
+      readinessStatus: "verified",
+      itemStatus: "complete",
+      demonstratedBy: demoName,
+      verifiedBy: verifier.value,
+      noteText: "",
+    };
+  }
+
+  if (checked) {
+    return {
+      readinessStatus: "demonstrated",
+      itemStatus: "in_progress",
+      demonstratedBy: demoName,
+      verifiedBy: "",
+      noteText: "",
+    };
+  }
+
+  return {
+    readinessStatus: "not_started",
+    itemStatus: "not_started",
+    demonstratedBy: demoName,
+    verifiedBy: "",
+    noteText: "",
+  };
+}
+
+export function buildPctReadinessCellUpdateArgs({
+  recordId,
+  templateItemId,
+  readinessStatus = "not_started",
+  demonstratedBy = "",
+  verifiedBy = "",
+  comment = "",
+  actorUserId = null,
+  actorName = null,
+} = {}) {
+  return {
+    p_record_id: recordId,
+    p_template_item_id: templateItemId,
+    p_readiness_status: normalizePctReadinessStatus(readinessStatus),
+    p_demonstrated_by: String(demonstratedBy || "").trim() || null,
+    p_verified_by: String(verifiedBy || "").trim() || null,
+    p_comment: String(comment || "").trim() || null,
+    p_actor_user_id: normalizeOptionalUuid(actorUserId),
+    p_actor_name: String(actorName || "").trim() || null,
+  };
+}
+
+export function isPctReadinessTemplate(template = {}) {
+  return String(template?.slug || "") === PCT_READINESS_TEMPLATE_SLUG;
+}
+
+export function isPctReadinessRecord(record = {}) {
+  return String(record?.template_slug || record?.metadata?.template_slug || "") === PCT_READINESS_TEMPLATE_SLUG
+    || String(record?.template_name_snapshot || "").trim().toLowerCase() === "pct team readiness board";
+}
+
+export function hasActivePctReadinessRecord(records = [], laborEmployeeId = "") {
+  const normalizedEmployeeId = normalizeOptionalUuid(laborEmployeeId);
+  if (!normalizedEmployeeId) return false;
+  return (Array.isArray(records) ? records : []).some((record) => {
+    if (!record || typeof record !== "object") return false;
+    if (!isPctReadinessRecord(record)) return false;
+    if (String(record.labor_employee_id || record.employee_id || "") !== normalizedEmployeeId) return false;
+    return String(record.overall_status || "") !== "archived";
+  });
+}
+
+export function matchPctReadinessEmployeeByName(employees = [], workbookName = "") {
+  const normalizedWorkbookName = normalizePctReadinessText(workbookName).replace(/\s+/g, "");
+  if (!normalizedWorkbookName) return { status: "unmatched", matches: [] };
+  const matches = (Array.isArray(employees) ? employees : []).filter((employee) => (
+    normalizePctReadinessText(employee?.full_name || employee?.name || "").replace(/\s+/g, "") === normalizedWorkbookName
+  ));
+  if (matches.length === 1) return { status: "matched", employee: matches[0], matches };
+  if (matches.length > 1) return { status: "ambiguous", matches };
+  return { status: "unmatched", matches: [] };
+}
+
+export function buildPctReadinessEmployeeOptions({
+  employees = [],
+  records = [],
+  excludeExistingReadinessRecords = true,
+} = {}) {
+  return (Array.isArray(employees) ? employees : [])
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => isLaborEmployeeActive(employee))
+    .filter((employee) => {
+      const employeeId = normalizeOptionalUuid(employee.id || employee.labor_employee_id);
+      return !excludeExistingReadinessRecords || !hasActivePctReadinessRecord(records, employeeId);
+    })
+    .sort((a, b) => {
+      const aTime = Date.parse(a.start_date || a.first_shift_date || "") || 0;
+      const bTime = Date.parse(b.start_date || b.first_shift_date || "") || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return String(a.full_name || "").localeCompare(String(b.full_name || ""));
+    })
+    .map((employee) => ({
+      value: employee.id || employee.labor_employee_id,
+      label: employee.full_name || employee.name || "Employee",
+      employee,
+    }));
+}
+
 export const LABOR_EMPLOYEE_ATTACHMENT_BUCKET = "labor-employee-attachments";
 export const LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES = 5;
 export const LABOR_EMPLOYEE_ATTACHMENT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
