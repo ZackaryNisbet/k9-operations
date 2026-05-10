@@ -403,6 +403,28 @@ function FieldEditor({ field, value, onChange }) {
   if (field.type === "select") {
     const options = field.options || [];
     const selected = String(value || "");
+    if (field.key === "event_type") {
+      return (
+        <label style={{ display: "block" }}>
+          <Label>{field.label}</Label>
+          <select
+            value={selected}
+            onChange={(event) => onChange(event.target.value)}
+            style={{
+              ...INPUT_STYLE,
+              appearance: "auto",
+              background: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            <option value="">{field.placeholder || "Select type"}</option>
+            {options.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+      );
+    }
     return (
       <label style={{ display: "block" }}>
         <Label>{field.label}</Label>
