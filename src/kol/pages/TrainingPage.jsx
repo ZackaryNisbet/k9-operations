@@ -11658,6 +11658,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   );
 
 		  const tableHeaderStyle = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
+  const pctReadinessEmployeeBoardTableHeaderStyle = {
+    padding: "9px 12px",
+    fontSize: 11,
+    fontWeight: 800,
+    color: C.textMut,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    borderBottom: `1px solid ${C.border}`,
+    textAlign: "left",
+  };
 	  const rosterCellStyle = { padding: "12px 10px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "middle" };
 	  const rosterSecondaryCellStyle = { ...rosterCellStyle, color: C.textSec, fontWeight: 650 };
   const rosterUsedKeys = Object.keys(rosterDraftFilters);
@@ -16434,10 +16444,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                           <tr>
-                            <th style={employeeDetailTableHeaderStyle}>Category</th>
-                            <th style={employeeDetailTableHeaderStyle}>Task / Skill</th>
-                            <th style={employeeDetailTableHeaderStyle}>Status</th>
-                            <th style={employeeDetailTableHeaderStyle}>Actor / Comment</th>
+                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Category</th>
+                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Task / Skill</th>
+                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Status</th>
+                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Actor / Comment</th>
                           </tr>
                         </thead>
                         <tbody>
