@@ -60,8 +60,9 @@ const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
 let googlePlacesScriptPromise = null;
 
 function loadGooglePlacesScript() {
-  if (!GOOGLE_PLACES_API_KEY || typeof document === "undefined") return Promise.resolve(false);
+  if (typeof document === "undefined") return Promise.resolve(false);
   if (window.google?.maps?.places) return Promise.resolve(true);
+  if (!GOOGLE_PLACES_API_KEY) return Promise.resolve(false);
   if (googlePlacesScriptPromise) return googlePlacesScriptPromise;
   googlePlacesScriptPromise = new Promise((resolve, reject) => {
     const existing = document.querySelector("script[data-k9-google-places]");
@@ -235,6 +236,20 @@ export function parseGooglePlaceAddress(place) {
   };
 }
 
+export function buildGrassrootsLegacyAddressFromSplitAddress(source = {}) {
+  const line1 = String(source.address_line_1 || "").trim();
+  const line2 = String(source.address_line_2 || "").trim();
+  const city = String(source.address_city || "").trim();
+  const state = String(source.address_state || "").trim();
+  const postalCode = String(source.address_postal_code || "").trim();
+  const country = String(source.address_country || "").trim();
+  const cityStatePostal = [
+    city,
+    [state, postalCode].filter(Boolean).join(" "),
+  ].filter(Boolean).join(", ");
+  return [line1, line2, cityStatePostal, country].filter(Boolean).join(", ");
+}
+
 function fmtCurrencyNumber(value) {
   if (value === "" || value == null) return "";
   const num = Number(value);
@@ -265,12 +280,13 @@ function buildTargetPayload(draft, locationId, actor) {
   const details = draft.details && typeof draft.details === "object" ? draft.details : {};
   const status = normalizeGrassrootsStatus(draft.status);
   const splitAddress = getGrassrootsSplitAddress(draft);
+  const legacyAddress = String(draft.address || "").trim() || buildGrassrootsLegacyAddressFromSplitAddress(draft);
 
   return {
     location_id: locationId,
     category: draft.category,
     name: String(draft.name || "").trim(),
-    address: String(draft.address || "").trim() || null,
+    address: legacyAddress || null,
     ...(isEvent ? {
       address_line_1: splitAddress.address_line_1 || null,
       address_line_2: splitAddress.address_line_2 || null,
@@ -817,7 +833,13 @@ function EventTargetInlineEditor({ draft, saving, onChange, onSave, onCancel, on
                   placeholder="Event address"
                 />
               </div>
-              <FieldEditor field={{ key: "address_line_1", label: "Street", placeholder: "Street address" }} value={draft.address_line_1} onChange={(value) => onChange("address_line_1", value)} />
+              <GooglePlacesAddressInput
+                label="Street"
+                value={draft.address_line_1}
+                onChange={(value) => onChange("address_line_1", value)}
+                onPlaceSelect={applyPlaceAddress}
+                placeholder="Street address"
+              />
               <FieldEditor field={{ key: "address_line_2", label: "Unit", placeholder: "Suite, booth, or unit" }} value={draft.address_line_2} onChange={(value) => onChange("address_line_2", value)} />
               <FieldEditor field={{ key: "address_city", label: "City", placeholder: "City" }} value={draft.address_city} onChange={(value) => onChange("address_city", value)} />
               <FieldEditor field={{ key: "address_state", label: "State", placeholder: "State" }} value={draft.address_state} onChange={(value) => onChange("address_state", value)} />
@@ -1566,6 +1588,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           padding: 0;
         }
         .grassroots-event-inline-body { padding: 14px; background: ${C.bg}; }
+        .pac-container {
+          z-index: 10050 !important;
+          border-radius: 12px;
+          border: 1px solid ${C.borderLight};
+          box-shadow: 0 16px 34px rgba(15,23,42,0.18);
+          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+          overflow: hidden;
+        }
         .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
         .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
         .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
