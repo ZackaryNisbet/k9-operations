@@ -5,10 +5,12 @@ import {
   buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
+  compareGrassrootsEventSchedule,
   getGrassrootsAddressText,
   getGrassrootsActivityCount,
   getGrassrootsDefaultFilters,
   getGrassrootsNextDate,
+  getGrassrootsNextEventDate,
   getGrassrootsPrimaryEventDate,
   getGrassrootsSplitAddress,
   groupGrassrootsHistory,
@@ -118,6 +120,32 @@ describe("grassrootsData", () => {
     expect(normalizeGrassrootsEventDates(target).map((row) => row.start_time)).toEqual(["14:00", "09:00"]);
     expect(normalizeGrassrootsEventDates(target).map((row) => row.end_time)).toEqual(["16:30", "12:00"]);
     expect(getGrassrootsPrimaryEventDate(target)).toBe("2026-06-10");
+  });
+
+  it("sorts events by the next upcoming event date by default", () => {
+    const rows = [
+      { id: "past", name: "Past Event", event_dates: [{ event_date: "2026-05-01" }] },
+      { id: "missing", name: "No Date" },
+      { id: "later", name: "Later Event", event_dates: [{ event_date: "2026-05-20" }] },
+      { id: "next", name: "Next Event", event_dates: [{ event_date: "2026-05-12" }] },
+      { id: "multi", name: "Multi Event", event_dates: [{ event_date: "2026-04-20" }, { event_date: "2026-05-13" }] },
+    ];
+
+    expect(getGrassrootsNextEventDate(rows[4], "2026-05-11")).toBe("2026-05-13");
+    expect(rows.slice().sort((a, b) => compareGrassrootsEventSchedule(a, b, "2026-05-11")).map((row) => row.id)).toEqual([
+      "next",
+      "multi",
+      "later",
+      "past",
+      "missing",
+    ]);
+    expect(rows.slice().sort((a, b) => compareGrassrootsEventSchedule(a, b, "2026-05-11", "desc")).map((row) => row.id)).toEqual([
+      "later",
+      "multi",
+      "next",
+      "past",
+      "missing",
+    ]);
   });
 
   it("packages event-date rows for a single atomic save RPC payload", () => {

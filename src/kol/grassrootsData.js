@@ -237,6 +237,31 @@ export function getGrassrootsPrimaryEventDate(target = {}) {
   return normalizeGrassrootsEventDates(target)[0]?.event_date || target.event_start_date || "";
 }
 
+export function getGrassrootsNextEventDate(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length === 0) return "";
+  return dates.find((row) => row.event_date >= today)?.event_date || dates[dates.length - 1]?.event_date || "";
+}
+
+export function compareGrassrootsEventSchedule(left = {}, right = {}, today = new Date().toISOString().slice(0, 10), direction = "asc") {
+  const leftDate = getGrassrootsNextEventDate(left, today);
+  const rightDate = getGrassrootsNextEventDate(right, today);
+  if (!leftDate && !rightDate) return normalizeText(left.name).localeCompare(normalizeText(right.name));
+  if (!leftDate) return 1;
+  if (!rightDate) return -1;
+
+  if (direction === "desc") {
+    const dateCompare = rightDate.localeCompare(leftDate);
+    return dateCompare || normalizeText(left.name).localeCompare(normalizeText(right.name));
+  }
+
+  const leftUpcoming = leftDate >= today;
+  const rightUpcoming = rightDate >= today;
+  if (leftUpcoming !== rightUpcoming) return leftUpcoming ? -1 : 1;
+  const dateCompare = leftUpcoming ? leftDate.localeCompare(rightDate) : rightDate.localeCompare(leftDate);
+  return dateCompare || normalizeText(left.name).localeCompare(normalizeText(right.name));
+}
+
 export function makeBlankGrassrootsTarget(category = "events") {
   const config = getGrassrootsCategoryConfig(category);
   const isEvent = config.id === "events";
