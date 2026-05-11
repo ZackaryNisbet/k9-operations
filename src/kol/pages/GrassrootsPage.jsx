@@ -260,6 +260,18 @@ export function buildGrassrootsLegacyAddressFromSplitAddress(source = {}) {
   return [line1, line2, cityStatePostal, country].filter(Boolean).join(", ");
 }
 
+export function getGrassrootsVisibleAddressLine(source = {}) {
+  return String(source.address_line_1 || source.address || "").trim();
+}
+
+function hasStructuredGrassrootsAddress(source = {}) {
+  return Boolean(String(source.address_line_1 || "").trim() && (
+    String(source.address_city || "").trim()
+    || String(source.address_state || "").trim()
+    || String(source.address_postal_code || "").trim()
+  ));
+}
+
 function fmtCurrencyNumber(value) {
   if (value === "" || value == null) return "";
   const num = Number(value);
@@ -290,7 +302,10 @@ function buildTargetPayload(draft, locationId, actor) {
   const details = draft.details && typeof draft.details === "object" ? draft.details : {};
   const status = normalizeGrassrootsStatus(draft.status);
   const splitAddress = getGrassrootsSplitAddress(draft);
-  const legacyAddress = String(draft.address || "").trim() || buildGrassrootsLegacyAddressFromSplitAddress(draft);
+  const structuredLegacyAddress = buildGrassrootsLegacyAddressFromSplitAddress(draft);
+  const legacyAddress = hasStructuredGrassrootsAddress(splitAddress)
+    ? structuredLegacyAddress
+    : String(draft.address || "").trim();
   const targetDetails = isEvent
     ? {
       ...details,
@@ -599,9 +614,10 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
         const place = autocompleteRef.current?.getPlace?.();
         const address = place?.formatted_address || inputRef.current?.value || "";
         const parsedAddress = parseGooglePlaceAddress(place);
+        const visibleAddressLine = getGrassrootsVisibleAddressLine(parsedAddress) || address;
         appliedAddressRef.current = address;
-        onChange(address);
-        onPlaceSelect?.({ ...parsedAddress, address: parsedAddress.address || address });
+        onChange(visibleAddressLine);
+        onPlaceSelect?.({ ...parsedAddress, address: visibleAddressLine });
       });
     });
     return () => {
@@ -655,10 +671,11 @@ function GooglePlacesBusinessInput({ label, value, onChange, onPlaceSelect, plac
         const place = autocompleteRef.current?.getPlace?.();
         const name = place?.name || inputRef.current?.value || "";
         const parsedAddress = parseGooglePlaceAddress(place);
+        const visibleAddressLine = getGrassrootsVisibleAddressLine(parsedAddress);
         onChange(name);
         onPlaceSelect?.({
           ...parsedAddress,
-          address: parsedAddress.address || place?.formatted_address || "",
+          address: visibleAddressLine || parsedAddress.address || place?.formatted_address || "",
           name,
           contact_phone: place?.formatted_phone_number || "",
           website: place?.website || "",
@@ -692,13 +709,22 @@ function GooglePlacesBusinessInput({ label, value, onChange, onPlaceSelect, plac
 }
 
 function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Address" }) {
+  const handlePlaceSelect = useCallback((parts) => {
+    const visibleAddressLine = getGrassrootsVisibleAddressLine(parts);
+    onPlaceSelect?.({
+      ...parts,
+      address: visibleAddressLine || parts?.address || "",
+    });
+  }, [onPlaceSelect]);
+
   return (
     <>
       <div className="grassroots-event-wide-field">
         <GooglePlacesAddressInput
+          label="Address"
           value={draft.address}
           onChange={(value) => onChange("address", value)}
-          onPlaceSelect={onPlaceSelect}
+          onPlaceSelect={handlePlaceSelect}
           placeholder={placeholder}
         />
       </div>
@@ -706,7 +732,7 @@ function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Add
         label="Street"
         value={draft.address_line_1}
         onChange={(value) => onChange("address_line_1", value)}
-        onPlaceSelect={onPlaceSelect}
+        onPlaceSelect={handlePlaceSelect}
         placeholder="Street address"
       />
       <FieldEditor field={{ key: "address_line_2", label: "Unit", placeholder: "Suite, booth, or unit" }} value={draft.address_line_2} onChange={(value) => onChange("address_line_2", value)} />
