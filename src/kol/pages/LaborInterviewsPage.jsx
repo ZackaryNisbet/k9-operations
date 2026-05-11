@@ -123,6 +123,42 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl }) {
+  useEffect(() => {
+    if (!bucket || !path) {
+      setPreviewUrl("");
+      return undefined;
+    }
+    let active = true;
+    let objectUrl = "";
+    setPreviewUrl("");
+
+    async function loadPreview() {
+      try {
+        const { data, error } = await supabase.storage.from(bucket).download(path);
+        if (!active) return;
+        if (error) throw error;
+        if (!data || typeof URL === "undefined" || !URL.createObjectURL) {
+          setPreviewUrl("");
+          return;
+        }
+        objectUrl = URL.createObjectURL(data);
+        setPreviewUrl(objectUrl);
+      } catch (_) {
+        if (active) setPreviewUrl("");
+      }
+    }
+
+    loadPreview();
+    return () => {
+      active = false;
+      if (objectUrl && typeof URL !== "undefined" && URL.revokeObjectURL) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [bucket, path, versionKey, setPreviewUrl]);
+}
+
 function normalizeAiReviewMode(value) {
   const text = String(value || "").trim().toLowerCase();
   return INTERVIEW_AI_REVIEW_MODES.some((mode) => mode.value === text) ? text : "literal";
@@ -4453,6 +4489,18 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   const selectedPayRateSummary = useMemo(() => formatInterviewPayRateSummary(selectedPayRates), [selectedPayRates]);
   const resumeArtifacts = useMemo(() => artifacts.filter((artifact) => artifact.artifact_type === "resume"), [artifacts]);
   const selectedResumeArtifact = resumeArtifacts[0] || null;
+  useStorageObjectPreviewUrl({
+    bucket: selectedPdfSourceBucket,
+    path: selectedPdfSourcePath,
+    versionKey: selectedSnapshot?.version?.id || "",
+    setPreviewUrl: setPdfPreviewUrl,
+  });
+  useStorageObjectPreviewUrl({
+    bucket: selectedResumeArtifact?.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
+    path: selectedResumeArtifact?.storage_path || "",
+    versionKey: selectedResumeArtifact?.id || selectedResumeArtifact?.created_at || "",
+    setPreviewUrl: setResumePreviewUrl,
+  });
   const selectedGuideReviewItems = useMemo(() => buildPdfReviewItems(selectedPdfFields), [selectedPdfFields]);
   const selectedGuideReviewedCount = useMemo(() => {
     return selectedGuideReviewItems.filter((item) => (
@@ -4721,35 +4769,6 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       return draftMapsEqual(prev, mergedDrafts) ? prev : mergedDrafts;
     });
   }, [responsesByTarget]);
-
-  useEffect(() => {
-    if (!selectedPdfSourcePath) {
-      setPdfPreviewUrl("");
-      return;
-    }
-    let active = true;
-    supabase.storage.from(selectedPdfSourceBucket).createSignedUrl(selectedPdfSourcePath, 60 * 30).then(({ data: signed, error }) => {
-      if (!active) return;
-      setPdfPreviewUrl(error ? "" : signed?.signedUrl || "");
-    });
-    return () => { active = false; };
-  }, [selectedPdfSourceBucket, selectedPdfSourcePath]);
-
-  useEffect(() => {
-    if (!selectedResumeArtifact?.storage_path) {
-      setResumePreviewUrl("");
-      return;
-    }
-    let active = true;
-    supabase.storage
-      .from(selectedResumeArtifact.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET)
-      .createSignedUrl(selectedResumeArtifact.storage_path, 60 * 30)
-      .then(({ data: signed, error }) => {
-        if (!active) return;
-        setResumePreviewUrl(error ? "" : signed?.signedUrl || "");
-      });
-    return () => { active = false; };
-  }, [selectedResumeArtifact?.storage_bucket, selectedResumeArtifact?.storage_path]);
 
   useEffect(() => {
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
