@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, MiniDatePicker, Modal } from "../../shared/ui";
+import { Btn, CalendarPicker, Card, MiniDatePicker } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -218,7 +218,7 @@ function parseNumberField(value) {
   return Number.isNaN(num) ? null : num;
 }
 
-function parseGooglePlaceAddress(place) {
+export function parseGooglePlaceAddress(place) {
   const components = Array.isArray(place?.address_components) ? place.address_components : [];
   const read = (type, mode = "long_name") => components.find((component) => component.types?.includes(type))?.[mode] || "";
   const streetNumber = read("street_number");
@@ -533,16 +533,14 @@ function FieldEditor({ field, value, onChange }) {
   );
 }
 
-function GooglePlacesAddressInput({ value, onChange, onPlaceSelect }) {
+function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceSelect, placeholder = "Start typing an address" }) {
   const inputRef = useRef(null);
   const autocompleteRef = useRef(null);
-  const [placesReady, setPlacesReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     loadGooglePlacesScript().then((ready) => {
       if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
-      setPlacesReady(true);
       autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
         fields: ["address_components", "formatted_address", "name", "place_id"],
         types: ["address"],
@@ -566,17 +564,14 @@ function GooglePlacesAddressInput({ value, onChange, onPlaceSelect }) {
 
   return (
     <label style={{ display: "block" }}>
-      <Label>Address</Label>
+      <Label>{label}</Label>
       <input
         ref={inputRef}
         value={value || ""}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={GOOGLE_PLACES_API_KEY ? "Start typing an address..." : "Event address"}
+        placeholder={placeholder}
         style={{ ...INPUT_STYLE, background: C.bg }}
       />
-      <div style={{ marginTop: 5, fontSize: 10.5, color: C.textMut, fontWeight: 700 }}>
-        {GOOGLE_PLACES_API_KEY ? (placesReady ? "Google Places suggestions enabled" : "Manual entry works while suggestions load") : "Manual address entry"}
-      </div>
     </label>
   );
 }
@@ -671,6 +666,9 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
     if (status === "abandoned") onChange("is_active", false);
     else if (normalizeGrassrootsStatus(draft.status) === "abandoned") onChange("is_active", true);
   };
+  const applyPlaceAddress = (parts) => {
+    Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
+  };
 
   return (
     <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.22s ease-out" }}>
@@ -702,7 +700,12 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
         {categoryId !== "events" && <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />}
         {categoryId === "events" ? (
           <>
-            <GooglePlacesAddressInput value={draft.address} onChange={(value) => onChange("address", value)} />
+            <GooglePlacesAddressInput
+              value={draft.address}
+              onChange={(value) => onChange("address", value)}
+              onPlaceSelect={applyPlaceAddress}
+              placeholder="Event address"
+            />
             <EventDateEditor draft={draft} onChange={onChange} />
             <FieldEditor field={{ key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS }} value={draft.event_type} onChange={(value) => onChange("event_type", value)} />
             <FieldEditor field={{ key: "organizer", label: "Organizer", placeholder: "Organizer" }} value={draft.organizer} onChange={(value) => onChange("organizer", value)} />
@@ -716,14 +719,28 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
             <FieldEditor field={{ key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" }} value={draft.proposal} onChange={(value) => onChange("proposal", value)} />
           </>
         ) : (
-          fields.map((field) => (
-            <FieldEditor
-              key={field.key}
-              field={field}
-              value={getFieldValue(field)}
-              onChange={(value) => onChange(field.key, value)}
-            />
-          ))
+          fields.map((field) => {
+            if (categoryId === "drops" && field.key === "address") {
+              return (
+                <GooglePlacesAddressInput
+                  key={field.key}
+                  label={field.label}
+                  value={draft.address}
+                  placeholder={field.placeholder || "Business address"}
+                  onChange={(value) => onChange("address", value)}
+                  onPlaceSelect={applyPlaceAddress}
+                />
+              );
+            }
+            return (
+              <FieldEditor
+                key={field.key}
+                field={field}
+                value={getFieldValue(field)}
+                onChange={(value) => onChange(field.key, value)}
+              />
+            );
+          })
         )}
       </div>
       {!draft.isDraft && (
@@ -748,7 +765,23 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetModal({ draft, saving, onChange, onSave, onCancel, onDelete }) {
+function getEventPopoverPosition(anchor) {
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 760;
+  const width = Math.min(860, Math.max(320, viewportWidth - 32));
+  const preferredLeft = anchor?.right ? anchor.right - width : viewportWidth - width - 24;
+  const left = Math.max(16, Math.min(preferredLeft, viewportWidth - width - 16));
+  const preferredTop = anchor?.bottom ? anchor.bottom + 10 : 96;
+  const top = Math.max(16, Math.min(preferredTop, Math.max(16, viewportHeight - 680)));
+  return {
+    left,
+    top,
+    width,
+    maxHeight: Math.max(360, viewportHeight - top - 16),
+  };
+}
+
+function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel, onDelete }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -758,10 +791,41 @@ function EventTargetModal({ draft, saving, onChange, onSave, onCancel, onDelete 
     Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
   };
   const cpl = fmtCurrencyNumber(calculateGrassrootsCpl(draft.cost, draft.leads_captured)) || "";
+  const position = getEventPopoverPosition(anchor);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
 
   return (
-    <Modal title={draft.isDraft ? "New Event" : "Edit Event"} onClose={onCancel} fullWidth>
-      <div className="grassroots-event-modal-shell">
+    <div className="grassroots-event-popover-layer">
+      <div
+        className="grassroots-event-popover"
+        style={{
+          left: position.left,
+          top: position.top,
+          width: position.width,
+          maxHeight: position.maxHeight,
+        }}
+      >
+        <div className="grassroots-event-popover-header">
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              {draft.isDraft ? "New Event" : "Edit Event"}
+            </div>
+            <div style={{ marginTop: 3, fontSize: 13, color: C.textMut }}>
+              {draft.isDraft ? "Create and return to the tracker" : "Update the event without leaving the tracker"}
+            </div>
+          </div>
+          <button type="button" onClick={onCancel} aria-label="Close event editor" title="Close" className="grassroots-event-popover-close">
+            <I.X />
+          </button>
+        </div>
+        <div className="grassroots-event-popover-body">
         <div className="grassroots-event-form-grid">
           <FormSection title="Event">
             <div className="grassroots-event-field-grid">
@@ -776,6 +840,7 @@ function EventTargetModal({ draft, saving, onChange, onSave, onCancel, onDelete 
                   value={draft.address}
                   onChange={(value) => onChange("address", value)}
                   onPlaceSelect={applyPlaceAddress}
+                  placeholder="Event address"
                 />
               </div>
               <FieldEditor field={{ key: "address_line_1", label: "Street", placeholder: "Street address" }} value={draft.address_line_1} onChange={(value) => onChange("address_line_1", value)} />
@@ -837,8 +902,9 @@ function EventTargetModal({ draft, saving, onChange, onSave, onCancel, onDelete 
             </Btn>
           </div>
         </div>
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -1087,6 +1153,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [history, setHistory] = useState([]);
   const [newDraft, setNewDraft] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
+  const [editorAnchor, setEditorAnchor] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [logPopover, setLogPopover] = useState(null);
@@ -1214,6 +1281,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   useEffect(() => {
     setNewDraft(null);
     setEditDraft(null);
+    setEditorAnchor(null);
     setExpandedUpdates(new Set());
     const defaults = getGrassrootsDefaultFilters(activeCategory);
     setFilters(defaults);
@@ -1231,18 +1299,25 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
   };
 
-  const openNewDraft = () => {
+  const getEditorAnchorFromEvent = (event) => {
+    const rect = event?.currentTarget?.getBoundingClientRect?.();
+    return rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null;
+  };
+
+  const openNewDraft = (event) => {
     if (!canEditTargets) {
       toast("You do not have permission to edit grassroots rows", "error");
       return;
     }
     setEditDraft(null);
+    setEditorAnchor(getEditorAnchorFromEvent(event));
     setNewDraft(makeBlankGrassrootsTarget(activeCategory));
   };
 
   const closeEditor = () => {
     setNewDraft(null);
     setEditDraft(null);
+    setEditorAnchor(null);
   };
 
   const saveDraft = async () => {
@@ -1497,7 +1572,39 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
         @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
         @keyframes grassrootsComposerIn { from { opacity:0; transform:translateY(-10px) scale(0.985); } to { opacity:1; transform:translateY(0) scale(1); } }
-        .grassroots-event-modal-shell { max-width: 1040px; margin: 0 auto; }
+        .grassroots-event-popover-layer { position: fixed; inset: 0; z-index: 9997; pointer-events: none; }
+        .grassroots-event-popover {
+          position: fixed;
+          pointer-events: auto;
+          overflow: hidden;
+          border-radius: 16px;
+          border: 1.5px solid ${C.border};
+          background: ${C.surface};
+          box-shadow: 0 24px 64px rgba(15,23,42,0.24), 0 6px 18px rgba(15,23,42,0.12);
+          animation: grassrootsComposerIn 0.18s ease-out both;
+        }
+        .grassroots-event-popover-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          padding: 14px 16px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: linear-gradient(135deg, ${C.priLt} 0%, #fff 72%);
+        }
+        .grassroots-event-popover-close {
+          width: 32px;
+          height: 32px;
+          border: 1px solid ${C.borderLight};
+          border-radius: 9px;
+          background: #fff;
+          color: ${C.textMut};
+          cursor: pointer;
+          display: grid;
+          place-items: center;
+          padding: 0;
+        }
+        .grassroots-event-popover-body { max-height: calc(100% - 62px); overflow: auto; padding: 16px; background: ${C.bg}; }
         .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
         .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
         .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
@@ -1831,7 +1938,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     })}
                     onLog={(event) => openLogPopover(target, event)}
                     onMove={(event) => openMovePopover(target, event)}
-                    onEdit={() => { setNewDraft(null); setEditDraft(buildEditorDraft(target)); }}
+                    onEdit={(event) => {
+                      setNewDraft(null);
+                      setEditorAnchor(getEditorAnchorFromEvent(event));
+                      setEditDraft(buildEditorDraft(target));
+                    }}
                   />
                 );
               })}
@@ -1841,9 +1952,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       )}
 
       {canEditTargets && activeConfig.id === "events" && (newDraft || editDraft) && (
-        <EventTargetModal
+        <EventTargetPopover
           draft={editDraft || newDraft}
           saving={savingDraft}
+          anchor={editorAnchor}
           onChange={updateDraft}
           onSave={saveDraft}
           onCancel={closeEditor}
