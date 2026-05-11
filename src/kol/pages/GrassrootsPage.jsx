@@ -15,6 +15,7 @@ import {
   buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
+  compareGrassrootsEventSchedule,
   getGrassrootsActivityCount,
   getGrassrootsActivityType,
   getGrassrootsBusinessCategory,
@@ -184,6 +185,9 @@ function getTrackerGridColumns(categoryConfig) {
   if (categoryConfig.id === "drops") {
     return "42px minmax(270px, 2fr) minmax(150px, 0.9fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
   }
+  if (categoryConfig.id === "events") {
+    return "42px minmax(260px, 2fr) minmax(130px, 0.7fr) minmax(180px, 0.8fr) minmax(220px, 0.85fr)";
+  }
   return "42px minmax(230px, 2fr) minmax(140px, 0.85fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
 }
 
@@ -200,6 +204,24 @@ function addDays(dateStr, days) {
 function fmtDate(value) {
   if (!value) return "—";
   return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function EventDateCell({ target }) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length === 0) {
+    return <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut }}>No date</div>;
+  }
+  const [firstDate, ...additionalDates] = dates;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 12, fontWeight: 900, color: C.text, whiteSpace: "nowrap" }}>{fmtDate(firstDate.event_date)}</div>
+      {additionalDates.length > 0 && (
+        <div style={{ marginTop: 3, fontSize: 11, fontWeight: 800, color: C.textMut }}>
+          +{additionalDates.length} more {additionalDates.length === 1 ? "date" : "dates"}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function fmtDateTime(value) {
@@ -1045,7 +1067,31 @@ function ActivityList({ activities, categoryConfig }) {
   );
 }
 
-function TrackerHeader({ categoryConfig }) {
+function EventDateSortHeader({ direction, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={`Sort event dates ${direction === "asc" ? "latest first" : "next event first"}`}
+      style={{
+        ...HEADER_CELL_STYLE,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        border: "none",
+        background: "transparent",
+        padding: 0,
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      <span>Event Date</span>
+      {direction === "asc" ? <I.SortAsc /> : <I.SortDesc />}
+    </button>
+  );
+}
+
+function TrackerHeader({ categoryConfig, eventDateSortDirection, onToggleEventDateSort }) {
   const gridColumns = getTrackerGridColumns(categoryConfig);
   return (
     <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "0 14px 0", minHeight: 22, boxSizing: "border-box" }}>
@@ -1053,8 +1099,9 @@ function TrackerHeader({ categoryConfig }) {
       <div style={HEADER_CELL_STYLE}>{categoryConfig.nameLabel}</div>
       {usesBusinessCategoryColumn(categoryConfig) && <div style={HEADER_CELL_STYLE}>Category</div>}
       {categoryConfig.usesStatus !== false && <div style={HEADER_CELL_STYLE}>Status</div>}
-      <div style={HEADER_CELL_STYLE}>{categoryConfig.id === "drops" ? "Next Drop" : "Next Contact"}</div>
-      <div style={{ ...HEADER_CELL_STYLE, textAlign: "center" }}>{categoryConfig.countLabel}</div>
+      {categoryConfig.id === "events" && <EventDateSortHeader direction={eventDateSortDirection} onToggle={onToggleEventDateSort} />}
+      {categoryConfig.id !== "events" && <div style={HEADER_CELL_STYLE}>{categoryConfig.id === "drops" ? "Next Drop" : "Next Contact"}</div>}
+      {categoryConfig.id !== "events" && <div style={{ ...HEADER_CELL_STYLE, textAlign: "center" }}>{categoryConfig.countLabel}</div>}
       <div style={{ ...HEADER_CELL_STYLE, textAlign: "left" }}>Actions</div>
     </div>
   );
@@ -1093,21 +1140,26 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, can
         </div>
         {usesBusinessCategoryColumn(categoryConfig) && <BusinessCategoryBadge value={getGrassrootsBusinessCategory(target)} />}
         {categoryConfig.usesStatus !== false && <StatusBadge status={target.status} />}
-        <div style={{ fontSize: 12, fontWeight: 800, color: nextDate ? (nextDate < todayStr() ? C.dan : C.text) : C.textMut }}>
-          {fmtDate(nextDate)}
-        </div>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <button
-            type="button"
-            onClick={onToggleUpdates}
-            title={`${activityCount} ${categoryConfig.countLabel.toLowerCase()}; click for logged ${categoryConfig.countLabel.toLowerCase()}`}
-            style={{ width: 32, height: 32, borderRadius: 10, border: "none", background: activityCount > 0 ? C.pri : C.bg, color: activityCount > 0 ? "#fff" : C.textMut, fontSize: 13, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}
-          >
-            {activityCount}
-          </button>
-        </div>
+        {categoryConfig.id === "events" && <EventDateCell target={target} />}
+        {categoryConfig.id !== "events" && (
+          <div style={{ fontSize: 12, fontWeight: 800, color: nextDate ? (nextDate < todayStr() ? C.dan : C.text) : C.textMut }}>
+            {fmtDate(nextDate)}
+          </div>
+        )}
+        {categoryConfig.id !== "events" && (
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <button
+              type="button"
+              onClick={onToggleUpdates}
+              title={`${activityCount} ${categoryConfig.countLabel.toLowerCase()}; click for logged ${categoryConfig.countLabel.toLowerCase()}`}
+              style={{ width: 32, height: 32, borderRadius: 10, border: "none", background: activityCount > 0 ? C.pri : C.bg, color: activityCount > 0 ? "#fff" : C.textMut, fontSize: 13, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              {activityCount}
+            </button>
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "flex-start", gap: 6, flexWrap: "wrap" }}>
-          <Btn variant="secondary" size="sm" onClick={onLog} disabled={!canLog}>{categoryConfig.logLabel}</Btn>
+          {categoryConfig.id !== "events" && <Btn variant="secondary" size="sm" onClick={onLog} disabled={!canLog}>{categoryConfig.logLabel}</Btn>}
           <Btn variant="ghost" size="sm" icon={<I.ChevronRight />} onClick={onMove} disabled={!canEdit}>Move</Btn>
           <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={onEdit} disabled={!canEdit}>Edit</Btn>
         </div>
@@ -1147,6 +1199,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [activeCategory, setActiveCategory] = useState("corporatePartnerships");
+  const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
   const [targets, setTargets] = useState([]);
   const [activities, setActivities] = useState([]);
   const [history, setHistory] = useState([]);
@@ -1179,6 +1232,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     () => applyGrassrootsFilters(categoryTargets, activitiesByTarget, filters, todayStr()),
     [activitiesByTarget, categoryTargets, filters],
   );
+  const sortedVisibleTargets = useMemo(() => {
+    if (activeConfig.id !== "events") return visibleTargets;
+    const today = todayStr();
+    return [...visibleTargets].sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
+  }, [activeConfig.id, eventDateSortDirection, visibleTargets]);
   const metrics = useMemo(() => buildGrassrootsMetrics(visibleTargets, activitiesByTarget, todayStr()), [activitiesByTarget, visibleTargets]);
   const usedFilterKeys = Object.keys(draftFilters || {});
   const filterFields = useMemo(() => {
@@ -1668,7 +1726,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <MetricCard label="Active" value={metrics.active} color={C.suc} />
         <MetricCard label="Inactive" value={metrics.inactive} color={C.warn} />
         <MetricCard label="Abandoned" value={metrics.abandoned} color={C.dan} />
-        <MetricCard label={activeConfig.countLabel} value={metrics.activities} color={C.accDk} />
+        {activeConfig.id !== "events" && <MetricCard label={activeConfig.countLabel} value={metrics.activities} color={C.accDk} />}
         <MetricCard label="Upcoming" value={metrics.upcoming} color={C.info} />
         <MetricCard label="Overdue" value={metrics.overdue} color={C.dan} />
       </div>
@@ -1898,7 +1956,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             </Card>
           ) : (
             <>
-              <TrackerHeader categoryConfig={activeConfig} />
+              <TrackerHeader
+                categoryConfig={activeConfig}
+                eventDateSortDirection={eventDateSortDirection}
+                onToggleEventDateSort={() => setEventDateSortDirection((current) => (current === "asc" ? "desc" : "asc"))}
+              />
               {canEditTargets && newDraft && activeConfig.id === "events" && (
                 <EventTargetInlineEditor
                   key="new-event-draft"
@@ -1909,7 +1971,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                   onCancel={closeEditor}
                 />
               )}
-              {visibleTargets.map((target, index) => {
+              {sortedVisibleTargets.map((target, index) => {
                 if (canEditTargets && activeConfig.id === "events" && editDraft?.id === target.id) {
                   return (
                     <EventTargetInlineEditor
