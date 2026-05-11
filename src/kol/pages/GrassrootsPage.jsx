@@ -586,6 +586,10 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
         value={value || ""}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
+        autoComplete="off"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-form-type="other"
         style={{ ...INPUT_STYLE, background: C.bg }}
       />
     </label>
