@@ -21,7 +21,7 @@ import {
   normalizeLegacyGrassrootsTracker,
   resolveGrassrootsTargetIsActive,
 } from "../kol/grassrootsData.js";
-import { buildGrassrootsLegacyAddressFromSplitAddress, parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
+import { buildGrassrootsLegacyAddressFromSplitAddress, parseFreeformGrassrootsAddress, parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
 
 describe("grassrootsData", () => {
   it("renames legacy Deerfield employees to local employees", () => {
@@ -266,6 +266,31 @@ describe("grassrootsData", () => {
       address_postal_code: "08002",
       address_country: "US",
       google_place_id: "place-500",
+    });
+  });
+
+  it("falls back to parsing a formatted address when Places does not return components", () => {
+    expect(parseFreeformGrassrootsAddress("150 Greene Ln, Cherry Hill Township, NJ 08003, USA")).toEqual({
+      address: "150 Greene Ln, Cherry Hill Township, NJ 08003, USA",
+      address_line_1: "150 Greene Ln",
+      address_line_2: "",
+      address_city: "Cherry Hill Township",
+      address_state: "NJ",
+      address_postal_code: "08003",
+      address_country: "US",
+      google_place_id: "",
+    });
+
+    expect(parseGooglePlaceAddress({
+      formatted_address: "150 Greene Ln, Cherry Hill Township, NJ 08003, USA",
+      place_id: "place-150",
+    })).toMatchObject({
+      address_line_1: "150 Greene Ln",
+      address_city: "Cherry Hill Township",
+      address_state: "NJ",
+      address_postal_code: "08003",
+      address_country: "US",
+      google_place_id: "place-150",
     });
   });
 
