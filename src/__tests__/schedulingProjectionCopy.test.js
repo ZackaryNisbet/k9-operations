@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   buildSchedulingNarrative,
   buildSchedulingNarrativeHtml,
+  buildMatrixColumns,
+  buildMonthWeekSegments,
   buildHistoricalRangeSummary,
   getProjectionHistoryPoints,
   getProjectionFormulaLine,
   getProjectionHeadline,
   getProjectionMethodologySteps,
   getProjectionSummaryLines,
+  summarizeAggregateMatrixCell,
 } from "../kol/pages/SchedulingPage.jsx";
 
 function makeProjectedDay() {
@@ -103,7 +106,7 @@ describe("scheduling projection explanation copy", () => {
     const steps = getProjectionMethodologySteps(makeProjectedDay());
     const detail = steps.map((step) => `${step.label} ${step.detail}`).join("\n");
 
-    expect(detail).toContain("GINGR reservations.created_date");
+    expect(detail).toContain("Gingr reservations.created_date");
     expect(detail).toContain("34 of 50 final dogs were booked");
     expect(detail).toContain("different weekday");
     expect(detail).toContain("Same-weekday samples get extra weight");
@@ -192,6 +195,80 @@ describe("scheduling projection explanation copy", () => {
     expect(summary.yoyDaytime).toBe(49);
     expect(summary.yoyTotal).toBe(130);
     expect(summary.yoyTotalPctVsCurrentYear).toBe(92.9);
+  });
+
+  it("aggregates YOY total cells and shows unavailable state when history is absent", () => {
+    const row = { key: "comparison.yoy_total", label: "YOY Total", comparison: true };
+    const withHistory = summarizeAggregateMatrixCell([
+      { comparison: { yoy_total: 70 } },
+      { comparison: { yoy_total: 60 } },
+    ], row, "current");
+    const withoutHistory = summarizeAggregateMatrixCell([
+      { comparison: { current_total: 80 } },
+      { comparison: {} },
+    ], row, "current");
+
+    expect(withHistory).toMatchObject({ hasValue: true, value: 130 });
+    expect(withoutHistory).toMatchObject({
+      hasValue: false,
+      unavailableLabel: "No history",
+    });
+  });
+
+  it("builds month columns as week-segment aggregates by default", () => {
+    const days = Array.from({ length: 31 }, (_, index) => {
+      const day = String(index + 1).padStart(2, "0");
+      return { date: `2026-05-${day}` };
+    });
+    const segments = buildMonthWeekSegments(days, "2026-05-01", "2026-05-31");
+    const columns = buildMatrixColumns({
+      days,
+      rangeMode: "month",
+      rangeStart: "2026-05-01",
+      rangeEnd: "2026-05-31",
+    });
+
+    expect(segments.map((segment) => [segment.startDate, segment.endDate, segment.days.length])).toEqual([
+      ["2026-05-01", "2026-05-03", 3],
+      ["2026-05-04", "2026-05-10", 7],
+      ["2026-05-11", "2026-05-17", 7],
+      ["2026-05-18", "2026-05-24", 7],
+      ["2026-05-25", "2026-05-31", 7],
+    ]);
+    expect(columns.columns).toHaveLength(5);
+    expect(columns.columns.every((column) => column.type === "segment")).toBe(true);
+  });
+
+  it("expands a month week segment into daily columns after the aggregate column", () => {
+    const days = Array.from({ length: 10 }, (_, index) => {
+      const day = String(index + 1).padStart(2, "0");
+      return { date: `2026-05-${day}` };
+    });
+    const segments = buildMonthWeekSegments(days, "2026-05-01", "2026-05-31");
+    const columns = buildMatrixColumns({
+      days,
+      rangeMode: "month",
+      rangeStart: "2026-05-01",
+      rangeEnd: "2026-05-31",
+      expandedMonthSegments: new Set([segments[1].id]),
+    });
+
+    expect(columns.columns.map((column) => column.type)).toEqual([
+      "segment",
+      "segment",
+      "day",
+      "day",
+      "day",
+      "day",
+      "day",
+      "day",
+      "day",
+    ]);
+    expect(columns.columns[2]).toMatchObject({
+      type: "day",
+      parentSegmentId: segments[1].id,
+      day: { date: "2026-05-04" },
+    });
   });
 
   it("maps projection history snapshots for interactive hover details", () => {

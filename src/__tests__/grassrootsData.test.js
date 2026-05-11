@@ -17,6 +17,7 @@ import {
   normalizeLegacyGrassrootsTracker,
   resolveGrassrootsTargetIsActive,
 } from "../kol/grassrootsData.js";
+import { parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
 
 describe("grassrootsData", () => {
   it("renames legacy Remy Calloway employees to local employees", () => {
@@ -171,6 +172,32 @@ describe("grassrootsData", () => {
       address_state: "NJ",
       address_postal_code: "08002",
       google_place_id: "place-123",
+    });
+  });
+
+  it("parses selected address suggestions into split fields while preserving freeform address", () => {
+    const parsed = parseGooglePlaceAddress({
+      formatted_address: "500 Route 70, Adair Forsythe, NJ 08002, USA",
+      place_id: "place-500",
+      address_components: [
+        { long_name: "500", short_name: "500", types: ["street_number"] },
+        { long_name: "Route 70", short_name: "Rte 70", types: ["route"] },
+        { long_name: "Adair Forsythe", short_name: "Adair Forsythe", types: ["locality"] },
+        { long_name: "New Jersey", short_name: "NJ", types: ["administrative_area_level_1"] },
+        { long_name: "08002", short_name: "08002", types: ["postal_code"] },
+        { long_name: "United States", short_name: "US", types: ["country"] },
+      ],
+    });
+
+    expect(parsed).toEqual({
+      address: "500 Route 70, Adair Forsythe, NJ 08002, USA",
+      address_line_1: "500 Route 70",
+      address_line_2: "",
+      address_city: "Adair Forsythe",
+      address_state: "NJ",
+      address_postal_code: "08002",
+      address_country: "US",
+      google_place_id: "place-500",
     });
   });
 

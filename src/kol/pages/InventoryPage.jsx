@@ -59,9 +59,10 @@ function clampPositive(val) {
   return String(parseInt(s, 10)); // strips leading zeros: "02" → "2"
 }
 
-const INVENTORY_VIEW_COLS = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
-const INVENTORY_EDIT_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 150px";
-const INVENTORY_VIEW_HEADERS = ["Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
+const INVENTORY_CATALOG_COLS = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 150px";
+const INVENTORY_VIEW_COLS = INVENTORY_CATALOG_COLS;
+const INVENTORY_EDIT_COLS = INVENTORY_CATALOG_COLS;
+const INVENTORY_VIEW_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 
 function catalogSortPayload(items) {
@@ -90,6 +91,46 @@ function getWindowScrollPosition() {
 function restoreWindowScrollPosition(position) {
   if (!position || typeof window === "undefined" || typeof window.scrollTo !== "function") return;
   const restore = () => window.scrollTo(position.x, position.y);
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => {
+      restore();
+      window.requestAnimationFrame(restore);
+    });
+    return;
+  }
+  setTimeout(restore, 0);
+}
+
+function getInventoryScrollAnchor() {
+  if (typeof document === "undefined" || typeof window === "undefined") return null;
+  const rows = Array.from(document.querySelectorAll("[data-inventory-row-id]"));
+  const viewportHeight = window.innerHeight || 0;
+  const target = rows
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .find(({ rect }) => rect.bottom > 88 && rect.top < viewportHeight - 40);
+  if (!target) return null;
+  return {
+    rowId: target.element.getAttribute("data-inventory-row-id"),
+    top: target.rect.top,
+  };
+}
+
+function restoreInventoryScrollAnchor(anchor, fallbackPosition) {
+  if (!anchor || typeof document === "undefined" || typeof window === "undefined") {
+    restoreWindowScrollPosition(fallbackPosition);
+    return;
+  }
+  const restore = () => {
+    const element = document.querySelector(`[data-inventory-row-id="${anchor.rowId}"]`);
+    if (!element) {
+      restoreWindowScrollPosition(fallbackPosition);
+      return;
+    }
+    const delta = element.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) > 1) {
+      window.scrollBy(0, delta);
+    }
+  };
   if (typeof window.requestAnimationFrame === "function") {
     window.requestAnimationFrame(() => {
       restore();
@@ -186,6 +227,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
   return (
     <>
     <div
+      data-inventory-row-id={item.id}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -200,6 +242,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
         transition: "background 0.15s, opacity 0.15s",
       }}
     >
+      <div aria-hidden="true" />
+
       {/* Product name + Product Link + Notes Icon */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         <div style={{ minWidth: 0 }}>
@@ -442,6 +486,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
       <div style={{ fontSize: 12, fontWeight: 600, color: stockValue != null && stockValue > 0 ? C.suc : C.textSec, textAlign: "right" }}>
         {stockValue != null ? fmtCurrency(stockValue) : <span style={{ color: C.textMut }}>—</span>}
       </div>
+      <div aria-hidden="true" />
     </div>
     {showNotes && (
       <div style={{ padding: "4px 16px 8px", background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
@@ -773,6 +818,7 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
   return (
     <>
       <div
+        data-inventory-row-id={item.id}
         draggable
         onDragStart={e => onDragStart(e, item.id)}
         onDragOver={e => onDragOver(e, { ...targetContext, targetItemId: item.id })}
@@ -1262,9 +1308,7 @@ function InventoryColumnHeader({ catalogEditMode }) {
           color: C.textMut,
           textTransform: "uppercase",
           letterSpacing: "0.06em",
-          textAlign: catalogEditMode
-            ? (i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left")
-            : (i === 6 ? "center" : i >= 7 ? "right" : i >= 2 ? "center" : "left"),
+          textAlign: i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left",
         }}>
           {h}
         </div>
@@ -3529,14 +3573,18 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   }, [addGlobalToast, canEditCounts]);
 
   // ── Filtered + grouped catalog ──
+  const visibleCatalogItems = useMemo(
+    () => catalogEditMode ? catalogItems : catalogItems.filter(item => item?.is_active !== false),
+    [catalogEditMode, catalogItems]
+  );
   const filteredGrouped = useMemo(() => {
-    return buildInventoryCatalogGroups(catalogItems, search);
-  }, [catalogItems, search]);
+    return buildInventoryCatalogGroups(visibleCatalogItems, search);
+  }, [visibleCatalogItems, search]);
 
   // ── Total inventory value ──
   const totalValue = useMemo(() => {
     let total = 0;
-    catalogItems.forEach(item => {
+    visibleCatalogItems.forEach(item => {
       const count = counts[item.id];
       const sc = count?.stock_count;
       if (sc != null && sc !== "" && item.unit_price != null) {
@@ -3549,14 +3597,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       }
     });
     return total;
-  }, [catalogItems, counts, adhocItems]);
+  }, [visibleCatalogItems, counts, adhocItems]);
 
   const inventoryWorkflow = useMemo(() => getInventoryWorkflow({
     snapshotStatus: snapshot?.status,
-    catalogItems,
+    catalogItems: visibleCatalogItems,
     counts,
     adhocItems,
-  }), [snapshot?.status, catalogItems, counts, adhocItems]);
+  }), [snapshot?.status, visibleCatalogItems, counts, adhocItems]);
 
   const canComplete = inventoryWorkflow.readyToSubmit;
   const canReopenSnapshot = snapshot?.status === "completed" && canReopenInventory;
@@ -3619,21 +3667,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const setCatalogEditModePreservingScroll = useCallback((nextMode) => {
     const enabled = Boolean(nextMode);
     const scrollPosition = getWindowScrollPosition();
+    const scrollAnchor = getInventoryScrollAnchor();
     catalogEditModeRef.current = enabled;
     setEditingField(null);
     setExpandedEditId(null);
     setCatalogEditMode(enabled);
-    if (enabled) {
-      void loadCatalogItems({ includeInactive: true, preserveScroll: true }).catch((err) => {
-        console.error("Catalog refresh error:", err);
-        setCatalogSaveStatus("error");
-        setTimeout(() => setCatalogSaveStatus("idle"), 3000);
-      });
-    } else {
-      setCatalogItems(prev => prev.filter(item => item?.is_active !== false));
-    }
-    restoreWindowScrollPosition(scrollPosition);
-  }, [loadCatalogItems]);
+    restoreInventoryScrollAnchor(scrollAnchor, scrollPosition);
+  }, []);
 
   // ── Render ──
   return (
@@ -3963,7 +4003,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           <div style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>{loadError}</div>
           <Btn variant="secondary" onClick={loadData}>Retry</Btn>
         </Card>
-      ) : catalogItems.length === 0 && !loading ? (
+      ) : visibleCatalogItems.length === 0 && !loading ? (
         <Card style={{ padding: 48, textAlign: "center" }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, fontFamily: "'Outfit', sans-serif" }}>

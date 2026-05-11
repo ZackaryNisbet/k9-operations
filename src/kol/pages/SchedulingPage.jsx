@@ -5,7 +5,7 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn } from "../../shared/ui";
+import { Btn, CalendarPicker } from "../../shared/ui";
 import { useSchedulingData } from "../../hooks/useSchedulingData";
 import {
   TASK_COLORS,
@@ -20,6 +20,10 @@ import {
 } from "../../shared/schedulingEngine";
 
 // ─── Utility Components ───────────────────────────────────────────────────
+
+function formatVisibleSchedulingCopy(value) {
+  return String(value ?? "").replace(/\bGINGR\b/g, "Gingr");
+}
 
 function SectionCard({ title, subtitle, icon, children, style }) {
   return (
@@ -51,7 +55,7 @@ function ProjectionMethodologyPanel({ day }) {
   if (!steps.length) {
     return (
       <div style={{ fontSize: 11, color: C.textMut, borderTop: `1px solid ${C.borderLight}`, paddingTop: 12, marginTop: 14 }}>
-        Selected day: <span style={{ fontWeight: 700, color: C.text }}>{day?.dayName} {formatMatrixDate(day?.date || todayStr())}</span>. Projected mode uses prior-year booking pace from GINGR created dates.
+        Selected day: <span style={{ fontWeight: 700, color: C.text }}>{day?.dayName} {formatMatrixDate(day?.date || todayStr())}</span>. Projected mode uses prior-year booking pace from Gingr created dates.
       </div>
     );
   }
@@ -125,16 +129,16 @@ function TrustBadge({ state, blocked }) {
 
 const MATRIX_GROUP_TEMPLATES = [
   {
-    section: "GINGR Source Counts",
+    section: "Gingr Source Counts",
     hideRowsWhenCollapsed: true,
     rows: [
-      { key: "source.check_ins", label: "GINGR Check-Ins", source: true },
-      { key: "source.check_outs", label: "GINGR Check-Outs", source: true },
-      { key: "source.overnight", label: "GINGR Overnight", source: true },
+      { key: "source.check_ins", label: "Gingr Check-Ins", source: true },
+      { key: "source.check_outs", label: "Gingr Check-Outs", source: true },
+      { key: "source.overnight", label: "Gingr Overnight", source: true },
       { key: "source.boarding_opening", label: "Boarding Dogs Opening", total: true, source: true },
       { key: "source.boarding_closing", label: "Boarding Dogs Closing", total: true, source: true },
-      { key: "source.daytime_total", label: "GINGR Daytime Dogs", total: true, source: true },
-      { key: "source.total", label: "GINGR Total Volume", total: true, source: true },
+      { key: "source.daytime_total", label: "Gingr Daytime Dogs", total: true, source: true },
+      { key: "source.total", label: "Gingr Total Volume", total: true, source: true },
     ],
   },
   {
@@ -254,6 +258,22 @@ function buildMatrixRowGroups(days) {
 function formatMatrixDate(date) {
   const dt = new Date(`${date}T12:00:00`);
   return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
+}
+
+function formatMatrixDateRange(startDate, endDate) {
+  if (!startDate || !endDate) return "";
+  if (startDate === endDate) return formatMatrixDate(startDate);
+  const start = new Date(`${startDate}T12:00:00`);
+  const end = new Date(`${endDate}T12:00:00`);
+  const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
+  const startText = start.toLocaleDateString("en-US", sameMonth ? { month: "short", day: "numeric" } : { month: "short", day: "numeric" });
+  const endText = end.toLocaleDateString("en-US", { month: sameMonth ? undefined : "short", day: "numeric" });
+  return `${startText} - ${endText}`;
+}
+
+function getDayColumnLabel(date) {
+  const dt = new Date(`${date}T12:00:00`);
+  return DAY_NAMES_SHORT[dt.getDay()] || dt.toLocaleDateString("en-US", { weekday: "short" });
 }
 
 function formatNarrativeDate(date) {
@@ -517,6 +537,100 @@ function shiftDemandAnchor(mode, anchorDate, delta) {
   return addDays(anchorDate, delta * 7);
 }
 
+export function buildMonthWeekSegments(days, rangeStart, rangeEnd) {
+  const sortedDays = [...(days || [])]
+    .filter((day) => day?.date && (!rangeStart || day.date >= rangeStart) && (!rangeEnd || day.date <= rangeEnd))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const segments = new Map();
+  sortedDays.forEach((day) => {
+    const rawWeekStart = getMondayStart(day.date);
+    const rawWeekEnd = addDays(rawWeekStart, 6);
+    const startDate = rangeStart && rawWeekStart < rangeStart ? rangeStart : rawWeekStart;
+    const endDate = rangeEnd && rawWeekEnd > rangeEnd ? rangeEnd : rawWeekEnd;
+    const id = `${startDate}:${endDate}`;
+    if (!segments.has(id)) {
+      segments.set(id, {
+        id,
+        startDate,
+        endDate,
+        days: [],
+      });
+    }
+    segments.get(id).days.push(day);
+  });
+
+  return [...segments.values()].map((segment, index) => ({
+    ...segment,
+    label: `Week ${index + 1}`,
+    dateLabel: formatMatrixDateRange(segment.startDate, segment.endDate),
+  }));
+}
+
+function dayToMatrixColumn(day, absoluteIndex, extra = {}) {
+  return {
+    type: "day",
+    id: `day:${day.date}`,
+    key: `day:${day.date}`,
+    day,
+    days: [day],
+    absoluteIndex,
+    label: day.dayName || getDayColumnLabel(day.date),
+    dateLabel: formatMatrixDate(day.date),
+    ...extra,
+  };
+}
+
+export function buildMatrixColumns({
+  days,
+  rangeMode,
+  rangeStart,
+  rangeEnd,
+  expandedMonthSegments = new Set(),
+  page = 0,
+  pageSize = MATRIX_PAGE_SIZE,
+}) {
+  const indexedDays = (days || []).map((day, index) => ({ day, index }));
+  if (rangeMode === "month") {
+    const indexByDate = new Map(indexedDays.map(({ day, index }) => [day.date, index]));
+    const segments = buildMonthWeekSegments(indexedDays.map(({ day }) => day), rangeStart, rangeEnd);
+    const columns = segments.flatMap((segment) => {
+      const aggregateColumn = {
+        type: "segment",
+        id: segment.id,
+        key: `segment:${segment.id}`,
+        segment,
+        days: segment.days,
+        absoluteIndex: indexByDate.get(segment.days[0]?.date) ?? 0,
+        label: segment.label,
+        dateLabel: segment.dateLabel,
+      };
+      if (!expandedMonthSegments.has(segment.id)) return [aggregateColumn];
+      return [
+        aggregateColumn,
+        ...segment.days.map((day) => dayToMatrixColumn(day, indexByDate.get(day.date) ?? 0, {
+          parentSegmentId: segment.id,
+          compact: true,
+        })),
+      ];
+    });
+    return {
+      columns,
+      visibleDays: indexedDays.map(({ day }) => day),
+      pageCount: 1,
+      segments,
+    };
+  }
+
+  const start = page * pageSize;
+  const pageDays = indexedDays.slice(start, start + pageSize);
+  return {
+    columns: pageDays.map(({ day, index }) => dayToMatrixColumn(day, index)),
+    visibleDays: pageDays.map(({ day }) => day),
+    pageCount: Math.max(1, Math.ceil(indexedDays.length / pageSize)),
+    segments: [],
+  };
+}
+
 function formatDemandRangeLabel(startDate, endDate) {
   const start = new Date(`${startDate}T12:00:00`);
   const end = new Date(`${endDate}T12:00:00`);
@@ -537,18 +651,53 @@ function formatMatrixValue(value, format) {
   return Math.round(numeric);
 }
 
+function getFiniteMatrixValues(days, row, mode) {
+  return days
+    .map((day) => getDayMatrixValue(day, row, mode))
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+}
+
 function sumMatrixValues(days, row, mode) {
-  return days.reduce((sum, day) => {
-    const value = getDayMatrixValue(day, row, mode);
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? sum + numeric : sum;
-  }, 0);
+  const values = getFiniteMatrixValues(days, row, mode);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 function totalHistoricalPct(days) {
-  const currentTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_total) || 0), 0);
-  const lastYearTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_total) || 0), 0);
-  return currentTotal > 0 ? Number(((lastYearTotal / currentTotal) * 100).toFixed(1)) : null;
+  const currentValues = days
+    .map((day) => Number(getDayComparison(day)?.current_total))
+    .filter((value) => Number.isFinite(value));
+  const lastYearValues = days
+    .map((day) => Number(getDayComparison(day)?.yoy_total))
+    .filter((value) => Number.isFinite(value));
+  const currentTotal = currentValues.reduce((sum, value) => sum + value, 0);
+  const lastYearTotal = lastYearValues.reduce((sum, value) => sum + value, 0);
+  if (currentTotal <= 0 || !lastYearValues.length) return null;
+  return Number(((lastYearTotal / currentTotal) * 100).toFixed(1));
+}
+
+export function summarizeAggregateMatrixCell(days, row, mode = "current") {
+  if (row.format === "percent") {
+    const value = totalHistoricalPct(days);
+    return {
+      value,
+      hasValue: value !== null && value !== undefined,
+      unavailableLabel: "No history",
+      unavailableTitle: "No canonical prior-year total is available for this aggregate.",
+    };
+  }
+
+  const value = sumMatrixValues(days, row, mode);
+  const isComparison = Boolean(row.comparison);
+  return {
+    value,
+    hasValue: value !== null && value !== undefined,
+    unavailableLabel: isComparison ? "No history" : "No data",
+    unavailableTitle: isComparison
+      ? "No canonical year-over-year source count is available for this aggregate."
+      : "No canonical source count is available for this aggregate.",
+  };
 }
 
 export function buildHistoricalRangeSummary(days) {
@@ -668,7 +817,7 @@ export function getProjectionHeadline(day) {
     return `${leadDays} days out. On this same date last year, ${formatRounded(exactAsOf)} of ${formatRounded(exactFinal)} final dogs were already booked by this point${completion ? ` (${completion})` : ""}.`;
   }
 
-  return `${leadDays} days out. The projection is based on comparable historical booking pace from GINGR created dates.`;
+  return `${leadDays} days out. The projection is based on comparable historical booking pace from Gingr created dates.`;
 }
 
 export function getProjectionFormulaLine(day) {
@@ -734,7 +883,7 @@ export function getProjectionSummaryLines(day) {
     lines.push("Capacity cap applied: matrix shows achievable forecast; tooltip keeps unconstrained demand.");
   }
   if (!lines.length) {
-    lines.push(`${leadDays} days out. Projected demand uses historical GINGR booking pace for this same date.`);
+    lines.push(`${leadDays} days out. Projected demand uses historical Gingr booking pace for this same date.`);
   }
   return lines;
 }
@@ -770,7 +919,7 @@ export function getProjectionMethodologySteps(day) {
   if (exactFinal > 0) {
     steps.push({
       label: "1. Same-date anchor",
-      detail: `From GINGR reservations.created_date, the app checks what was already booked at the same lead time. ${leadDays} days before last year's matching date, ${exactAsOf} of ${exactFinal} final dogs were booked${exactCompletion ? ` (${exactCompletion})` : ""}. This anchor stays visible because it is the simplest way to audit the projection.`,
+      detail: `From Gingr reservations.created_date, the app checks what was already booked at the same lead time. ${leadDays} days before last year's matching date, ${exactAsOf} of ${exactFinal} final dogs were booked${exactCompletion ? ` (${exactCompletion})` : ""}. This anchor stays visible because it is the simplest way to audit the projection.`,
     });
   }
 
@@ -896,9 +1045,10 @@ function renderMatrixCellValue({ row, day, mode }) {
   const missingValue = (mode === "projected" ? projectedValue : currentValue) === null || (mode === "projected" ? projectedValue : currentValue) === undefined;
 
   if (row.comparison) {
+    const unavailableLabel = row.format === "percent" ? "No history" : "No history";
     return {
       title: comparisonValue === null || comparisonValue === undefined ? "No canonical year-over-year source count available." : `${row.label}: ${formatMatrixValue(comparisonValue, row.format)}`,
-      content: comparisonValue === null || comparisonValue === undefined ? "—" : formatMatrixValue(comparisonValue, row.format),
+      content: comparisonValue === null || comparisonValue === undefined ? unavailableLabel : formatMatrixValue(comparisonValue, row.format),
       missingValue: comparisonValue === null || comparisonValue === undefined,
     };
   }
@@ -929,9 +1079,25 @@ function renderMatrixCellValue({ row, day, mode }) {
   }
 
   return {
-    title: missingValue ? "No data available for this row." : `${currentValue}`,
-    content: missingValue ? "—" : formatMatrixValue(currentValue, row.format),
+    title: missingValue ? "No canonical source count is available for this row." : `${currentValue}`,
+    content: missingValue ? "No data" : formatMatrixValue(currentValue, row.format),
     missingValue,
+  };
+}
+
+function renderAggregateMatrixCellValue({ row, days, mode }) {
+  const summary = summarizeAggregateMatrixCell(days, row, mode);
+  if (!summary.hasValue) {
+    return {
+      title: summary.unavailableTitle,
+      content: summary.unavailableLabel,
+      missingValue: true,
+    };
+  }
+  return {
+    title: `${row.label}: ${formatMatrixValue(summary.value, row.format)} across ${days.length} day${days.length === 1 ? "" : "s"}`,
+    content: formatMatrixValue(summary.value, row.format),
+    missingValue: false,
   };
 }
 
@@ -1303,6 +1469,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [customEndDate, setCustomEndDate] = useState(addDays(getMondayStart(today), 6));
   const [matrixPage, setMatrixPage] = useState(0);
   const [matrixMode, setMatrixMode] = useState("current");
+  const [expandedMonthSegments, setExpandedMonthSegments] = useState(new Set());
   const demandRange = useMemo(
     () => getDemandRange(matrixRangeMode, viewStartDate, customStartDate, customEndDate),
     [matrixRangeMode, viewStartDate, customStartDate, customEndDate],
@@ -1358,17 +1525,31 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     })),
     [weekData]
   );
-  const matrixPageCount = Math.max(1, Math.ceil(workbookDays.length / MATRIX_PAGE_SIZE));
-  const visibleMatrixDays = useMemo(() => {
-    const start = matrixPage * MATRIX_PAGE_SIZE;
-    return workbookDays.slice(start, start + MATRIX_PAGE_SIZE);
-  }, [workbookDays, matrixPage]);
+  const matrixColumnState = useMemo(() => buildMatrixColumns({
+    days: workbookDays,
+    rangeMode: matrixRangeMode,
+    rangeStart: demandRange.startDate,
+    rangeEnd: demandRange.endDate,
+    expandedMonthSegments,
+    page: matrixPage,
+    pageSize: MATRIX_PAGE_SIZE,
+  }), [workbookDays, matrixRangeMode, demandRange.startDate, demandRange.endDate, expandedMonthSegments, matrixPage]);
+  const matrixPageCount = matrixColumnState.pageCount;
+  const visibleMatrixColumns = matrixColumnState.columns;
+  const visibleMatrixDays = matrixColumnState.visibleDays;
   const narrativeDays = matrixRangeMode === "week" ? workbookDays : visibleMatrixDays;
   const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(narrativeDays), [narrativeDays]);
   const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(narrativeDays), [narrativeDays]);
   const matrixRowGroups = useMemo(() => buildMatrixRowGroups(visibleMatrixDays), [visibleMatrixDays]);
-  const historicalSummary = useMemo(() => buildHistoricalRangeSummary(workbookDays), [workbookDays]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
+  const toggleMonthSegment = useCallback((segmentId) => {
+    setExpandedMonthSegments((current) => {
+      const next = new Set(current);
+      if (next.has(segmentId)) next.delete(segmentId);
+      else next.add(segmentId);
+      return next;
+    });
+  }, []);
   const toggleMatrixGroup = useCallback((section) => {
     setExpandedMatrixGroups((current) => {
       const next = new Set(current);
@@ -1446,6 +1627,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   React.useEffect(() => {
     setSelectedDayIdx(dateIndexInRange(demandRange.startDate, demandRange.endDate, today));
     setMatrixPage(0);
+    setExpandedMonthSegments(new Set());
   }, [demandRange.startDate, demandRange.endDate, today]);
 
   React.useEffect(() => {
@@ -1508,7 +1690,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const handleGenerate = useCallback(async () => {
     if (!selectedDay?.canGenerate || !visibleRotation?.saveable_payload) {
       const blocker = selectedDay?.generationBlockers?.[0];
-      addGlobalToast?.(blocker || "This day is not ready for schedule generation yet.", "info");
+      addGlobalToast?.(formatVisibleSchedulingCopy(blocker || "This day is not ready for schedule generation yet."), "info");
       return;
     }
     try {
@@ -1567,10 +1749,28 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [viewStartDate, demandRange.startDate, demandRange.endDate]);
 
+  const applyCustomRange = useCallback((startDate, endDate) => {
+    const cleanStart = startDate || today;
+    const cleanEnd = endDate && endDate >= cleanStart ? endDate : cleanStart;
+    setCustomStartDate(cleanStart);
+    setCustomEndDate(cleanEnd);
+    setViewStartDate(cleanStart);
+    setMatrixPage(0);
+  }, [today]);
+
   const handleRangeJump = useCallback((delta) => {
+    if (matrixRangeMode === "custom") {
+      const start = new Date(`${customStartDate}T12:00:00`);
+      const end = new Date(`${customEndDate}T12:00:00`);
+      const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+      const nextStart = addDays(customStartDate, delta * spanDays);
+      const nextEnd = addDays(customEndDate, delta * spanDays);
+      applyCustomRange(nextStart, nextEnd);
+      return;
+    }
     setViewStartDate((current) => shiftDemandAnchor(matrixRangeMode, current, delta));
     setMatrixPage(0);
-  }, [matrixRangeMode]);
+  }, [matrixRangeMode, customStartDate, customEndDate, applyCustomRange]);
 
   // Apply override
   const handleApplyOverride = useCallback(async () => {
@@ -1666,10 +1866,10 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const display = selectedDay?.currentDisplay || getMatrixDisplay(selectedDay?.matrix || {});
   const projectedDisplay = selectedDay?.projectedDisplay || getMatrixProjectedDisplay(selectedDay?.matrix || {});
   const matrixDisplay = matrixMode === "projected" ? projectedDisplay : display;
-  const visibleWarnings = visibleRotation?.warnings || [];
+  const visibleWarnings = (visibleRotation?.warnings || []).map(formatVisibleSchedulingCopy);
   const saveButtonLabel = showingAdjustedSchedule ? "Save Staff-Adjusted Schedule" : "Save Optimal Schedule";
   const generateDisabled = !selectedDay?.canGenerate || !visibleRotation?.saveable_payload;
-  const generateDisabledReason = rotationError || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation yet.";
+  const generateDisabledReason = formatVisibleSchedulingCopy(rotationError || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation yet.");
 
   const gridData = visibleRotation?.grid || { lanes: [], slots: [], cells: {} };
   const { lanes, slots, cells: serverGrid } = gridData;
@@ -1714,13 +1914,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       <SectionCard title={matrixRangeMode === "week" ? "7-Day Demand Matrix" : "Demand Matrix"} subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {[
-              { id: "week", label: "Week" },
-              { id: "month", label: "Month" },
-              { id: "year", label: "Year-ish" },
-              { id: "custom", label: "Custom" },
-            ].map((option) => (
-              <button
+              {[
+                { id: "week", label: "Week" },
+                { id: "month", label: "Month" },
+                { id: "year", label: "Year" },
+                { id: "custom", label: "Custom" },
+              ].map((option) => (
+                <button
                 key={option.id}
                 onClick={() => handleRangeModeChange(option.id)}
                 style={{
@@ -1738,6 +1938,61 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 {option.label}
               </button>
             ))}
+            {matrixRangeMode === "custom" && (
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "#F8FAFC",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
+              }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(160px, 1fr)", gap: 8, alignItems: "start" }}>
+                  <CalendarPicker
+                    label="Start"
+                    value={customStartDate}
+                    onChange={(value) => applyCustomRange(value, customEndDate)}
+                  />
+                  <CalendarPicker
+                    label="End"
+                    value={customEndDate}
+                    min={customStartDate}
+                    onChange={(value) => applyCustomRange(customStartDate, value)}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  {[
+                    { label: "This week", start: getMondayStart(today), end: addDays(getMondayStart(today), 6) },
+                    { label: "Next week", start: addDays(getMondayStart(today), 7), end: addDays(getMondayStart(today), 13) },
+                    { label: "This month", start: getMonthStart(today), end: getMonthEnd(today) },
+                    { label: "Next 30", start: today, end: addDays(today, 29) },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => applyCustomRange(preset.start, preset.end)}
+                      style={{
+                        padding: "6px 9px",
+                        borderRadius: 999,
+                        border: `1px solid ${C.borderLight}`,
+                        background: C.surface,
+                        color: C.textSec,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <Btn variant="secondary" size="sm" onClick={() => handleRangeJump(-1)}>← Previous</Btn>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{formatDemandRangeLabel(demandRange.startDate, demandRange.endDate)}</div>
             <Btn
@@ -1755,28 +2010,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               This Period
             </Btn>
             <Btn variant="secondary" size="sm" onClick={() => handleRangeJump(1)}>Next →</Btn>
-            {matrixRangeMode === "custom" && (
-              <>
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setCustomStartDate(next);
-                    setViewStartDate(next);
-                    if (customEndDate < next) setCustomEndDate(next);
-                  }}
-                  style={{ height: 30, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 8px", fontSize: 12, color: C.text, fontFamily: "inherit" }}
-                />
-                <span style={{ fontSize: 11, color: C.textMut }}>to</span>
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(event) => setCustomEndDate(event.target.value < customStartDate ? customStartDate : event.target.value)}
-                  style={{ height: 30, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 8px", fontSize: 12, color: C.text, fontFamily: "inherit" }}
-                />
-              </>
-            )}
             {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading range…</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -1876,26 +2109,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             ))}
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
-          {[
-            { label: "Current Total", value: historicalSummary.currentTotal, sub: "GINGR source volume" },
-            { label: "YOY Overnight", value: historicalSummary.yoyOvernight, sub: "Same range last year" },
-            { label: "YOY Daytime", value: historicalSummary.yoyDaytime, sub: "Same range last year" },
-            { label: "YOY Total", value: historicalSummary.yoyTotal, sub: "Same range last year" },
-            { label: "YOY % vs Current", value: historicalSummary.yoyTotalPctVsCurrentYear, sub: "LY total / CY total", format: "percent" },
-          ].map((item) => (
-            <div key={item.label} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "10px 12px", background: "#F8FAFC" }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>{item.label}</div>
-              <div style={{ fontSize: 22, fontWeight: 850, color: C.text, lineHeight: 1.1, marginTop: 4 }}>{formatMatrixValue(item.value, item.format)}</div>
-              <div style={{ fontSize: 10, color: C.textMut, marginTop: 3 }}>{item.sub}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
-          Expand GINGR Source Counts to audit Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
-          {matrixMode === "projected" && " Projected mode shows currently booked values moving to a calibrated forecast using same-season booking curves, same-weekday comparables, and recent YOY pickup."}
-          {workbookDays.length > MATRIX_PAGE_SIZE && ` Showing ${visibleMatrixDays.length} table days at a time; summary cards use the full ${workbookDays.length}-day range.`}
-        </div>
+        {(matrixMode === "projected" || (matrixRangeMode !== "month" && workbookDays.length > MATRIX_PAGE_SIZE)) && (
+          <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
+            {matrixMode === "projected" && "Projected mode shows currently booked values moving to a calibrated forecast using same-season booking curves, same-weekday comparables, and recent YOY pickup."}
+            {matrixRangeMode !== "month" && workbookDays.length > MATRIX_PAGE_SIZE && ` Showing ${visibleMatrixDays.length} table days at a time across the ${workbookDays.length}-day range.`}
+          </div>
+        )}
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
             <thead>
@@ -1903,44 +2122,83 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 <th style={{ position: "sticky", left: 0, zIndex: 3, background: "#F8FAFC", width: 250, padding: "12px 12px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
                   Operational Metric
                 </th>
-                {visibleMatrixDays.map((day, index) => {
-                  const absoluteIndex = (matrixPage * MATRIX_PAGE_SIZE) + index;
-                  const selected = absoluteIndex === selectedDayIdx;
-                  const blocked = !day.canGenerate;
+                {visibleMatrixColumns.map((column) => {
+                  const columnDays = column.days || [];
+                  const day = column.day || columnDays[0] || {};
+                  const selected = columnDays.some((candidate) => candidate.date === selectedDay?.date);
+                  const blocked = column.type === "segment"
+                    ? columnDays.some((candidate) => !candidate.canGenerate)
+                    : !day.canGenerate;
+                  const trustState = column.type === "segment"
+                    ? (blocked ? "blocked" : columnDays.some((candidate) => candidate.matrixTrustState !== "trusted") ? "estimated" : "trusted")
+                    : day.matrixTrustState;
+                  const generationBlockers = column.type === "segment"
+                    ? columnDays.flatMap((candidate) => candidate.generationBlockers || [])
+                    : (day.generationBlockers || []);
+                  const isExpandedSegment = column.type === "segment" && expandedMonthSegments.has(column.segment.id);
                   return (
                     <th
-                      key={day.date}
-                      onClick={() => setSelectedDayIdx(absoluteIndex)}
+                      key={column.key}
+                      onClick={() => setSelectedDayIdx(column.absoluteIndex)}
                       style={{
                         cursor: "pointer",
-                        width: 112,
+                        width: column.type === "segment" ? 132 : 112,
                         padding: "10px 8px 12px",
                         textAlign: "center",
                         borderBottom: `1px solid ${C.border}`,
-                        background: selected ? "#EEF4FF" : "#F8FAFC",
+                        background: selected ? "#EEF4FF" : column.parentSegmentId ? "#FBFCFF" : "#F8FAFC",
                         boxShadow: selected ? `inset 0 -2px 0 ${C.pri}` : "none",
                       }}
                     >
                       <div style={{ fontSize: 16, fontWeight: 800, color: selected ? C.pri : C.text, lineHeight: 1.1 }}>
-                        {day.dayName}
+                        {column.label}
                       </div>
-                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{formatMatrixDate(day.date)}</div>
+                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{column.dateLabel}</div>
                       <div style={{ marginTop: 8 }}>
-                        <TrustBadge state={day.matrixTrustState} blocked={blocked} />
+                        <TrustBadge state={trustState} blocked={blocked} />
                       </div>
+                      {column.type === "segment" && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleMonthSegment(column.segment.id);
+                          }}
+                          style={{
+                            marginTop: 7,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            border: `1px solid ${isExpandedSegment ? C.pri : C.borderLight}`,
+                            background: isExpandedSegment ? C.priLt : C.surface,
+                            color: isExpandedSegment ? C.pri : C.textMut,
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          <span style={{ display: "flex", transform: isExpandedSegment ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><I.ChevronDown /></span>
+                          {isExpandedSegment ? "Hide days" : "Show days"}
+                        </button>
+                      )}
                       {matrixMode === "projected" && (
                         <div style={{ fontSize: 10, color: C.pri, fontWeight: 800, marginTop: 6 }}>
-                          {getDayProjection(day)?.lead_days > 0 ? `${getDayProjection(day).lead_days}d out projection` : "Actual"}
+                          {column.type === "segment"
+                            ? "Segment total"
+                            : getDayProjection(day)?.lead_days > 0 ? `${getDayProjection(day).lead_days}d out projection` : "Actual"}
                         </div>
                       )}
-                      <div style={{ fontSize: 10, color: blocked ? C.dan : day.generationBlockers.length > 0 ? C.warn : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
+                      <div style={{ fontSize: 10, color: blocked ? C.dan : generationBlockers.length > 0 ? C.warn : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
                         {blocked
-                          ? (day.generationBlockers[0] || "Waiting on matrix")
-                          : day.generationBlockers.length > 0
-                            ? "Verification warnings to review before publish"
+                          ? formatVisibleSchedulingCopy(generationBlockers[0] || "Waiting on matrix")
+                          : generationBlockers.length > 0
+                            ? "Review notes"
                             : "Ready to schedule"}
                       </div>
-                      {matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
+                      {column.type === "day" && matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, lineHeight: 1.35 }}>
                           {getProjectionSummaryLines(day).map((line) => (
                             <div key={`${day.date}-${line}`}>{line}</div>
@@ -1993,8 +2251,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           {!groupExpanded && <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>+{Math.max(group.rows.length - visibleRows.length, 0)}</span>}
                         </button>
                       </td>
-                      {visibleMatrixDays.map((day, index) => (
-                        <td key={`${group.section}-${day.date}`} style={{ background: ((matrixPage * MATRIX_PAGE_SIZE) + index) === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                      {visibleMatrixColumns.map((column) => (
+                        <td key={`${group.section}-${column.key}`} style={{ background: column.days?.some((day) => day.date === selectedDay?.date) ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
                       ))}
                       <td style={{ position: "sticky", right: 0, zIndex: 2, background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
                     </tr>,
@@ -2003,25 +2261,30 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                         <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "9px 12px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 12, fontWeight: row.total ? 800 : 600, color: C.text }}>
                           {row.label}
                         </td>
-                        {visibleMatrixDays.map((day, index) => {
-                          const absoluteIndex = (matrixPage * MATRIX_PAGE_SIZE) + index;
-                          const selected = absoluteIndex === selectedDayIdx;
-                          const cellValue = renderMatrixCellValue({
-                            row,
-                            day,
-                            mode: matrixMode,
-                          });
+                        {visibleMatrixColumns.map((column) => {
+                          const selected = column.days?.some((day) => day.date === selectedDay?.date);
+                          const cellValue = column.type === "segment"
+                            ? renderAggregateMatrixCellValue({
+                              row,
+                              days: column.days,
+                              mode: matrixMode,
+                            })
+                            : renderMatrixCellValue({
+                              row,
+                              day: column.day,
+                              mode: matrixMode,
+                            });
                           return (
                             <td
-                              key={`${row.key}-${day.date}`}
-                              onClick={() => setSelectedDayIdx(absoluteIndex)}
+                              key={`${row.key}-${column.key}`}
+                              onClick={() => setSelectedDayIdx(column.absoluteIndex)}
                               title={cellValue.title}
                               style={{
                                 cursor: "pointer",
                                 textAlign: "center",
                                 padding: "10px 8px",
                                 borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
-                                background: row.total ? (selected ? "#EAF2FF" : "#F4F7FB") : (selected ? "#F8FBFF" : C.surface),
+                                background: row.total ? (selected ? "#EAF2FF" : "#F4F7FB") : (selected ? "#F8FBFF" : column.parentSegmentId ? "#FBFCFF" : C.surface),
                                 color: cellValue.missingValue ? C.textMut : row.total ? C.text : C.textSec,
                                 fontSize: cellValue.missingValue ? 11 : 16,
                                 fontWeight: row.total ? 800 : 700,
@@ -2047,15 +2310,21 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           }}
                         >
                           {(() => {
-                            const total = row.format === "percent"
-                              ? totalHistoricalPct(visibleMatrixDays)
-                              : sumMatrixValues(visibleMatrixDays, row, matrixMode);
+                            const aggregate = summarizeAggregateMatrixCell(visibleMatrixDays, row, matrixMode);
+                            if (!aggregate.hasValue) {
+                              return (
+                                <span title={aggregate.unavailableTitle} style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+                                  {aggregate.unavailableLabel}
+                                </span>
+                              );
+                            }
+                            const total = aggregate.value;
 
                             if (matrixMode === "projected" && !row.comparison) {
                               const currentTotal = sumMatrixValues(visibleMatrixDays, row, "current");
                               return (
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
-                                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal}</span>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal ?? "No data"}</span>
                                   <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
                                   <span>{formatMatrixValue(total, row.format)}</span>
                                 </div>
@@ -2073,7 +2342,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </tbody>
           </table>
         </div>
-        {workbookDays.length > MATRIX_PAGE_SIZE && (
+        {matrixRangeMode !== "month" && workbookDays.length > MATRIX_PAGE_SIZE && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
             <div style={{ fontSize: 11, color: C.textMut }}>
               Table page {matrixPage + 1} of {matrixPageCount} · {visibleMatrixDays[0]?.date || "—"} to {visibleMatrixDays[visibleMatrixDays.length - 1]?.date || "—"}
@@ -2092,7 +2361,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
             </span>
             <span style={{ fontSize: 11, color: C.textMut }}>
-              Trust notes: {selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.join(" ") : "Verified rows are ready for staffing logic."}
+              Trust notes: {selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.map(formatVisibleSchedulingCopy).join(" ") : "Verified rows are ready for staffing logic."}
             </span>
             <span style={{ fontSize: 11, color: C.textMut }}>
               Weekly totals shown in the workbook are dog-days, not unique reservations.
@@ -2121,7 +2390,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       {selectedDay && (
         <SectionCard
           title={`Optimal Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="The ideal opening and closing shift recommendation auto-generates from projected GINGR demand. Peak daytime coverage is absorbed into those two shifts instead of being shown as a third shift."
+          subtitle="The ideal opening and closing shift recommendation auto-generates from projected Gingr demand. Peak daytime coverage is absorbed into those two shifts instead of being shown as a third shift."
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
@@ -2135,7 +2404,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </div>
               {selectedDay.generationBlockers.length > 0 && (
                 <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
-                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{formatVisibleSchedulingCopy(blocker)}</li>)}
                 </ul>
               )}
             </div>
@@ -2225,7 +2494,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </div>
               {selectedDay.generationBlockers.length > 0 && (
                 <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
-                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{blocker}</li>)}
+                  {selectedDay.generationBlockers.map((blocker, index) => <li key={index}>{formatVisibleSchedulingCopy(blocker)}</li>)}
                 </ul>
               )}
             </div>
