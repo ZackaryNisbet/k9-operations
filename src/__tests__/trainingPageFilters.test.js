@@ -2,9 +2,13 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLaborRosterFilters,
+  applyLaborCapacityModelActivation,
   buildHourAnalysisCapacityRowVisualModel,
+  buildDefaultLaborCapacityModelPayload,
   buildLaborModulePanelKey,
   buildHourAnalysisModel,
+  buildOutOfPositionLaborSummary,
+  calculateLaborShiftHours,
   buildLaborModelCoverageValue,
   CAPACITY_PLANNING_VIEWS,
   clearHourAnalysisPlanningState,
@@ -18,6 +22,7 @@ import {
   LABOR_MANAGEMENT_TABS,
   makeLaborModelCellKey,
   normalizeCapacityPlanningView,
+  normalizeLaborCapacityModelRow,
   normalizeLaborModelBreakerSettings,
   normalizeLaborModelCoverageCell,
   normalizeLaborModelRolePalette,
@@ -25,6 +30,7 @@ import {
   noteMatchesSearch,
   removeLaborModelColumnFromDay,
   safeTrainingProgress,
+  selectStaffingCapacitySettings,
   setLaborModelCoverageDuration,
   setLaborModelCoveragePosition,
   shouldCycleLaborModelCoveragePointer,
@@ -289,6 +295,171 @@ describe("applyLaborRosterFilters", () => {
     expect(isLaborEmployeeActive({ id: "inactive-status", employment_status: "inactive" })).toBe(false);
     expect(isLaborEmployeeActive({ id: "inactive-flag", is_active: false })).toBe(false);
     expect(isLaborEmployeeActive({ id: "active-fallback", end_date: null })).toBe(true);
+  });
+
+  it("preserves the current labor model when creating the default active saved model", () => {
+    const emptyLaborDay = (day) => ({
+      day_key: day,
+      columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
+      rows: [],
+    });
+    const currentSettings = normalizeHourAnalysisSettings({
+      expectations: {
+        csr: { full_time: { expected: 31 }, part_time: { expected: 16 } },
+      },
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [{ id: "monday-open", label: "8-9a", hours: 1 }],
+            rows: [{ id: "csr-open", group_key: "csr", role_label: "CSR", break_enabled: false, coverage: ["CSR"] }],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+    const before = JSON.stringify(currentSettings);
+    const payload = buildDefaultLaborCapacityModelPayload({
+      locationId: "location-1",
+      settings: currentSettings,
+      actorUserId: "actor-1",
+      actorName: "Zack",
+      isActive: true,
+    });
+    const savedModel = normalizeLaborCapacityModelRow({
+      id: "model-1",
+      ...payload,
+    });
+    const model = buildHourAnalysisModel({ settings: savedModel.model_settings, rosterRows: [] });
+
+    expect(JSON.stringify(currentSettings)).toBe(before);
+    expect(payload).toMatchObject({
+      location_id: "location-1",
+      name: "Current Cherry Hill Operating Model",
+      is_active: true,
+      created_by_user_id: "actor-1",
+      updated_by_user_id: "actor-1",
+    });
+    expect(savedModel.model_settings.expectations.csr.full_time.expected).toBe(31);
+    expect(model.laborModelSummary.totalWeekly).toBe(1);
+  });
+
+  it("keeps only one active labor model and isolates draft edits from Staffing Capacity", () => {
+    const emptyLaborDay = (day) => ({
+      day_key: day,
+      columns: [{ id: `${day}-slot`, label: "Closed", hours: 1 }],
+      rows: [],
+    });
+    const activeSettings = normalizeHourAnalysisSettings({
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [{ id: "slot-active", label: "8-6p", hours: 10 }],
+            rows: [{ id: "active-csr", group_key: "csr", role_label: "CSR", break_enabled: false, coverage: ["CSR"] }],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+    const draftSettings = normalizeHourAnalysisSettings({
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [{ id: "slot-draft", label: "8-4p", hours: 8 }],
+            rows: [{ id: "draft-csr", group_key: "csr", role_label: "CSR", break_enabled: false, coverage: ["CSR"] }],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+    const models = [
+      { id: "active", location_id: "loc", name: "Active", is_active: true, model_settings: activeSettings },
+      { id: "draft", location_id: "loc", name: "Draft", is_active: false, model_settings: draftSettings },
+    ];
+
+    const staffingSettings = selectStaffingCapacitySettings({
+      models,
+      editingModelId: "draft",
+      editingSettings: draftSettings,
+      legacySettings: draftSettings,
+    });
+    const staffingModel = buildHourAnalysisModel({ settings: staffingSettings, rosterRows: [] });
+
+    expect(staffingModel.laborModelSummary.totalWeekly).toBe(10);
+
+    const activated = applyLaborCapacityModelActivation(models, "draft");
+    expect(activated.filter((model) => model.is_active)).toHaveLength(1);
+    expect(activated.find((model) => model.id === "draft")).toMatchObject({ is_active: true });
+    expect(activated.find((model) => model.id === "active")).toMatchObject({ is_active: false });
+
+    const activeDraftSettings = selectStaffingCapacitySettings({
+      models: activated,
+      editingModelId: "draft",
+      editingSettings: draftSettings,
+      legacySettings: activeSettings,
+    });
+    expect(buildHourAnalysisModel({ settings: activeDraftSettings, rosterRows: [] }).laborModelSummary.totalWeekly).toBe(8);
+  });
+
+  it("aggregates out-of-position and unclassified schedule labor by shift and hours", () => {
+    expect(calculateLaborShiftHours("10p", "2a")).toBe(4);
+
+    const summary = buildOutOfPositionLaborSummary({
+      weekStart: "2026-05-04",
+      employees: [
+        { full_name: "Gina Manager", position_title: "General Manager", employment_status: "active" },
+        { full_name: "Sam Supervisor", position_title: "Supervisor", employment_status: "active" },
+        { full_name: "Pat Tech", position_title: "Pet Care Technician", employment_status: "active" },
+        { full_name: "Chris CSR", position_title: "Customer Service Representative", employment_status: "active" },
+      ],
+      staffPlans: [
+        {
+          id: "plan-1",
+          plan_date: "2026-05-05",
+          shift: "am",
+          staff_names: [
+            { id: "shift-1", name: "Gina Manager", position: "csr", shift_start: "7a", shift_end: "3p" },
+            { id: "shift-2", name: "Sam Supervisor", position: "pct", shift_start: "8a", shift_end: "12p" },
+            { id: "shift-3", name: "Pat Tech", position: "pct", shift_start: "9a", shift_end: "11a" },
+            { id: "shift-4", name: "Unknown Person", position: "csr", shift_start: "10a", shift_end: "12p" },
+            { id: "shift-5", name: "Chris CSR", position: "", shift_start: "10a", shift_end: "12p" },
+          ],
+        },
+      ],
+    });
+
+    expect(summary).toMatchObject({
+      weekStart: "2026-05-04",
+      weekEnd: "2026-05-10",
+      totalShifts: 2,
+      totalHours: 12,
+      unclassifiedShifts: 2,
+      unclassifiedHours: 4,
+    });
+    expect(summary.topMismatches.map((item) => item.key)).toEqual(["GM -> CSR", "SUP -> PCT"]);
+    expect(summary.rows.map((row) => row.employee_name)).toEqual([
+      "Gina Manager",
+      "Sam Supervisor",
+      "Chris CSR",
+      "Unknown Person",
+    ]);
   });
 
   it("searches employee notes across note body and context fields", () => {
