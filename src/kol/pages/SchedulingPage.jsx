@@ -654,6 +654,7 @@ function formatMatrixValue(value, format) {
 function getFiniteMatrixValues(days, row, mode) {
   return days
     .map((day) => getDayMatrixValue(day, row, mode))
+    .filter((value) => value !== null && value !== undefined && value !== "")
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value));
 }

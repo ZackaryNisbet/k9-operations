@@ -55,6 +55,7 @@ export function findStaleSchedulingMatrixDates(matrixRows, dates, today = localT
   return (dates || []).filter((date) => {
     if (date < today) return false;
     const matrixRow = byDate.get(date);
+    if (!matrixRow) return false;
     const asOfDate = getMatrixProjectionAsOfDate(matrixRow);
     return !!asOfDate && asOfDate < today;
   });

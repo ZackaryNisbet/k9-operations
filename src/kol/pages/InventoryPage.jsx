@@ -242,7 +242,9 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
         transition: "background 0.15s, opacity 0.15s",
       }}
     >
-      <div aria-hidden="true" />
+      <div className="inventory-edit-affordance is-placeholder" aria-hidden="true">
+        <I.GripVertical />
+      </div>
 
       {/* Product name + Product Link + Notes Icon */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -486,7 +488,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
       <div style={{ fontSize: 12, fontWeight: 600, color: stockValue != null && stockValue > 0 ? C.suc : C.textSec, textAlign: "right" }}>
         {stockValue != null ? fmtCurrency(stockValue) : <span style={{ color: C.textMut }}>—</span>}
       </div>
-      <div aria-hidden="true" />
+      <div className="inventory-edit-affordance is-placeholder" aria-hidden="true" />
     </div>
     {showNotes && (
       <div style={{ padding: "4px 16px 8px", background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
@@ -790,7 +792,7 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
           alignItems: "center",
           gap: 4,
           minHeight: 28,
-          padding: "2px 4px",
+          padding: "2px 0",
           borderRadius: 6,
           transition: "background 0.15s",
           background: hovered ? C.bg : "transparent",
@@ -841,7 +843,7 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
         }}
       >
         {/* Drag handle */}
-        <div style={{ color: C.textMut, cursor: "grab", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="inventory-edit-affordance is-visible" style={{ color: C.textMut, cursor: "grab", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <I.GripVertical />
         </div>
 
@@ -886,13 +888,11 @@ const EditModeItemRow = React.memo(function EditModeItemRow({
         </div>
 
         {/* Row actions */}
-        <div style={{
+        <div className="inventory-edit-affordance is-visible" style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "flex-end",
           gap: 6,
-          position: "sticky",
-          right: 0,
           zIndex: 4,
           background: hovered ? C.surfaceHover : !item.is_active ? C.bg : C.surface,
           paddingLeft: 6,
@@ -2694,8 +2694,27 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           from { opacity: 0; transform: translateY(6px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes inventoryEditAffordanceIn {
+          from { opacity: 0; transform: translateY(4px) scale(0.96); filter: blur(2px); }
+          to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
         .inv-fade-in { animation: invFadeIn 0.35s cubic-bezier(0.22,1,0.36,1) both; }
         .inv-row-hover:hover { background: ${C.surfaceHover} !important; }
+        .inventory-edit-affordance {
+          min-width: 0;
+          opacity: 0;
+          transform: translateY(4px) scale(0.96);
+          transition: opacity 0.18s cubic-bezier(0.22,1,0.36,1), transform 0.18s cubic-bezier(0.22,1,0.36,1);
+        }
+        .inventory-edit-affordance.is-visible {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+          animation: inventoryEditAffordanceIn 0.2s cubic-bezier(0.22,1,0.36,1) both;
+        }
+        .inventory-edit-affordance.is-placeholder {
+          visibility: hidden;
+          pointer-events: none;
+        }
         .inventory-taxonomy-menu {
           transform-origin: top center;
           animation: invTaxonomyMenuIn 0.18s cubic-bezier(0.22,1,0.36,1) both;
