@@ -321,6 +321,8 @@ const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
 const LABOR_HOUR_ANALYSIS_SETTING_KEY = "labor_hour_analysis";
+const LABOR_CAPACITY_MODEL_DEFAULT_NAME = "Current Adair Forsythe Operating Model";
+const LABOR_CAPACITY_MODEL_TABLE_MISSING_CODES = new Set(["42P01", "PGRST205", "PGRST116"]);
 const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
 const LABOR_COMMITMENT_SELECT_OPTIONS = [
   { value: "", label: "Unassigned" },
@@ -3142,6 +3144,277 @@ export function clearHourAnalysisPlanningState(value = {}) {
   };
 }
 
+function makeLaborCapacityModelTempId(prefix = "labor-model") {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeLaborCapacityModelName(value = "", fallback = LABOR_CAPACITY_MODEL_DEFAULT_NAME) {
+  const name = String(value || "").trim().replace(/\s+/g, " ");
+  return name || fallback;
+}
+
+export function normalizeLaborCapacityModelRow(row = {}, fallbackSettings = {}) {
+  const source = isObjectRow(row) ? row : {};
+  const modelSettings = source.model_settings || source.modelSettings || source.settings || fallbackSettings;
+  const createdAt = source.created_at || source.createdAt || null;
+  const updatedAt = source.updated_at || source.updatedAt || createdAt || null;
+  return {
+    id: String(source.id || makeLaborCapacityModelTempId()).trim(),
+    location_id: String(source.location_id || source.locationId || "").trim(),
+    name: normalizeLaborCapacityModelName(source.name, LABOR_CAPACITY_MODEL_DEFAULT_NAME),
+    description: String(source.description || "").trim(),
+    model_settings: normalizeHourAnalysisSettings(modelSettings),
+    is_active: Boolean(source.is_active ?? source.isActive),
+    archived_at: source.archived_at || source.archivedAt || null,
+    activated_at: source.activated_at || source.activatedAt || null,
+    created_by_user_id: source.created_by_user_id || source.createdByUserId || null,
+    created_by_name: source.created_by_name || source.createdByName || "",
+    updated_by_user_id: source.updated_by_user_id || source.updatedByUserId || null,
+    updated_by_name: source.updated_by_name || source.updatedByName || "",
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+export function normalizeLaborCapacityModels(rows = [], fallbackSettings = {}) {
+  return toObjectRows(rows)
+    .map((row) => normalizeLaborCapacityModelRow(row, fallbackSettings))
+    .sort((left, right) => {
+      if (left.archived_at && !right.archived_at) return 1;
+      if (!left.archived_at && right.archived_at) return -1;
+      if (left.is_active && !right.is_active) return -1;
+      if (!left.is_active && right.is_active) return 1;
+      return String(right.updated_at || "").localeCompare(String(left.updated_at || ""));
+    });
+}
+
+export function getActiveLaborCapacityModel(models = []) {
+  return normalizeLaborCapacityModels(models).find((model) => model.is_active && !model.archived_at) || null;
+}
+
+export function applyLaborCapacityModelActivation(models = [], activeModelId = "") {
+  const targetId = String(activeModelId || "").trim();
+  return normalizeLaborCapacityModels(models).map((model) => ({
+    ...model,
+    is_active: Boolean(targetId && model.id === targetId && !model.archived_at),
+    activated_at: targetId && model.id === targetId && !model.archived_at ? model.activated_at || new Date().toISOString() : model.activated_at,
+  }));
+}
+
+export function buildDefaultLaborCapacityModelPayload({
+  locationId = "",
+  name = LABOR_CAPACITY_MODEL_DEFAULT_NAME,
+  settings = {},
+  actorUserId = null,
+  actorName = "",
+  isActive = true,
+} = {}) {
+  return {
+    location_id: String(locationId || "").trim(),
+    name: normalizeLaborCapacityModelName(name, LABOR_CAPACITY_MODEL_DEFAULT_NAME),
+    model_settings: normalizeHourAnalysisSettings(settings),
+    is_active: Boolean(isActive),
+    activated_at: isActive ? new Date().toISOString() : null,
+    created_by_user_id: actorUserId || null,
+    created_by_name: actorName || "",
+    updated_by_user_id: actorUserId || null,
+    updated_by_name: actorName || "",
+  };
+}
+
+export function selectStaffingCapacitySettings({
+  models = [],
+  editingModelId = "",
+  editingSettings = {},
+  legacySettings = {},
+} = {}) {
+  const normalizedModels = normalizeLaborCapacityModels(models);
+  const activeModel = getActiveLaborCapacityModel(normalizedModels);
+  if (!activeModel) return normalizeHourAnalysisSettings(legacySettings || editingSettings);
+  if (String(activeModel.id) === String(editingModelId || "")) {
+    return normalizeHourAnalysisSettings(editingSettings);
+  }
+  return normalizeHourAnalysisSettings(activeModel.model_settings);
+}
+
+function getLaborCapacityModelLoadMissing(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").toLowerCase();
+  return LABOR_CAPACITY_MODEL_TABLE_MISSING_CODES.has(code)
+    || message.includes("labor_capacity_models")
+    || message.includes("could not find the table");
+}
+
+function normalizeStaffingRoleKey(value = "", row = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = raw.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (["pct", "pet care technician", "pet care tech", "kennel technician"].includes(normalized)) return "pct";
+  if (["csr", "customer service representative", "guest service representative", "front desk"].includes(normalized)) return "csr";
+  if (["sup", "supervisor", "shift supervisor", "shift lead"].includes(normalized)) return "supervisor";
+  if (["gm", "general manager"].includes(normalized)) return "general_manager";
+  if (["am", "agm", "assistant manager", "assistant general manager"].includes(normalized)) return "assistant_manager";
+  if (["mod", "manager on duty", "manager"].includes(normalized)) return "management";
+  const hourGroup = normalizeHourAnalysisGroupKey(raw, row);
+  return hourGroup === "other" ? "" : hourGroup;
+}
+
+function getOutOfPositionRoleLabel(roleKey = "", fallback = "Unclassified") {
+  if (roleKey === "management") return "MOD";
+  return roleKey ? getHourAnalysisGroupShortLabel(roleKey) : fallback;
+}
+
+function getOutOfPositionCompareKey(roleKey = "") {
+  if (["general_manager", "assistant_manager", "management"].includes(roleKey)) return "management";
+  return roleKey || "";
+}
+
+function parseLaborShiftMinutes(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(a|am|p|pm)?$/);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes < 0 || minutes >= 60) return null;
+  const suffix = match[3] || "";
+  if ((suffix === "p" || suffix === "pm") && hours < 12) hours += 12;
+  if ((suffix === "a" || suffix === "am") && hours === 12) hours = 0;
+  if (!suffix && hours > 23) return null;
+  return (hours * 60) + minutes;
+}
+
+export function calculateLaborShiftHours(startValue, endValue, fallbackHours = null) {
+  const explicit = Number(fallbackHours);
+  const start = parseLaborShiftMinutes(startValue);
+  const end = parseLaborShiftMinutes(endValue);
+  if (start == null || end == null) {
+    return Number.isFinite(explicit) && explicit > 0 ? normalizeHourAnalysisNumber(explicit, 0) : 0;
+  }
+  const adjustedEnd = end <= start ? end + (24 * 60) : end;
+  return normalizeHourAnalysisNumber((adjustedEnd - start) / 60, 0);
+}
+
+function getStaffPlanEntries(plan = {}) {
+  const entries = Array.isArray(plan.shift_entries)
+    ? plan.shift_entries
+    : Array.isArray(plan.staff_names)
+      ? plan.staff_names
+      : [];
+  return entries.map((entry, index) => {
+    if (typeof entry === "string") {
+      return {
+        id: `${plan.id || plan.plan_date || "plan"}-${index}`,
+        name: entry,
+        position: "",
+        shift_start: "",
+        shift_end: "",
+        hours: 0,
+      };
+    }
+    const source = isObjectRow(entry) ? entry : {};
+    const start = source.shift_start || source.start_time || source.startTime || source.start || "";
+    const end = source.shift_end || source.end_time || source.endTime || source.end || "";
+    const hours = calculateLaborShiftHours(start, end, source.hours ?? source.duration_hours ?? source.durationHours);
+    return {
+      id: String(source.id || `${plan.id || plan.plan_date || "plan"}-${index}`).trim(),
+      name: String(source.name || source.full_name || source.employee_name || source.employeeName || "").trim(),
+      position: String(source.position || source.role || source.shift_position || source.shiftPosition || "").trim(),
+      shift_start: String(start || "").trim(),
+      shift_end: String(end || "").trim(),
+      hours,
+    };
+  });
+}
+
+export function buildOutOfPositionLaborSummary({ staffPlans = [], employees = [], weekStart = todayStr() } = {}) {
+  const start = getLaborCapacityWeekStart(weekStart);
+  const end = addDaysToDateString(start, 6);
+  const employeeByName = new Map();
+  toObjectRows(employees).forEach((employee) => {
+    const name = normalizeEmployeeName(employee.full_name || employee.name || [employee.first_name, employee.last_name].filter(Boolean).join(" "));
+    if (name && !employeeByName.has(name)) employeeByName.set(name, employee);
+  });
+
+  const rows = [];
+  toObjectRows(staffPlans)
+    .filter((plan) => {
+      const planDate = String(plan.plan_date || plan.date || "").slice(0, 10);
+      return planDate >= start && planDate <= end;
+    })
+    .forEach((plan) => {
+      const planDate = String(plan.plan_date || plan.date || "").slice(0, 10);
+      const date = new Date(`${planDate}T12:00:00`);
+      const dayLabel = Number.isNaN(date.getTime())
+        ? planDate
+        : date.toLocaleDateString(undefined, { weekday: "short" });
+      getStaffPlanEntries(plan).forEach((entry) => {
+        const employeeNameKey = normalizeEmployeeName(entry.name);
+        const employee = employeeNameKey ? employeeByName.get(employeeNameKey) : null;
+        const homeRoleKey = employee ? getHourAnalysisGroupKey(employee) : "";
+        const workedRoleKey = normalizeStaffingRoleKey(entry.position);
+        const homeCompare = getOutOfPositionCompareKey(homeRoleKey);
+        const workedCompare = getOutOfPositionCompareKey(workedRoleKey);
+        const isUnclassified = !employee || !homeRoleKey || !workedRoleKey;
+        const isMismatch = !isUnclassified && homeCompare !== workedCompare;
+        rows.push({
+          id: `${plan.id || planDate || "plan"}-${entry.id}`,
+          employee_name: entry.name || "Unassigned",
+          date: planDate,
+          day_label: dayLabel,
+          home_role_key: homeRoleKey,
+          home_role_label: getOutOfPositionRoleLabel(homeRoleKey),
+          worked_role_key: workedRoleKey,
+          worked_role_label: getOutOfPositionRoleLabel(workedRoleKey),
+          shift_label: [entry.shift_start, entry.shift_end].filter(Boolean).join("-") || String(plan.shift || "").toUpperCase() || "Shift",
+          shift: String(plan.shift || "").toUpperCase(),
+          hours: normalizeHourAnalysisNumber(entry.hours, 0),
+          classification: isUnclassified ? "unclassified" : isMismatch ? "mismatch" : "matched",
+          reason: !employee ? "Employee not matched to roster" : !homeRoleKey ? "Home role missing" : !workedRoleKey ? "Worked role missing" : "",
+        });
+      });
+    });
+
+  const mismatchRows = rows.filter((row) => row.classification === "mismatch");
+  const unclassifiedRows = rows.filter((row) => row.classification === "unclassified");
+  const mismatchBuckets = mismatchRows.reduce((acc, row) => {
+    const key = `${row.home_role_label} -> ${row.worked_role_label}`;
+    const bucket = acc[key] || { key, shifts: 0, hours: 0 };
+    bucket.shifts += 1;
+    bucket.hours = normalizeHourAnalysisNumber(bucket.hours + row.hours, 0);
+    acc[key] = bucket;
+    return acc;
+  }, {});
+
+  return {
+    weekStart: start,
+    weekEnd: end,
+    totalShifts: mismatchRows.length,
+    totalHours: normalizeHourAnalysisNumber(mismatchRows.reduce((sum, row) => sum + row.hours, 0), 0),
+    unclassifiedShifts: unclassifiedRows.length,
+    unclassifiedHours: normalizeHourAnalysisNumber(unclassifiedRows.reduce((sum, row) => sum + row.hours, 0), 0),
+    topMismatches: Object.values(mismatchBuckets).sort((left, right) => (right.shifts - left.shifts) || (right.hours - left.hours)).slice(0, 5),
+    rows: [...mismatchRows, ...unclassifiedRows].sort((left, right) => {
+      const leftPriority = left.classification === "mismatch" ? 0 : 1;
+      const rightPriority = right.classification === "mismatch" ? 0 : 1;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      return `${left.date}-${left.employee_name}`.localeCompare(`${right.date}-${right.employee_name}`);
+    }),
+  };
+}
+
+export function getLaborCapacityWeekStart(dateValue = todayStr()) {
+  const date = new Date(`${String(dateValue || todayStr()).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return todayStr();
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + mondayOffset);
+  return date.toISOString().slice(0, 10);
+}
+
 function makeHourAnalysisRangeTotals() {
   return { min: 0, expected: 0, max: 0 };
 }
@@ -4423,8 +4696,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
   const rosterPdfAssetsRef = useRef(null);
   const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
+  const [legacyHourAnalysisSettings, setLegacyHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
   const [hourAnalysisLoaded, setHourAnalysisLoaded] = useState(false);
   const [savingHourAnalysis, setSavingHourAnalysis] = useState(false);
+  const [laborCapacityModels, setLaborCapacityModels] = useState([]);
+  const [laborCapacityModelsLoaded, setLaborCapacityModelsLoaded] = useState(false);
+  const [laborCapacityModelsAvailable, setLaborCapacityModelsAvailable] = useState(true);
+  const [editingLaborCapacityModelId, setEditingLaborCapacityModelId] = useState("");
+  const [laborCapacityModelNameDraft, setLaborCapacityModelNameDraft] = useState("");
+  const [laborCapacityModelActionId, setLaborCapacityModelActionId] = useState("");
+  const [creatingLaborCapacityModel, setCreatingLaborCapacityModel] = useState(false);
+  const [staffingCapacityWeekStart, setStaffingCapacityWeekStart] = useState(() => getLaborCapacityWeekStart(todayStr()));
+  const [staffingCapacityStaffPlans, setStaffingCapacityStaffPlans] = useState([]);
+  const [staffingCapacityPlansLoaded, setStaffingCapacityPlansLoaded] = useState(false);
   const [showHourAnalysisWhatIfModal, setShowHourAnalysisWhatIfModal] = useState(false);
   const [showHourAnalysisAudit, setShowHourAnalysisAudit] = useState(false);
   const [hourAnalysisLaborModelTab, setHourAnalysisLaborModelTab] = useState(LABOR_MODEL_SUMMARY_TAB);
@@ -4459,6 +4743,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const laborContactLocationName = String(locationName || data?.locationName || profile?.location_name || "K9 Operations").trim();
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
+  const activeLaborCapacityModel = useMemo(() => getActiveLaborCapacityModel(laborCapacityModels), [laborCapacityModels]);
+  const editingLaborCapacityModel = useMemo(() => {
+    const normalizedModels = normalizeLaborCapacityModels(laborCapacityModels);
+    return normalizedModels.find((model) => model.id === editingLaborCapacityModelId) || activeLaborCapacityModel || normalizedModels[0] || null;
+  }, [activeLaborCapacityModel, editingLaborCapacityModelId, laborCapacityModels]);
+  const isEditingActiveLaborCapacityModel = Boolean(editingLaborCapacityModel?.id && activeLaborCapacityModel?.id === editingLaborCapacityModel.id);
 
   useEffect(() => {
     if (!laborLocationRef) return;
@@ -4492,28 +4782,106 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (!laborLocationRef) {
       const defaults = normalizeHourAnalysisSettings();
       setHourAnalysisSettings(defaults);
+      setLegacyHourAnalysisSettings(defaults);
+      setLaborCapacityModels([]);
+      setLaborCapacityModelsLoaded(false);
+      setLaborCapacityModelsAvailable(true);
+      setEditingLaborCapacityModelId("");
+      setLaborCapacityModelNameDraft("");
       hourAnalysisLoadedSnapshotRef.current = JSON.stringify(defaults);
       setHourAnalysisLoaded(false);
       return;
     }
     let cancelled = false;
     setHourAnalysisLoaded(false);
-    supabase
-      .from("lite_settings")
-      .select("setting_value")
-      .eq("location_id", laborLocationRef)
-      .eq("setting_key", LABOR_HOUR_ANALYSIS_SETTING_KEY)
-      .maybeSingle()
-      .then(({ data: row, error }) => {
+    setLaborCapacityModelsLoaded(false);
+    (async () => {
+      const legacyRes = await supabase
+        .from("lite_settings")
+        .select("setting_value")
+        .eq("location_id", laborLocationRef)
+        .eq("setting_key", LABOR_HOUR_ANALYSIS_SETTING_KEY)
+        .maybeSingle();
+      if (cancelled) return;
+      if (legacyRes.error) console.warn("Labor hour analysis settings load skipped:", legacyRes.error);
+      const legacySettings = normalizeHourAnalysisSettings(legacyRes.data?.setting_value);
+      setLegacyHourAnalysisSettings(legacySettings);
+
+      const modelsRes = await supabase
+        .from("labor_capacity_models")
+        .select("*")
+        .eq("location_id", laborLocationRef)
+        .order("is_active", { ascending: false })
+        .order("updated_at", { ascending: false });
+      if (cancelled) return;
+
+      if (modelsRes.error) {
+        if (getLaborCapacityModelLoadMissing(modelsRes.error)) {
+          setLaborCapacityModelsAvailable(false);
+          setLaborCapacityModels([]);
+          setLaborCapacityModelsLoaded(true);
+          setEditingLaborCapacityModelId("");
+          setLaborCapacityModelNameDraft("");
+          setHourAnalysisSettings(legacySettings);
+          hourAnalysisLoadedSnapshotRef.current = JSON.stringify(legacySettings);
+          setHourAnalysisLoaded(true);
+          return;
+        }
+        console.error("Failed to load labor capacity models", modelsRes.error);
+        addGlobalToast?.(modelsRes.error.message || "Failed to load saved labor models", "error");
+      }
+
+      setLaborCapacityModelsAvailable(true);
+      let models = normalizeLaborCapacityModels(modelsRes.data || [], legacySettings);
+      if (models.length === 0 && laborLocationRef) {
+        const payload = buildDefaultLaborCapacityModelPayload({
+          locationId: laborLocationRef,
+          settings: legacySettings,
+          actorUserId,
+          actorName: actorName || "Legacy Labor Model",
+          isActive: true,
+        });
+        const insertRes = await supabase
+          .from("labor_capacity_models")
+          .insert(payload)
+          .select("*")
+          .maybeSingle();
         if (cancelled) return;
-        if (error) console.warn("Labor hour analysis settings load skipped:", error);
-        const normalized = normalizeHourAnalysisSettings(row?.setting_value);
-        setHourAnalysisSettings(normalized);
-        hourAnalysisLoadedSnapshotRef.current = JSON.stringify(normalized);
-        setHourAnalysisLoaded(true);
-      });
+        if (insertRes.error) {
+          console.error("Failed to create default labor capacity model", insertRes.error);
+          addGlobalToast?.(insertRes.error.message || "Failed to create default active labor model", "error");
+        } else if (insertRes.data) {
+          models = normalizeLaborCapacityModels([insertRes.data], legacySettings);
+        }
+      }
+
+      const activeModel = getActiveLaborCapacityModel(models) || models[0] || null;
+      const settings = normalizeHourAnalysisSettings(activeModel?.model_settings || legacySettings);
+      setLaborCapacityModels(models);
+      setLaborCapacityModelsLoaded(true);
+      setEditingLaborCapacityModelId(activeModel?.id || "");
+      setLaborCapacityModelNameDraft(activeModel?.name || "");
+      setHourAnalysisSettings(settings);
+      hourAnalysisLoadedSnapshotRef.current = JSON.stringify(settings);
+      setHourAnalysisLoaded(true);
+    })();
     return () => { cancelled = true; };
-  }, [laborLocationRef]);
+  }, [actorName, actorUserId, addGlobalToast, laborLocationRef]);
+
+  useEffect(() => {
+    if (!hourAnalysisLoaded || !laborCapacityModelsAvailable || !laborCapacityModelsLoaded || !editingLaborCapacityModel) return;
+    const normalized = normalizeHourAnalysisSettings(editingLaborCapacityModel.model_settings);
+    setLaborCapacityModelNameDraft(editingLaborCapacityModel.name || "");
+    setHourAnalysisSettings(normalized);
+    hourAnalysisLoadedSnapshotRef.current = JSON.stringify(normalized);
+  }, [editingLaborCapacityModel?.id]);
+
+  useEffect(() => {
+    if (!laborCapacityModelsAvailable || !activeLaborCapacityModel?.id) return;
+    if (capacityPlanningView === "staffing-capacity" && editingLaborCapacityModelId !== activeLaborCapacityModel.id) {
+      setEditingLaborCapacityModelId(activeLaborCapacityModel.id);
+    }
+  }, [activeLaborCapacityModel?.id, capacityPlanningView, editingLaborCapacityModelId, laborCapacityModelsAvailable]);
 
   useEffect(() => {
     if (!hourAnalysisLoaded || !laborLocationRef) return undefined;
@@ -4523,28 +4891,92 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (hourAnalysisSaveTimerRef.current) window.clearTimeout(hourAnalysisSaveTimerRef.current);
     setSavingHourAnalysis(true);
     hourAnalysisSaveTimerRef.current = window.setTimeout(async () => {
-      const { error } = await supabase
-        .from("lite_settings")
-        .upsert(
-          {
-            location_id: laborLocationRef,
-            setting_key: LABOR_HOUR_ANALYSIS_SETTING_KEY,
-            setting_value: normalized,
-          },
-          { onConflict: "location_id,setting_key" },
-        );
+      const saveStartedAt = new Date().toISOString();
+      const shouldUseSavedModels = laborCapacityModelsAvailable && editingLaborCapacityModelId;
+      const { error } = shouldUseSavedModels
+        ? await supabase
+          .from("labor_capacity_models")
+          .update({
+            model_settings: normalized,
+            updated_by_user_id: actorUserId,
+            updated_by_name: actorName,
+            updated_at: saveStartedAt,
+          })
+          .eq("id", editingLaborCapacityModelId)
+        : await supabase
+          .from("lite_settings")
+          .upsert(
+            {
+              location_id: laborLocationRef,
+              setting_key: LABOR_HOUR_ANALYSIS_SETTING_KEY,
+              setting_value: normalized,
+              updated_by: actorUserId,
+            },
+            { onConflict: "location_id,setting_key" },
+          );
       if (error) {
         console.error("Failed to save labor hour analysis settings", error);
         addGlobalToast?.(error.message || "Failed to save hour analysis", "error");
       } else {
         hourAnalysisLoadedSnapshotRef.current = serialized;
+        if (shouldUseSavedModels) {
+          setLaborCapacityModels((prev) => normalizeLaborCapacityModels(prev.map((model) => (
+            model.id === editingLaborCapacityModelId
+              ? {
+                ...model,
+                model_settings: normalized,
+                updated_at: saveStartedAt,
+                updated_by_user_id: actorUserId,
+                updated_by_name: actorName,
+              }
+              : model
+          ))));
+        } else {
+          setLegacyHourAnalysisSettings(normalized);
+        }
       }
       setSavingHourAnalysis(false);
     }, 520);
     return () => {
       if (hourAnalysisSaveTimerRef.current) window.clearTimeout(hourAnalysisSaveTimerRef.current);
     };
-  }, [addGlobalToast, hourAnalysisLoaded, hourAnalysisSettings, laborLocationRef]);
+  }, [actorName, actorUserId, addGlobalToast, editingLaborCapacityModelId, hourAnalysisLoaded, hourAnalysisSettings, laborCapacityModelsAvailable, laborLocationRef]);
+
+  useEffect(() => {
+    if (!laborLocationRef || tab !== "hour-analysis" || capacityPlanningView !== "staffing-capacity") {
+      setStaffingCapacityStaffPlans([]);
+      setStaffingCapacityPlansLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    setStaffingCapacityPlansLoaded(false);
+    const weekEnd = addDaysToDateString(staffingCapacityWeekStart, 6);
+    const locationRefs = [...new Set([
+      laborLocationRef,
+      resolvedLaborLocationId,
+      locationRef,
+      profile?.location_id,
+    ].filter(Boolean).map(String))];
+    supabase
+      .from("daily_staff_plan")
+      .select("*")
+      .in("location_id", locationRefs)
+      .gte("plan_date", staffingCapacityWeekStart)
+      .lte("plan_date", weekEnd)
+      .order("plan_date", { ascending: true })
+      .then(({ data: rows, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to load staffing plans for out-of-position summary", error);
+          addGlobalToast?.(error.message || "Failed to load staffing schedule rows", "error");
+          setStaffingCapacityStaffPlans([]);
+        } else {
+          setStaffingCapacityStaffPlans(rows || []);
+        }
+        setStaffingCapacityPlansLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [addGlobalToast, capacityPlanningView, laborLocationRef, locationRef, profile?.location_id, resolvedLaborLocationId, staffingCapacityWeekStart, tab]);
 
   useEffect(() => {
     if (showRosterFilterPanel && !prevRosterFilterOpen.current) {
@@ -8140,7 +8572,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     return options;
   }, [approvedLaborPositionOptions]);
+  const staffingCapacityHourAnalysisSettings = useMemo(() => selectStaffingCapacitySettings({
+    models: laborCapacityModelsAvailable ? laborCapacityModels : [],
+    editingModelId: editingLaborCapacityModelId,
+    editingSettings: hourAnalysisSettings,
+    legacySettings: legacyHourAnalysisSettings,
+  }), [editingLaborCapacityModelId, hourAnalysisSettings, laborCapacityModels, laborCapacityModelsAvailable, legacyHourAnalysisSettings]);
   const hourAnalysisModel = useMemo(() => buildHourAnalysisModel({
+    rosterRows: preparedRosterRows,
+    settings: staffingCapacityHourAnalysisSettings,
+  }), [preparedRosterRows, staffingCapacityHourAnalysisSettings]);
+  const laborModelEditorModel = useMemo(() => buildHourAnalysisModel({
     rosterRows: preparedRosterRows,
     settings: hourAnalysisSettings,
   }), [hourAnalysisSettings, preparedRosterRows]);
@@ -8248,6 +8690,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     hourAnalysisModel.totals.projectedExpected,
     hourAnalysisModel.totals.capacityStandard,
   );
+  const staffingCapacityWeekEnd = addDaysToDateString(staffingCapacityWeekStart, 6);
+  const staffingCapacityWeekLabel = `${fmtDate(staffingCapacityWeekStart)} - ${fmtDate(staffingCapacityWeekEnd)}`;
+  const outOfPositionLaborSummary = useMemo(() => buildOutOfPositionLaborSummary({
+    staffPlans: staffingCapacityStaffPlans,
+    employees: preparedRosterRows,
+    weekStart: staffingCapacityWeekStart,
+  }), [preparedRosterRows, staffingCapacityStaffPlans, staffingCapacityWeekStart]);
   const hourAnalysisDecision = useMemo(() => {
     const totals = hourAnalysisModel.totals;
     if (totals.hireDeficitHours > 0) {
@@ -8334,6 +8783,189 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       });
     });
   }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const persistLaborCapacityModelSettingsNow = useCallback(async (modelId, settings) => {
+    const targetId = String(modelId || "").trim();
+    if (!targetId || !laborCapacityModelsAvailable) return true;
+    const normalized = normalizeHourAnalysisSettings(settings);
+    const savedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("labor_capacity_models")
+      .update({
+        model_settings: normalized,
+        updated_by_user_id: actorUserId,
+        updated_by_name: actorName,
+        updated_at: savedAt,
+      })
+      .eq("id", targetId);
+    if (error) {
+      console.error("Failed to save labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to save labor model", "error");
+      return false;
+    }
+    hourAnalysisLoadedSnapshotRef.current = JSON.stringify(normalized);
+    setLaborCapacityModels((prev) => normalizeLaborCapacityModels(prev.map((model) => (
+      model.id === targetId
+        ? {
+          ...model,
+          model_settings: normalized,
+          updated_at: savedAt,
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+        }
+        : model
+    ))));
+    return true;
+  }, [actorName, actorUserId, addGlobalToast, laborCapacityModelsAvailable]);
+  const createLaborCapacityModel = useCallback(async () => {
+    if (!canEditRoster || !laborCapacityModelsAvailable || !laborLocationRef) return;
+    const name = window.prompt("New labor model name", "Draft Labor Model");
+    if (name == null) return;
+    const normalizedName = normalizeLaborCapacityModelName(name, "Draft Labor Model");
+    setCreatingLaborCapacityModel(true);
+    try {
+      const payload = buildDefaultLaborCapacityModelPayload({
+        locationId: laborLocationRef,
+        name: normalizedName,
+        settings: hourAnalysisSettings,
+        actorUserId,
+        actorName,
+        isActive: false,
+      });
+      const { data: row, error } = await supabase
+        .from("labor_capacity_models")
+        .insert(payload)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      const normalized = normalizeLaborCapacityModelRow(row, hourAnalysisSettings);
+      setLaborCapacityModels((prev) => normalizeLaborCapacityModels([...prev, normalized]));
+      setEditingLaborCapacityModelId(normalized.id);
+      setLaborCapacityModelNameDraft(normalized.name);
+      addGlobalToast?.(`Created draft model ${normalized.name}`, "success");
+    } catch (error) {
+      console.error("Failed to create labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to create labor model", "error");
+    } finally {
+      setCreatingLaborCapacityModel(false);
+    }
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, hourAnalysisSettings, laborCapacityModelsAvailable, laborLocationRef]);
+  const renameLaborCapacityModel = useCallback(async () => {
+    if (!canEditRoster || !editingLaborCapacityModel?.id || !laborCapacityModelsAvailable) return;
+    const nextName = normalizeLaborCapacityModelName(laborCapacityModelNameDraft, editingLaborCapacityModel.name);
+    if (!nextName) return;
+    setLaborCapacityModelActionId(`rename:${editingLaborCapacityModel.id}`);
+    try {
+      const { error } = await supabase
+        .from("labor_capacity_models")
+        .update({
+          name: nextName,
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", editingLaborCapacityModel.id);
+      if (error) throw error;
+      setLaborCapacityModels((prev) => normalizeLaborCapacityModels(prev.map((model) => (
+        model.id === editingLaborCapacityModel.id ? { ...model, name: nextName, updated_by_user_id: actorUserId, updated_by_name: actorName } : model
+      ))));
+      addGlobalToast?.("Labor model renamed", "success");
+    } catch (error) {
+      console.error("Failed to rename labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to rename labor model", "error");
+    } finally {
+      setLaborCapacityModelActionId("");
+    }
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborCapacityModel, laborCapacityModelNameDraft, laborCapacityModelsAvailable]);
+  const duplicateLaborCapacityModel = useCallback(async () => {
+    if (!canEditRoster || !editingLaborCapacityModel?.id || !laborCapacityModelsAvailable || !laborLocationRef) return;
+    const sourceSettings = normalizeHourAnalysisSettings(hourAnalysisSettings);
+    const copyName = normalizeLaborCapacityModelName(`Copy of ${editingLaborCapacityModel.name}`, "Copied Labor Model");
+    setLaborCapacityModelActionId(`duplicate:${editingLaborCapacityModel.id}`);
+    try {
+      const payload = buildDefaultLaborCapacityModelPayload({
+        locationId: laborLocationRef,
+        name: copyName,
+        settings: sourceSettings,
+        actorUserId,
+        actorName,
+        isActive: false,
+      });
+      const { data: row, error } = await supabase
+        .from("labor_capacity_models")
+        .insert(payload)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      const normalized = normalizeLaborCapacityModelRow(row, sourceSettings);
+      setLaborCapacityModels((prev) => normalizeLaborCapacityModels([...prev, normalized]));
+      setEditingLaborCapacityModelId(normalized.id);
+      setLaborCapacityModelNameDraft(normalized.name);
+      addGlobalToast?.(`Duplicated model as ${normalized.name}`, "success");
+    } catch (error) {
+      console.error("Failed to duplicate labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to duplicate labor model", "error");
+    } finally {
+      setLaborCapacityModelActionId("");
+    }
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborCapacityModel, hourAnalysisSettings, laborCapacityModelsAvailable, laborLocationRef]);
+  const activateLaborCapacityModel = useCallback(async () => {
+    if (!canEditRoster || !editingLaborCapacityModel?.id || !laborCapacityModelsAvailable) return;
+    const targetId = editingLaborCapacityModel.id;
+    setLaborCapacityModelActionId(`activate:${targetId}`);
+    try {
+      const saved = await persistLaborCapacityModelSettingsNow(targetId, hourAnalysisSettings);
+      if (!saved) return;
+      const { data: activated, error } = await supabase.rpc("activate_labor_capacity_model", { p_model_id: targetId });
+      if (error) throw error;
+      const activatedRow = normalizeLaborCapacityModelRow(activated || { ...editingLaborCapacityModel, is_active: true }, hourAnalysisSettings);
+      setLaborCapacityModels((prev) => normalizeLaborCapacityModels(applyLaborCapacityModelActivation(prev, targetId).map((model) => (
+        model.id === targetId ? { ...model, ...activatedRow, model_settings: hourAnalysisSettings } : model
+      ))));
+      setEditingLaborCapacityModelId(targetId);
+      addGlobalToast?.(`Using active model: ${activatedRow.name}`, "success");
+    } catch (error) {
+      console.error("Failed to activate labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to activate labor model", "error");
+    } finally {
+      setLaborCapacityModelActionId("");
+    }
+  }, [addGlobalToast, canEditRoster, editingLaborCapacityModel, hourAnalysisSettings, laborCapacityModelsAvailable, persistLaborCapacityModelSettingsNow]);
+  const archiveLaborCapacityModel = useCallback(async () => {
+    if (!canEditRoster || !editingLaborCapacityModel?.id || !laborCapacityModelsAvailable) return;
+    if (editingLaborCapacityModel.is_active) {
+      addGlobalToast?.("Activate another model before archiving the active model.", "warning");
+      return;
+    }
+    if (!window.confirm(`Archive ${editingLaborCapacityModel.name}? Staffing Capacity will continue using ${activeLaborCapacityModel?.name || "the active model"}.`)) return;
+    const archivedAt = new Date().toISOString();
+    setLaborCapacityModelActionId(`archive:${editingLaborCapacityModel.id}`);
+    try {
+      const { error } = await supabase
+        .from("labor_capacity_models")
+        .update({
+          archived_at: archivedAt,
+          is_active: false,
+          updated_by_user_id: actorUserId,
+          updated_by_name: actorName,
+          updated_at: archivedAt,
+        })
+        .eq("id", editingLaborCapacityModel.id);
+      if (error) throw error;
+      const nextModels = normalizeLaborCapacityModels(laborCapacityModels.map((model) => (
+        model.id === editingLaborCapacityModel.id ? { ...model, archived_at: archivedAt, is_active: false } : model
+      )));
+      const nextEditing = getActiveLaborCapacityModel(nextModels) || nextModels.find((model) => !model.archived_at) || null;
+      setLaborCapacityModels(nextModels);
+      setEditingLaborCapacityModelId(nextEditing?.id || "");
+      setLaborCapacityModelNameDraft(nextEditing?.name || "");
+      addGlobalToast?.("Labor model archived", "success");
+    } catch (error) {
+      console.error("Failed to archive labor capacity model", error);
+      addGlobalToast?.(error.message || "Failed to archive labor model", "error");
+    } finally {
+      setLaborCapacityModelActionId("");
+    }
+  }, [actorName, actorUserId, activeLaborCapacityModel?.name, addGlobalToast, canEditRoster, editingLaborCapacityModel, laborCapacityModels, laborCapacityModelsAvailable]);
   const updateHourExpectation = useCallback((groupKey, commitment, band, value) => {
     const normalizedGroup = HOUR_ANALYSIS_GROUP_LABELS[groupKey] ? groupKey : "other";
     const normalizedCommitment = commitment === "part_time" ? "part_time" : "full_time";
@@ -11765,7 +12397,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const configuringRosterField = configuringRosterKey ? LABOR_ROSTER_FILTER_FIELDS.find((field) => field.key === configuringRosterKey) : null;
   const configuringRosterValue = configuringRosterKey ? rosterDraftFilters[configuringRosterKey] : null;
   const displayLaborTab = tab === "templates" ? "training" : tab;
-  const hourAnalysisLaborModelSummary = hourAnalysisModel.laborModelSummary;
+  const hourAnalysisLaborModelSummary = laborModelEditorModel.laborModelSummary;
   const activeHourAnalysisLaborModelDayKey = LABOR_MODEL_DAY_KEYS.includes(hourAnalysisLaborModelTab) ? hourAnalysisLaborModelTab : "monday";
   const activeHourAnalysisLaborModelDay = hourAnalysisSettings.laborModel?.days?.[activeHourAnalysisLaborModelDayKey] || hourAnalysisLaborModelSummary.model.days[activeHourAnalysisLaborModelDayKey];
   const activeHourAnalysisLaborModelDaySummary = hourAnalysisLaborModelSummary.dayRows.find((day) => day.key === activeHourAnalysisLaborModelDayKey) || hourAnalysisLaborModelSummary.dayRows[0];
@@ -12396,6 +13028,142 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 12px;
           line-height: 1.35;
           font-weight: 650;
+        }
+        .out-of-position-card {
+          overflow: visible;
+        }
+        .out-of-position-week-controls {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .out-of-position-week-controls button,
+        .labor-capacity-model-actions button {
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          color: ${C.textSec};
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          line-height: 1;
+          padding: 8px 10px;
+        }
+        .out-of-position-week-controls button:hover,
+        .labor-capacity-model-actions button:hover {
+          border-color: rgba(20, 83, 45, 0.34);
+          background: #f0fdf4;
+          color: ${C.pri};
+        }
+        .out-of-position-metrics {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          padding: 12px 16px;
+          border-bottom: 1px solid ${C.borderLight};
+        }
+        .out-of-position-metric {
+          min-width: 0;
+          border: 1px solid ${C.borderLight};
+          border-radius: 8px;
+          background: #fff;
+          padding: 10px 11px;
+        }
+        .out-of-position-metric.is-primary {
+          border-color: rgba(194, 65, 12, 0.22);
+          background: linear-gradient(135deg, #fff7ed, #fff 66%);
+        }
+        .out-of-position-metric span {
+          display: block;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1.1;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .out-of-position-metric strong {
+          display: block;
+          margin-top: 5px;
+          color: ${C.text};
+          font-size: 24px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .out-of-position-metric.is-primary strong {
+          color: #c2410c;
+        }
+        .out-of-position-topline {
+          display: flex;
+          gap: 7px;
+          flex-wrap: wrap;
+          padding: 11px 16px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #fbfdff;
+        }
+        .out-of-position-topline span {
+          display: inline-flex;
+          align-items: center;
+          border: 1px solid rgba(194, 65, 12, 0.18);
+          border-radius: 999px;
+          background: #fff7ed;
+          color: #9a3412;
+          font-size: 10.5px;
+          font-weight: 900;
+          line-height: 1;
+          padding: 6px 8px;
+        }
+        .out-of-position-table-wrap {
+          max-height: 260px;
+          overflow: auto;
+        }
+        .out-of-position-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          min-width: 760px;
+        }
+        .out-of-position-table th,
+        .out-of-position-table td {
+          border-bottom: 1px solid ${C.borderLight};
+          padding: 9px 12px;
+          font-size: 11.5px;
+          text-align: left;
+          white-space: nowrap;
+        }
+        .out-of-position-table th {
+          position: sticky;
+          top: 0;
+          z-index: 1;
+          background: #f8fafc;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .out-of-position-table td {
+          color: ${C.textSec};
+          font-weight: 780;
+        }
+        .out-of-position-table td strong {
+          display: block;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 950;
+        }
+        .out-of-position-table td small {
+          display: block;
+          margin-top: 3px;
+          color: #b45309;
+          font-size: 10px;
+          font-weight: 780;
+        }
+        .out-of-position-table tr.is-unclassified td {
+          background: #fffbeb;
         }
         .hour-analysis-roster-summary {
           display: grid;
@@ -13901,6 +14669,110 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .capacity-planning-page {
           display: grid;
           gap: 16px;
+        }
+        .labor-capacity-model-bar {
+          display: grid;
+          grid-template-columns: minmax(260px, 0.95fr) minmax(360px, 1.05fr);
+          gap: 12px;
+          align-items: center;
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(240,253,244,0.86), #ffffff 66%);
+          padding: 12px;
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.045);
+        }
+        .labor-capacity-model-status {
+          min-width: 0;
+        }
+        .labor-capacity-model-status span {
+          display: block;
+          color: ${C.pri};
+          font-size: 13px;
+          font-weight: 950;
+          line-height: 1.2;
+        }
+        .labor-capacity-model-status small {
+          display: block;
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 760;
+          line-height: 1.35;
+        }
+        .labor-capacity-model-controls {
+          display: grid;
+          grid-template-columns: minmax(155px, 0.7fr) minmax(210px, 1fr) auto;
+          gap: 8px;
+          align-items: end;
+        }
+        .labor-capacity-model-controls label {
+          display: grid;
+          gap: 5px;
+          min-width: 0;
+        }
+        .labor-capacity-model-controls label span {
+          color: ${C.textMut};
+          font-size: 9.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .labor-capacity-model-controls select,
+        .labor-capacity-model-controls input {
+          width: 100%;
+          min-width: 0;
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          color: ${C.text};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 850;
+          padding: 8px 9px;
+          outline: none;
+        }
+        .labor-capacity-model-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .labor-capacity-model-actions button.is-primary {
+          border-color: rgba(20, 83, 45, 0.3);
+          background: ${C.pri};
+          color: #fff;
+        }
+        .labor-capacity-model-actions button.is-danger {
+          border-color: rgba(220, 38, 38, 0.24);
+          color: #b91c1c;
+        }
+        .labor-capacity-model-actions button:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+          transform: none;
+        }
+        @media (max-width: 1050px) {
+          .labor-capacity-model-bar {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .labor-capacity-model-controls {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .labor-capacity-model-actions {
+            justify-content: flex-start;
+          }
+          .out-of-position-metrics {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 720px) {
+          .out-of-position-metrics {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .out-of-position-week-controls {
+            justify-content: flex-start;
+          }
         }
         @keyframes laborModelGridIn {
           0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.996); filter: blur(3px); }
@@ -17405,6 +18277,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div className="hour-analysis-card-header">
               <div>
                 <h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>
+                <div className="hour-analysis-card-subtitle">
+                  Using active model: {activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}
+                </div>
               </div>
             </div>
             <div className="hour-analysis-capacity-dashboard">
@@ -17535,6 +18410,81 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           </div>
 
+          <div className="hour-analysis-card out-of-position-card">
+            <div className="hour-analysis-card-header">
+              <div>
+                <h3 className="hour-analysis-card-title">Out-of-Position Labor</h3>
+                <div className="hour-analysis-card-subtitle">Week of {staffingCapacityWeekLabel}</div>
+              </div>
+              <div className="out-of-position-week-controls">
+                <button type="button" onClick={() => setStaffingCapacityWeekStart((prev) => addDaysToDateString(prev, -7))}>Prev</button>
+                <button type="button" onClick={() => setStaffingCapacityWeekStart(getLaborCapacityWeekStart(todayStr()))}>This Week</button>
+                <button type="button" onClick={() => setStaffingCapacityWeekStart((prev) => addDaysToDateString(prev, 7))}>Next</button>
+              </div>
+            </div>
+            <div className="out-of-position-metrics">
+              <div className="out-of-position-metric is-primary">
+                <span>Out-of-position shifts</span>
+                <strong>{outOfPositionLaborSummary.totalShifts}</strong>
+              </div>
+              <div className="out-of-position-metric">
+                <span>Out-of-position hours</span>
+                <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.totalHours)}</strong>
+              </div>
+              <div className="out-of-position-metric">
+                <span>Unclassified shifts</span>
+                <strong>{outOfPositionLaborSummary.unclassifiedShifts}</strong>
+              </div>
+              <div className="out-of-position-metric">
+                <span>Unclassified hours</span>
+                <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.unclassifiedHours)}</strong>
+              </div>
+            </div>
+            <div className="out-of-position-topline">
+              {outOfPositionLaborSummary.topMismatches.length > 0 ? (
+                outOfPositionLaborSummary.topMismatches.map((item) => (
+                  <span key={item.key}>{item.key}: {item.shifts} shift{item.shifts === 1 ? "" : "s"} / {formatHourAnalysisHours(item.hours)} hrs</span>
+                ))
+              ) : (
+                <span>{staffingCapacityPlansLoaded ? "No classified out-of-position shifts found for this week." : "Loading schedule rows..."}</span>
+              )}
+            </div>
+            <div className="out-of-position-table-wrap">
+              <table className="out-of-position-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Date</th>
+                    <th>Home</th>
+                    <th>Worked</th>
+                    <th>Hours</th>
+                    <th>Shift</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outOfPositionLaborSummary.rows.map((row) => (
+                    <tr key={row.id} className={row.classification === "unclassified" ? "is-unclassified" : ""}>
+                      <td>
+                        <strong>{row.employee_name}</strong>
+                        {row.reason ? <small>{row.reason}</small> : null}
+                      </td>
+                      <td>{row.day_label} {fmtDate(row.date)}</td>
+                      <td>{row.home_role_label}</td>
+                      <td>{row.worked_role_label}</td>
+                      <td>{formatHourAnalysisHours(row.hours)}</td>
+                      <td>{row.shift_label}</td>
+                    </tr>
+                  ))}
+                  {outOfPositionLaborSummary.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={6}>{staffingCapacityPlansLoaded ? "No mismatch or unclassified schedule rows to show." : "Loading schedule rows..."}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div className="hour-analysis-card">
             <div className="hour-analysis-card-header">
               <div>
@@ -17607,7 +18557,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <tbody>
                   {hourAnalysisGroups.map((group) => {
                     const headcount = hourAnalysisModel.headcountRows.find((row) => row.key === group.key) || {};
-                    const expectation = hourAnalysisSettings.expectations[group.key] || DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key] || {};
+                    const expectation = staffingCapacityHourAnalysisSettings.expectations[group.key] || DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key] || {};
                     return (
                       <tr key={group.key}>
                         <td>{group.label}</td>
@@ -17839,6 +18789,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           </div>
 
+          <div className="labor-capacity-model-bar">
+            <div className="labor-capacity-model-status">
+              <span>Using active model: {activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}</span>
+              {editingLaborCapacityModel && !isEditingActiveLaborCapacityModel ? (
+                <small>Editing draft model: {editingLaborCapacityModel.name}. Staffing Capacity will not use this draft until it is activated.</small>
+              ) : (
+                <small>{laborCapacityModelsAvailable ? "Edits to the active model feed Staffing Capacity after auto-save." : "Saved model table is not available yet; legacy settings are still powering the page."}</small>
+              )}
+            </div>
+            {laborCapacityModelsAvailable ? (
+              <div className="labor-capacity-model-controls">
+                <label>
+                  <span>Editing</span>
+                  <select
+                    value={editingLaborCapacityModel?.id || ""}
+                    onChange={(event) => setEditingLaborCapacityModelId(event.target.value)}
+                    disabled={!canEditRoster || laborCapacityModels.length === 0}
+                  >
+                    {normalizeLaborCapacityModels(laborCapacityModels).filter((model) => !model.archived_at).map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.is_active ? "Active - " : ""}{model.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="labor-capacity-model-name">
+                  <span>Name</span>
+                  <input
+                    value={laborCapacityModelNameDraft}
+                    onChange={(event) => setLaborCapacityModelNameDraft(event.target.value)}
+                    disabled={!canEditRoster || !editingLaborCapacityModel}
+                  />
+                </label>
+                {canEditRoster && (
+                  <div className="labor-capacity-model-actions">
+                    <button type="button" onClick={renameLaborCapacityModel} disabled={!editingLaborCapacityModel || laborCapacityModelActionId.startsWith("rename:")}>Rename</button>
+                    <button type="button" onClick={createLaborCapacityModel} disabled={creatingLaborCapacityModel}>New Draft</button>
+                    <button type="button" onClick={duplicateLaborCapacityModel} disabled={!editingLaborCapacityModel || laborCapacityModelActionId.startsWith("duplicate:")}>Duplicate</button>
+                    <button type="button" className="is-primary" onClick={activateLaborCapacityModel} disabled={!editingLaborCapacityModel || isEditingActiveLaborCapacityModel || laborCapacityModelActionId.startsWith("activate:")}>Activate</button>
+                    <button type="button" className="is-danger" onClick={archiveLaborCapacityModel} disabled={!editingLaborCapacityModel || isEditingActiveLaborCapacityModel || laborCapacityModelActionId.startsWith("archive:")}>Archive</button>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
           <div className="labor-model-shell is-page">
             <div className="labor-model-tabs" style={{ "--labor-model-tab-count": LABOR_MODEL_DAY_KEYS.length + 1, "--labor-model-active-index": Math.max(0, [LABOR_MODEL_SUMMARY_TAB, ...LABOR_MODEL_DAY_KEYS].indexOf(hourAnalysisLaborModelTab)) }}>
               <span className="labor-model-tab-indicator" aria-hidden="true" />
@@ -17927,7 +18923,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         </tr>
                       </thead>
                       <tbody>
-                        {hourAnalysisModel.weeklyRows.map((row) => (
+                        {laborModelEditorModel.weeklyRows.map((row) => (
                           <tr key={row.key}>
                             <td>{getHourAnalysisGroupShortLabel(row.key)}</td>
                             <td>{formatHourAnalysisHours(row.requiredWeekly)}</td>
