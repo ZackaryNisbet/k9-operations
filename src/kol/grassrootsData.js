@@ -196,6 +196,21 @@ export function normalizeGrassrootsEventType(value = "") {
   return GRASSROOTS_EVENT_TYPE_OPTIONS.includes(normalized) ? normalized : "";
 }
 
+export function normalizeGrassrootsEventLinks(target = {}) {
+  const sourceLinks = Array.isArray(target.details?.links)
+    ? target.details.links
+    : Array.isArray(target.links)
+      ? target.links
+      : [];
+  return sourceLinks
+    .map((row, index) => ({
+      id: row?.id || `event_link_${index + 1}`,
+      label: normalizeText(row?.label || row?.title),
+      url: normalizeText(row?.url || row?.href),
+    }))
+    .filter((row) => row.url);
+}
+
 function parseTime(value) {
   const text = stringValue(value);
   const match = text.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);

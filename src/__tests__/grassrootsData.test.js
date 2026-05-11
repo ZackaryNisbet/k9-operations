@@ -14,6 +14,7 @@ import {
   getGrassrootsPrimaryEventDate,
   getGrassrootsSplitAddress,
   groupGrassrootsHistory,
+  normalizeGrassrootsEventLinks,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsStatus,
   normalizeLegacyGrassrootsTracker,
@@ -168,6 +169,21 @@ describe("grassrootsData", () => {
         { event_date: "2026-07-05", start_time: "14:00", end_time: "18:30", sequence_order: 2 },
       ],
     });
+  });
+
+  it("normalizes event links from event details", () => {
+    expect(normalizeGrassrootsEventLinks({
+      details: {
+        links: [
+          { title: "Flyer", href: " k9ops.com/flyer " },
+          { label: "Map", url: "https://maps.example.com" },
+          { label: "", url: "" },
+        ],
+      },
+    })).toEqual([
+      { id: "event_link_1", label: "Flyer", url: "k9ops.com/flyer" },
+      { id: "event_link_2", label: "Map", url: "https://maps.example.com" },
+    ]);
   });
 
   it("preserves legacy freeform addresses while supporting nullable split address fields", () => {
