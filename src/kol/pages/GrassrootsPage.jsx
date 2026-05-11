@@ -21,6 +21,7 @@ import {
   getGrassrootsBusinessCategory,
   getGrassrootsCategoryConfig,
   getGrassrootsDefaultFilters,
+  normalizeGrassrootsEventLinks,
   getGrassrootsSplitAddress,
   getGrassrootsNextDate,
   getGrassrootsPrimaryEventDate,
@@ -303,6 +304,18 @@ function buildTargetPayload(draft, locationId, actor) {
   const status = normalizeGrassrootsStatus(draft.status);
   const splitAddress = getGrassrootsSplitAddress(draft);
   const legacyAddress = String(draft.address || "").trim() || buildGrassrootsLegacyAddressFromSplitAddress(draft);
+  const eventDetails = isEvent
+    ? {
+      ...details,
+      event_dates: eventDates,
+      is_multi_day_event: Boolean(draft.is_multi_day_event || eventDates.length > 1),
+    }
+    : details;
+  if (isEvent) {
+    const eventLinks = normalizeGrassrootsEventLinks(draft);
+    if (eventLinks.length > 0) eventDetails.links = eventLinks;
+    else delete eventDetails.links;
+  }
 
   return {
     location_id: locationId,
@@ -344,9 +357,7 @@ function buildTargetPayload(draft, locationId, actor) {
     leads_captured: leadsCaptured,
     cost,
     cpl,
-    details: isEvent
-      ? { ...details, event_dates: eventDates, is_multi_day_event: Boolean(draft.is_multi_day_event || eventDates.length > 1) }
-      : details,
+    details: eventDetails,
     updated_by_user_id: actor.userId,
     updated_by_name: actor.name,
     ...(draft.isDraft ? { created_by_user_id: actor.userId, created_by_name: actor.name } : {}),
@@ -450,6 +461,31 @@ function ActiveToggle({ value, onChange }) {
   );
 }
 
+function EventTypePicker({ value, onChange }) {
+  const selected = normalizeGrassrootsEventType(value);
+  return (
+    <div>
+      <Label>Type</Label>
+      <div className="grassroots-event-type-picker" role="group" aria-label="Event type">
+        {GRASSROOTS_EVENT_TYPE_OPTIONS.map((option) => {
+          const active = selected === option;
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(option)}
+              className={active ? "grassroots-event-type-option is-active" : "grassroots-event-type-option"}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Label({ children }) {
   return (
     <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>
@@ -480,28 +516,6 @@ function FieldEditor({ field, value, onChange }) {
   if (field.type === "select") {
     const options = field.options || [];
     const selected = String(value || "");
-    if (field.key === "event_type") {
-      return (
-        <label style={{ display: "block" }}>
-          <Label>{field.label}</Label>
-          <select
-            value={selected}
-            onChange={(event) => onChange(event.target.value)}
-            style={{
-              ...INPUT_STYLE,
-              appearance: "auto",
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            <option value="">{field.placeholder || "Select type"}</option>
-            {options.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </label>
-      );
-    }
     return (
       <label style={{ display: "block" }}>
         <Label>{field.label}</Label>
@@ -695,6 +709,97 @@ function EventDateEditor({ draft, onChange }) {
   );
 }
 
+function eventLinkRowsForEditor(draft = {}) {
+  const rawLinks = Array.isArray(draft.details?.links) ? draft.details.links : [];
+  if (rawLinks.length === 0) {
+    return [{ id: "event_link_blank", label: "", url: "" }];
+  }
+  return rawLinks.map((row, index) => ({
+    id: row?.id || `event_link_${index + 1}`,
+    label: row?.label || "",
+    url: row?.url || row?.href || "",
+  }));
+}
+
+function getSafeEventLinkHref(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(candidate);
+    return ["http:", "https:", "mailto:", "tel:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function EventLinksEditor({ draft, onChange }) {
+  const rows = eventLinkRowsForEditor(draft);
+  const updateRows = (nextRows) => {
+    const details = draft.details && typeof draft.details === "object" ? draft.details : {};
+    onChange("details", { ...details, links: nextRows });
+  };
+  const updateRow = (index, key, value) => {
+    updateRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+  };
+  const removeRow = (index) => {
+    const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
+    updateRows(nextRows.length > 0 ? nextRows : [{ id: "event_link_blank", label: "", url: "" }]);
+  };
+
+  return (
+    <div className="grassroots-event-links">
+      <div className="grassroots-event-links-header">
+        <Label>Links</Label>
+        <button
+          type="button"
+          onClick={() => updateRows([...rows, { id: `event_link_${Date.now()}`, label: "", url: "" }])}
+          className="grassroots-link-add-button"
+        >
+          <I.Plus /> Add link
+        </button>
+      </div>
+      <div className="grassroots-event-links-list">
+        {rows.map((row, index) => {
+          const safeHref = getSafeEventLinkHref(row.url);
+          return (
+            <div key={row.id || index} className="grassroots-event-link-row">
+              <input
+                value={row.label || ""}
+                onChange={(event) => updateRow(index, "label", event.target.value)}
+                placeholder="Label"
+                style={{ ...INPUT_STYLE, background: C.bg }}
+              />
+              <div className="grassroots-event-link-url">
+                <input
+                  value={row.url || ""}
+                  onChange={(event) => updateRow(index, "url", event.target.value)}
+                  placeholder="URL"
+                  style={{ ...INPUT_STYLE, background: C.bg, paddingRight: safeHref ? 42 : 12 }}
+                />
+                {safeHref && (
+                  <a href={safeHref} target="_blank" rel="noreferrer" className="grassroots-event-link-open" title="Open link" aria-label="Open link">
+                    <I.Link />
+                  </a>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRow(index)}
+                className="grassroots-link-remove-button"
+                aria-label="Remove link"
+                title="Remove link"
+              >
+                <I.X />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCancel, onDelete }) {
   const categoryId = categoryConfig.id;
   const fields = FIELD_CONFIGS[categoryId] || [];
@@ -713,7 +818,8 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
   };
 
   return (
-    <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.22s ease-out" }}>
+    <Card style={{ padding: 0, overflow: "visible", position: "relative", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1)" }}>
+      <div className="grassroots-composer-sweep" aria-hidden="true" />
       <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt} 0%, #fff 70%)` }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
           <div>
@@ -749,7 +855,7 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
               placeholder="Event address"
             />
             <EventDateEditor draft={draft} onChange={onChange} />
-            <FieldEditor field={{ key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS }} value={draft.event_type} onChange={(value) => onChange("event_type", value)} />
+            <EventTypePicker value={draft.event_type} onChange={(value) => onChange("event_type", value)} />
             <FieldEditor field={{ key: "organizer", label: "Organizer", placeholder: "Organizer" }} value={draft.organizer} onChange={(value) => onChange("organizer", value)} />
             <FieldEditor field={{ key: "expected_audience", label: "Expected Audience", type: "number", placeholder: "Expected audience" }} value={draft.expected_audience} onChange={(value) => onChange("expected_audience", value)} />
             <FieldEditor field={{ key: "leads_captured", label: "Leads Captured", type: "number", placeholder: "Leads captured" }} value={draft.leads_captured} onChange={(value) => onChange("leads_captured", value)} />
@@ -807,7 +913,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, onChange, onSave, onCancel, onDelete }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], canLog = false, onChange, onSave, onCancel, onDelete, onLog }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -874,11 +980,7 @@ function EventTargetInlineEditor({ draft, saving, onChange, onSave, onCancel, on
               <div className="grassroots-event-wide-field">
                 <EventDateEditor draft={draft} onChange={onChange} />
               </div>
-              <FieldEditor
-                field={{ key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS, placeholder: "Type" }}
-                value={draft.event_type}
-                onChange={(value) => onChange("event_type", value)}
-              />
+              <EventTypePicker value={draft.event_type} onChange={(value) => onChange("event_type", value)} />
             </div>
           </FormSection>
 
@@ -906,6 +1008,18 @@ function EventTargetInlineEditor({ draft, saving, onChange, onSave, onCancel, on
               value={draft.proposal}
               onChange={(value) => onChange("proposal", value)}
             />
+            <EventLinksEditor draft={draft} onChange={onChange} />
+            {!draft.isDraft && (
+              <div className="grassroots-event-commentary">
+                <div className="grassroots-event-commentary-header">
+                  <Label>Comments</Label>
+                  <button type="button" onClick={onLog} disabled={!canLog} className="grassroots-comment-add-button">
+                    <I.MessageSquare /> Log comment
+                  </button>
+                </div>
+                <ActivityList activities={activities} categoryConfig={getGrassrootsCategoryConfig("events")} />
+              </div>
+            )}
           </FormSection>
         </div>
 
@@ -1026,7 +1140,7 @@ function ActivityList({ activities, categoryConfig }) {
     .sort((a, b) => String(b.created_at || b.activity_date || "").localeCompare(String(a.created_at || a.activity_date || "")));
 
   if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: C.textMut }}>No logged {categoryConfig.countLabel.toLowerCase()} yet.</div>;
+    return <div style={{ fontSize: 12, color: C.textMut }}>No logged {categoryConfig.id === "events" ? "comments" : categoryConfig.countLabel.toLowerCase()} yet.</div>;
   }
 
   return (
@@ -1045,7 +1159,7 @@ function ActivityList({ activities, categoryConfig }) {
             }}
           >
             <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-              {activityType === "drop" ? "Drop" : "Development"}
+              {categoryConfig.id === "events" ? "Comment" : activityType === "drop" ? "Drop" : "Development"}
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.45, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
@@ -1116,7 +1230,7 @@ const HEADER_CELL_STYLE = {
   whiteSpace: "nowrap",
 };
 
-function TrackerRow({ target, index, categoryConfig, activities, isExpanded, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit }) {
+function TrackerRow({ target, index, categoryConfig, activities, isExpanded, isFresh = false, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit }) {
   const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
   const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
   const gridColumns = getTrackerGridColumns(categoryConfig);
@@ -1129,7 +1243,8 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, can
   ].filter(Boolean).slice(0, 2).join(" • ");
 
   return (
-    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 12 }}>
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 12, position: "relative", animation: isFresh ? "grassrootsFreshRow 1.8s ease-out both" : undefined }}>
+      {isFresh && <div className="grassroots-row-fresh-sweep" aria-hidden="true" />}
       <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "10px 14px", minHeight: 58, boxSizing: "border-box" }}>
         <div style={{ width: 30, height: 30, borderRadius: 10, display: "grid", placeItems: "center", background: target.is_active === false ? C.bg : C.pri, color: target.is_active === false ? C.textMut : "#fff", fontSize: 12, fontWeight: 900 }}>
           {index + 1}
@@ -1212,6 +1327,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [logNotes, setLogNotes] = useState("");
   const [logDate, setLogDate] = useState("");
   const [logContactName, setLogContactName] = useState("");
+  const [freshTargetId, setFreshTargetId] = useState(null);
   const [filters, setFilters] = useState(() => getGrassrootsDefaultFilters("corporatePartnerships"));
   const [draftFilters, setDraftFilters] = useState(() => getGrassrootsDefaultFilters("corporatePartnerships"));
   const [showFilterPanel, setShowFilterPanel] = useState(false);
@@ -1220,6 +1336,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [configuringFilterKey, setConfiguringFilterKey] = useState(null);
   const [filterPickerReady, setFilterPickerReady] = useState(false);
   const prevFilterOpen = useRef(false);
+  const freshTargetTimer = useRef(null);
 
   const activeConfig = getGrassrootsCategoryConfig(activeCategory);
   const activitiesByTarget = useMemo(() => groupGrassrootsActivities(activities), [activities]);
@@ -1325,6 +1442,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     loadGrassroots();
   }, [loadGrassroots]);
 
+  useEffect(() => () => {
+    if (freshTargetTimer.current) window.clearTimeout(freshTargetTimer.current);
+  }, []);
+
   useEffect(() => {
     if (showFilterPanel && !prevFilterOpen.current) {
       setDraftFilters({ ...filters });
@@ -1366,6 +1487,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const closeEditor = () => {
     setNewDraft(null);
     setEditDraft(null);
+  };
+
+  const markFreshTarget = (targetId) => {
+    if (!targetId) return;
+    if (freshTargetTimer.current) window.clearTimeout(freshTargetTimer.current);
+    setFreshTargetId(targetId);
+    freshTargetTimer.current = window.setTimeout(() => setFreshTargetId(null), 1800);
   };
 
   const saveDraft = async () => {
@@ -1420,6 +1548,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setTargets((prev) => draft.isDraft ? [dataWithDates, ...prev] : prev.map((target) => (target.id === data.id ? dataWithDates : target)));
     closeEditor();
     await loadGrassroots();
+    if (draft.isDraft) markFreshTarget(data.id);
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
     toast("Grassroots row saved");
@@ -1529,13 +1658,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return;
     }
     if (!logPopover?.target) return;
-    if (!logNotes.trim() || !logDate) {
-      toast("Notes and next date are required", "error");
-      return;
-    }
     const target = logPopover.target;
     const category = getGrassrootsCategoryConfig(target.category).id;
     const activityType = getGrassrootsActivityType(category);
+    const requiresNextDate = category !== "events";
+    if (!logNotes.trim() || (requiresNextDate && !logDate)) {
+      toast(requiresNextDate ? "Notes and next date are required" : "Comment is required", "error");
+      return;
+    }
     if (activityType === "drop" && !logContactName.trim()) {
       toast("Who did you speak with is required", "error");
       return;
@@ -1550,7 +1680,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         activity_type: activityType,
         activity_date: activityDate,
         notes: logNotes.trim(),
-        next_contact_date: logDate,
+        next_contact_date: logDate || null,
         metadata: activityType === "drop" ? { person_spoken_with: logContactName.trim() } : {},
         created_by_user_id: actor.userId,
         created_by_name: actor.name,
@@ -1571,7 +1701,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setLogContactName("");
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
-    toast(activityType === "drop" ? "Drop logged" : "Development logged");
+    toast(activityType === "drop" ? "Drop logged" : category === "events" ? "Comment logged" : "Development logged");
   };
 
   const removeFilter = (key) => {
@@ -1619,16 +1749,68 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         @keyframes grassrootsSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
         @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
         @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
-        @keyframes grassrootsComposerIn { from { opacity:0; transform:translateY(-10px) scale(0.985); } to { opacity:1; transform:translateY(0) scale(1); } }
+        @keyframes grassrootsComposerIn {
+          0% { opacity:0; transform:translateY(-18px) scale(0.985); filter:blur(4px); }
+          65% { opacity:1; transform:translateY(2px) scale(1.002); filter:blur(0); }
+          100% { opacity:1; transform:translateY(0) scale(1); filter:blur(0); }
+        }
+        @keyframes grassrootsComposerSweep {
+          0% { transform:translate3d(-220%,0,0) skewX(-18deg); opacity:0; }
+          18% { opacity:0; }
+          34% { opacity:0.42; }
+          58% { opacity:0.82; }
+          82% { opacity:0.18; }
+          100% { transform:translate3d(420%,0,0) skewX(-18deg); opacity:0; }
+        }
+        @keyframes grassrootsFreshRow {
+          0% { box-shadow:0 0 0 2px rgba(20,83,45,0), 0 1px 3px rgba(0,0,0,0.04); }
+          24% { box-shadow:0 0 0 2px rgba(20,83,45,0.32), 0 18px 42px rgba(20,83,45,0.16); }
+          100% { box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02); }
+        }
+        .grassroots-composer-sweep {
+          pointer-events: none;
+          position: absolute;
+          inset: 0;
+          z-index: 2;
+          overflow: hidden;
+          border-radius: 14px;
+        }
+        .grassroots-composer-sweep::after,
+        .grassroots-event-inline-editor::before,
+        .grassroots-row-fresh-sweep::after {
+          content: "";
+          position: absolute;
+          top: -30%;
+          bottom: -30%;
+          left: 0;
+          width: 90px;
+          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.72), rgba(20,83,45,0.16), rgba(255,255,255,0));
+          animation: grassrootsComposerSweep 1.35s ease-out 0.06s 1;
+        }
+        .grassroots-row-fresh-sweep {
+          pointer-events: none;
+          position: absolute;
+          inset: 0;
+          z-index: 3;
+          overflow: hidden;
+          border-radius: 12px;
+        }
         .grassroots-event-inline-editor {
+          position: relative;
           overflow: hidden;
           border-radius: 14px;
           border: 1.5px solid ${C.border};
           background: ${C.surface};
           box-shadow: 0 14px 36px rgba(15,23,42,0.12);
-          animation: grassrootsComposerIn 0.18s ease-out both;
+          animation: grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        .grassroots-event-inline-editor::before {
+          pointer-events: none;
+          z-index: 4;
         }
         .grassroots-event-inline-header {
+          position: relative;
+          z-index: 1;
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -1649,7 +1831,106 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           place-items: center;
           padding: 0;
         }
-        .grassroots-event-inline-body { padding: 14px; background: ${C.bg}; }
+        .grassroots-event-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
+        .grassroots-event-type-picker {
+          display: inline-grid;
+          grid-template-columns: repeat(2, minmax(76px, 1fr));
+          gap: 5px;
+          width: 100%;
+          max-width: 256px;
+          padding: 5px;
+          border-radius: 13px;
+          border: 1.5px solid ${C.border};
+          background: ${C.bg};
+        }
+        .grassroots-event-type-option {
+          border: none;
+          border-radius: 10px;
+          padding: 9px 12px;
+          background: transparent;
+          color: ${C.textSec};
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
+          transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+        }
+        .grassroots-event-type-option:hover { transform: translateY(-1px); color: ${C.text}; }
+        .grassroots-event-type-option.is-active {
+          background: ${C.pri};
+          color: #fff;
+          box-shadow: 0 8px 18px rgba(20,83,45,0.22);
+        }
+        .grassroots-event-links {
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid ${C.borderLight};
+        }
+        .grassroots-event-links-header,
+        .grassroots-event-commentary-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .grassroots-link-add-button,
+        .grassroots-comment-add-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 1.5px solid ${C.borderLight};
+          border-radius: 10px;
+          background: #fff;
+          color: ${C.pri};
+          padding: 7px 10px;
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .grassroots-comment-add-button:disabled {
+          cursor: default;
+          opacity: 0.5;
+        }
+        .grassroots-event-links-list { display: grid; gap: 8px; }
+        .grassroots-event-link-row {
+          display: grid;
+          grid-template-columns: minmax(110px, 0.85fr) minmax(180px, 1.45fr) 34px;
+          gap: 8px;
+          align-items: center;
+        }
+        .grassroots-event-link-url { position: relative; min-width: 0; }
+        .grassroots-event-link-open {
+          position: absolute;
+          right: 8px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          display: grid;
+          place-items: center;
+          color: ${C.pri};
+          background: #fff;
+          border: 1px solid ${C.borderLight};
+        }
+        .grassroots-link-remove-button {
+          width: 34px;
+          height: 34px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textMut};
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+        .grassroots-event-commentary {
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid ${C.borderLight};
+        }
         .pac-container {
           z-index: 10050 !important;
           border-radius: 12px;
@@ -1671,6 +1952,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           .grassroots-event-field-grid { grid-template-columns: 1fr; }
           .grassroots-event-date-row { grid-template-columns: 1fr; padding: 12px; border: 1px solid ${C.borderLight}; border-radius: 12px; background: ${C.bg}; }
           .grassroots-event-date-row > button { margin-bottom: 0; width: 100% !important; }
+          .grassroots-event-link-row { grid-template-columns: 1fr 34px; }
+          .grassroots-event-link-row > input { grid-column: 1 / -1; }
         }
       `}</style>
       <div style={{
@@ -1972,16 +2255,20 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 />
               )}
               {sortedVisibleTargets.map((target, index) => {
+                const rowActivities = activitiesByTarget[target.id] || [];
                 if (canEditTargets && activeConfig.id === "events" && editDraft?.id === target.id) {
                   return (
                     <EventTargetInlineEditor
                       key={target.id}
                       draft={editDraft}
                       saving={savingDraft}
+                      activities={rowActivities}
+                      canLog={canLogActivity}
                       onChange={updateDraft}
                       onSave={saveDraft}
                       onCancel={closeEditor}
                       onDelete={() => deleteTarget(editDraft)}
+                      onLog={(event) => openLogPopover(target, event)}
                     />
                   );
                 }
@@ -1999,7 +2286,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     />
                   );
                 }
-                const rowActivities = activitiesByTarget[target.id] || [];
                 return (
                   <TrackerRow
                     key={target.id}
@@ -2008,6 +2294,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     categoryConfig={activeConfig}
                     activities={rowActivities}
                     isExpanded={expandedUpdates.has(target.id)}
+                    isFresh={freshTargetId === target.id}
                     canLog={canLogActivity}
                     canEdit={canEditTargets}
                     onToggleUpdates={() => setExpandedUpdates((prev) => {
@@ -2104,10 +2391,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             {(() => {
               const logCategoryId = getGrassrootsCategoryConfig(logPopover.target.category).id;
               const isDropLog = logCategoryId === "drops";
+              const isEventLog = logCategoryId === "events";
               return (
                 <>
             <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>
-              {isDropLog ? "Log Drop" : "Log Development"}
+              {isDropLog ? "Log Drop" : isEventLog ? "Log Event Comment" : "Log Development"}
             </div>
             {isDropLog && (
               <label style={{ display: "block", marginBottom: 10 }}>
@@ -2124,18 +2412,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <textarea
               value={logNotes}
               onChange={(event) => setLogNotes(event.target.value)}
-              placeholder={isDropLog ? "Notes about this drop..." : "Notes about this development..."}
+              placeholder={isDropLog ? "Notes about this drop..." : isEventLog ? "Comment or development..." : "Notes about this development..."}
               rows={3}
               style={{ ...INPUT_STYLE, minHeight: 88, resize: "vertical", background: C.bg, marginBottom: 10 }}
               autoFocus={!isDropLog}
             />
             <div style={{ marginBottom: 10 }}>
-              <Label>{isDropLog ? "Next Drop Date" : "Next Follow-Up Date"}</Label>
+              <Label>{isDropLog ? "Next Drop Date" : isEventLog ? "Follow-Up Date Optional" : "Next Follow-Up Date"}</Label>
               <MiniDatePicker
                 value={logDate}
                 onChange={setLogDate}
                 recommendedDate={addDays(todayStr(), isDropLog ? 28 : 2)}
-                recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : "Recommended: +2 days unless the partner gave a specific callback date."}
+                recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : isEventLog ? "Optional: set only if this comment needs follow-up." : "Recommended: +2 days unless the partner gave a specific callback date."}
               />
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
