@@ -2,15 +2,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, MiniDatePicker } from "../../shared/ui";
+import { Btn, CalendarPicker, Card, MiniDatePicker, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
+  GRASSROOTS_EVENT_SAVE_RPC,
   GRASSROOTS_EVENT_TYPE_OPTIONS,
   GRASSROOTS_FILTER_OP_LABELS,
   GRASSROOTS_STATUS_OPTIONS,
   applyGrassrootsFilters,
+  buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
   getGrassrootsActivityCount,
@@ -18,6 +20,7 @@ import {
   getGrassrootsBusinessCategory,
   getGrassrootsCategoryConfig,
   getGrassrootsDefaultFilters,
+  getGrassrootsSplitAddress,
   getGrassrootsNextDate,
   getGrassrootsPrimaryEventDate,
   getGrassrootsStatusLabel,
@@ -27,6 +30,7 @@ import {
   normalizeGrassrootsEventDates,
   normalizeGrassrootsEventType,
   normalizeGrassrootsStatus,
+  resolveGrassrootsTargetIsActive,
 } from "../grassrootsData";
 import { normalizeOptionalUuid } from "../trainingData";
 
@@ -214,6 +218,23 @@ function parseNumberField(value) {
   return Number.isNaN(num) ? null : num;
 }
 
+function parseGooglePlaceAddress(place) {
+  const components = Array.isArray(place?.address_components) ? place.address_components : [];
+  const read = (type, mode = "long_name") => components.find((component) => component.types?.includes(type))?.[mode] || "";
+  const streetNumber = read("street_number");
+  const route = read("route");
+  return {
+    address: place?.formatted_address || "",
+    address_line_1: [streetNumber, route].filter(Boolean).join(" ").trim(),
+    address_line_2: "",
+    address_city: read("locality") || read("postal_town") || read("sublocality") || read("administrative_area_level_3"),
+    address_state: read("administrative_area_level_1", "short_name"),
+    address_postal_code: read("postal_code"),
+    address_country: read("country", "short_name"),
+    google_place_id: place?.place_id || "",
+  };
+}
+
 function fmtCurrencyNumber(value) {
   if (value === "" || value == null) return "";
   const num = Number(value);
@@ -242,20 +263,31 @@ function buildTargetPayload(draft, locationId, actor) {
     ? calculateGrassrootsCpl(cost, leadsCaptured)
     : parseNumberField(draft.cpl);
   const details = draft.details && typeof draft.details === "object" ? draft.details : {};
+  const status = normalizeGrassrootsStatus(draft.status);
+  const splitAddress = getGrassrootsSplitAddress(draft);
 
   return {
     location_id: locationId,
     category: draft.category,
     name: String(draft.name || "").trim(),
     address: String(draft.address || "").trim() || null,
+    ...(isEvent ? {
+      address_line_1: splitAddress.address_line_1 || null,
+      address_line_2: splitAddress.address_line_2 || null,
+      address_city: splitAddress.address_city || null,
+      address_state: splitAddress.address_state || null,
+      address_postal_code: splitAddress.address_postal_code || null,
+      address_country: splitAddress.address_country || null,
+      google_place_id: splitAddress.google_place_id || null,
+    } : {}),
     organizer: String(draft.organizer || "").trim() || null,
     first_name: String(draft.first_name || "").trim() || null,
     last_name: String(draft.last_name || "").trim() || null,
     contact_source: String(draft.contact_source || draft.first_name || "").trim() || null,
     contact_email: String(draft.contact_email || "").trim() || null,
     contact_phone: String(draft.contact_phone || "").trim() || null,
-    status: normalizeGrassrootsStatus(draft.status),
-    is_active: draft.is_active !== false,
+    status,
+    is_active: resolveGrassrootsTargetIsActive(status, draft.is_active),
     business_category: businessCategory || null,
     drop_category: businessCategory || null,
     local_employees: parseNumberField(draft.local_employees),
@@ -288,6 +320,7 @@ function buildEditorDraft(target) {
   return {
     ...makeBlankGrassrootsTarget(getGrassrootsCategoryConfig(target.category).id),
     ...target,
+    ...getGrassrootsSplitAddress(target),
     business_category: getGrassrootsBusinessCategory(target),
     drop_category: getGrassrootsBusinessCategory(target),
     local_employees: target.local_employees ?? "",
@@ -305,13 +338,19 @@ function buildEditorDraft(target) {
 
 function StatusPicker({ value, onChange }) {
   const normalizedValue = normalizeGrassrootsStatus(value);
+  const colors = {
+    identified: "#2563EB",
+    corresponding: "#7C3AED",
+    booked: C.suc,
+    abandoned: C.dan,
+  };
   return (
     <div>
       <Label>Status</Label>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-        {GRASSROOTS_STATUS_OPTIONS.map((option, index) => {
+        {GRASSROOTS_STATUS_OPTIONS.map((option) => {
           const active = normalizedValue === option.value;
-          const color = ["#2563EB", "#7C3AED", C.suc][index] || C.pri;
+          const color = colors[option.value] || C.pri;
           return (
             <button
               key={option.value}
@@ -494,7 +533,7 @@ function FieldEditor({ field, value, onChange }) {
   );
 }
 
-function GooglePlacesAddressInput({ value, onChange }) {
+function GooglePlacesAddressInput({ value, onChange, onPlaceSelect }) {
   const inputRef = useRef(null);
   const autocompleteRef = useRef(null);
   const [placesReady, setPlacesReady] = useState(false);
@@ -505,14 +544,16 @@ function GooglePlacesAddressInput({ value, onChange }) {
       if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
       setPlacesReady(true);
       autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
-        fields: ["formatted_address", "name"],
+        fields: ["address_components", "formatted_address", "name", "place_id"],
         types: ["address"],
         componentRestrictions: { country: "us" },
       });
       autocompleteRef.current.addListener("place_changed", () => {
         const place = autocompleteRef.current?.getPlace?.();
         const address = place?.formatted_address || inputRef.current?.value || "";
+        const parsedAddress = parseGooglePlaceAddress(place);
         onChange(address);
+        onPlaceSelect?.({ ...parsedAddress, address: parsedAddress.address || address });
       });
     });
     return () => {
@@ -521,7 +562,7 @@ function GooglePlacesAddressInput({ value, onChange }) {
         window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
       }
     };
-  }, [onChange]);
+  }, [onChange, onPlaceSelect]);
 
   return (
     <label style={{ display: "block" }}>
@@ -581,10 +622,16 @@ function EventDateEditor({ draft, onChange }) {
         </label>
       </div>
       {visibleRows.map((row, index) => (
-        <div key={row.id || index} style={{ display: "grid", gridTemplateColumns: multiDay ? "minmax(150px, 1fr) 120px 120px 34px" : "minmax(150px, 1fr) 120px 120px", gap: 8, alignItems: "center" }}>
-          <input type="date" value={row.event_date || ""} onChange={(event) => updateRow(index, "event_date", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
-          <input type="time" value={row.start_time || ""} onChange={(event) => updateRow(index, "start_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
-          <input type="time" value={row.end_time || ""} onChange={(event) => updateRow(index, "end_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+        <div key={row.id || index} className="grassroots-event-date-row">
+          <CalendarPicker label={multiDay ? `Date ${index + 1}` : "Date"} value={row.event_date || ""} onChange={(value) => updateRow(index, "event_date", value)} />
+          <label style={{ display: "block" }}>
+            <Label>Start</Label>
+            <input type="time" value={row.start_time || ""} onChange={(event) => updateRow(index, "start_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+          </label>
+          <label style={{ display: "block" }}>
+            <Label>End</Label>
+            <input type="time" value={row.end_time || ""} onChange={(event) => updateRow(index, "end_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
+          </label>
           {multiDay && (
             <button
               type="button"
@@ -618,6 +665,12 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
     if (field.key === "cpl") return fmtCurrencyNumber(calculateGrassrootsCpl(draft.cost, draft.leads_captured));
     return draft[field.key];
   };
+  const changeStatus = (value) => {
+    const status = normalizeGrassrootsStatus(value);
+    onChange("status", status);
+    if (status === "abandoned") onChange("is_active", false);
+    else if (normalizeGrassrootsStatus(draft.status) === "abandoned") onChange("is_active", true);
+  };
 
   return (
     <Card style={{ padding: 0, overflow: "visible", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.22s ease-out" }}>
@@ -645,8 +698,8 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
           value={draft.name}
           onChange={(value) => onChange("name", value)}
         />
-        {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "identified"} onChange={(value) => onChange("status", value)} />}
-        <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />
+        {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "identified"} onChange={changeStatus} />}
+        {categoryId !== "events" && <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />}
         {categoryId === "events" ? (
           <>
             <GooglePlacesAddressInput value={draft.address} onChange={(value) => onChange("address", value)} />
@@ -684,11 +737,117 @@ function TargetEditor({ draft, categoryConfig, saving, onChange, onSave, onCance
   );
 }
 
+function FormSection({ title, children }) {
+  return (
+    <section className="grassroots-event-form-section">
+      <div style={{ fontSize: 12, fontWeight: 900, color: C.pri, textTransform: "uppercase", marginBottom: 12 }}>
+        {title}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function EventTargetModal({ draft, saving, onChange, onSave, onCancel, onDelete }) {
+  const changeStatus = (value) => {
+    const status = normalizeGrassrootsStatus(value);
+    onChange("status", status);
+    onChange("is_active", status === "abandoned" ? false : true);
+  };
+  const applyPlaceAddress = (parts) => {
+    Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
+  };
+  const cpl = fmtCurrencyNumber(calculateGrassrootsCpl(draft.cost, draft.leads_captured)) || "";
+
+  return (
+    <Modal title={draft.isDraft ? "New Event" : "Edit Event"} onClose={onCancel} fullWidth>
+      <div className="grassroots-event-modal-shell">
+        <div className="grassroots-event-form-grid">
+          <FormSection title="Event">
+            <div className="grassroots-event-field-grid">
+              <FieldEditor
+                field={{ key: "name", label: "Event", placeholder: "Event name" }}
+                value={draft.name}
+                onChange={(value) => onChange("name", value)}
+              />
+              <StatusPicker value={draft.status || "identified"} onChange={changeStatus} />
+              <div className="grassroots-event-wide-field">
+                <GooglePlacesAddressInput
+                  value={draft.address}
+                  onChange={(value) => onChange("address", value)}
+                  onPlaceSelect={applyPlaceAddress}
+                />
+              </div>
+              <FieldEditor field={{ key: "address_line_1", label: "Street", placeholder: "Street address" }} value={draft.address_line_1} onChange={(value) => onChange("address_line_1", value)} />
+              <FieldEditor field={{ key: "address_line_2", label: "Unit", placeholder: "Suite, booth, or unit" }} value={draft.address_line_2} onChange={(value) => onChange("address_line_2", value)} />
+              <FieldEditor field={{ key: "address_city", label: "City", placeholder: "City" }} value={draft.address_city} onChange={(value) => onChange("address_city", value)} />
+              <FieldEditor field={{ key: "address_state", label: "State", placeholder: "State" }} value={draft.address_state} onChange={(value) => onChange("address_state", value)} />
+              <FieldEditor field={{ key: "address_postal_code", label: "ZIP", placeholder: "ZIP" }} value={draft.address_postal_code} onChange={(value) => onChange("address_postal_code", value)} />
+              <FieldEditor field={{ key: "address_country", label: "Country", placeholder: "Country" }} value={draft.address_country} onChange={(value) => onChange("address_country", value)} />
+              <div className="grassroots-event-wide-field">
+                <EventDateEditor draft={draft} onChange={onChange} />
+              </div>
+              <FieldEditor
+                field={{ key: "event_type", label: "Type", type: "select", options: GRASSROOTS_EVENT_TYPE_OPTIONS, placeholder: "Type" }}
+                value={draft.event_type}
+                onChange={(value) => onChange("event_type", value)}
+              />
+            </div>
+          </FormSection>
+
+          <FormSection title="Organizer">
+            <div className="grassroots-event-field-grid">
+              <FieldEditor field={{ key: "organizer", label: "Organizer", placeholder: "Organizer" }} value={draft.organizer} onChange={(value) => onChange("organizer", value)} />
+              <FieldEditor field={{ key: "first_name", label: "Contact Name", placeholder: "Contact name" }} value={draft.first_name} onChange={(value) => onChange("first_name", value)} />
+              <FieldEditor field={{ key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" }} value={draft.contact_email} onChange={(value) => onChange("contact_email", value)} />
+              <FieldEditor field={{ key: "contact_phone", label: "Contact Number", placeholder: "Contact number" }} value={draft.contact_phone} onChange={(value) => onChange("contact_phone", value)} />
+            </div>
+          </FormSection>
+
+          <FormSection title="Reporting">
+            <div className="grassroots-event-field-grid">
+              <FieldEditor field={{ key: "expected_audience", label: "Expected Audience", type: "number", placeholder: "Expected audience" }} value={draft.expected_audience} onChange={(value) => onChange("expected_audience", value)} />
+              <FieldEditor field={{ key: "leads_captured", label: "Leads Captured", type: "number", placeholder: "Leads captured" }} value={draft.leads_captured} onChange={(value) => onChange("leads_captured", value)} />
+              <FieldEditor field={{ key: "cost", label: "Cost", type: "number", placeholder: "Cost" }} value={draft.cost} onChange={(value) => onChange("cost", value)} />
+              <FieldEditor field={{ key: "cpl", label: "CPL", type: "computed", placeholder: "-" }} value={cpl || "-"} onChange={() => {}} />
+            </div>
+          </FormSection>
+
+          <FormSection title="Notes">
+            <FieldEditor
+              field={{ key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" }}
+              value={draft.proposal}
+              onChange={(value) => onChange("proposal", value)}
+            />
+          </FormSection>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingTop: 18, borderTop: `1px solid ${C.borderLight}` }}>
+          <div>
+            {!draft.isDraft && (
+              <Btn variant="ghost" size="sm" icon={<I.Trash />} onClick={onDelete} style={{ color: C.dan }}>
+                Delete
+              </Btn>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+            <Btn variant="primary" onClick={onSave} disabled={saving}>
+              {saving ? "Saving..." : "Save Event"}
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function StatusBadge({ status }) {
   const colors = {
     identified: C.info,
     corresponding: "#7C3AED",
     booked: C.suc,
+    abandoned: C.dan,
   };
   const normalizedStatus = normalizeGrassrootsStatus(status);
   const color = colors[normalizedStatus] || C.textMut;
@@ -1024,12 +1183,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       acc[row.target_id].push(row);
       return acc;
     }, {});
-    setTargets((targetResult.data || []).map((target) => ({
-      ...target,
-      status: normalizeGrassrootsStatus(target.status),
-      event_type: normalizeGrassrootsEventType(target.event_type) || target.event_type,
-      event_dates: eventDatesByTarget[target.id] || normalizeGrassrootsEventDates(target),
-    })));
+    setTargets((targetResult.data || []).map((target) => {
+      const status = normalizeGrassrootsStatus(target.status);
+      return {
+        ...target,
+        status,
+        is_active: resolveGrassrootsTargetIsActive(status, target.is_active),
+        event_type: normalizeGrassrootsEventType(target.event_type) || target.event_type,
+        event_dates: eventDatesByTarget[target.id] || normalizeGrassrootsEventDates(target),
+      };
+    }));
     setActivities(activityResult.data || []);
     setHistory(historyResult.data || []);
     setLoading(false);
@@ -1082,26 +1245,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setEditDraft(null);
   };
 
-  const persistEventDatesForTarget = async (targetId, draft) => {
-    if (!targetId || getGrassrootsCategoryConfig(draft.category).id !== "events") return { error: null };
-    const eventDates = normalizeGrassrootsEventDates(draft);
-    const deleteResult = await supabase.from("grassroots_event_dates").delete().eq("target_id", targetId);
-    if (deleteResult.error) return deleteResult;
-    if (eventDates.length === 0) return { error: null };
-    return supabase.from("grassroots_event_dates").insert(eventDates.map((row, index) => ({
-      location_id: locationId,
-      target_id: targetId,
-      event_date: row.event_date,
-      start_time: row.start_time || null,
-      end_time: row.end_time || null,
-      sequence_order: index + 1,
-      created_by_user_id: actor.userId,
-      created_by_name: actor.name,
-      updated_by_user_id: actor.userId,
-      updated_by_name: actor.name,
-    })));
-  };
-
   const saveDraft = async () => {
     if (!canEditTargets) {
       toast("You do not have permission to edit grassroots rows", "error");
@@ -1120,25 +1263,37 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setSavingDraft(true);
     setSaveState("saving");
     const payload = buildTargetPayload(draft, locationId, actor);
-    const query = draft.isDraft
-      ? supabase.from("grassroots_targets").insert(payload).select("*").single()
-      : supabase.from("grassroots_targets").update(payload).eq("id", draft.id).select("*").single();
-    const { data, error } = await query;
+    const isEventDraft = getGrassrootsCategoryConfig(draft.category).id === "events";
+    let data = null;
+    let savedEventDates = normalizeGrassrootsEventDates(draft);
+    let error = null;
+
+    if (isEventDraft) {
+      const rpcPayload = { ...payload, id: draft.isDraft ? null : draft.id };
+      const result = await supabase.rpc(
+        GRASSROOTS_EVENT_SAVE_RPC,
+        buildGrassrootsEventSaveRpcArgs(rpcPayload, draft),
+      );
+      error = result.error;
+      data = result.data?.target || null;
+      savedEventDates = result.data?.event_dates || savedEventDates;
+    } else {
+      const query = draft.isDraft
+        ? supabase.from("grassroots_targets").insert(payload).select("*").single()
+        : supabase.from("grassroots_targets").update(payload).eq("id", draft.id).select("*").single();
+      const result = await query;
+      error = result.error;
+      data = result.data;
+    }
+
     setSavingDraft(false);
-    if (error) {
+    if (error || !data) {
       console.error("Failed to save grassroots target", error);
       setSaveState("error");
-      toast(error.message || "Failed to save row", "error");
+      toast(error?.message || "Failed to save row", "error");
       return;
     }
-    const eventDateWrite = await persistEventDatesForTarget(data.id, draft);
-    if (eventDateWrite.error) {
-      console.error("Failed to save grassroots event dates", eventDateWrite.error);
-      setSaveState("error");
-      toast(eventDateWrite.error.message || "Failed to save event dates", "error");
-      return;
-    }
-    const dataWithDates = { ...data, event_dates: normalizeGrassrootsEventDates(draft) };
+    const dataWithDates = { ...data, event_dates: savedEventDates };
     setTargets((prev) => draft.isDraft ? [dataWithDates, ...prev] : prev.map((target) => (target.id === data.id ? dataWithDates : target)));
     closeEditor();
     await loadGrassroots();
@@ -1342,6 +1497,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
         @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
         @keyframes grassrootsComposerIn { from { opacity:0; transform:translateY(-10px) scale(0.985); } to { opacity:1; transform:translateY(0) scale(1); } }
+        .grassroots-event-modal-shell { max-width: 1040px; margin: 0 auto; }
+        .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
+        .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
+        .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+        .grassroots-event-wide-field { grid-column: 1 / -1; }
+        .grassroots-event-date-row { display: grid; grid-template-columns: minmax(190px, 1.4fr) minmax(112px, 0.7fr) minmax(112px, 0.7fr) 36px; gap: 8px; align-items: end; }
+        .grassroots-event-date-row > button { margin-bottom: 1px; }
+        @media (max-width: 880px) {
+          .grassroots-event-form-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 680px) {
+          .grassroots-event-field-grid { grid-template-columns: 1fr; }
+          .grassroots-event-date-row { grid-template-columns: 1fr; padding: 12px; border: 1px solid ${C.borderLight}; border-radius: 12px; background: ${C.bg}; }
+          .grassroots-event-date-row > button { margin-bottom: 0; width: 100% !important; }
+        }
       `}</style>
       <div style={{
         display: "flex",
@@ -1395,6 +1565,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <MetricCard label="Visible" value={metrics.total} color={C.pri} />
         <MetricCard label="Active" value={metrics.active} color={C.suc} />
         <MetricCard label="Inactive" value={metrics.inactive} color={C.warn} />
+        <MetricCard label="Abandoned" value={metrics.abandoned} color={C.dan} />
         <MetricCard label={activeConfig.countLabel} value={metrics.activities} color={C.accDk} />
         <MetricCard label="Upcoming" value={metrics.upcoming} color={C.info} />
         <MetricCard label="Overdue" value={metrics.overdue} color={C.dan} />
@@ -1606,7 +1777,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
-          {canEditTargets && newDraft && (
+          {canEditTargets && newDraft && activeConfig.id !== "events" && (
             <TargetEditor
               draft={newDraft}
               categoryConfig={activeConfig}
@@ -1627,7 +1798,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <>
               <TrackerHeader categoryConfig={activeConfig} />
               {visibleTargets.map((target, index) => {
-                if (canEditTargets && editDraft?.id === target.id) {
+                if (canEditTargets && activeConfig.id !== "events" && editDraft?.id === target.id) {
                   return (
                     <TargetEditor
                       key={target.id}
@@ -1667,6 +1838,17 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             </>
           )}
         </div>
+      )}
+
+      {canEditTargets && activeConfig.id === "events" && (newDraft || editDraft) && (
+        <EventTargetModal
+          draft={editDraft || newDraft}
+          saving={savingDraft}
+          onChange={updateDraft}
+          onSave={saveDraft}
+          onCancel={closeEditor}
+          onDelete={() => deleteTarget(editDraft)}
+        />
       )}
 
       {canEditTargets && movePopover && (

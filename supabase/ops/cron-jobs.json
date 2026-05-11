@@ -254,6 +254,303 @@
       "payloadMode": "single_day",
       "dayOffset": 27,
       "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-28",
+      "schedule": "21 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 28,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-29",
+      "schedule": "22 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 29,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-30",
+      "schedule": "23 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 30,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-31",
+      "schedule": "24 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 31,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-32",
+      "schedule": "25 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 32,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-33",
+      "schedule": "26 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 33,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-34",
+      "schedule": "27 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 34,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-35",
+      "schedule": "28 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 35,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-36",
+      "schedule": "29 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 36,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-37",
+      "schedule": "30 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 37,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-38",
+      "schedule": "31 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 38,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-39",
+      "schedule": "32 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 39,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-40",
+      "schedule": "33 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 40,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-41",
+      "schedule": "34 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 41,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-42",
+      "schedule": "35 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 42,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-43",
+      "schedule": "36 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 43,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-44",
+      "schedule": "37 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 44,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-45",
+      "schedule": "38 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 45,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-46",
+      "schedule": "39 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 46,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-47",
+      "schedule": "40 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 47,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-48",
+      "schedule": "41 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 48,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-49",
+      "schedule": "42 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 49,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-50",
+      "schedule": "43 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 50,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-51",
+      "schedule": "44 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 51,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-52",
+      "schedule": "45 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 52,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-53",
+      "schedule": "46 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 53,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-54",
+      "schedule": "47 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 54,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-55",
+      "schedule": "48 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 55,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-56",
+      "schedule": "49 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 56,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-57",
+      "schedule": "50 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 57,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-58",
+      "schedule": "51 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 58,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-59",
+      "schedule": "52 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 59,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-60",
+      "schedule": "53 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 60,
+      "projectionScopeMode": "target_week"
     }
   ]
 }

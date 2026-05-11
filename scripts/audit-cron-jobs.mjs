@@ -21,9 +21,8 @@ function detectOverlap(liveMap) {
     "compute-scheduling-matrix-cherry-hill-two-weeks",
     "compute-scheduling-matrix-cherry-hill-three-weeks",
   ].some((name) => liveMap.has(name));
-  const hasFutureDayJobs = Array.from({ length: 21 }, (_, index) =>
-    liveMap.has(`compute-scheduling-matrix-cherry-hill-day-${index + 7}`)
-  ).some(Boolean);
+  const hasFutureDayJobs = Array.from(liveMap.keys())
+    .some((name) => /^compute-scheduling-matrix-cherry-hill-day-\d+$/.test(name));
   if (hasFutureWeekJobs && hasFutureDayJobs) {
     overlap.push("Scheduling future horizon is double-scheduled: week jobs and day fanout jobs are both active.");
   }

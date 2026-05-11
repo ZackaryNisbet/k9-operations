@@ -594,8 +594,22 @@ export function getMatrixProjection(matrix) {
 }
 
 export function getMatrixComparison(matrix) {
+  const comparisons = matrix?.detail_json?.projection?.comparisons || {};
   return {
-    last_year_total_dog_volume: toNullableNumber(matrix?.detail_json?.projection?.comparisons?.last_year_total_dog_volume),
+    source: comparisons.source || null,
+    current_year_date: comparisons.current_year_date || null,
+    last_year_date: comparisons.last_year_date || null,
+    current_year: comparisons.current_year || null,
+    last_year: comparisons.last_year || null,
+    current_overnight: toNullableNumber(comparisons.current_year?.overnight),
+    current_daytime: toNullableNumber(comparisons.current_year?.daytime),
+    current_total: toNullableNumber(comparisons.current_year?.total),
+    yoy_overnight: toNullableNumber(comparisons.yoy_overnight),
+    yoy_daytime: toNullableNumber(comparisons.yoy_daytime),
+    yoy_total: toNullableNumber(comparisons.yoy_total),
+    yoy_total_pct_vs_current_year: toNullableNumber(comparisons.yoy_total_pct_vs_current_year),
+    source_available: Boolean(comparisons.source_available),
+    last_year_total_dog_volume: toNullableNumber(comparisons.last_year_total_dog_volume),
     exact_last_year_display: matrix?.detail_json?.projection?.exact_last_year_display || null,
   };
 }

@@ -1577,6 +1577,72 @@ function flattenDisplay(display: any) {
   };
 }
 
+function toHistoricalMetric(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : null;
+}
+
+function getCanonicalSourceMetrics(display: any) {
+  const source = display?.source || null;
+  return {
+    overnight: toHistoricalMetric(source?.overnight),
+    daytime: toHistoricalMetric(source?.daytime_total),
+    total: toHistoricalMetric(source?.total),
+    source_available: !!source,
+    source_endpoint: source ? "gingr_reservation_widget_daily" : null,
+  };
+}
+
+function percentageOfCurrentYear(lastYearValue: number | null, currentValue: number | null): number | null {
+  if (lastYearValue === null || currentValue === null || currentValue <= 0) return null;
+  return Number(((lastYearValue / currentValue) * 100).toFixed(1));
+}
+
+function getWidgetSourceForDate(
+  sourceByDate: Map<string, GingrWidgetSourceCounts> | Record<string, GingrWidgetSourceCounts> | null | undefined,
+  targetDate: string,
+) {
+  if (!sourceByDate) return null;
+  if (sourceByDate instanceof Map) return sourceByDate.get(targetDate) || null;
+  return sourceByDate[targetDate] || null;
+}
+
+function applyHistoricalWidgetSource(display: any, sourceCounts: GingrWidgetSourceCounts | null) {
+  if (!display || !sourceCounts) return display;
+  return applyGingrWidgetSourceCountsToDisplay(display, sourceCounts).display;
+}
+
+function buildHistoricalComparisonPayload({
+  currentDate,
+  lastYearDate,
+  currentDisplay,
+  lastYearDisplay,
+}: {
+  currentDate: string;
+  lastYearDate: string;
+  currentDisplay: any;
+  lastYearDisplay: any;
+}) {
+  const current = getCanonicalSourceMetrics(currentDisplay);
+  const lastYear = getCanonicalSourceMetrics(lastYearDisplay);
+  const legacyLastYearTotal = lastYear.total
+    ?? toHistoricalMetric(lastYearDisplay?.support?.total_dog_volume);
+
+  return {
+    source: "gingr_reservation_widget_daily",
+    current_year_date: currentDate,
+    last_year_date: lastYearDate,
+    current_year: current,
+    last_year: lastYear,
+    yoy_overnight: lastYear.overnight,
+    yoy_daytime: lastYear.daytime,
+    yoy_total: lastYear.total,
+    yoy_total_pct_vs_current_year: percentageOfCurrentYear(lastYear.total, current.total),
+    last_year_total_dog_volume: legacyLastYearTotal,
+    source_available: current.source_available && lastYear.source_available,
+  };
+}
+
 const DERIVED_PROJECTION_METRIC_KEYS = new Set([
   "support_morning_feeding_dogs",
   "support_evening_feeding_dogs",
@@ -1794,6 +1860,7 @@ export function buildProjectionForDate({
   roomByDate,
   totalRooms,
   capacityConfig,
+  historicalWidgetSourceByDate = null,
 }: {
   targetDate: string;
   currentDate: string;
@@ -1805,12 +1872,14 @@ export function buildProjectionForDate({
   roomByDate: Record<string, { occupied: number; available: number; total: number }>;
   totalRooms: number;
   capacityConfig?: ReturnType<typeof normalizeProjectionCapacityConfig> | null;
+  historicalWidgetSourceByDate?: Map<string, GingrWidgetSourceCounts> | Record<string, GingrWidgetSourceCounts> | null;
 }) {
   const leadDays = Math.max(0, diffDays(currentDate, targetDate));
   const currentFlat = flattenDisplay(currentSnapshot.display);
   const exactLastYear = shiftYearsStr(targetDate, -1);
   const exactLastYearReservations = historicalReservations.filter((row) => row.startKey <= exactLastYear && row.endKey >= exactLastYear);
-  const exactLastYearSnapshot = exactLastYearReservations.length > 0
+  const exactLastYearSource = getWidgetSourceForDate(historicalWidgetSourceByDate, exactLastYear);
+  const exactLastYearSnapshot = exactLastYearReservations.length > 0 || exactLastYearSource
     ? computeDemandSnapshotForDate({
       targetDate: exactLastYear,
       reservations: historicalReservations,
@@ -1818,7 +1887,7 @@ export function buildProjectionForDate({
       totalRooms,
     })
     : null;
-  const exactLastYearDisplay = exactLastYearSnapshot?.display || null;
+  const exactLastYearDisplay = applyHistoricalWidgetSource(exactLastYearSnapshot?.display || null, exactLastYearSource);
 
   if (leadDays <= 0) {
     const actualCapacity = buildProjectionCapacityEnvelope({
@@ -1840,9 +1909,12 @@ export function buildProjectionForDate({
         has_capacity_constrained_projection: false,
       },
       exact_last_year_display: exactLastYearDisplay,
-      comparisons: {
-        last_year_total_dog_volume: Number(exactLastYearDisplay?.support?.total_dog_volume ?? 0) || null,
-      },
+      comparisons: buildHistoricalComparisonPayload({
+        currentDate: targetDate,
+        lastYearDate: exactLastYear,
+        currentDisplay: currentSnapshot.display,
+        lastYearDisplay: exactLastYearDisplay,
+      }),
       explanations: {},
       sample_count: 0,
     };
@@ -1885,7 +1957,7 @@ export function buildProjectionForDate({
     const asOfSnapshot = getHistoricalSnapshot(sampleDate, asOfDate);
     const weight = projectionWeight(candidate, targetDate);
     if (sampleDate === exactLastYear) {
-      exactLastYearDisplayProjected = finalSnapshot.display;
+      exactLastYearDisplayProjected = applyHistoricalWidgetSource(finalSnapshot.display, exactLastYearSource);
     }
     return {
       ...candidate,
@@ -2232,9 +2304,12 @@ export function buildProjectionForDate({
       has_capacity_constrained_projection: hasCapacityConstrainedProjection,
     },
     exact_last_year_display: exactLastYearDisplayProjected,
-    comparisons: {
-      last_year_total_dog_volume: Number(exactLastYearDisplayProjected?.support?.total_dog_volume ?? 0) || null,
-    },
+    comparisons: buildHistoricalComparisonPayload({
+      currentDate: targetDate,
+      lastYearDate: exactLastYear,
+      currentDisplay: currentSnapshot.display,
+      lastYearDisplay: exactLastYearDisplayProjected,
+    }),
     explanations,
     calibration: {
       yoy_pickup: yoyCalibration,
@@ -2455,6 +2530,9 @@ export async function computeSchedulingMatrixRows({
   const currentDate = dateStrET();
   const historicalWindow = buildHistoricalWindow(contextDates);
   const exactHistoricalReferenceRanges = buildContiguousDateRanges(historicalWindow?.referenceDates || []);
+  const historicalComparisonDates = contextDates.map((dateKey) => shiftYearsStr(dateKey, -1));
+  const historicalComparisonDateFrom = historicalComparisonDates[0] || null;
+  const historicalComparisonDateTo = historicalComparisonDates[historicalComparisonDates.length - 1] || null;
   const calibrationDates = buildProjectionCalibrationDates(currentDate);
   const weeklyCalibrationStart = addDaysStr(currentDate, -(PROJECTION_WEEKLY_LOOKBACK_WEEKS * 7));
   const calibrationStart = [calibrationDates[0], weeklyCalibrationStart].filter(Boolean).sort()[0] || null;
@@ -2472,7 +2550,7 @@ export async function computeSchedulingMatrixRows({
     buildDateRangeOverlapQuery(buildReservationRowsQuery(), from, to),
   );
 
-  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, reservationsRes, exactHistoricalReservationRangeResults, calibrationReservationsRes, calibrationHistoricalReservationsRes, scheduleConfigRes, playgroupAssignments] = await Promise.all([
+  const [resTypesRes, roomOccRes, runsRes, widgetSourceRes, historicalWidgetSourceRes, reservationsRes, exactHistoricalReservationRangeResults, calibrationReservationsRes, calibrationHistoricalReservationsRes, scheduleConfigRes, playgroupAssignments] = await Promise.all([
     supabase
       .from("gingr_reservation_types")
       .select("gingr_id, name, is_boarding, is_daycare, single_day")
@@ -2493,6 +2571,14 @@ export async function computeSchedulingMatrixRows({
       .eq("location_id", locationId)
       .gte("widget_date", contextDateFrom)
       .lte("widget_date", contextDateTo),
+    historicalComparisonDateFrom && historicalComparisonDateTo
+      ? supabase
+        .from("gingr_reservation_widget_daily")
+        .select("widget_date, check_in_total, check_out_total, overnight_total, total_reservation_volume, per_type, synced_at")
+        .eq("location_id", locationId)
+        .gte("widget_date", historicalComparisonDateFrom)
+        .lte("widget_date", historicalComparisonDateTo)
+      : Promise.resolve({ data: [], error: null }),
     buildReservationRowsQuery()
       .lt("start_date", `${addDaysStr(contextDateTo, 1)}T00:00:00`)
       .gte("end_date", `${contextDateFrom}T00:00:00`),
@@ -2527,12 +2613,16 @@ export async function computeSchedulingMatrixRows({
   if (roomOccRes.error) throw roomOccRes.error;
   if (runsRes.error) throw runsRes.error;
   if (widgetSourceRes.error) throw widgetSourceRes.error;
+  if (historicalWidgetSourceRes.error) throw historicalWidgetSourceRes.error;
   if (calibrationReservationsRes.error) throw calibrationReservationsRes.error;
   if (calibrationHistoricalReservationsRes.error) throw calibrationHistoricalReservationsRes.error;
   if (scheduleConfigRes.error) throw scheduleConfigRes.error;
 
   const resTypeMaps = buildReservationTypeMaps(resTypesRes.data || []);
-  const widgetSourceByDate = buildGingrWidgetSourceCountsByDate(widgetSourceRes.data || [], resTypeMaps);
+  const widgetSourceByDate = buildGingrWidgetSourceCountsByDate([
+    ...(widgetSourceRes.data || []),
+    ...(historicalWidgetSourceRes.data || []),
+  ], resTypeMaps);
 
   const playgroupMap = buildPlaygroupAssignmentMap(playgroupAssignments || []);
 
@@ -2672,6 +2762,7 @@ export async function computeSchedulingMatrixRows({
       historicalReservations,
       calibrationReservations,
       calibrationHistoricalReservations,
+      historicalWidgetSourceByDate: widgetSourceByDate,
       roomByDate,
       totalRooms,
       capacityConfig,
@@ -2704,6 +2795,7 @@ export async function computeSchedulingMatrixRows({
       calibrationReservations,
       calibrationHistoricalReservations,
       weeklyPaceCalibration,
+      historicalWidgetSourceByDate: widgetSourceByDate,
       roomByDate,
       totalRooms,
       capacityConfig,

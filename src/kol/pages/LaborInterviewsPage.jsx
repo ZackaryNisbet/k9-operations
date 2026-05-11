@@ -37,12 +37,16 @@ import {
   INTERVIEW_TRANSCRIPT_ACCEPT,
   LABOR_INTERVIEW_DOCUMENT_BUCKET,
   LABOR_INTERVIEW_TEMPLATE_STATUS_LABELS,
+  canAccessInterviewIdentity,
+  getInterviewCandidateContactLabel,
+  getInterviewCandidateDisplayLabel,
   isInterviewResponseReviewed,
   normalizeInterviewCandidateDraft,
   normalizeInterviewPayRates,
   normalizeQuestionKey,
   pdfFieldsFromSnapshot,
   questionRowsFromSnapshot,
+  redactInterviewRecordForIdentityAccess,
   shouldNormalizeInterviewAudioForStt,
   validateInterviewAudioFile,
   validateInterviewResumeFile,
@@ -119,13 +123,27 @@ function compactDateTime(row) {
   return [row.interview_date ? fmtDate(row.interview_date) : "", row.interview_time || ""].filter(Boolean).join(" at ");
 }
 
+function normalizeRpcArray(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.records)) return value.records;
+  return [];
+}
+
+function isInterviewRpcMissing(error) {
+  return error?.code === "PGRST202"
+    || error?.code === "PGRST204"
+    || /get_labor_interview_/i.test(error?.message || "")
+    || /function .* does not exist/i.test(error?.message || "");
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl }) {
+function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl, enabled = true }) {
   useEffect(() => {
-    if (!bucket || !path) {
+    if (!enabled || !bucket || !path) {
       setPreviewUrl("");
       return undefined;
     }
@@ -156,7 +174,7 @@ function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewU
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [bucket, path, versionKey, setPreviewUrl]);
+  }, [bucket, enabled, path, versionKey, setPreviewUrl]);
 }
 
 function normalizeAiReviewMode(value) {
@@ -2107,8 +2125,8 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{record.candidate_full_name}</div>
-              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{record.candidate_email || record.candidate_phone || "No contact saved"}</div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateDisplayLabel(record)}</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateContactLabel(record)}</div>
             </div>
             <div style={{ fontSize: 13, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
             <div style={{ fontSize: 13, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
@@ -2124,13 +2142,14 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
 
 function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving, canManage = true }) {
   const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
+  const canAccessIdentity = canAccessInterviewIdentity(record, canManage);
   return (
     <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: 18, borderBottom: `1px solid ${C.borderLight}`, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
           <IconButton label="Back to interviews" onClick={onBack}>{"<"}</IconButton>
           <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: 0, color: C.text, fontSize: 26, lineHeight: 1.1, fontWeight: 950, letterSpacing: 0 }}>{record.candidate_full_name}</h2>
+            <h2 style={{ margin: 0, color: C.text, fontSize: 26, lineHeight: 1.1, fontWeight: 950, letterSpacing: 0 }}>{getInterviewCandidateDisplayLabel(record, { canAccessIdentity })}</h2>
             <div style={{ marginTop: 7, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: C.textSec, fontWeight: 800 }}>{position || "Interview"}</span>
             </div>
@@ -2145,10 +2164,29 @@ function CandidateHeader({ record, recommendation, payRateSummary, onRecommendat
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
         <StaticField label="Date" value={compactDateTime(record)} />
         <StaticField label="Pay Range" value={payRateSummary} />
-        <StaticField label="Candidate Email" value={record.candidate_email} />
-        <StaticField label="Candidate Phone" value={record.candidate_phone} />
-        <StaticField label="Zoom Link" value={record.zoom_recording_url} />
-        <StaticField label="Zoom Passcode" value={record.zoom_passcode} />
+        <StaticField label="Candidate Email" value={canAccessIdentity ? record.candidate_email : "Restricted"} />
+        <StaticField label="Candidate Phone" value={canAccessIdentity ? record.candidate_phone : "Restricted"} />
+        <StaticField label="Zoom Link" value={canAccessIdentity ? record.zoom_recording_url : "Restricted"} />
+        <StaticField label="Zoom Passcode" value={canAccessIdentity ? record.zoom_passcode : "Restricted"} />
+      </div>
+    </div>
+  );
+}
+
+function RestrictedInterviewDetail({ record }) {
+  return (
+    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Identity Restricted</div>
+        <div style={{ marginTop: 5, color: C.textMut, fontSize: 13, lineHeight: 1.45 }}>
+          This view intentionally excludes candidate contact details, transcripts, resumes, audio, generated PDFs, and signed storage links.
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        <StaticField label="Candidate" value={getInterviewCandidateDisplayLabel(record)} />
+        <StaticField label="Position" value={record.candidate_position || "Interview"} />
+        <StaticField label="Interview Date" value={compactDateTime(record)} />
+        <StaticField label="Next Step" value={getInterviewRecommendationOption(getInterviewRecommendation(record))?.label || "Pending"} />
       </div>
     </div>
   );
@@ -4487,19 +4525,24 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
 
   const selectedPayRates = useMemo(() => payRatesFromVersion(selectedSnapshot?.version || {}), [selectedSnapshot]);
   const selectedPayRateSummary = useMemo(() => formatInterviewPayRateSummary(selectedPayRates), [selectedPayRates]);
-  const resumeArtifacts = useMemo(() => artifacts.filter((artifact) => artifact.artifact_type === "resume"), [artifacts]);
+  const selectedRecordCanAccessIdentity = useMemo(() => canAccessInterviewIdentity(selectedRecord, canManage), [canManage, selectedRecord]);
+  const resumeArtifacts = useMemo(() => (
+    selectedRecordCanAccessIdentity ? artifacts.filter((artifact) => artifact.artifact_type === "resume") : []
+  ), [artifacts, selectedRecordCanAccessIdentity]);
   const selectedResumeArtifact = resumeArtifacts[0] || null;
   useStorageObjectPreviewUrl({
     bucket: selectedPdfSourceBucket,
     path: selectedPdfSourcePath,
     versionKey: selectedSnapshot?.version?.id || "",
     setPreviewUrl: setPdfPreviewUrl,
+    enabled: selectedRecordCanAccessIdentity,
   });
   useStorageObjectPreviewUrl({
     bucket: selectedResumeArtifact?.storage_bucket || LABOR_INTERVIEW_DOCUMENT_BUCKET,
     path: selectedResumeArtifact?.storage_path || "",
     versionKey: selectedResumeArtifact?.id || selectedResumeArtifact?.created_at || "",
     setPreviewUrl: setResumePreviewUrl,
+    enabled: selectedRecordCanAccessIdentity,
   });
   const selectedGuideReviewItems = useMemo(() => buildPdfReviewItems(selectedPdfFields), [selectedPdfFields]);
   const selectedGuideReviewedCount = useMemo(() => {
@@ -4590,14 +4633,40 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         : { data: [], error: null };
       if (questionRes.error) throw questionRes.error;
 
-      const recordRes = await supabase
-        .from("labor_interview_records")
-        .select("*")
-        .eq("location_id", resolvedLocationId)
-        .order("interview_date", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false });
-      if (recordRes.error) throw recordRes.error;
-      const recordIds = (recordRes.data || []).map((record) => record.id);
+      let recordRows = [];
+      const recordRpcRes = await supabase.rpc("get_labor_interview_records_redacted", {
+        p_location_id: resolvedLocationId,
+      });
+      if (recordRpcRes.error) {
+        if (!isInterviewRpcMissing(recordRpcRes.error)) throw recordRpcRes.error;
+        const fallbackRecordRes = canManage
+          ? await supabase
+              .from("labor_interview_records")
+              .select("*")
+              .eq("location_id", resolvedLocationId)
+              .order("interview_date", { ascending: false, nullsFirst: false })
+              .order("created_at", { ascending: false })
+          : await supabase
+              .from("labor_interview_records")
+              .select("id,location_id,template_id,template_version_id,candidate_position,interview_date,interview_time,status,metadata,created_at,updated_at")
+              .eq("location_id", resolvedLocationId)
+              .order("interview_date", { ascending: false, nullsFirst: false })
+              .order("created_at", { ascending: false });
+        if (fallbackRecordRes.error) throw fallbackRecordRes.error;
+        recordRows = (fallbackRecordRes.data || []).map((record, index) => (
+          redactInterviewRecordForIdentityAccess({
+            ...record,
+            masked_candidate_label: `Candidate ${index + 1}`,
+          }, { canAccessIdentity: canManage })
+        ));
+      } else {
+        recordRows = normalizeRpcArray(recordRpcRes.data).map((record) => (
+          redactInterviewRecordForIdentityAccess(record, {
+            canAccessIdentity: canAccessInterviewIdentity(record, canManage),
+          })
+        ));
+      }
+      const recordIds = recordRows.map((record) => record.id).filter(Boolean);
       const guideRes = recordIds.length
         ? await supabase
             .from("labor_interview_record_guides")
@@ -4612,7 +4681,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       setTemplates(templateRows);
       setVersions(versionRows);
       setQuestions(questionRes.data || []);
-      setRecords(recordRes.data || []);
+      setRecords(recordRows);
       setGuides(guideMissing ? [] : (guideRes.data || []));
     } catch (error) {
       const missing = error?.code === "PGRST205" || /labor_interview_/i.test(error?.message || "");
@@ -4620,7 +4689,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     } finally {
       setLoading(false);
     }
-  }, [locationId]);
+  }, [canManage, locationId]);
 
   useEffect(() => {
     let active = true;
@@ -4648,6 +4717,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       setArtifacts([]);
       return { responses: [], artifacts: [] };
     }
+    const targetRecord = records.find((record) => record.id === interviewId) || null;
+    if (!canAccessInterviewIdentity(targetRecord, canManage)) {
+      setResponses([]);
+      setArtifacts([]);
+      return { responses: [], artifacts: [] };
+    }
     const [responseRes, artifactRes] = await Promise.all([
       supabase.from("labor_interview_responses").select("*").eq("interview_id", interviewId).order("created_at"),
       supabase.from("labor_interview_artifacts").select("*").eq("interview_id", interviewId).order("created_at", { ascending: false }),
@@ -4657,7 +4732,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     setResponses(responseRes.data || []);
     setArtifacts(artifactRes.data || []);
     return { responses: responseRes.data || [], artifacts: artifactRes.data || [] };
-  }, []);
+  }, [canManage, records]);
 
   useEffect(() => {
     const loadRecordDetail = async () => {
@@ -4771,6 +4846,12 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
   }, [responsesByTarget]);
 
   useEffect(() => {
+    if (!selectedRecordCanAccessIdentity) {
+      setAudioSources([]);
+      setActiveAudioSourceIndex(0);
+      setAudioUrl("");
+      return undefined;
+    }
     const sourceAudio = selectedRecord?.metadata?.audio_transcription?.source_audio || {};
     const candidates = getInterviewAudioPlaybackCandidates(sourceAudio);
     if (!candidates.length) {
@@ -4805,7 +4886,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     };
     signFirstReadableSource();
     return () => { active = false; };
-  }, [selectedRecord?.metadata?.audio_transcription?.source_audio]);
+  }, [selectedRecord?.metadata?.audio_transcription?.source_audio, selectedRecordCanAccessIdentity]);
 
   const buildCurrentPdfResponseMap = useCallback((drafts = responseDrafts) => {
     const map = buildPdfResponseMap([], selectedRecord, selectedPdfFields, { includeDrafts: true });
@@ -6637,6 +6718,10 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
             canManage={canManage}
           />
 
+          {!selectedRecordCanAccessIdentity ? (
+            <RestrictedInterviewDetail record={selectedRecord} />
+          ) : (
+            <>
           <input
             ref={resumeInputRef}
             type="file"
@@ -6830,6 +6915,8 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
               </div>
             </div>
           </div>
+            </>
+          )}
         </div>
       )}
 
@@ -7167,7 +7254,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         />
       )}
 
-      {showActiveInterview && activeInterviewPane === "resume" && selectedRecord && (
+      {selectedRecordCanAccessIdentity && showActiveInterview && activeInterviewPane === "resume" && selectedRecord && (
         <ResumeWorkspaceModal
           record={selectedRecord}
           resumeArtifact={selectedResumeArtifact}
@@ -7186,7 +7273,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         />
       )}
 
-      {showActiveInterview && activeInterviewPane === "guide" && selectedRecord && (
+      {selectedRecordCanAccessIdentity && showActiveInterview && activeInterviewPane === "guide" && selectedRecord && (
         <ReviewGuideModal
           record={selectedRecord}
           fields={selectedPdfFields}
@@ -7224,7 +7311,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
         />
       )}
 
-      {showActiveInterview && activeInterviewPane === "questions" && selectedRecord && (
+      {selectedRecordCanAccessIdentity && showActiveInterview && activeInterviewPane === "questions" && selectedRecord && (
         <QuestionReviewModal
           record={selectedRecord}
           questions={selectedQuestions}
