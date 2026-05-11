@@ -421,6 +421,87 @@ export function normalizeInterviewCandidateDraft(draft = {}) {
   };
 }
 
+export function canAccessInterviewIdentity(record = {}, fallback = false) {
+  if (!record || typeof record !== "object") return Boolean(fallback);
+  return Boolean(
+    record.can_access_identity
+    ?? record.canAccessIdentity
+    ?? record.identity_access_granted
+    ?? record.identityAccessGranted
+    ?? fallback
+  );
+}
+
+export function getInterviewCandidateDisplayLabel(record = {}, options = {}) {
+  const canAccessIdentity = canAccessInterviewIdentity(record, options.canAccessIdentity);
+  if (canAccessIdentity) {
+    return String(record.candidate_full_name || record.candidateFullName || "").trim() || "Candidate";
+  }
+  return String(
+    record.masked_candidate_label
+    || record.maskedCandidateLabel
+    || record.candidate_label
+    || record.candidateLabel
+    || "Candidate"
+  ).trim() || "Candidate";
+}
+
+export function getInterviewCandidateContactLabel(record = {}, options = {}) {
+  const canAccessIdentity = canAccessInterviewIdentity(record, options.canAccessIdentity);
+  if (!canAccessIdentity) return "Contact restricted";
+  return String(record.candidate_email || record.candidate_phone || "").trim() || "No contact saved";
+}
+
+export function redactInterviewRecordForIdentityAccess(record = {}, options = {}) {
+  const source = record && typeof record === "object" ? record : {};
+  const canAccessIdentity = canAccessInterviewIdentity(source, options.canAccessIdentity);
+  if (canAccessIdentity) {
+    return {
+      ...source,
+      can_access_identity: true,
+      masked_candidate_label: getInterviewCandidateDisplayLabel(source, { canAccessIdentity: true }),
+    };
+  }
+  const safeMetadata = source.metadata && typeof source.metadata === "object"
+    ? {
+        hiring_recommendation: source.metadata.hiring_recommendation || source.metadata.next_step || "pending",
+        next_step: source.metadata.next_step || source.metadata.hiring_recommendation || "pending",
+      }
+    : { hiring_recommendation: "pending", next_step: "pending" };
+  const maskedLabel = getInterviewCandidateDisplayLabel(source, { canAccessIdentity: false });
+  return {
+    id: source.id,
+    location_id: source.location_id,
+    labor_employee_id: null,
+    template_id: source.template_id || null,
+    template_version_id: source.template_version_id || null,
+    candidate_full_name: maskedLabel,
+    candidate_email: null,
+    candidate_phone: null,
+    candidate_position: source.candidate_position || source.role_label || "",
+    interview_date: source.interview_date || null,
+    interview_time: source.interview_time || null,
+    status: source.status || "draft",
+    interviewer_user_id: null,
+    interviewer_name: null,
+    zoom_recording_url: null,
+    zoom_passcode: null,
+    transcript_text: null,
+    transcript_file_bucket: null,
+    transcript_file_path: null,
+    template_snapshot: {},
+    pdf_field_manifest_snapshot: [],
+    question_snapshot: [],
+    metadata: safeMetadata,
+    created_at: source.created_at || null,
+    updated_at: source.updated_at || null,
+    created_by_user_id: null,
+    updated_by_user_id: null,
+    masked_candidate_label: maskedLabel,
+    can_access_identity: false,
+  };
+}
+
 export function normalizeInterviewPayRates(value = {}) {
   const source = value && typeof value === "object" ? value : {};
   return {

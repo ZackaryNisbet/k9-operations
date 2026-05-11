@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   applyGrassrootsFilters,
+  buildGrassrootsEventDateRpcRows,
+  buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
+  getGrassrootsAddressText,
   getGrassrootsActivityCount,
   getGrassrootsDefaultFilters,
   getGrassrootsNextDate,
   getGrassrootsPrimaryEventDate,
+  getGrassrootsSplitAddress,
   groupGrassrootsHistory,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsStatus,
   normalizeLegacyGrassrootsTracker,
+  resolveGrassrootsTargetIsActive,
 } from "../kol/grassrootsData.js";
 
 describe("grassrootsData", () => {
@@ -62,11 +67,13 @@ describe("grassrootsData", () => {
     const rows = [
       { id: "active", is_active: true, status: "outreach" },
       { id: "inactive", is_active: false, status: "outreach" },
+      { id: "abandoned", is_active: false, status: "abandoned" },
     ];
 
     expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "active" } }).map((row) => row.id)).toEqual(["active"]);
-    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "inactive" } }).map((row) => row.id)).toEqual(["inactive"]);
-    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "all" } }).map((row) => row.id)).toEqual(["active", "inactive"]);
+    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "inactive" } }).map((row) => row.id)).toEqual(["inactive", "abandoned"]);
+    expect(applyGrassrootsFilters(rows, {}, { is_active: { op: "is", val: "all" } }).map((row) => row.id)).toEqual(["active", "inactive", "abandoned"]);
+    expect(applyGrassrootsFilters(rows, {}, { status: { op: "is", val: "abandoned" } }).map((row) => row.id)).toEqual(["abandoned"]);
   });
 
   it("filters by workflow status and computed activity count", () => {
@@ -87,23 +94,84 @@ describe("grassrootsData", () => {
     expect(getGrassrootsActivityCount(rows[1], activities)).toBe(2);
   });
 
-  it("normalizes old and new event statuses to the three current statuses", () => {
+  it("normalizes old and new event statuses to current statuses including abandoned", () => {
     expect(normalizeGrassrootsStatus("Outreach")).toBe("identified");
     expect(normalizeGrassrootsStatus("Corresponding")).toBe("corresponding");
     expect(normalizeGrassrootsStatus("Closing")).toBe("booked");
     expect(normalizeGrassrootsStatus("Active")).toBe("booked");
+    expect(normalizeGrassrootsStatus("Abandoned")).toBe("abandoned");
+    expect(normalizeGrassrootsStatus("Archived")).toBe("abandoned");
+    expect(resolveGrassrootsTargetIsActive("abandoned", true)).toBe(false);
+    expect(resolveGrassrootsTargetIsActive("identified", true)).toBe(true);
   });
 
   it("normalizes non-consecutive event dates with independent times", () => {
     const target = {
       event_dates: [
         { event_date: "2026-06-12", start_time: "09:00", end_time: "12:00" },
-        { event_date: "2026-06-10", start_time: "14:00", end_time: "16:30" },
+        { event_date: "2026-06-10", start_time: "14:00:00", end_time: "16:30:00" },
       ],
     };
 
     expect(normalizeGrassrootsEventDates(target).map((row) => row.event_date)).toEqual(["2026-06-10", "2026-06-12"]);
+    expect(normalizeGrassrootsEventDates(target).map((row) => row.start_time)).toEqual(["14:00", "09:00"]);
+    expect(normalizeGrassrootsEventDates(target).map((row) => row.end_time)).toEqual(["16:30", "12:00"]);
     expect(getGrassrootsPrimaryEventDate(target)).toBe("2026-06-10");
+  });
+
+  it("packages event-date rows for a single atomic save RPC payload", () => {
+    const targetPayload = { id: "event-1", location_id: "loc-1", category: "events", name: "Market Day" };
+    const eventSource = {
+      event_dates: [
+        { event_date: "2026-07-03", start_time: "10:15", end_time: "12:00" },
+        { event_date: "2026-07-05", start_time: "14:00", end_time: "18:30" },
+      ],
+    };
+
+    expect(buildGrassrootsEventDateRpcRows(eventSource)).toEqual([
+      { event_date: "2026-07-03", start_time: "10:15", end_time: "12:00", sequence_order: 1 },
+      { event_date: "2026-07-05", start_time: "14:00", end_time: "18:30", sequence_order: 2 },
+    ]);
+    expect(buildGrassrootsEventSaveRpcArgs(targetPayload, eventSource)).toEqual({
+      p_target: targetPayload,
+      p_event_dates: [
+        { event_date: "2026-07-03", start_time: "10:15", end_time: "12:00", sequence_order: 1 },
+        { event_date: "2026-07-05", start_time: "14:00", end_time: "18:30", sequence_order: 2 },
+      ],
+    });
+  });
+
+  it("preserves legacy freeform addresses while supporting nullable split address fields", () => {
+    const legacyOnly = { address: "123 Main St, Cherry Hill, NJ 08002" };
+    const split = {
+      address: "500 Route 70, Cherry Hill, NJ 08002",
+      address_line_1: "500 Route 70",
+      address_line_2: "",
+      address_city: "Cherry Hill",
+      address_state: "NJ",
+      address_postal_code: "08002",
+      address_country: "US",
+      google_place_id: "place-123",
+    };
+
+    expect(getGrassrootsAddressText(legacyOnly)).toBe("123 Main St, Cherry Hill, NJ 08002");
+    expect(getGrassrootsSplitAddress(legacyOnly)).toEqual({
+      address_line_1: "",
+      address_line_2: "",
+      address_city: "",
+      address_state: "",
+      address_postal_code: "",
+      address_country: "",
+      google_place_id: "",
+    });
+    expect(getGrassrootsAddressText(split)).toBe("500 Route 70, Cherry Hill, NJ 08002");
+    expect(getGrassrootsSplitAddress(split)).toMatchObject({
+      address_line_1: "500 Route 70",
+      address_city: "Cherry Hill",
+      address_state: "NJ",
+      address_postal_code: "08002",
+      google_place_id: "place-123",
+    });
   });
 
   it("filters drops by business category", () => {
@@ -132,8 +200,8 @@ describe("grassrootsData", () => {
 
   it("derives next contact dates and metrics from activity when target date is empty", () => {
     const rows = [
-      { id: "a", category: "corporate_partnerships", is_active: true, next_contact_date: "" },
-      { id: "b", category: "drops", is_active: false, next_contact_date: "2026-04-10" },
+      { id: "a", category: "corporate_partnerships", status: "identified", is_active: true, next_contact_date: "" },
+      { id: "b", category: "drops", status: "abandoned", is_active: false, next_contact_date: "2026-04-10" },
     ];
     const activities = {
       a: [{ target_id: "a", activity_type: "development", next_contact_date: "2026-04-18", created_at: "2026-04-16T12:00:00Z" }],
@@ -146,6 +214,7 @@ describe("grassrootsData", () => {
       total: 2,
       active: 1,
       inactive: 1,
+      abandoned: 1,
       activities: 2,
       upcoming: 1,
       overdue: 1,

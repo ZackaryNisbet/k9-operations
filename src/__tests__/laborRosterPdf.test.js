@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { describe, expect, it } from "vitest";
 import {
   buildLaborRosterPdfBytes,
@@ -74,22 +75,41 @@ const basePayload = {
   rows: rosterRows,
 };
 
+async function extractPdfText(bytes) {
+  const loadingTask = getDocument({ data: new Uint8Array(bytes), disableWorker: true });
+  const pdf = await loadingTask.promise;
+  const pages = [];
+  for (let index = 1; index <= pdf.numPages; index += 1) {
+    const page = await pdf.getPage(index);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(" "));
+  }
+  await pdf.destroy();
+  return pages.join("\n");
+}
+
 describe("labor roster PDF", () => {
-  it("defaults to wall-poster output without metrics or contact columns", () => {
+  it("defaults to contact roster output without report metrics", () => {
     expect(normalizeLaborRosterPdfOptions()).toMatchObject({
       showMetrics: false,
       showStaffingMatrix: false,
       showCommitment: false,
-      showPhone: false,
-      showEmail: false,
+      showPhone: true,
+      showEmail: true,
     });
   });
 
-  it("generates a one-page K9 Resorts wall roster for the normal Cherry Hill team size", async () => {
+  it("generates a one-page K9 Resorts contact roster for the normal Cherry Hill team size", async () => {
     const bytes = await buildLaborRosterPdfBytes(basePayload);
     const pdfDoc = await PDFDocument.load(bytes);
+    const text = await extractPdfText(bytes);
     expect(bytes.length).toBeGreaterThan(200000);
     expect(pdfDoc.getPageCount()).toBe(1);
+    expect(text).toContain("Cherry Hill Team Roster");
+    expect(text).toContain("K9 Resorts Luxury Pet Hotel");
+    expect(text).toContain("(856) 555-0100");
+    expect(text).toContain("zackary.nisbet@example.com");
+    expect(text).not.toContain("K9 Operations");
   });
 
   it("keeps the normal phone and email roster on one page", async () => {

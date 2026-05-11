@@ -138,6 +138,15 @@ const MATRIX_GROUP_TEMPLATES = [
     ],
   },
   {
+    section: "Historical",
+    rows: [
+      { key: "comparison.yoy_overnight", label: "YOY Overnight", comparison: true },
+      { key: "comparison.yoy_daytime", label: "YOY Daytime", comparison: true },
+      { key: "comparison.yoy_total", label: "YOY Total", total: true, comparison: true },
+      { key: "comparison.yoy_total_pct_vs_current_year", label: "YOY Total % vs Current Year", comparison: true, format: "percent" },
+    ],
+  },
+  {
     section: "Opening Boarding",
     rows: [
       { key: "opening.large_boarding", label: "Large Boarding Opening" },
@@ -182,7 +191,6 @@ const MATRIX_GROUP_TEMPLATES = [
       { key: "play_yard.small_play_dogs", label: "Small Play Demand", alwaysVisible: true },
       { key: "play_yard.private_play_dogs", label: "Private Play Demand", alwaysVisible: true },
       { key: "play_yard.split_play_dogs", label: "Split Play Demand", optional: true, alwaysVisible: true },
-      { key: "comparison.last_year_total_dog_volume", label: "Last Year Total Dog Volume", optional: true, comparison: true },
       { key: "support.tours", label: "Tours" },
     ],
   },
@@ -448,6 +456,117 @@ function getDayIndexFromMonday(dateStr) {
   const date = new Date(`${dateStr}T12:00:00`);
   const day = date.getDay();
   return day === 0 ? 6 : day - 1;
+}
+
+const MATRIX_PAGE_SIZE = 14;
+
+function getMonthStart(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function getMonthEnd(dateStr) {
+  const start = new Date(`${getMonthStart(dateStr)}T12:00:00`);
+  start.setMonth(start.getMonth() + 1);
+  start.setDate(0);
+  return start.toISOString().slice(0, 10);
+}
+
+function getYearStart(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  return `${date.getFullYear()}-01-01`;
+}
+
+function getYearEnd(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  return `${date.getFullYear()}-12-31`;
+}
+
+function shiftMonth(dateStr, delta) {
+  const date = new Date(`${getMonthStart(dateStr)}T12:00:00`);
+  date.setMonth(date.getMonth() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function shiftYear(dateStr, delta) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setFullYear(date.getFullYear() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function getDemandRange(mode, anchorDate, customStartDate, customEndDate) {
+  if (mode === "month") {
+    return { startDate: getMonthStart(anchorDate), endDate: getMonthEnd(anchorDate) };
+  }
+  if (mode === "year") {
+    return { startDate: getYearStart(anchorDate), endDate: getYearEnd(anchorDate) };
+  }
+  if (mode === "custom") {
+    const startDate = customStartDate || anchorDate;
+    const endDate = customEndDate && customEndDate >= startDate ? customEndDate : startDate;
+    return { startDate, endDate };
+  }
+  const startDate = getMondayStart(anchorDate);
+  return { startDate, endDate: addDays(startDate, 6) };
+}
+
+function shiftDemandAnchor(mode, anchorDate, delta) {
+  if (mode === "month") return shiftMonth(anchorDate, delta);
+  if (mode === "year") return shiftYear(anchorDate, delta);
+  if (mode === "custom") return addDays(anchorDate, delta * 7);
+  return addDays(anchorDate, delta * 7);
+}
+
+function formatDemandRangeLabel(startDate, endDate) {
+  const start = new Date(`${startDate}T12:00:00`);
+  const end = new Date(`${endDate}T12:00:00`);
+  return `${start.toLocaleDateString("en-US", { month: "short", day: "numeric", year: start.getFullYear() !== end.getFullYear() ? "numeric" : undefined })} - ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function dateIndexInRange(startDate, endDate, dateStr) {
+  if (!startDate || !dateStr || dateStr < startDate || dateStr > endDate) return 0;
+  const start = new Date(`${startDate}T12:00:00`);
+  const date = new Date(`${dateStr}T12:00:00`);
+  return Math.max(0, Math.round((date.getTime() - start.getTime()) / 86400000));
+}
+
+function formatMatrixValue(value, format) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "—";
+  if (format === "percent") return `${numeric.toFixed(Number.isInteger(numeric) ? 0 : 1)}%`;
+  return Math.round(numeric);
+}
+
+function sumMatrixValues(days, row, mode) {
+  return days.reduce((sum, day) => {
+    const value = getDayMatrixValue(day, row, mode);
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? sum + numeric : sum;
+  }, 0);
+}
+
+function totalHistoricalPct(days) {
+  const currentTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_total) || 0), 0);
+  const lastYearTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_total) || 0), 0);
+  return currentTotal > 0 ? Number(((lastYearTotal / currentTotal) * 100).toFixed(1)) : null;
+}
+
+export function buildHistoricalRangeSummary(days) {
+  const currentOvernight = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_overnight) || 0), 0);
+  const currentDaytime = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_daytime) || 0), 0);
+  const currentTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_total) || 0), 0);
+  const yoyOvernight = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_overnight) || 0), 0);
+  const yoyDaytime = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_daytime) || 0), 0);
+  const yoyTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_total) || 0), 0);
+  return {
+    currentOvernight,
+    currentDaytime,
+    currentTotal,
+    yoyOvernight,
+    yoyDaytime,
+    yoyTotal,
+    yoyTotalPctVsCurrentYear: currentTotal > 0 ? Number(((yoyTotal / currentTotal) * 100).toFixed(1)) : null,
+  };
 }
 
 function getShiftHourSummary(frame, breakMinutes = 30) {
@@ -778,8 +897,8 @@ function renderMatrixCellValue({ row, day, mode }) {
 
   if (row.comparison) {
     return {
-      title: comparisonValue === null || comparisonValue === undefined ? "No year-over-year comparison available." : `Exact same date last year total dog volume: ${comparisonValue}`,
-      content: comparisonValue === null || comparisonValue === undefined ? "—" : comparisonValue,
+      title: comparisonValue === null || comparisonValue === undefined ? "No canonical year-over-year source count available." : `${row.label}: ${formatMatrixValue(comparisonValue, row.format)}`,
+      content: comparisonValue === null || comparisonValue === undefined ? "—" : formatMatrixValue(comparisonValue, row.format),
       missingValue: comparisonValue === null || comparisonValue === undefined,
     };
   }
@@ -811,7 +930,7 @@ function renderMatrixCellValue({ row, day, mode }) {
 
   return {
     title: missingValue ? "No data available for this row." : `${currentValue}`,
-    content: missingValue ? "—" : currentValue,
+    content: missingValue ? "—" : formatMatrixValue(currentValue, row.format),
     missingValue,
   };
 }
@@ -821,7 +940,7 @@ function getProjectionMetricValue(display, fallback = null) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function getProjectionHistoryPoints(day) {
+export function getProjectionHistoryPoints(day) {
   const projection = getDayProjection(day);
   const synthetic = projection ? [{
     target_date: day?.date,
@@ -840,16 +959,27 @@ function getProjectionHistoryPoints(day) {
   return history
     .map((snapshot) => {
       const projected = getProjectionMetricValue(snapshot.projected_display, null);
+      const demand = getProjectionMetricValue(
+        snapshot.projection_json?.demand_display
+        || snapshot.projection_json?.unconstrained_display
+        || snapshot.projected_display,
+        projected,
+      );
       const booked = getProjectionMetricValue(snapshot.current_display, null);
       const actual = getProjectionMetricValue(snapshot.actual_display, null);
       const leadDays = Number(snapshot.lead_days ?? snapshot.projection_json?.lead_days);
       if (!Number.isFinite(leadDays) || projected === null) return null;
+      const capacityConstrained = Boolean(snapshot.projection_json?.capacity?.has_capacity_constrained_projection)
+        || (Number.isFinite(demand) && Number.isFinite(projected) && demand > projected);
       return {
         asOfDate: snapshot.as_of_date || snapshot.projection_json?.as_of_date,
         leadDays,
         projected,
+        demand,
         booked,
         actual,
+        delta: Number.isFinite(actual) ? actual - projected : null,
+        capacityConstrained,
       };
     })
     .filter(Boolean)
@@ -869,17 +999,15 @@ function getCapacityRiskLines(day) {
     });
 }
 
-function ProjectionAccuracyPanel({ day }) {
-  if (!day) return null;
-  const points = getProjectionHistoryPoints(day);
-  const capacityLines = getCapacityRiskLines(day);
-  const values = points.flatMap((point) => [point.projected, point.booked, point.actual]).filter((value) => Number.isFinite(value));
+function ProjectionHistoryChart({ points }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const width = 640;
+  const height = 220;
+  const pad = { left: 44, right: 20, top: 22, bottom: 42 };
+  const values = points.flatMap((point) => [point.projected, point.booked, point.actual, point.demand]).filter((value) => Number.isFinite(value));
   const maxValue = Math.max(10, ...values) + 4;
   const minLead = Math.min(...points.map((point) => point.leadDays), 0);
   const maxLead = Math.max(...points.map((point) => point.leadDays), 1);
-  const width = 640;
-  const height = 190;
-  const pad = { left: 42, right: 18, top: 20, bottom: 34 };
   const xFor = (leadDays) => {
     if (maxLead === minLead) return width / 2;
     return pad.left + ((maxLead - leadDays) / (maxLead - minLead)) * (width - pad.left - pad.right);
@@ -889,6 +1017,82 @@ function ProjectionAccuracyPanel({ day }) {
     .filter((point) => Number.isFinite(point[key]))
     .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(point.leadDays).toFixed(1)} ${yFor(point[key]).toFixed(1)}`)
     .join(" ");
+  const hoverPoint = hoverIndex === null ? null : points[hoverIndex];
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Projection history by days out"
+        style={{ width: "100%", height: 240, display: "block" }}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const svgX = ((event.clientX - rect.left) / rect.width) * width;
+          const nearest = points.reduce((best, point, index) => {
+            const distance = Math.abs(xFor(point.leadDays) - svgX);
+            return distance < best.distance ? { index, distance } : best;
+          }, { index: 0, distance: Infinity });
+          setHoverIndex(nearest.index);
+        }}
+        onMouseLeave={() => setHoverIndex(null)}
+      >
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke={C.border} />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke={C.border} />
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const value = maxValue * ratio;
+          const y = yFor(value);
+          return (
+            <g key={ratio}>
+              <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={C.borderLight} strokeDasharray="4 4" />
+              <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill={C.textMut}>{Math.round(value)}</text>
+            </g>
+          );
+        })}
+        <text x={pad.left} y={height - 13} fontSize="10" fill={C.textMut}>{maxLead} days out</text>
+        <text x={width - pad.right} y={height - 13} textAnchor="end" fontSize="10" fill={C.textMut}>{minLead} days out</text>
+        <text x={width / 2} y={height - 13} textAnchor="middle" fontSize="10" fill={C.textMut}>As-of snapshots move left to right toward actual day</text>
+        {pathFor("demand") && <path d={pathFor("demand")} fill="none" stroke="#7C3AED" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6 4" opacity="0.7" />}
+        {pathFor("booked") && <path d={pathFor("booked")} fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 5" />}
+        {pathFor("projected") && <path d={pathFor("projected")} fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
+        {pathFor("actual") && <path d={pathFor("actual")} fill="none" stroke={C.suc} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
+        {points.map((point, index) => (
+          <g key={`${point.asOfDate}-${point.leadDays}`}>
+            {Number.isFinite(point.demand) && point.demand !== point.projected && <circle cx={xFor(point.leadDays)} cy={yFor(point.demand)} r="3" fill="#7C3AED" opacity="0.75" />}
+            {Number.isFinite(point.booked) && <circle cx={xFor(point.leadDays)} cy={yFor(point.booked)} r="3" fill="#94A3B8" />}
+            <circle cx={xFor(point.leadDays)} cy={yFor(point.projected)} r={point.capacityConstrained ? 5 : 4} fill={C.pri} stroke={point.capacityConstrained ? C.dan : C.pri} strokeWidth={point.capacityConstrained ? 2 : 0} />
+            {Number.isFinite(point.actual) && <circle cx={xFor(point.leadDays)} cy={yFor(point.actual)} r="4" fill={C.suc} />}
+            {hoverIndex === index && (
+              <g>
+                <line x1={xFor(point.leadDays)} y1={pad.top} x2={xFor(point.leadDays)} y2={height - pad.bottom} stroke={C.text} strokeWidth="1" strokeDasharray="3 3" opacity="0.35" />
+                <circle cx={xFor(point.leadDays)} cy={yFor(point.projected)} r="7" fill="none" stroke={C.pri} strokeWidth="2" />
+              </g>
+            )}
+          </g>
+        ))}
+      </svg>
+      {hoverPoint && (
+        <div style={{ position: "absolute", top: 8, right: 8, minWidth: 190, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 10px 24px rgba(15, 23, 42, 0.12)", padding: "8px 10px", fontSize: 11, color: C.text, pointerEvents: "none" }}>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>As of {hoverPoint.asOfDate || "—"} · {hoverPoint.leadDays} days out</div>
+          <div style={{ color: C.textMut }}>Booked/current: <span style={{ color: C.text, fontWeight: 800 }}>{formatMatrixValue(hoverPoint.booked)}</span></div>
+          <div style={{ color: C.textMut }}>Achievable projected: <span style={{ color: C.pri, fontWeight: 800 }}>{formatMatrixValue(hoverPoint.projected)}</span></div>
+          {Number.isFinite(hoverPoint.demand) && hoverPoint.demand !== hoverPoint.projected && (
+            <div style={{ color: C.textMut }}>Unconstrained demand: <span style={{ color: "#7C3AED", fontWeight: 800 }}>{formatMatrixValue(hoverPoint.demand)}</span></div>
+          )}
+          {Number.isFinite(hoverPoint.actual) && (
+            <div style={{ color: C.textMut }}>Actual: <span style={{ color: C.suc, fontWeight: 800 }}>{formatMatrixValue(hoverPoint.actual)}</span>{Number.isFinite(hoverPoint.delta) ? ` (${hoverPoint.delta > 0 ? "+" : ""}${formatMatrixValue(hoverPoint.delta)} vs projected)` : ""}</div>
+          )}
+          {hoverPoint.capacityConstrained && <div style={{ color: C.dan, fontWeight: 800, marginTop: 4 }}>Capacity-constrained view</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectionAccuracyPanel({ day }) {
+  if (!day) return null;
+  const points = getProjectionHistoryPoints(day);
+  const capacityLines = getCapacityRiskLines(day);
 
   return (
     <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.borderLight}`, display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(240px, 0.8fr)", gap: 18 }}>
@@ -900,29 +1104,13 @@ function ProjectionAccuracyPanel({ day }) {
           </div>
           <div style={{ display: "flex", gap: 10, fontSize: 10, fontWeight: 700, color: C.textMut, flexWrap: "wrap" }}>
             <span><span style={{ color: C.pri }}>●</span> Achievable</span>
+            <span><span style={{ color: "#7C3AED" }}>●</span> Unconstrained</span>
             <span><span style={{ color: C.textMut }}>●</span> Booked</span>
             <span><span style={{ color: C.suc }}>●</span> Actual</span>
           </div>
         </div>
         {points.length ? (
-          <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Projection accuracy by days out" style={{ width: "100%", height: 210, display: "block" }}>
-            <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke={C.border} />
-            <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke={C.border} />
-            <text x={pad.left - 8} y={yFor(maxValue - 4) + 4} textAnchor="end" fontSize="10" fill={C.textMut}>{Math.round(maxValue - 4)}</text>
-            <text x={pad.left - 8} y={height - pad.bottom + 4} textAnchor="end" fontSize="10" fill={C.textMut}>0</text>
-            <text x={pad.left} y={height - 8} fontSize="10" fill={C.textMut}>{maxLead} days out</text>
-            <text x={width - pad.right} y={height - 8} textAnchor="end" fontSize="10" fill={C.textMut}>{minLead} days out</text>
-            <path d={pathFor("projected")} fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            <path d={pathFor("booked")} fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 5" />
-            <path d={pathFor("actual")} fill="none" stroke={C.suc} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            {points.map((point) => (
-              <g key={`${point.asOfDate}-${point.leadDays}`}>
-                <circle cx={xFor(point.leadDays)} cy={yFor(point.projected)} r="4" fill={C.pri} />
-                {Number.isFinite(point.booked) && <circle cx={xFor(point.leadDays)} cy={yFor(point.booked)} r="3" fill="#94A3B8" />}
-                {Number.isFinite(point.actual) && <circle cx={xFor(point.leadDays)} cy={yFor(point.actual)} r="4" fill={C.suc} />}
-              </g>
-            ))}
-          </svg>
+          <ProjectionHistoryChart points={points} />
         ) : (
           <div style={{ padding: "20px 0", fontSize: 12, color: C.textMut }}>Projection history will appear after the next daily compute snapshot.</div>
         )}
@@ -1110,7 +1298,21 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const locationId = profile?.location_id;
   const today = todayStr();
   const [viewStartDate, setViewStartDate] = useState(getMondayStart(today));
+  const [matrixRangeMode, setMatrixRangeMode] = useState("week");
+  const [customStartDate, setCustomStartDate] = useState(getMondayStart(today));
+  const [customEndDate, setCustomEndDate] = useState(addDays(getMondayStart(today), 6));
+  const [matrixPage, setMatrixPage] = useState(0);
   const [matrixMode, setMatrixMode] = useState("current");
+  const demandRange = useMemo(
+    () => getDemandRange(matrixRangeMode, viewStartDate, customStartDate, customEndDate),
+    [matrixRangeMode, viewStartDate, customStartDate, customEndDate],
+  );
+  const schedulingDataOptions = useMemo(() => ({
+    endDate: demandRange.endDate,
+    projectionScopeDateFrom: demandRange.startDate,
+    projectionScopeDateTo: demandRange.endDate,
+    recomputeLimitDays: 14,
+  }), [demandRange.startDate, demandRange.endDate]);
 
   const {
     weekData,
@@ -1124,7 +1326,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     applyScheduleOverride,
     fetchScheduleVersions,
     computeRotationSchedule,
-  } = useSchedulingData(locationId, viewStartDate);
+  } = useSchedulingData(locationId, demandRange.startDate, schedulingDataOptions);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [showAssumptions, setShowAssumptions] = useState(false);
@@ -1156,9 +1358,16 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     })),
     [weekData]
   );
-  const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(workbookDays), [workbookDays]);
-  const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(workbookDays), [workbookDays]);
-  const matrixRowGroups = useMemo(() => buildMatrixRowGroups(workbookDays), [workbookDays]);
+  const matrixPageCount = Math.max(1, Math.ceil(workbookDays.length / MATRIX_PAGE_SIZE));
+  const visibleMatrixDays = useMemo(() => {
+    const start = matrixPage * MATRIX_PAGE_SIZE;
+    return workbookDays.slice(start, start + MATRIX_PAGE_SIZE);
+  }, [workbookDays, matrixPage]);
+  const narrativeDays = matrixRangeMode === "week" ? workbookDays : visibleMatrixDays;
+  const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(narrativeDays), [narrativeDays]);
+  const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(narrativeDays), [narrativeDays]);
+  const matrixRowGroups = useMemo(() => buildMatrixRowGroups(visibleMatrixDays), [visibleMatrixDays]);
+  const historicalSummary = useMemo(() => buildHistoricalRangeSummary(workbookDays), [workbookDays]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
   const toggleMatrixGroup = useCallback((section) => {
     setExpandedMatrixGroups((current) => {
@@ -1235,8 +1444,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, [selectedDayIdx]);
 
   React.useEffect(() => {
-    setSelectedDayIdx(viewStartDate === getMondayStart(today) ? getDayIndexFromMonday(today) : 0);
-  }, [viewStartDate, today]);
+    setSelectedDayIdx(dateIndexInRange(demandRange.startDate, demandRange.endDate, today));
+    setMatrixPage(0);
+  }, [demandRange.startDate, demandRange.endDate, today]);
+
+  React.useEffect(() => {
+    if (matrixPage >= matrixPageCount) {
+      setMatrixPage(Math.max(0, matrixPageCount - 1));
+    }
+  }, [matrixPage, matrixPageCount]);
 
   const copyNarrativeTimerRef = React.useRef(null);
   React.useEffect(() => () => {
@@ -1334,6 +1550,27 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       }
     }
   }, [publishSchedule, activeScheduleId, fetchScheduleVersions, selectedDay, addGlobalToast]);
+
+  const handleRangeModeChange = useCallback((mode) => {
+    setMatrixRangeMode(mode);
+    setMatrixPage(0);
+    if (mode === "week") {
+      setViewStartDate(getMondayStart(viewStartDate));
+    } else if (mode === "month") {
+      setViewStartDate(getMonthStart(viewStartDate));
+    } else if (mode === "year") {
+      setViewStartDate(getYearStart(viewStartDate));
+    } else if (mode === "custom") {
+      setCustomStartDate(demandRange.startDate);
+      setCustomEndDate(demandRange.endDate);
+      setViewStartDate(demandRange.startDate);
+    }
+  }, [viewStartDate, demandRange.startDate, demandRange.endDate]);
+
+  const handleRangeJump = useCallback((delta) => {
+    setViewStartDate((current) => shiftDemandAnchor(matrixRangeMode, current, delta));
+    setMatrixPage(0);
+  }, [matrixRangeMode]);
 
   // Apply override
   const handleApplyOverride = useCallback(async () => {
@@ -1473,15 +1710,74 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
         </div>
       </div>
 
-      {/* ── Section 1: 7-Day Workbook Matrix ──────────────────────────── */}
-      <SectionCard title="7-Day Demand Matrix" subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
+      {/* ── Section 1: Demand Matrix ──────────────────────────────────── */}
+      <SectionCard title={matrixRangeMode === "week" ? "7-Day Demand Matrix" : "Demand Matrix"} subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, -7))}>← Previous Week</Btn>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{formatWeekRange(viewStartDate)}</div>
-            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(getMondayStart(today))}>This Week</Btn>
-            <Btn variant="secondary" size="sm" onClick={() => setViewStartDate(addDays(viewStartDate, 7))}>Next Week →</Btn>
-            {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading week…</span>}
+            {[
+              { id: "week", label: "Week" },
+              { id: "month", label: "Month" },
+              { id: "year", label: "Year-ish" },
+              { id: "custom", label: "Custom" },
+            ].map((option) => (
+              <button
+                key={option.id}
+                onClick={() => handleRangeModeChange(option.id)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${matrixRangeMode === option.id ? C.pri : C.border}`,
+                  background: matrixRangeMode === option.id ? C.priLt : C.surface,
+                  color: matrixRangeMode === option.id ? C.pri : C.textMut,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+            <Btn variant="secondary" size="sm" onClick={() => handleRangeJump(-1)}>← Previous</Btn>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{formatDemandRangeLabel(demandRange.startDate, demandRange.endDate)}</div>
+            <Btn
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                const monday = getMondayStart(today);
+                setViewStartDate(matrixRangeMode === "week" ? monday : today);
+                if (matrixRangeMode === "custom") {
+                  setCustomStartDate(monday);
+                  setCustomEndDate(addDays(monday, 6));
+                }
+              }}
+            >
+              This Period
+            </Btn>
+            <Btn variant="secondary" size="sm" onClick={() => handleRangeJump(1)}>Next →</Btn>
+            {matrixRangeMode === "custom" && (
+              <>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setCustomStartDate(next);
+                    setViewStartDate(next);
+                    if (customEndDate < next) setCustomEndDate(next);
+                  }}
+                  style={{ height: 30, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 8px", fontSize: 12, color: C.text, fontFamily: "inherit" }}
+                />
+                <span style={{ fontSize: 11, color: C.textMut }}>to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => setCustomEndDate(event.target.value < customStartDate ? customStartDate : event.target.value)}
+                  style={{ height: 30, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 8px", fontSize: 12, color: C.text, fontFamily: "inherit" }}
+                />
+              </>
+            )}
+            {loading && <span style={{ fontSize: 11, color: C.textMut }}>Loading range…</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <button
@@ -1580,9 +1876,25 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             ))}
           </div>
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+          {[
+            { label: "Current Total", value: historicalSummary.currentTotal, sub: "GINGR source volume" },
+            { label: "YOY Overnight", value: historicalSummary.yoyOvernight, sub: "Same range last year" },
+            { label: "YOY Daytime", value: historicalSummary.yoyDaytime, sub: "Same range last year" },
+            { label: "YOY Total", value: historicalSummary.yoyTotal, sub: "Same range last year" },
+            { label: "YOY % vs Current", value: historicalSummary.yoyTotalPctVsCurrentYear, sub: "LY total / CY total", format: "percent" },
+          ].map((item) => (
+            <div key={item.label} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "10px 12px", background: "#F8FAFC" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>{item.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 850, color: C.text, lineHeight: 1.1, marginTop: 4 }}>{formatMatrixValue(item.value, item.format)}</div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 3 }}>{item.sub}</div>
+            </div>
+          ))}
+        </div>
         <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, lineHeight: 1.6 }}>
           Expand GINGR Source Counts to audit Calendar Details totals. Operational rows use the same source totals for top-line counts, with playgroup splits kept separate for staffing workload.
           {matrixMode === "projected" && " Projected mode shows currently booked values moving to a calibrated forecast using same-season booking curves, same-weekday comparables, and recent YOY pickup."}
+          {workbookDays.length > MATRIX_PAGE_SIZE && ` Showing ${visibleMatrixDays.length} table days at a time; summary cards use the full ${workbookDays.length}-day range.`}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
@@ -1591,14 +1903,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 <th style={{ position: "sticky", left: 0, zIndex: 3, background: "#F8FAFC", width: 250, padding: "12px 12px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
                   Operational Metric
                 </th>
-                {workbookDays.map((day, index) => {
-                  const selected = index === selectedDayIdx;
+                {visibleMatrixDays.map((day, index) => {
+                  const absoluteIndex = (matrixPage * MATRIX_PAGE_SIZE) + index;
+                  const selected = absoluteIndex === selectedDayIdx;
                   const blocked = !day.canGenerate;
-                  const comparison = getMatrixComparison(day.matrix || day);
                   return (
                     <th
                       key={day.date}
-                      onClick={() => setSelectedDayIdx(index)}
+                      onClick={() => setSelectedDayIdx(absoluteIndex)}
                       style={{
                         cursor: "pointer",
                         width: 112,
@@ -1616,9 +1928,9 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                       <div style={{ marginTop: 8 }}>
                         <TrustBadge state={day.matrixTrustState} blocked={blocked} />
                       </div>
-                      {comparison?.last_year_total_dog_volume !== null && comparison?.last_year_total_dog_volume !== undefined && (
-                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
-                          LY total: {comparison.last_year_total_dog_volume}
+                      {matrixMode === "projected" && (
+                        <div style={{ fontSize: 10, color: C.pri, fontWeight: 800, marginTop: 6 }}>
+                          {getDayProjection(day)?.lead_days > 0 ? `${getDayProjection(day).lead_days}d out projection` : "Actual"}
                         </div>
                       )}
                       <div style={{ fontSize: 10, color: blocked ? C.dan : day.generationBlockers.length > 0 ? C.warn : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
@@ -1640,10 +1952,10 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 })}
                 <th style={{ position: "sticky", right: 0, zIndex: 3, width: 118, padding: "10px 8px 12px", textAlign: "center", borderBottom: `1px solid ${C.border}`, background: "#F8FAFC", boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>
-                    Weekly Total
+                    {matrixRangeMode === "week" ? "Weekly Total" : "Visible Total"}
                   </div>
                   <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>
-                    Dog-days across visible week
+                    Dog-days across visible table
                   </div>
                 </th>
               </tr>
@@ -1681,8 +1993,8 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           {!groupExpanded && <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>+{Math.max(group.rows.length - visibleRows.length, 0)}</span>}
                         </button>
                       </td>
-                      {workbookDays.map((day, index) => (
-                        <td key={`${group.section}-${day.date}`} style={{ background: index === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
+                      {visibleMatrixDays.map((day, index) => (
+                        <td key={`${group.section}-${day.date}`} style={{ background: ((matrixPage * MATRIX_PAGE_SIZE) + index) === selectedDayIdx ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
                       ))}
                       <td style={{ position: "sticky", right: 0, zIndex: 2, background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
                     </tr>,
@@ -1691,8 +2003,9 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                         <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "9px 12px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 12, fontWeight: row.total ? 800 : 600, color: C.text }}>
                           {row.label}
                         </td>
-                        {workbookDays.map((day, index) => {
-                          const selected = index === selectedDayIdx;
+                        {visibleMatrixDays.map((day, index) => {
+                          const absoluteIndex = (matrixPage * MATRIX_PAGE_SIZE) + index;
+                          const selected = absoluteIndex === selectedDayIdx;
                           const cellValue = renderMatrixCellValue({
                             row,
                             day,
@@ -1701,7 +2014,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           return (
                             <td
                               key={`${row.key}-${day.date}`}
-                              onClick={() => setSelectedDayIdx(index)}
+                              onClick={() => setSelectedDayIdx(absoluteIndex)}
                               title={cellValue.title}
                               style={{
                                 cursor: "pointer",
@@ -1734,28 +2047,22 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                           }}
                         >
                           {(() => {
-                            const total = workbookDays.reduce((sum, day) => {
-                              const value = getDayMatrixValue(day, row, matrixMode);
-                              const numeric = Number(value);
-                              return Number.isFinite(numeric) ? sum + numeric : sum;
-                            }, 0);
+                            const total = row.format === "percent"
+                              ? totalHistoricalPct(visibleMatrixDays)
+                              : sumMatrixValues(visibleMatrixDays, row, matrixMode);
 
                             if (matrixMode === "projected" && !row.comparison) {
-                              const currentTotal = workbookDays.reduce((sum, day) => {
-                                const value = getDayMatrixValue(day, row, "current");
-                                const numeric = Number(value);
-                                return Number.isFinite(numeric) ? sum + numeric : sum;
-                              }, 0);
+                              const currentTotal = sumMatrixValues(visibleMatrixDays, row, "current");
                               return (
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
                                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal}</span>
                                   <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
-                                  <span>{total}</span>
+                                  <span>{formatMatrixValue(total, row.format)}</span>
                                 </div>
                               );
                             }
 
-                            return total;
+                            return formatMatrixValue(total, row.format);
                           })()}
                         </td>
                       </tr>
@@ -1766,6 +2073,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </tbody>
           </table>
         </div>
+        {workbookDays.length > MATRIX_PAGE_SIZE && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            <div style={{ fontSize: 11, color: C.textMut }}>
+              Table page {matrixPage + 1} of {matrixPageCount} · {visibleMatrixDays[0]?.date || "—"} to {visibleMatrixDays[visibleMatrixDays.length - 1]?.date || "—"}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="secondary" size="sm" onClick={() => setMatrixPage((page) => Math.max(0, page - 1))} disabled={matrixPage <= 0}>Previous Days</Btn>
+              <Btn variant="secondary" size="sm" onClick={() => setMatrixPage((page) => Math.min(matrixPageCount - 1, page + 1))} disabled={matrixPage >= matrixPageCount - 1}>Next Days</Btn>
+            </div>
+          </div>
+        )}
         {matrixMode === "projected" ? (
           <ProjectionMethodologyPanel day={selectedDay} />
         ) : (

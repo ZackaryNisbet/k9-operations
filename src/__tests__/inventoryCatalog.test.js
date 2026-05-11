@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   assignInventoryCatalogSortOrder,
   buildInventoryCatalogGroups,
+  getInventoryVendorHref,
   getInventoryCategoryOrder,
   getInventoryCategorySuggestions,
   getInventorySubcategorySuggestions,
   moveInventoryCatalogItem,
   moveInventoryCategory,
+  normalizeInventoryVendorUrl,
   renameInventorySubcategory,
 } from "../kol/pages/inventoryCatalog";
 
@@ -69,5 +71,23 @@ describe("inventory catalog helpers", () => {
       subcategory: "First Aid",
       sort_order: 20,
     });
+  });
+
+  it("normalizes vendor URLs for catalog editing and saving", () => {
+    expect(normalizeInventoryVendorUrl(" amazon.com/foo ")).toBe("https://amazon.com/foo");
+    expect(normalizeInventoryVendorUrl("www.amazon.com/foo")).toBe("https://www.amazon.com/foo");
+    expect(normalizeInventoryVendorUrl("https://amazon.com/foo")).toBe("https://amazon.com/foo");
+    expect(normalizeInventoryVendorUrl("http://amazon.com/foo")).toBe("http://amazon.com/foo");
+    expect(normalizeInventoryVendorUrl("//amazon.com/foo")).toBe("//amazon.com/foo");
+    expect(normalizeInventoryVendorUrl("")).toBe("");
+    expect(normalizeInventoryVendorUrl(" javascript:alert(1) ")).toBe("");
+  });
+
+  it("only renders safe vendor links as clickable hrefs", () => {
+    expect(getInventoryVendorHref("amazon.com/foo")).toBe("https://amazon.com/foo");
+    expect(getInventoryVendorHref("https://amazon.com/foo")).toBe("https://amazon.com/foo");
+    expect(getInventoryVendorHref("//amazon.com/foo")).toBe("//amazon.com/foo");
+    expect(getInventoryVendorHref("javascript:alert(1)")).toBe("");
+    expect(getInventoryVendorHref("not a url")).toBe("");
   });
 });

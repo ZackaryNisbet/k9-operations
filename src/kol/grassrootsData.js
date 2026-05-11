@@ -69,9 +69,12 @@ export const GRASSROOTS_STATUS_OPTIONS = [
   { value: "identified", label: "Identified" },
   { value: "corresponding", label: "Corresponding" },
   { value: "booked", label: "Booked" },
+  { value: "abandoned", label: "Abandoned" },
 ];
 
 export const GRASSROOTS_EVENT_TYPE_OPTIONS = ["B2C", "B2B"];
+
+export const GRASSROOTS_EVENT_SAVE_RPC = "save_grassroots_target_with_event_dates";
 
 export const GRASSROOTS_BUSINESS_CATEGORY_OPTIONS = [
   "Veterinarian",
@@ -175,7 +178,17 @@ export function normalizeGrassrootsStatus(value) {
   if (["outreach", "identified", "new", "lead"].includes(normalized)) return "identified";
   if (["corresponding", "correspondence", "contacted"].includes(normalized)) return "corresponding";
   if (["closing", "active", "booked", "officially_booked"].includes(normalized)) return "booked";
+  if (["abandoned", "archive", "archived", "inactive", "dead", "dropped"].includes(normalized)) return "abandoned";
   return "identified";
+}
+
+export function shouldArchiveGrassrootsTargetForStatus(value) {
+  return normalizeGrassrootsStatus(value) === "abandoned";
+}
+
+export function resolveGrassrootsTargetIsActive(status, requestedIsActive = true) {
+  if (shouldArchiveGrassrootsTargetForStatus(status)) return false;
+  return requestedIsActive !== false;
 }
 
 export function normalizeGrassrootsEventType(value = "") {
@@ -185,7 +198,8 @@ export function normalizeGrassrootsEventType(value = "") {
 
 function parseTime(value) {
   const text = stringValue(value);
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(text) ? text : "";
+  const match = text.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  return match ? `${match[1]}:${match[2]}` : "";
 }
 
 export function normalizeGrassrootsEventDates(target = {}) {
@@ -231,6 +245,13 @@ export function makeBlankGrassrootsTarget(category = "events") {
     category: config.dbValue,
     name: "",
     address: "",
+    address_line_1: "",
+    address_line_2: "",
+    address_city: "",
+    address_state: "",
+    address_postal_code: "",
+    address_country: "",
+    google_place_id: "",
     first_name: "",
     last_name: "",
     contact_source: "",
@@ -259,6 +280,38 @@ export function makeBlankGrassrootsTarget(category = "events") {
     organizer: "",
     details: {},
     isDraft: true,
+  };
+}
+
+export function getGrassrootsAddressText(target = {}) {
+  return normalizeText(target.address);
+}
+
+export function getGrassrootsSplitAddress(target = {}) {
+  return {
+    address_line_1: normalizeText(target.address_line_1),
+    address_line_2: normalizeText(target.address_line_2),
+    address_city: normalizeText(target.address_city),
+    address_state: normalizeText(target.address_state),
+    address_postal_code: normalizeText(target.address_postal_code),
+    address_country: normalizeText(target.address_country),
+    google_place_id: normalizeText(target.google_place_id),
+  };
+}
+
+export function buildGrassrootsEventDateRpcRows(target = {}) {
+  return normalizeGrassrootsEventDates(target).map((row, index) => ({
+    event_date: row.event_date,
+    start_time: row.start_time || null,
+    end_time: row.end_time || null,
+    sequence_order: index + 1,
+  }));
+}
+
+export function buildGrassrootsEventSaveRpcArgs(targetPayload = {}, eventDateSource = {}) {
+  return {
+    p_target: targetPayload && typeof targetPayload === "object" ? targetPayload : {},
+    p_event_dates: buildGrassrootsEventDateRpcRows(eventDateSource),
   };
 }
 
@@ -444,6 +497,7 @@ export function buildGrassrootsMetrics(targets = [], activitiesByTarget = {}, to
     total: visible.length,
     active: visible.filter((target) => target.is_active !== false).length,
     inactive: visible.filter((target) => target.is_active === false).length,
+    abandoned: visible.filter((target) => normalizeGrassrootsStatus(target.status) === "abandoned").length,
     activities: visible.reduce((sum, target) => sum + getGrassrootsActivityCount(target, activitiesByTarget), 0),
     upcoming: visible.filter((target) => {
       const next = getGrassrootsNextDate(target, activitiesByTarget);

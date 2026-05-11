@@ -29,11 +29,13 @@ import {
 import {
   assignInventoryCatalogSortOrder,
   buildInventoryCatalogGroups,
+  getInventoryVendorHref,
   getInventoryCategorySuggestions,
   getInventorySubcategorySuggestions,
   inventorySectionId,
   moveInventoryCatalogItem,
   moveInventoryCategory,
+  normalizeInventoryVendorUrl,
   renameInventorySubcategory,
 } from "./inventoryCatalog";
 
@@ -75,6 +77,27 @@ function normalizeCatalogNumber(value, integer = false) {
   if (value === "" || value == null) return null;
   const parsed = integer ? parseInt(value, 10) : parseFloat(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getWindowScrollPosition() {
+  if (typeof window === "undefined") return null;
+  return {
+    x: window.scrollX || window.pageXOffset || 0,
+    y: window.scrollY || window.pageYOffset || 0,
+  };
+}
+
+function restoreWindowScrollPosition(position) {
+  if (!position || typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+  const restore = () => window.scrollTo(position.x, position.y);
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => {
+      restore();
+      window.requestAnimationFrame(restore);
+    });
+    return;
+  }
+  setTimeout(restore, 0);
 }
 
 // ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
@@ -158,6 +181,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
   const needsOrder = toOrder !== "" && toOrder > 0;
   const countReadOnly = isReadOnly || !canEditCounts;
   const orderReadOnly = isReadOnly || !canMarkOrdered;
+  const vendorHref = getInventoryVendorHref(item.vendor_link);
 
   return (
     <>
@@ -181,9 +205,9 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCo
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {item.item_name}
-            {item.vendor_link && (
+            {vendorHref && (
               <a
-                href={item.vendor_link}
+                href={vendorHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Open product link"
@@ -603,7 +627,13 @@ const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, catalogIte
         </div>
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Product Link</div>
-          <input value={item.vendor_link || ""} onChange={e => onChange("vendor_link", e.target.value)} placeholder="https://..." style={{ ...fieldStyle, fontSize: 11 }} />
+          <input
+            value={item.vendor_link || ""}
+            onChange={e => onChange("vendor_link", e.target.value)}
+            onBlur={e => onChange("vendor_link", normalizeInventoryVendorUrl(e.target.value))}
+            placeholder="https://..."
+            style={{ ...fieldStyle, fontSize: 11 }}
+          />
         </div>
         <div>
           <InventoryTaxonomySelect
@@ -1528,7 +1558,7 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onCl
     par_level: item?.par_level ?? defaults?.par_level ?? "",
     size: item?.size || defaults?.size || "",
     vendor: item?.vendor || defaults?.vendor || "",
-    vendor_link: item?.vendor_link || defaults?.vendor_link || "",
+    vendor_link: normalizeInventoryVendorUrl(item?.vendor_link || defaults?.vendor_link || ""),
     category: item?.category || defaults?.category || "",
     subcategory: item?.subcategory || defaults?.subcategory || "",
     unit_price: item?.unit_price ?? defaults?.unit_price ?? "",
@@ -1580,7 +1610,7 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onCl
       gl_account: form.gl_account.trim(),
       size: form.size.trim(),
       vendor: form.vendor.trim(),
-      vendor_link: form.vendor_link.trim(),
+      vendor_link: normalizeInventoryVendorUrl(form.vendor_link),
       par_level: normalizeCatalogNumber(form.par_level, true),
       unit_price: normalizeCatalogNumber(form.unit_price, false),
     });
@@ -1634,7 +1664,10 @@ function CatalogItemModal({ mode, item, defaults, catalogItems, categories, onCl
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 12 }}>
           {renderField("Vendor", "vendor", { placeholder: "Vendor" })}
-          {renderField("Product Link", "vendor_link", { placeholder: "https://..." })}
+          {renderField("Product Link", "vendor_link", {
+            placeholder: "https://...",
+            onBlur: (event) => setField("vendor_link", normalizeInventoryVendorUrl(event.target.value)),
+          })}
         </div>
         {renderField("Unit Cost", "unit_price", { type: "number", min: "0", step: "0.01", placeholder: "0.00" })}
 
@@ -2517,6 +2550,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [catalogItemSaving, setCatalogItemSaving] = useState(false);
   const [dragState, setDragState] = useState({ draggingId: null, overKey: null });
   const currentCycleRef = useRef(thisWeekStart);
+  const catalogEditModeRef = useRef(false);
 
   // ── Refs ──
   const saveTimer = useRef(null);
@@ -2527,6 +2561,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const countsRef = useRef({});
   const countedDateRef = useRef(countedDate);
   const profileRef = useRef(profile);
+
+  useEffect(() => {
+    catalogEditModeRef.current = catalogEditMode;
+  }, [catalogEditMode]);
 
   const viewerProfile = profile || authProfile || {};
   const locationId = profile?.location_id || authProfile?.location_id;
@@ -2661,6 +2699,24 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }
   }, []);
 
+  const loadCatalogItems = useCallback(async ({ includeInactive = false, preserveScroll = false } = {}) => {
+    if (!locationId) return [];
+    const scrollPosition = preserveScroll ? getWindowScrollPosition() : null;
+    const catQuery = supabase
+      .from("inventory_catalog")
+      .select("*")
+      .eq("location_id", locationId);
+    if (!includeInactive) catQuery.eq("is_active", true);
+    const { data: catalog, error: catErr } = await catQuery
+      .order("category", { ascending: true })
+      .order("subcategory", { ascending: true })
+      .order("sort_order", { ascending: true });
+    if (catErr) throw catErr;
+    setCatalogItems(catalog || []);
+    restoreWindowScrollPosition(scrollPosition);
+    return catalog || [];
+  }, [locationId]);
+
   // ── Data loading ──
   const loadData = useCallback(async () => {
     if (!locationId) return;
@@ -2668,18 +2724,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     setLoadError(null);
     try {
       // 1. Load catalog items (sorted: category → subcategory → sort_order)
-      // Only filter active items when not in catalog edit mode
-      const catQuery = supabase
-        .from("inventory_catalog")
-        .select("*")
-        .eq("location_id", locationId);
-      if (!catalogEditMode) catQuery.eq("is_active", true);
-      const { data: catalog, error: catErr } = await catQuery
-        .order("category", { ascending: true })
-        .order("subcategory", { ascending: true })
-        .order("sort_order", { ascending: true });
-      if (catErr) throw catErr;
-      setCatalogItems(catalog || []);
+      await loadCatalogItems({ includeInactive: catalogEditModeRef.current });
 
       // 2. Find or create snapshot
       let snap = null;
@@ -2773,7 +2818,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     } finally {
       setLoading(false);
     }
-  }, [locationId, currentWeekStart, thisWeekStart, catalogEditMode]);
+  }, [locationId, currentWeekStart, thisWeekStart, loadCatalogItems]);
 
   useEffect(() => {
     loadData();
@@ -2930,9 +2975,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     setCatalogSaveStatus("saving");
     catalogSaveTimers.current[itemId] = setTimeout(async () => {
       try {
+        const saveUpdates = Object.prototype.hasOwnProperty.call(updates, "vendor_link")
+          ? { ...updates, vendor_link: normalizeInventoryVendorUrl(updates.vendor_link) }
+          : updates;
         const { error } = await supabase
           .from("inventory_catalog")
-          .update({ ...updates, updated_at: new Date().toISOString() })
+          .update({ ...saveUpdates, updated_at: new Date().toISOString() })
           .eq("id", itemId);
         if (error) throw error;
         setCatalogSaveStatus("saved");
@@ -3047,7 +3095,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       category: formData.category || "",
       subcategory: formData.subcategory || "",
       vendor: formData.vendor || "",
-      vendor_link: formData.vendor_link || "",
+      vendor_link: normalizeInventoryVendorUrl(formData.vendor_link),
       gl_account: formData.gl_account || "",
       size: formData.size || "",
       par_level: formData.par_level,
@@ -3568,6 +3616,24 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     [catalogItems]
   );
   const showCatalogEditControls = !isReadOnly && canEditCatalog;
+  const setCatalogEditModePreservingScroll = useCallback((nextMode) => {
+    const enabled = Boolean(nextMode);
+    const scrollPosition = getWindowScrollPosition();
+    catalogEditModeRef.current = enabled;
+    setEditingField(null);
+    setExpandedEditId(null);
+    setCatalogEditMode(enabled);
+    if (enabled) {
+      void loadCatalogItems({ includeInactive: true, preserveScroll: true }).catch((err) => {
+        console.error("Catalog refresh error:", err);
+        setCatalogSaveStatus("error");
+        setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      });
+    } else {
+      setCatalogItems(prev => prev.filter(item => item?.is_active !== false));
+    }
+    restoreWindowScrollPosition(scrollPosition);
+  }, [loadCatalogItems]);
 
   // ── Render ──
   return (
@@ -3609,11 +3675,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             )}
             {showCatalogEditControls && (
               catalogEditMode ? (
-                <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
+                <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => setCatalogEditModePreservingScroll(false)}>
                   Done Editing
                 </Btn>
               ) : (
-                <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => setCatalogEditMode(true)}>
+                <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => setCatalogEditModePreservingScroll(true)}>
                   Edit Catalog
                 </Btn>
               )
@@ -3709,10 +3775,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             icon={catalogEditMode ? <I.Check /> : <I.Edit />}
             onClick={() => {
               if (catalogEditMode) {
-                setCatalogEditMode(false);
-                loadData();
+                setCatalogEditModePreservingScroll(false);
               } else {
-                setCatalogEditMode(true);
+                setCatalogEditModePreservingScroll(true);
               }
             }}
           >

@@ -1198,4 +1198,67 @@ describe("scheduling matrix logic", () => {
 
     expect(snapshot.display.play_yard.large_play_dogs).toBe(5);
   });
+
+  it("uses calendar-day lead math and canonical widget source fields for historical comparisons", () => {
+    const baseSnapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-17",
+      reservations: [],
+      roomByDate: {},
+      totalRooms: 0,
+    });
+    const currentAdjusted = applyGingrWidgetSourceCountsToDisplay(baseSnapshot.display, {
+      date: "2026-05-17",
+      check_ins: 14,
+      check_outs: 10,
+      overnight: 52,
+      total: 90,
+      boarding: { check_ins: 7, check_outs: 8, overnight: 52, opening: 60, total: 67 },
+      daytime: { check_ins: 7, check_outs: 2, overnight: 0, total: 38 },
+      other: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+      per_type: [],
+      synced_at: "2026-05-11T15:25:28.112Z",
+    });
+
+    const projection = buildProjectionForDate({
+      targetDate: "2026-05-17",
+      currentDate: "2026-05-11",
+      currentSnapshot: { ...baseSnapshot, display: currentAdjusted.display },
+      historicalReservations: [
+        makeReservation({
+          gingr_id: "last-year-anchor",
+          animalId: "last-year-anchor-dog",
+          cls: "daycare",
+          startKey: "2025-05-17",
+          endKey: "2025-05-17",
+          bookedDateKey: "2025-05-10",
+        }),
+      ],
+      historicalWidgetSourceByDate: new Map([
+        ["2025-05-17", {
+          date: "2025-05-17",
+          check_ins: 12,
+          check_outs: 9,
+          overnight: 48,
+          total: 80,
+          boarding: { check_ins: 6, check_outs: 7, overnight: 48, opening: 55, total: 61 },
+          daytime: { check_ins: 6, check_outs: 2, overnight: 0, total: 32 },
+          other: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+          per_type: [],
+          synced_at: "2025-05-17T12:00:00.000Z",
+        }],
+      ]),
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(projection.lead_days).toBe(6);
+    expect(projection.comparisons.current_year.total).toBe(90);
+    expect(projection.comparisons.current_year.overnight).toBe(52);
+    expect(projection.comparisons.current_year.daytime).toBe(38);
+    expect(projection.comparisons.yoy_total).toBe(80);
+    expect(projection.comparisons.yoy_overnight).toBe(48);
+    expect(projection.comparisons.yoy_daytime).toBe(32);
+    expect(projection.comparisons.yoy_total_pct_vs_current_year).toBe(88.9);
+    expect(projection.comparisons.source_available).toBe(true);
+  });
 });

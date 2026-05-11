@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
 import {
   buildPdfResponseMap,
+  canAccessInterviewIdentity,
   buildInterviewSttAudioFileName,
   buildInterviewResumePath,
   buildInterviewTemplateSnapshot,
@@ -11,6 +13,8 @@ import {
   formatInterviewPayRateRange,
   formatInterviewPayRateSummary,
   getInterviewPdfFieldDisplayRect,
+  getInterviewCandidateContactLabel,
+  getInterviewCandidateDisplayLabel,
   getInterviewAudioContentType,
   getInterviewResumeContentType,
   getInterviewRecommendation,
@@ -19,6 +23,7 @@ import {
   INTERVIEW_RESUME_MAX_BYTES,
   INTERVIEW_STT_NORMALIZED_AUDIO_SAMPLE_RATE,
   normalizeInterviewPayRates,
+  redactInterviewRecordForIdentityAccess,
   shouldNormalizeInterviewAudioForStt,
   validateAiDraftPayload,
   validateInterviewAudioFile,
@@ -174,6 +179,87 @@ describe("interview PDF form utilities", () => {
       interviewer_name: "Zack Nisbet",
       decision_move_forward: "X",
     });
+  });
+
+  it("redacts interview identity fields for restricted users before render or detail fetch", () => {
+    const rawRecord = {
+      id: "interview-1",
+      location_id: "location-1",
+      template_id: "template-1",
+      template_version_id: "version-1",
+      candidate_full_name: "Alex Private",
+      candidate_email: "alex@example.com",
+      candidate_phone: "555-111-2222",
+      candidate_position: "Pet Care Technician",
+      interview_date: "2026-05-11",
+      interview_time: "09:30:00",
+      zoom_recording_url: "https://zoom.example/private",
+      zoom_passcode: "123456",
+      transcript_text: "private transcript",
+      transcript_file_bucket: "labor-interview-documents",
+      transcript_file_path: "location/interviews/interview-1/transcript.txt",
+      template_snapshot: { template: { role_key: "pct" } },
+      pdf_field_manifest_snapshot: [{ name: "candidate_name" }],
+      question_snapshot: [{ prompt: "Private question" }],
+      metadata: {
+        hiring_recommendation: "proceed",
+        audio_transcription: { source_audio: { bucket: "labor-interview-documents" } },
+      },
+      created_by_user_id: "creator-1",
+      updated_by_user_id: "manager-1",
+      masked_candidate_label: "Candidate 4",
+      can_access_identity: false,
+    };
+
+    const redacted = redactInterviewRecordForIdentityAccess(rawRecord);
+
+    expect(canAccessInterviewIdentity(redacted)).toBe(false);
+    expect(getInterviewCandidateDisplayLabel(redacted)).toBe("Candidate 4");
+    expect(getInterviewCandidateContactLabel(redacted)).toBe("Contact restricted");
+    expect(redacted).toMatchObject({
+      candidate_full_name: "Candidate 4",
+      candidate_email: null,
+      candidate_phone: null,
+      zoom_recording_url: null,
+      zoom_passcode: null,
+      transcript_text: null,
+      transcript_file_bucket: null,
+      transcript_file_path: null,
+      created_by_user_id: null,
+      updated_by_user_id: null,
+      metadata: {
+        hiring_recommendation: "proceed",
+        next_step: "proceed",
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toContain("Alex Private");
+    expect(JSON.stringify(redacted)).not.toContain("alex@example.com");
+    expect(JSON.stringify(redacted)).not.toContain("private transcript");
+    expect(JSON.stringify(redacted)).not.toContain("labor-interview-documents");
+  });
+
+  it("keeps interview identity fields for authorized users", () => {
+    const rawRecord = {
+      candidate_full_name: "Alex Private",
+      candidate_email: "alex@example.com",
+      can_access_identity: true,
+    };
+
+    const visible = redactInterviewRecordForIdentityAccess(rawRecord);
+
+    expect(canAccessInterviewIdentity(visible)).toBe(true);
+    expect(getInterviewCandidateDisplayLabel(visible)).toBe("Alex Private");
+    expect(getInterviewCandidateContactLabel(visible)).toBe("alex@example.com");
+  });
+
+  it("keeps restricted interview views on the redacted data path", () => {
+    const source = readFileSync(new URL("../kol/pages/LaborInterviewsPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain('supabase.rpc("get_labor_interview_records_redacted"');
+    expect(source).toContain('select("id,location_id,template_id,template_version_id,candidate_position,interview_date,interview_time,status,metadata,created_at,updated_at")');
+    expect(source).toContain("!canAccessInterviewIdentity(targetRecord, canManage)");
+    expect(source).toContain("enabled: selectedRecordCanAccessIdentity");
+    expect(source).toContain("<RestrictedInterviewDetail record={selectedRecord} />");
   });
 
   it("excludes unreviewed AI drafts from final PDF maps unless explicitly requested", () => {
