@@ -2,18 +2,18 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "b9ec2b64379a8fe025b89ba7081695593d3e639d",
+      "commit": "f4e8229bca57a5734590721e0800bc30e066e7ed",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Allow larger Checkout TV profile photo cache uploads",
-      "updatedAt": "2026-05-02T14:46:08.422Z"
+      "note": "Cherry Hill QA 23 scheduling horizon and projection freshness",
+      "updatedAt": "2026-05-11T16:28:08.361Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "17e68aaf6f395e6dca4b822fc9d0cd2a44b2630f",
+      "commit": "f4e8229bca57a5734590721e0800bc30e066e7ed",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Normalize Cherry Hill scheduling location aliases before matrix writes",
-      "updatedAt": "2026-04-22T18:37:02.826Z"
+      "note": "Cherry Hill QA 23 scheduling horizon and projection freshness",
+      "updatedAt": "2026-05-11T16:28:08.361Z"
     },
     "ops-compute": {
       "commit": "8ac020be08871362d5ba7f4ded3c0a08bf6537bc",
