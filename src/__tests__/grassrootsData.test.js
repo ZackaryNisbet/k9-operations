@@ -17,7 +17,7 @@ import {
   normalizeLegacyGrassrootsTracker,
   resolveGrassrootsTargetIsActive,
 } from "../kol/grassrootsData.js";
-import { parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
+import { buildGrassrootsLegacyAddressFromSplitAddress, parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
 
 describe("grassrootsData", () => {
   it("renames legacy Remy Calloway employees to local employees", () => {
@@ -199,6 +199,17 @@ describe("grassrootsData", () => {
       address_country: "US",
       google_place_id: "place-500",
     });
+  });
+
+  it("builds a legacy freeform address from manual split address fields", () => {
+    expect(buildGrassrootsLegacyAddressFromSplitAddress({
+      address_line_1: "500 Route 70",
+      address_line_2: "Suite 5",
+      address_city: "Adair Forsythe",
+      address_state: "NJ",
+      address_postal_code: "08002",
+      address_country: "US",
+    })).toBe("500 Route 70, Suite 5, Adair Forsythe, NJ 08002, US");
   });
 
   it("filters drops by business category", () => {
