@@ -277,6 +277,69 @@ export function compareGrassrootsEventSchedule(left = {}, right = {}, today = ne
   return dateCompare || normalizeText(left.name).localeCompare(normalizeText(right.name));
 }
 
+function hasGrassrootsEventDateInRange(target = {}, startDate = "", endDate = "") {
+  return normalizeGrassrootsEventDates(target).some((row) => row.event_date >= startDate && row.event_date <= endDate);
+}
+
+function normalizeGrassrootsMetricDate(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  return "";
+}
+
+function hasGrassrootsEventMetricDateInRange(target = {}, startDate = "", endDate = "") {
+  if (hasGrassrootsEventDateInRange(target, startDate, endDate)) return true;
+  const fallbackDates = [
+    target.initial_contact_date,
+    target.last_contact_date,
+    target.created_at,
+    target.updated_at,
+  ].map(normalizeGrassrootsMetricDate).filter(Boolean);
+  return fallbackDates.some((date) => date >= startDate && date <= endDate);
+}
+
+function isGrassrootsEventCompletedBefore(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length === 0) return false;
+  return dates[dates.length - 1].event_date < today;
+}
+
+function isGrassrootsEventUpcomingOnOrAfter(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  return normalizeGrassrootsEventDates(target).some((row) => row.event_date >= today);
+}
+
+export function buildGrassrootsEventMetrics(targets = [], today = new Date().toISOString().slice(0, 10)) {
+  const year = today.slice(0, 4);
+  const month = today.slice(0, 7);
+  const yearStart = `${year}-01-01`;
+  const yearEnd = `${year}-12-31`;
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-31`;
+  const eventTargets = targets.filter((target) => getGrassrootsCategoryConfig(target.category).id === "events");
+  const bookedEvents = eventTargets.filter((target) => normalizeGrassrootsStatus(target.status) === "booked");
+  return {
+    year,
+    month,
+    bookedUpcomingThisYear: bookedEvents.filter((target) => (
+      hasGrassrootsEventDateInRange(target, yearStart, yearEnd)
+      && isGrassrootsEventUpcomingOnOrAfter(target, today)
+    )).length,
+    bookedCompletedThisYear: bookedEvents.filter((target) => (
+      hasGrassrootsEventDateInRange(target, yearStart, yearEnd)
+      && isGrassrootsEventCompletedBefore(target, today)
+    )).length,
+    identifiedThisYear: eventTargets.filter((target) => (
+      normalizeGrassrootsStatus(target.status) === "identified"
+      && hasGrassrootsEventMetricDateInRange(target, yearStart, yearEnd)
+    )).length,
+    correspondingThisYear: eventTargets.filter((target) => (
+      normalizeGrassrootsStatus(target.status) === "corresponding"
+      && hasGrassrootsEventMetricDateInRange(target, yearStart, yearEnd)
+    )).length,
+    bookedThisMonth: bookedEvents.filter((target) => hasGrassrootsEventDateInRange(target, monthStart, monthEnd)).length,
+  };
+}
+
 export function makeBlankGrassrootsTarget(category = "events") {
   const config = getGrassrootsCategoryConfig(category);
   const isEvent = config.id === "events";

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyGrassrootsFilters,
   buildGrassrootsEventDateRpcRows,
+  buildGrassrootsEventMetrics,
   buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
@@ -147,6 +148,29 @@ describe("grassrootsData", () => {
       "past",
       "missing",
     ]);
+  });
+
+  it("builds simple event metrics for the active calendar year and month", () => {
+    const rows = [
+      { id: "upcoming-booked", category: "events", status: "booked", event_dates: [{ event_date: "2026-06-01" }] },
+      { id: "completed-booked", category: "events", status: "booked", event_dates: [{ event_date: "2026-04-10" }] },
+      { id: "multi-booked", category: "events", status: "booked", event_dates: [{ event_date: "2026-05-02" }, { event_date: "2026-05-13" }] },
+      { id: "identified", category: "events", status: "identified", event_dates: [{ event_date: "2026-07-15" }] },
+      { id: "created-identified", category: "events", status: "identified", created_at: "2026-03-02T12:00:00Z" },
+      { id: "corresponding", category: "events", status: "corresponding", event_dates: [{ event_date: "2026-08-01" }] },
+      { id: "wrong-year", category: "events", status: "booked", event_dates: [{ event_date: "2027-01-01" }] },
+      { id: "drop", category: "drops", status: "booked", event_dates: [{ event_date: "2026-06-01" }] },
+    ];
+
+    expect(buildGrassrootsEventMetrics(rows, "2026-05-11")).toMatchObject({
+      year: "2026",
+      month: "2026-05",
+      bookedUpcomingThisYear: 2,
+      bookedCompletedThisYear: 1,
+      identifiedThisYear: 2,
+      correspondingThisYear: 1,
+      bookedThisMonth: 1,
+    });
   });
 
   it("packages event-date rows for a single atomic save RPC payload", () => {
