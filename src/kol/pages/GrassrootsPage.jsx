@@ -198,15 +198,51 @@ export function parseGooglePlaceAddress(place) {
   const read = (type, mode = "long_name") => components.find((component) => component.types?.includes(type))?.[mode] || "";
   const streetNumber = read("street_number");
   const route = read("route");
+  const postalCode = [read("postal_code"), read("postal_code_suffix")].filter(Boolean).join("-");
+  const fallback = parseFreeformGrassrootsAddress(place?.formatted_address || "");
   return {
-    address: place?.formatted_address || "",
-    address_line_1: [streetNumber, route].filter(Boolean).join(" ").trim(),
+    address: place?.formatted_address || fallback.address || "",
+    address_line_1: [streetNumber, route].filter(Boolean).join(" ").trim() || fallback.address_line_1,
     address_line_2: "",
-    address_city: read("locality") || read("postal_town") || read("sublocality") || read("administrative_area_level_3"),
-    address_state: read("administrative_area_level_1", "short_name"),
-    address_postal_code: read("postal_code"),
-    address_country: read("country", "short_name"),
+    address_city: read("locality") || read("postal_town") || read("sublocality") || read("administrative_area_level_3") || fallback.address_city,
+    address_state: read("administrative_area_level_1", "short_name") || fallback.address_state,
+    address_postal_code: postalCode || fallback.address_postal_code,
+    address_country: read("country", "short_name") || fallback.address_country,
     google_place_id: place?.place_id || "",
+  };
+}
+
+export function parseFreeformGrassrootsAddress(value) {
+  const address = String(value || "").trim().replace(/\s+/g, " ");
+  const blank = {
+    address,
+    address_line_1: "",
+    address_line_2: "",
+    address_city: "",
+    address_state: "",
+    address_postal_code: "",
+    address_country: "",
+    google_place_id: "",
+  };
+  if (!address) return blank;
+  const parts = address.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 3) return blank;
+  const countryRaw = parts.at(-1) || "";
+  const country = /^u\.?s\.?a?\.?$/i.test(countryRaw) || /^united states/i.test(countryRaw) ? "US" : countryRaw;
+  const statePostal = parts.at(-2) || "";
+  const statePostalMatch = statePostal.match(/^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
+  const postalOnlyMatch = statePostal.match(/(\d{5}(?:-\d{4})?)$/);
+  const state = statePostalMatch?.[1]?.toUpperCase() || "";
+  const postalCode = statePostalMatch?.[2] || postalOnlyMatch?.[1] || "";
+  const city = parts.at(-3) || "";
+  const line1 = parts.slice(0, -3).join(", ");
+  return {
+    ...blank,
+    address_line_1: line1,
+    address_city: city,
+    address_state: state,
+    address_postal_code: postalCode,
+    address_country: country,
   };
 }
 
@@ -532,9 +568,23 @@ function FieldEditor({ field, value, onChange }) {
   );
 }
 
+function looksLikeCompleteGrassrootsAddress(value) {
+  return /,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?(?:,\s*[^,]+)?$/i.test(String(value || "").trim());
+}
+
 function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceSelect, placeholder = "Start typing an address" }) {
   const inputRef = useRef(null);
   const autocompleteRef = useRef(null);
+  const appliedAddressRef = useRef("");
+  const applyAddressValue = useCallback((rawValue, options = {}) => {
+    const address = String(rawValue || "").trim();
+    if (!address || appliedAddressRef.current === address) return;
+    if (!options.force && !looksLikeCompleteGrassrootsAddress(address)) return;
+    const parsedAddress = parseFreeformGrassrootsAddress(address);
+    if (!parsedAddress.address_line_1 || !parsedAddress.address_city) return;
+    appliedAddressRef.current = address;
+    onPlaceSelect?.({ ...parsedAddress, address });
+  }, [onPlaceSelect]);
 
   useEffect(() => {
     let cancelled = false;
@@ -549,8 +599,70 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
         const place = autocompleteRef.current?.getPlace?.();
         const address = place?.formatted_address || inputRef.current?.value || "";
         const parsedAddress = parseGooglePlaceAddress(place);
+        appliedAddressRef.current = address;
         onChange(address);
         onPlaceSelect?.({ ...parsedAddress, address: parsedAddress.address || address });
+      });
+    });
+    return () => {
+      cancelled = true;
+      if (autocompleteRef.current && window.google?.maps?.event) {
+        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  }, [onChange, onPlaceSelect]);
+
+  return (
+    <label style={{ display: "block" }}>
+      <Label>{label}</Label>
+      <input
+        ref={inputRef}
+        value={value || ""}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          onChange(nextValue);
+          applyAddressValue(nextValue);
+        }}
+        onBlur={(event) => applyAddressValue(event.target.value, { force: true })}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === "Tab") applyAddressValue(event.currentTarget.value, { force: true });
+        }}
+        placeholder={placeholder}
+        autoComplete="off"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-form-type="other"
+        style={{ ...INPUT_STYLE, background: C.bg }}
+      />
+    </label>
+  );
+}
+
+function GooglePlacesBusinessInput({ label, value, onChange, onPlaceSelect, placeholder = "Start typing a business" }) {
+  const inputRef = useRef(null);
+  const autocompleteRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGooglePlacesScript().then((ready) => {
+      if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
+      autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
+        fields: ["address_components", "formatted_address", "formatted_phone_number", "name", "place_id", "types", "website"],
+        types: ["establishment"],
+        componentRestrictions: { country: "us" },
+      });
+      autocompleteRef.current.addListener("place_changed", () => {
+        const place = autocompleteRef.current?.getPlace?.();
+        const name = place?.name || inputRef.current?.value || "";
+        const parsedAddress = parseGooglePlaceAddress(place);
+        onChange(name);
+        onPlaceSelect?.({
+          ...parsedAddress,
+          address: parsedAddress.address || place?.formatted_address || "",
+          name,
+          contact_phone: place?.formatted_phone_number || "",
+          website: place?.website || "",
+        });
       });
     });
     return () => {
@@ -573,7 +685,7 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
         data-1p-ignore="true"
         data-lpignore="true"
         data-form-type="other"
-        style={{ ...INPUT_STYLE, background: C.bg }}
+        style={INPUT_STYLE}
       />
     </label>
   );
@@ -785,6 +897,28 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog =
   const applyPlaceAddress = (parts) => {
     Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
   };
+  const applyBusinessPlace = (parts) => {
+    Object.entries(parts || {}).forEach(([key, value]) => {
+      if (["name", "contact_phone", "website"].includes(key)) return;
+      onChange(key, value || "");
+    });
+    if (parts?.name) onChange("name", parts.name);
+    if (parts?.contact_phone && !String(draft.contact_phone || "").trim()) onChange("contact_phone", parts.contact_phone);
+    if (parts?.website) {
+      const existingDetails = draft.details && typeof draft.details === "object" ? draft.details : {};
+      const currentLinks = normalizeGrassrootsEventLinks(draft);
+      const hasWebsiteLink = currentLinks.some((link) => String(link.url || "").trim() === parts.website);
+      if (!hasWebsiteLink) {
+        onChange("details", {
+          ...existingDetails,
+          links: [
+            ...currentLinks,
+            { id: `business_link_${Date.now()}`, label: "Website", url: parts.website },
+          ],
+        });
+      }
+    }
+  };
 
   return (
     <Card style={{ padding: 0, overflow: "visible", position: "relative", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1)" }}>
@@ -811,10 +945,12 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog =
         <div className="grassroots-target-form-grid">
           <FormSection title={categoryConfig.singular}>
             <div className="grassroots-event-field-grid">
-              <FieldEditor
-                field={{ key: "name", label: categoryConfig.nameLabel, placeholder: categoryConfig.nameLabel }}
+              <GooglePlacesBusinessInput
+                label={categoryConfig.nameLabel}
                 value={draft.name}
                 onChange={(value) => onChange("name", value)}
+                onPlaceSelect={applyBusinessPlace}
+                placeholder={categoryId === "apartments" ? "Search apartment complex" : "Search business"}
               />
               {categoryConfig.usesStatus !== false && <StatusPicker value={draft.status || "identified"} onChange={changeStatus} />}
               {categoryId !== "events" && <ActiveToggle value={draft.is_active !== false} onChange={(value) => onChange("is_active", value)} />}
@@ -1738,12 +1874,17 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           100% { opacity:1; transform:translateY(0) scale(1); filter:blur(0); }
         }
         @keyframes grassrootsComposerSweep {
-          0% { transform:translate3d(-200%,0,0) skewX(-18deg); opacity:0; }
-          12% { opacity:0; }
-          24% { opacity:0.36; }
-          48% { opacity:0.84; }
-          72% { opacity:0.22; }
-          100% { transform:translate3d(420%,0,0) skewX(-18deg); opacity:0; }
+          0% { transform:translate3d(-220%,0,0) skewX(-18deg); opacity:0; }
+          10% { opacity:0; }
+          24% { opacity:0.72; }
+          46% { opacity:0.95; }
+          72% { opacity:0.38; }
+          100% { transform:translate3d(820%,0,0) skewX(-18deg); opacity:0; }
+        }
+        @keyframes grassrootsCategoryCycle {
+          0% { opacity:0; transform:translate3d(0,10px,0) scale(0.992); filter:blur(3px); }
+          62% { opacity:1; transform:translate3d(0,-1px,0) scale(1.001); filter:blur(0); }
+          100% { opacity:1; transform:translate3d(0,0,0) scale(1); filter:blur(0); }
         }
         @keyframes grassrootsFreshRow {
           0% { box-shadow:0 0 0 2px rgba(20,83,45,0), 0 1px 3px rgba(0,0,0,0.04); }
@@ -1753,16 +1894,24 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-composer-sweep {
           pointer-events: none;
           position: absolute;
-          inset: -24% auto -24% -16%;
+          inset: 0;
           z-index: 4;
-          width: 34%;
-          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.26), rgba(190,242,100,0.28), rgba(255,255,255,0.88), rgba(255,255,255,0));
-          transform: translate3d(-200%, 0, 0) skewX(-18deg);
+          overflow: hidden;
+          border-radius: inherit;
+        }
+        .grassroots-composer-sweep::after {
+          content: "";
+          position: absolute;
+          top: -34%;
+          bottom: -34%;
+          left: 0;
+          width: 150px;
+          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(20,83,45,0.05), rgba(190,242,100,0.38), rgba(255,255,255,0.92), rgba(20,83,45,0.12), rgba(255,255,255,0));
+          transform: translate3d(-220%, 0, 0) skewX(-18deg);
           opacity: 0;
-          animation: grassrootsComposerSweep 1850ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+          animation: grassrootsComposerSweep 2200ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
           will-change: transform, opacity;
-          mix-blend-mode: screen;
-          filter: blur(2px);
+          filter: blur(1px);
         }
         .grassroots-row-fresh-sweep {
           pointer-events: none;
@@ -1821,6 +1970,41 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
           gap: 12px;
           margin-bottom: 16px;
+        }
+        .grassroots-category-tabs {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 14px;
+        }
+        .grassroots-category-tab {
+          position: relative;
+          border: 1.5px solid ${C.border};
+          border-radius: 999px;
+          background: #fff;
+          color: ${C.text};
+          padding: 8px 14px;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 800;
+          cursor: pointer;
+          transform: translateZ(0);
+          transition: transform 0.22s cubic-bezier(0.16,1,0.3,1), background 0.22s cubic-bezier(0.16,1,0.3,1), border-color 0.22s cubic-bezier(0.16,1,0.3,1), color 0.22s cubic-bezier(0.16,1,0.3,1), box-shadow 0.22s cubic-bezier(0.16,1,0.3,1);
+        }
+        .grassroots-category-tab:hover {
+          transform: translateY(-1px);
+          border-color: ${C.pri}70;
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08);
+        }
+        .grassroots-category-tab.is-active {
+          background: ${C.pri};
+          border-color: ${C.pri};
+          color: #fff;
+          box-shadow: 0 12px 24px rgba(20,83,45,0.18);
+        }
+        .grassroots-category-stage {
+          animation: grassrootsCategoryCycle 0.34s cubic-bezier(0.16,1,0.3,1) both;
+          transform-origin: top center;
         }
         .grassroots-event-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
         .grassroots-target-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
@@ -2005,7 +2189,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <MetricCard label={`Booked ${fmtMonthYear(eventMetrics.month)}`} value={eventMetrics.bookedThisMonth} color={C.accDk} />
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+      <div className="grassroots-category-tabs">
         {GRASSROOTS_CATEGORY_CONFIGS.map((category) => {
           const active = category.id === activeCategory;
           const count = targets.filter((target) => target.category === category.dbValue).length;
@@ -2014,17 +2198,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
               key={category.id}
               type="button"
               onClick={() => setActiveCategory(category.id)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 999,
-                border: `1.5px solid ${active ? C.pri : C.border}`,
-                background: active ? C.pri : "#fff",
-                color: active ? "#fff" : C.text,
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
+              className={active ? "grassroots-category-tab is-active" : "grassroots-category-tab"}
             >
               {category.label} ({count})
             </button>
@@ -2210,7 +2384,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       ) : loading ? (
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
       ) : (
-        <div style={{ display: "grid", gap: 12 }}>
+        <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
           {canEditTargets && newDraft && activeConfig.id !== "events" && (
             <TargetEditor
               draft={newDraft}
