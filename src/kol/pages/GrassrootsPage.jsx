@@ -716,30 +716,44 @@ function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Add
       address: visibleAddressLine || parts?.address || "",
     });
   }, [onPlaceSelect]);
+  const fullAddress = buildGrassrootsLegacyAddressFromSplitAddress(draft) || String(draft.address || "").trim();
 
   return (
     <>
-      <div className="grassroots-event-wide-field">
-        <GooglePlacesAddressInput
-          label="Address"
-          value={draft.address}
-          onChange={(value) => onChange("address", value)}
-          onPlaceSelect={handlePlaceSelect}
-          placeholder={placeholder}
-        />
-      </div>
       <GooglePlacesAddressInput
         label="Street"
         value={draft.address_line_1}
-        onChange={(value) => onChange("address_line_1", value)}
+        onChange={(value) => {
+          onChange("address_line_1", value);
+          onChange("address", value);
+        }}
         onPlaceSelect={handlePlaceSelect}
-        placeholder="Street address"
+        placeholder={placeholder || "Street address"}
       />
       <FieldEditor field={{ key: "address_line_2", label: "Unit", placeholder: "Suite, booth, or unit" }} value={draft.address_line_2} onChange={(value) => onChange("address_line_2", value)} />
       <FieldEditor field={{ key: "address_city", label: "City", placeholder: "City" }} value={draft.address_city} onChange={(value) => onChange("address_city", value)} />
       <FieldEditor field={{ key: "address_state", label: "State", placeholder: "State" }} value={draft.address_state} onChange={(value) => onChange("address_state", value)} />
       <FieldEditor field={{ key: "address_postal_code", label: "ZIP", placeholder: "ZIP" }} value={draft.address_postal_code} onChange={(value) => onChange("address_postal_code", value)} />
       <FieldEditor field={{ key: "address_country", label: "Country", placeholder: "Country" }} value={draft.address_country} onChange={(value) => onChange("address_country", value)} />
+      <div className="grassroots-address-copy-field">
+        <Label>Full Address</Label>
+        <div className="grassroots-address-copy-shell">
+          <input
+            value={fullAddress}
+            readOnly
+            placeholder="Full address builds from the fields above"
+            style={{ ...INPUT_STYLE, background: C.bg, paddingRight: 82 }}
+          />
+          <button
+            type="button"
+            onClick={() => fullAddress && navigator.clipboard?.writeText(fullAddress)}
+            disabled={!fullAddress}
+            className="grassroots-address-copy-button"
+          >
+            <I.Clipboard /> Copy
+          </button>
+        </div>
+      </div>
     </>
   );
 }
@@ -786,7 +800,7 @@ function EventDateEditor({ draft, onChange }) {
       </div>
       {visibleRows.map((row, index) => (
         <div key={row.id || index} className="grassroots-event-date-row">
-          <CalendarPicker label={multiDay ? `Date ${index + 1}` : "Date"} value={row.event_date || ""} onChange={(value) => updateRow(index, "event_date", value)} />
+          <CalendarPicker label={multiDay ? `Date ${index + 1}` : "Date"} value={row.event_date || ""} onChange={(value) => updateRow(index, "event_date", value)} required />
           <label style={{ display: "block" }}>
             <Label>Start</Label>
             <input type="time" value={row.start_time || ""} onChange={(event) => updateRow(index, "start_time", event.target.value)} style={{ ...INPUT_STYLE, background: C.bg }} />
@@ -824,11 +838,10 @@ function EventDateEditor({ draft, onChange }) {
 function eventLinkRowsForEditor(draft = {}) {
   const rawLinks = Array.isArray(draft.details?.links) ? draft.details.links : [];
   if (rawLinks.length === 0) {
-    return [{ id: "event_link_blank", label: "", url: "" }];
+    return [{ id: "event_link_blank", url: "" }];
   }
   return rawLinks.map((row, index) => ({
     id: row?.id || `event_link_${index + 1}`,
-    label: row?.label || "",
     url: row?.url || row?.href || "",
   }));
 }
@@ -856,7 +869,7 @@ function EventLinksEditor({ draft, onChange }) {
   };
   const removeRow = (index) => {
     const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
-    updateRows(nextRows.length > 0 ? nextRows : [{ id: "event_link_blank", label: "", url: "" }]);
+    updateRows(nextRows.length > 0 ? nextRows : [{ id: "event_link_blank", url: "" }]);
   };
 
   return (
@@ -865,7 +878,7 @@ function EventLinksEditor({ draft, onChange }) {
         <Label>Links</Label>
         <button
           type="button"
-          onClick={() => updateRows([...rows, { id: `event_link_${Date.now()}`, label: "", url: "" }])}
+          onClick={() => updateRows([...rows, { id: `event_link_${Date.now()}`, url: "" }])}
           className="grassroots-link-add-button"
         >
           <I.Plus /> Add link
@@ -876,22 +889,16 @@ function EventLinksEditor({ draft, onChange }) {
           const safeHref = getSafeEventLinkHref(row.url);
           return (
             <div key={row.id || index} className="grassroots-event-link-row">
-              <input
-                value={row.label || ""}
-                onChange={(event) => updateRow(index, "label", event.target.value)}
-                placeholder="Label"
-                style={{ ...INPUT_STYLE, background: C.bg }}
-              />
               <div className="grassroots-event-link-url">
                 <input
                   value={row.url || ""}
                   onChange={(event) => updateRow(index, "url", event.target.value)}
-                  placeholder="URL"
-                  style={{ ...INPUT_STYLE, background: C.bg, paddingRight: safeHref ? 42 : 12 }}
+                  placeholder="Paste link"
+                  style={{ ...INPUT_STYLE, background: C.bg, paddingRight: safeHref ? 86 : 12 }}
                 />
                 {safeHref && (
                   <a href={safeHref} target="_blank" rel="noreferrer" className="grassroots-event-link-open" title="Open link" aria-label="Open link">
-                    <I.Link />
+                    <I.Link /> Open
                   </a>
                 )}
               </div>
@@ -2099,7 +2106,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-event-links-list { display: grid; gap: 8px; }
         .grassroots-event-link-row {
           display: grid;
-          grid-template-columns: minmax(110px, 0.85fr) minmax(180px, 1.45fr) 34px;
+          grid-template-columns: minmax(0, 1fr) 34px;
           gap: 8px;
           align-items: center;
         }
@@ -2109,14 +2116,51 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           right: 8px;
           top: 50%;
           transform: translateY(-50%);
-          width: 28px;
+          width: auto;
+          min-width: 62px;
           height: 28px;
           border-radius: 8px;
-          display: grid;
-          place-items: center;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
           color: ${C.pri};
           background: #fff;
           border: 1px solid ${C.borderLight};
+          font-size: 11px;
+          font-weight: 900;
+          text-decoration: none;
+          padding: 0 8px;
+        }
+        .grassroots-address-copy-field {
+          grid-column: 1 / -1;
+        }
+        .grassroots-address-copy-shell {
+          position: relative;
+        }
+        .grassroots-address-copy-button {
+          position: absolute;
+          right: 8px;
+          top: 50%;
+          transform: translateY(-50%);
+          height: 28px;
+          border-radius: 8px;
+          border: 1px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.pri};
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 0 9px;
+          font-family: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .grassroots-address-copy-button:disabled {
+          color: ${C.textMut};
+          cursor: default;
+          opacity: 0.6;
         }
         .grassroots-link-remove-button {
           width: 34px;
@@ -2156,7 +2200,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           .grassroots-event-date-row { grid-template-columns: 1fr; padding: 12px; border: 1px solid ${C.borderLight}; border-radius: 12px; background: ${C.bg}; }
           .grassroots-event-date-row > button { margin-bottom: 0; width: 100% !important; }
           .grassroots-event-link-row { grid-template-columns: 1fr 34px; }
-          .grassroots-event-link-row > input { grid-column: 1 / -1; }
         }
       `}</style>
       <div style={{
