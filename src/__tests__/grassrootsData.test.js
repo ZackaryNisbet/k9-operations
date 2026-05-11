@@ -21,7 +21,12 @@ import {
   normalizeLegacyGrassrootsTracker,
   resolveGrassrootsTargetIsActive,
 } from "../kol/grassrootsData.js";
-import { buildGrassrootsLegacyAddressFromSplitAddress, parseFreeformGrassrootsAddress, parseGooglePlaceAddress } from "../kol/pages/GrassrootsPage.jsx";
+import {
+  buildGrassrootsLegacyAddressFromSplitAddress,
+  getGrassrootsVisibleAddressLine,
+  parseFreeformGrassrootsAddress,
+  parseGooglePlaceAddress,
+} from "../kol/pages/GrassrootsPage.jsx";
 
 describe("grassrootsData", () => {
   it("renames legacy Remy Calloway employees to local employees", () => {
@@ -267,6 +272,7 @@ describe("grassrootsData", () => {
       address_country: "US",
       google_place_id: "place-500",
     });
+    expect(getGrassrootsVisibleAddressLine(parsed)).toBe("500 Route 70");
   });
 
   it("falls back to parsing a formatted address when Places does not return components", () => {
