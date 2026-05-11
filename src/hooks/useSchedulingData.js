@@ -18,6 +18,47 @@ import {
 } from "../shared/schedulingEngine";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_RANGE_DAYS = 7;
+const MAX_RANGE_DAYS = 370;
+const DEFAULT_RECOMPUTE_LIMIT_DAYS = 14;
+
+function localTodayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function buildSchedulingDateRange(startDate, requestedEndDate, maxDays = MAX_RANGE_DAYS) {
+  if (!startDate) return [];
+  const endDate = requestedEndDate || (() => {
+    const d = new Date(`${startDate}T12:00:00`);
+    d.setDate(d.getDate() + DEFAULT_RANGE_DAYS - 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const normalizedEndDate = endDate < startDate ? startDate : endDate;
+  const dates = [];
+  let current = startDate;
+  while (current <= normalizedEndDate && dates.length < maxDays) {
+    dates.push(current);
+    const d = new Date(`${current}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    current = d.toISOString().slice(0, 10);
+  }
+  return dates;
+}
+
+export function getMatrixProjectionAsOfDate(matrixRow) {
+  return String(matrixRow?.detail_json?.projection?.as_of_date || "").slice(0, 10);
+}
+
+export function findStaleSchedulingMatrixDates(matrixRows, dates, today = localTodayStr()) {
+  const byDate = new Map((matrixRows || []).map((row) => [row.matrix_date, row]));
+  return (dates || []).filter((date) => {
+    if (date < today) return false;
+    const matrixRow = byDate.get(date);
+    const asOfDate = getMatrixProjectionAsOfDate(matrixRow);
+    return !!asOfDate && asOfDate < today;
+  });
+}
 
 async function extractEdgeFunctionError(fnError) {
   if (!fnError) return "Unknown edge function error";
@@ -52,7 +93,13 @@ async function extractEdgeFunctionError(fnError) {
  *   refresh()   — manual refresh trigger
  *   upsertStaffPlan(plan) — save a staff plan entry
  */
-export function useSchedulingData(locationId, startDate) {
+export function useSchedulingData(locationId, startDate, options = {}) {
+  const requestedEndDate = options?.endDate || null;
+  const recomputeLimitDays = Number.isFinite(Number(options?.recomputeLimitDays))
+    ? Number(options.recomputeLimitDays)
+    : DEFAULT_RECOMPUTE_LIMIT_DAYS;
+  const projectionScopeDateFromOption = options?.projectionScopeDateFrom || null;
+  const projectionScopeDateToOption = options?.projectionScopeDateTo || null;
   const [matrixRows, setMatrixRows] = useState([]);
   const [staffPlans, setStaffPlans] = useState([]);
   const [projectionSnapshots, setProjectionSnapshots] = useState([]);
@@ -62,28 +109,24 @@ export function useSchedulingData(locationId, startDate) {
   const fetchIdRef = useRef(0);
   const intervalRef = useRef(null);
 
-  // Compute the 7-day date range
+  // Compute the selected date range. The default remains the 7-day week flow.
   const dates = useMemo(() => {
-    if (!startDate) return [];
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(startDate + "T12:00:00");
-      d.setDate(d.getDate() + i);
-      return d.toISOString().slice(0, 10);
-    });
-  }, [startDate]);
+    return buildSchedulingDateRange(startDate, requestedEndDate);
+  }, [startDate, requestedEndDate]);
 
-  const endDate = dates[6] || startDate;
+  const endDate = dates[dates.length - 1] || startDate;
+  const canRecomputeVisibleRange = dates.length > 0 && dates.length <= recomputeLimitDays;
 
   const recomputeDates = useCallback(async (targetDates) => {
     const orderedDates = [...new Set((targetDates || []).filter(Boolean))].sort();
     if (!orderedDates.length) return [];
 
-    const projectionScopeDateFrom = dates[0] || orderedDates[0];
-    const projectionScopeDateTo = dates[dates.length - 1] || orderedDates[orderedDates.length - 1];
+    const projectionScopeDateFrom = projectionScopeDateFromOption || dates[0] || orderedDates[0];
+    const projectionScopeDateTo = projectionScopeDateToOption || dates[dates.length - 1] || orderedDates[orderedDates.length - 1];
     const failures = [];
 
     for (const date of orderedDates) {
-      const { error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
+      const { data: computeData, error: computeErr } = await supabase.functions.invoke("compute-scheduling-matrix", {
         body: {
           location_id: locationId,
           date_from: date,
@@ -98,18 +141,23 @@ export function useSchedulingData(locationId, startDate) {
           date,
           error: computeErr.message || String(computeErr),
         });
+      } else if (computeData?.ok === false) {
+        failures.push({
+          date,
+          error: (computeData.chunk_failures || []).map((failure) => failure.error).join("; ") || "compute-scheduling-matrix returned partial failure",
+        });
       }
     }
 
     return failures;
-  }, [locationId, dates]);
+  }, [locationId, dates, projectionScopeDateFromOption, projectionScopeDateToOption]);
 
   const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;
     const fetchId = ++fetchIdRef.current;
 
     try {
-      if (recompute) {
+      if (recompute && canRecomputeVisibleRange) {
         const computeFailures = await recomputeDates(dates);
         if (computeFailures.length) {
           console.warn("compute-scheduling-matrix refresh failures:", computeFailures);
@@ -153,13 +201,15 @@ export function useSchedulingData(locationId, startDate) {
           .order("lead_days", { ascending: false }),
       ]);
 
-      const matrixCoverage = (matrixRes.data || []).length;
-      if (!recompute && matrixCoverage < dates.length) {
+      if (!recompute && canRecomputeVisibleRange) {
+        const matrixRowsLoaded = matrixRes.data || [];
         const existingDates = new Set((matrixRes.data || []).map((row) => row.matrix_date));
         const missingDates = dates.filter((date) => !existingDates.has(date));
-        const computeFailures = await recomputeDates(missingDates);
+        const staleDates = findStaleSchedulingMatrixDates(matrixRowsLoaded, dates);
+        const refreshDates = [...new Set([...missingDates, ...staleDates])].sort();
+        const computeFailures = await recomputeDates(refreshDates);
 
-        if (!computeFailures.length) {
+        if (refreshDates.length && !computeFailures.length) {
           [matrixRes, staffRes, configRes, projectionSnapshotsRes] = await Promise.all([
             supabase
               .from("scheduling_matrix_daily")
@@ -190,7 +240,7 @@ export function useSchedulingData(locationId, startDate) {
               .order("target_date", { ascending: true })
               .order("lead_days", { ascending: false }),
           ]);
-        } else {
+        } else if (computeFailures.length) {
           console.warn("compute-scheduling-matrix missing-day refresh failures:", computeFailures);
         }
       }
@@ -214,7 +264,7 @@ export function useSchedulingData(locationId, startDate) {
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false);
     }
-  }, [locationId, startDate, endDate, dates, recomputeDates]);
+  }, [locationId, startDate, endDate, dates, canRecomputeVisibleRange, recomputeDates]);
 
   useEffect(() => {
     setLoading(true);

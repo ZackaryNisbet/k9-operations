@@ -22,7 +22,7 @@ const corsHeaders = {
 // range, but process one matrix day at a time server-side so later weeks stay
 // reliable without user intervention.
 const COMPUTE_CHUNK_DAYS = 1;
-const LIVE_HYDRATION_HORIZON_DAYS = 6;
+const LIVE_HYDRATION_HORIZON_DAYS = 60;
 const RESERVATION_RETRY_DELAYS_MS = [250, 750, 1500];
 const CHERRY_HILL_LOCATION_ID = "11111111-1111-1111-1111-111111111111";
 const LOCATION_ID_ALIASES: Record<string, string> = {
@@ -496,33 +496,48 @@ Deno.serve(async (req: Request) => {
       : { synced: 0, animals: 0, skipped: true, mode: "synced_icons_only" };
 
     let rowsUpserted = 0;
+    const chunkFailures: Array<{ from: string; to: string; error: string }> = [];
     const chunks = chunkDateRange(dateFrom, dateTo);
     for (const chunk of chunks) {
-      const rows = await computeSchedulingMatrixRows({
-        supabase: serviceClient,
-        locationId,
-        dateFrom: chunk.from,
-        dateTo: chunk.to,
-        projectionScopeDateFrom,
-        projectionScopeDateTo,
-      });
-      const result = await upsertSchedulingMatrixRows(serviceClient, rows);
-      rowsUpserted += Number(result.count || 0);
+      try {
+        const rows = await computeSchedulingMatrixRows({
+          supabase: serviceClient,
+          locationId,
+          dateFrom: chunk.from,
+          dateTo: chunk.to,
+          projectionScopeDateFrom,
+          projectionScopeDateTo,
+        });
+        const result = await upsertSchedulingMatrixRows(serviceClient, rows);
+        rowsUpserted += Number(result.count || 0);
+      } catch (chunkError: any) {
+        console.error(`compute-scheduling-matrix chunk failed for ${chunk.from}..${chunk.to}:`, chunkError);
+        chunkFailures.push({
+          from: chunk.from,
+          to: chunk.to,
+          error: chunkError?.message || String(chunkError || "Unknown chunk error"),
+        });
+      }
     }
 
+    const responseStatus = chunkFailures.length
+      ? (rowsUpserted > 0 ? 207 : 500)
+      : 200;
+
     return jsonResponse({
-      ok: true,
+      ok: chunkFailures.length === 0,
       location_id: locationId,
       requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
       date_range: [dateFrom, dateTo],
       projection_scope_date_range: [projectionScopeDateFrom, projectionScopeDateTo],
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
+      chunk_failures: chunkFailures,
       reservation_hydration: reservationHydration,
       widget_hydration: widgetHydration,
       icon_sync: iconSync,
       source: "canonical_supabase",
-    });
+    }, responseStatus);
   } catch (error: any) {
     console.error("compute-scheduling-matrix error:", error);
     return jsonResponse({ error: error.message || "Failed to compute scheduling matrix" }, error.status || 500);

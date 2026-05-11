@@ -5,7 +5,9 @@ import {
   applyLaborCapacityModelActivation,
   buildHourAnalysisCapacityRowVisualModel,
   buildDefaultLaborCapacityModelPayload,
+  buildLaborModelCrossRoleCoverageSummary,
   buildLaborModulePanelKey,
+  buildTrainingHistoryRows,
   buildHourAnalysisModel,
   buildOutOfPositionLaborSummary,
   calculateLaborShiftHours,
@@ -23,17 +25,20 @@ import {
   makeLaborModelCellKey,
   normalizeCapacityPlanningView,
   normalizeLaborCapacityModelRow,
+  normalizeLaborCapacityModelVersions,
   normalizeLaborModelBreakerSettings,
   normalizeLaborModelCoverageCell,
   normalizeLaborModelRolePalette,
   normalizeHourAnalysisSettings,
   noteMatchesSearch,
+  resolveVerifiedActorDisplayName,
   removeLaborModelColumnFromDay,
   safeTrainingProgress,
   selectStaffingCapacitySettings,
   setLaborModelCoverageDuration,
   setLaborModelCoveragePosition,
   shouldCycleLaborModelCoveragePointer,
+  summarizeLaborCapacityModelSnapshotDiff,
   toObjectRows,
   updateLaborModelBreakersForDay,
 } from "../kol/pages/TrainingPage.jsx";
@@ -63,6 +68,17 @@ describe("applyLaborRosterFilters", () => {
     expect(kolAppSource).toContain('home: "roster"');
     expect(kolAppSource).toContain('"hour-analysis": "capacity-planning"');
     expect(kolAppSource).toContain('"labor-model": "capacity-planning/labor-model"');
+  });
+
+  it("keeps the Training board search visible before opening the filter panel", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const visibleSearchIndex = source.indexOf('label="Search Training Board"');
+    const filterPanelIndex = source.indexOf("showPctReadinessFilterPanel &&");
+    const hiddenTaskSearchIndex = source.indexOf('label="Task or Category"');
+
+    expect(visibleSearchIndex).toBeGreaterThan(0);
+    expect(filterPanelIndex).toBeGreaterThan(visibleSearchIndex);
+    expect(hiddenTaskSearchIndex).toBeGreaterThan(filterPanelIndex);
   });
 
   it("removes duplicate roster summary/output controls from the Roster source", () => {
@@ -349,6 +365,60 @@ describe("applyLaborRosterFilters", () => {
     expect(model.laborModelSummary.totalWeekly).toBe(1);
   });
 
+  it("counts GM model coverage toward CSR without creating actual out-of-position labor", () => {
+    const emptyLaborDay = (day) => ({ day_key: day, columns: [], rows: [] });
+    const settings = normalizeHourAnalysisSettings({
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [
+              { id: "monday-8", label: "8-9a", hours: 1 },
+              { id: "monday-9", label: "9-10a", hours: 1 },
+            ],
+            rows: [
+              {
+                id: "gm-floor",
+                group_key: "general_manager",
+                role_label: "GM",
+                break_enabled: false,
+                coverage: ["CSR", "GM"],
+              },
+            ],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+
+    const model = buildHourAnalysisModel({ settings, rosterRows: [] });
+    const crossRoleCoverage = buildLaborModelCrossRoleCoverageSummary(settings);
+    const actualOutOfPosition = buildOutOfPositionLaborSummary({
+      weekStart: "2026-05-04",
+      employees: [{ id: "gm-1", full_name: "Gina Manager", position_title: "General Manager", employment_status: "active" }],
+      staffPlans: [],
+    });
+
+    expect(model.laborModelSummary.roleWeekly.csr).toBe(1);
+    expect(model.laborModelSummary.roleWeekly.general_manager).toBe(1);
+    expect(crossRoleCoverage).toEqual([
+      expect.objectContaining({
+        key: "general_manager->csr",
+        from_label: "GM",
+        to_label: "CSR",
+        hours: 1,
+        slots: 1,
+        day_labels: ["Mon"],
+      }),
+    ]);
+    expect(actualOutOfPosition.totalShifts).toBe(0);
+  });
+
   it("keeps only one active labor model and isolates draft edits from Staffing Capacity", () => {
     const emptyLaborDay = (day) => ({
       day_key: day,
@@ -462,6 +532,104 @@ describe("applyLaborRosterFilters", () => {
     ]);
   });
 
+  it("matches actual out-of-position labor by labor_employee_id before falling back to name", () => {
+    const summary = buildOutOfPositionLaborSummary({
+      weekStart: "2026-05-04",
+      employees: [
+        { id: "gm-1", full_name: "Gina Manager", position_title: "General Manager", employment_status: "active" },
+        { id: "csr-1", full_name: "Gina Manager", position_title: "Customer Service Representative", employment_status: "active" },
+      ],
+      staffPlans: [
+        {
+          id: "plan-1",
+          plan_date: "2026-05-05",
+          shift: "am",
+          staff_names: [
+            {
+              id: "shift-1",
+              labor_employee_id: "gm-1",
+              name: "Gina Manager",
+              position: "csr",
+              shift_start: "7a",
+              shift_end: "3p",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(summary).toMatchObject({
+      totalShifts: 1,
+      totalHours: 8,
+      unclassifiedShifts: 0,
+    });
+    expect(summary.topMismatches.map((item) => item.key)).toEqual(["GM -> CSR"]);
+    expect(summary.rows[0]).toMatchObject({
+      labor_employee_id: "gm-1",
+      match_method: "labor_employee_id",
+      home_role_key: "general_manager",
+      worked_role_key: "csr",
+      classification: "mismatch",
+    });
+  });
+
+  it("normalizes labor capacity model versions newest first and summarizes snapshot changes", () => {
+    const emptyLaborDay = (day) => ({ day_key: day, columns: [], rows: [] });
+    const earlierSettings = normalizeHourAnalysisSettings({
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [{ id: "monday-8", label: "8-9a", hours: 1 }],
+            rows: [{ id: "csr-floor", group_key: "csr", role_label: "CSR", break_enabled: false, coverage: ["CSR"] }],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+    const currentSettings = normalizeHourAnalysisSettings({
+      expectations: {
+        csr: { full_time: { expected: 32 } },
+      },
+      laborModel: {
+        days: {
+          monday: {
+            day_key: "monday",
+            columns: [
+              { id: "monday-8", label: "8-9a", hours: 1 },
+              { id: "monday-9", label: "9-10a", hours: 1 },
+            ],
+            rows: [{ id: "csr-floor", group_key: "csr", role_label: "CSR", break_enabled: false, coverage: ["CSR", "CSR"] }],
+          },
+          tuesday: emptyLaborDay("tuesday"),
+          wednesday: emptyLaborDay("wednesday"),
+          thursday: emptyLaborDay("thursday"),
+          friday: emptyLaborDay("friday"),
+          saturday: emptyLaborDay("saturday"),
+          sunday: emptyLaborDay("sunday"),
+        },
+      },
+    });
+    const versions = normalizeLaborCapacityModelVersions([
+      { id: "version-1", model_id: "model-1", location_id: "loc", version_no: 1, model_name: "Active", model_settings_snapshot: earlierSettings, change_type: "create", created_at: "2026-05-11T10:00:00Z" },
+      { id: "version-3", model_id: "model-1", location_id: "loc", version_no: 3, model_name: "Active", model_settings_snapshot: currentSettings, change_type: "autosave", created_at: "2026-05-11T10:05:00Z" },
+      { id: "version-2", model_id: "model-1", location_id: "loc", version_no: 2, model_name: "Active", model_settings_snapshot: earlierSettings, change_type: "rename", created_at: "2026-05-11T10:03:00Z" },
+    ]);
+    const diff = summarizeLaborCapacityModelSnapshotDiff(currentSettings, earlierSettings);
+
+    expect(versions.map((version) => version.version_no)).toEqual([3, 2, 1]);
+    expect(diff).toEqual(expect.arrayContaining([
+      "Weekly floor: 1 -> 2 hrs (+1)",
+      "CSR floor: 1 -> 2 hrs (+1)",
+      "CSR Full-Time expected: 30 -> 32 hrs",
+    ]));
+  });
+
   it("searches employee notes across note body and context fields", () => {
     const note = {
       employeeName: "Larrissa Santana",
@@ -475,6 +643,91 @@ describe("applyLaborRosterFilters", () => {
     expect(noteMatchesSearch(note, "larrissa")).toBe(true);
     expect(noteMatchesSearch(note, "disciplinary")).toBe(false);
     expect(noteMatchesSearch(note, "")).toBe(true);
+  });
+
+  it("searches training notes across note body, source, and verified actor fields", () => {
+    const note = {
+      employeeName: "Zach E. Cruz",
+      noteType: "task_observation",
+      sourceLabel: "Daycare Group Transitions",
+      createdByName: "Skyler Brooks",
+      noteText: "Needs another repetition on controlled gate movement.",
+    };
+
+    expect(noteMatchesSearch(note, "gate movement")).toBe(true);
+    expect(noteMatchesSearch(note, "daycare group")).toBe(true);
+    expect(noteMatchesSearch(note, "zack")).toBe(true);
+    expect(noteMatchesSearch(note, "email only")).toBe(false);
+  });
+
+  it("builds Training History rows from note activity and prefers verified actor names", () => {
+    const recordMap = {
+      "record-1": {
+        id: "record-1",
+        labor_employee_id: "employee-1",
+        employee_full_name: "Zach E. Cruz",
+        template_name_snapshot: "PCT Team Readiness Board",
+      },
+    };
+    const laborEmployeeMap = {
+      "employee-1": { id: "employee-1", full_name: "Zach E. Cruz" },
+    };
+    const rows = buildTrainingHistoryRows({
+      recordMap,
+      laborEmployeeMap,
+      getItemById: (itemId) => (itemId === "item-1" ? { id: "item-1", label: "Gate control" } : null),
+      notes: [
+        {
+          id: "note-1",
+          record_id: "record-1",
+          template_item_id: "item-1",
+          note_text: "Needs another repetition.",
+          created_at: "2026-05-11T15:00:00Z",
+          created_by_name: "zack@example.com",
+          created_by_full_name: "Skyler Brooks",
+        },
+      ],
+      events: [
+        {
+          id: "event-1",
+          record_id: "record-1",
+          template_item_id: "item-1",
+          event_type: "note_added",
+          created_at: "2026-05-11T15:00:00Z",
+          actor_name: "zack@example.com",
+          actor_full_name: "Skyler Brooks",
+          after_state: { id: "note-1" },
+        },
+        {
+          id: "event-2",
+          record_id: "record-1",
+          template_item_id: "item-1",
+          event_type: "status_changed",
+          created_at: "2026-05-11T14:00:00Z",
+          actor_name: "zack@example.com",
+          actor_full_name: "Skyler Brooks",
+        },
+      ],
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["note_note-1", "event_event-2"]);
+    expect(rows[0]).toMatchObject({
+      historyKind: "note",
+      event_type: "task_note_added",
+      employeeName: "Zach E. Cruz",
+      actorDisplayName: "Skyler Brooks",
+      summary: "Gate control: Needs another repetition.",
+    });
+    expect(rows[1]).toMatchObject({
+      historyKind: "event",
+      actorDisplayName: "Skyler Brooks",
+      summary: "Gate control",
+    });
+  });
+
+  it("falls back to email only when no verified actor name is available", () => {
+    expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com" })).toBe("manager@example.com");
+    expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com", actor_full_name: "Maria Manager" })).toBe("Maria Manager");
   });
 
   it("keeps interview detail state out of the labor panel remount key", () => {

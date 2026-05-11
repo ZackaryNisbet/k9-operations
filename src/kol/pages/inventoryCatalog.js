@@ -15,6 +15,28 @@ function alphaCompare(left, right) {
   return cleanText(left).localeCompare(cleanText(right), undefined, { sensitivity: "base" });
 }
 
+const SAFE_VENDOR_URL_RE = /^https?:\/\//i;
+const PROTOCOL_RELATIVE_VENDOR_URL_RE = /^\/\//;
+const URL_PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:/i;
+const DOMAIN_VENDOR_URL_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i;
+
+export function normalizeInventoryVendorUrl(value) {
+  const url = cleanText(value);
+  if (!url) return "";
+  if (SAFE_VENDOR_URL_RE.test(url) || PROTOCOL_RELATIVE_VENDOR_URL_RE.test(url)) return url;
+  if (URL_PROTOCOL_RE.test(url)) return "";
+  if (DOMAIN_VENDOR_URL_RE.test(url)) return `https://${url}`;
+  return url;
+}
+
+export function getInventoryVendorHref(value) {
+  const url = normalizeInventoryVendorUrl(value);
+  if (!url) return "";
+  if (SAFE_VENDOR_URL_RE.test(url) || PROTOCOL_RELATIVE_VENDOR_URL_RE.test(url)) return url;
+  if (DOMAIN_VENDOR_URL_RE.test(url)) return `https://${url}`;
+  return "";
+}
+
 export function getInventoryCategoryName(item) {
   return cleanText(item?.category) || FALLBACK_CATEGORY;
 }

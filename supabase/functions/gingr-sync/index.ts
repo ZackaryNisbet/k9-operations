@@ -28,7 +28,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const SCHEDULING_FUTURE_SYNC_DAYS = 28;
+const SCHEDULING_FUTURE_SYNC_DAYS = 60;
 const PRESENCE_SYNC_FRESH_MS = 5_000;
 const PRESENCE_SYNC_SETTING_KEY = "presence_sync_config_v1";
 const PRESENCE_WORKER_MAX_RUN_MS = 55_000;

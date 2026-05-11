@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildSchedulingNarrative,
   buildSchedulingNarrativeHtml,
+  buildHistoricalRangeSummary,
+  getProjectionHistoryPoints,
   getProjectionFormulaLine,
   getProjectionHeadline,
   getProjectionMethodologySteps,
@@ -159,5 +161,69 @@ describe("scheduling projection explanation copy", () => {
     expect(html).toContain("<ul");
     expect(html).toContain("<li");
     expect(html).toContain("Total opening boarding dogs: 41 current → 52 projected");
+  });
+
+  it("aggregates historical range cards from canonical comparison fields", () => {
+    const summary = buildHistoricalRangeSummary([
+      {
+        comparison: {
+          current_overnight: 50,
+          current_daytime: 30,
+          current_total: 80,
+          yoy_overnight: 45,
+          yoy_daytime: 25,
+          yoy_total: 70,
+        },
+      },
+      {
+        comparison: {
+          current_overnight: 40,
+          current_daytime: 20,
+          current_total: 60,
+          yoy_overnight: 36,
+          yoy_daytime: 24,
+          yoy_total: 60,
+        },
+      },
+    ]);
+
+    expect(summary.currentTotal).toBe(140);
+    expect(summary.yoyOvernight).toBe(81);
+    expect(summary.yoyDaytime).toBe(49);
+    expect(summary.yoyTotal).toBe(130);
+    expect(summary.yoyTotalPctVsCurrentYear).toBe(92.9);
+  });
+
+  it("maps projection history snapshots for interactive hover details", () => {
+    const points = getProjectionHistoryPoints({
+      date: "2026-05-17",
+      projectionHistory: [
+        {
+          target_date: "2026-05-17",
+          as_of_date: "2026-05-11",
+          lead_days: 6,
+          current_display: { support: { total_dog_volume: 90 } },
+          projected_display: { support: { total_dog_volume: 99 } },
+          actual_display: { support: { total_dog_volume: 101 } },
+          projection_json: {
+            demand_display: { support: { total_dog_volume: 105 } },
+            capacity: { has_capacity_constrained_projection: true },
+          },
+        },
+      ],
+    });
+
+    expect(points).toEqual([
+      expect.objectContaining({
+        asOfDate: "2026-05-11",
+        leadDays: 6,
+        booked: 90,
+        projected: 99,
+        demand: 105,
+        actual: 101,
+        delta: 2,
+        capacityConstrained: true,
+      }),
+    ]);
   });
 });

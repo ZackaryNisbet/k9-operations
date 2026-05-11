@@ -39,15 +39,20 @@ export const DEFAULT_LABOR_ROSTER_PDF_OPTIONS = {
   showMetrics: false,
   showStaffingMatrix: false,
   showCommitment: false,
-  showPhone: false,
-  showEmail: false,
+  showPhone: true,
+  showEmail: true,
 };
 
 export function normalizeLaborRosterPdfOptions(options = {}) {
   return {
     ...DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
     ...Object.fromEntries(
-      Object.keys(DEFAULT_LABOR_ROSTER_PDF_OPTIONS).map((key) => [key, Boolean(options[key])]),
+      Object.keys(DEFAULT_LABOR_ROSTER_PDF_OPTIONS).map((key) => [
+        key,
+        Object.prototype.hasOwnProperty.call(options, key)
+          ? Boolean(options[key])
+          : DEFAULT_LABOR_ROSTER_PDF_OPTIONS[key],
+      ]),
     ),
   };
 }
