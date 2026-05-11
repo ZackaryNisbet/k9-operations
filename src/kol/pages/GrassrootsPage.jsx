@@ -765,23 +765,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function getEventPopoverPosition(anchor) {
-  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1024;
-  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 760;
-  const width = Math.min(860, Math.max(320, viewportWidth - 32));
-  const preferredLeft = anchor?.right ? anchor.right - width : viewportWidth - width - 24;
-  const left = Math.max(16, Math.min(preferredLeft, viewportWidth - width - 16));
-  const preferredTop = anchor?.bottom ? anchor.bottom + 10 : 96;
-  const top = Math.max(16, Math.min(preferredTop, Math.max(16, viewportHeight - 680)));
-  return {
-    left,
-    top,
-    width,
-    maxHeight: Math.max(360, viewportHeight - top - 16),
-  };
-}
-
-function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel, onDelete }) {
+function EventTargetInlineEditor({ draft, saving, onChange, onSave, onCancel, onDelete }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -791,7 +775,6 @@ function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel,
     Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
   };
   const cpl = fmtCurrencyNumber(calculateGrassrootsCpl(draft.cost, draft.leads_captured)) || "";
-  const position = getEventPopoverPosition(anchor);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -802,17 +785,8 @@ function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel,
   }, [onCancel]);
 
   return (
-    <div className="grassroots-event-popover-layer">
-      <div
-        className="grassroots-event-popover"
-        style={{
-          left: position.left,
-          top: position.top,
-          width: position.width,
-          maxHeight: position.maxHeight,
-        }}
-      >
-        <div className="grassroots-event-popover-header">
+    <div className="grassroots-event-inline-editor">
+        <div className="grassroots-event-inline-header">
           <div>
             <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>
               {draft.isDraft ? "New Event" : "Edit Event"}
@@ -821,11 +795,11 @@ function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel,
               {draft.isDraft ? "Create and return to the tracker" : "Update the event without leaving the tracker"}
             </div>
           </div>
-          <button type="button" onClick={onCancel} aria-label="Close event editor" title="Close" className="grassroots-event-popover-close">
+          <button type="button" onClick={onCancel} aria-label="Close event editor" title="Close" className="grassroots-event-inline-close">
             <I.X />
           </button>
         </div>
-        <div className="grassroots-event-popover-body">
+        <div className="grassroots-event-inline-body">
         <div className="grassroots-event-form-grid">
           <FormSection title="Event">
             <div className="grassroots-event-field-grid">
@@ -903,7 +877,6 @@ function EventTargetPopover({ draft, saving, anchor, onChange, onSave, onCancel,
           </div>
         </div>
         </div>
-      </div>
     </div>
   );
 }
@@ -1153,7 +1126,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [history, setHistory] = useState([]);
   const [newDraft, setNewDraft] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
-  const [editorAnchor, setEditorAnchor] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [logPopover, setLogPopover] = useState(null);
@@ -1281,7 +1253,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   useEffect(() => {
     setNewDraft(null);
     setEditDraft(null);
-    setEditorAnchor(null);
     setExpandedUpdates(new Set());
     const defaults = getGrassrootsDefaultFilters(activeCategory);
     setFilters(defaults);
@@ -1299,25 +1270,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
   };
 
-  const getEditorAnchorFromEvent = (event) => {
-    const rect = event?.currentTarget?.getBoundingClientRect?.();
-    return rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null;
-  };
-
-  const openNewDraft = (event) => {
+  const openNewDraft = () => {
     if (!canEditTargets) {
       toast("You do not have permission to edit grassroots rows", "error");
       return;
     }
     setEditDraft(null);
-    setEditorAnchor(getEditorAnchorFromEvent(event));
     setNewDraft(makeBlankGrassrootsTarget(activeCategory));
   };
 
   const closeEditor = () => {
     setNewDraft(null);
     setEditDraft(null);
-    setEditorAnchor(null);
   };
 
   const saveDraft = async () => {
@@ -1572,18 +1536,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         @keyframes grassrootsFadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
         @keyframes grassrootsChipIn { from { opacity:0; transform:translateX(-6px) scale(0.92); } to { opacity:1; transform:translateX(0) scale(1); } }
         @keyframes grassrootsComposerIn { from { opacity:0; transform:translateY(-10px) scale(0.985); } to { opacity:1; transform:translateY(0) scale(1); } }
-        .grassroots-event-popover-layer { position: fixed; inset: 0; z-index: 9997; pointer-events: none; }
-        .grassroots-event-popover {
-          position: fixed;
-          pointer-events: auto;
+        .grassroots-event-inline-editor {
           overflow: hidden;
-          border-radius: 16px;
+          border-radius: 14px;
           border: 1.5px solid ${C.border};
           background: ${C.surface};
-          box-shadow: 0 24px 64px rgba(15,23,42,0.24), 0 6px 18px rgba(15,23,42,0.12);
+          box-shadow: 0 14px 36px rgba(15,23,42,0.12);
           animation: grassrootsComposerIn 0.18s ease-out both;
         }
-        .grassroots-event-popover-header {
+        .grassroots-event-inline-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -1592,7 +1553,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           border-bottom: 1px solid ${C.borderLight};
           background: linear-gradient(135deg, ${C.priLt} 0%, #fff 72%);
         }
-        .grassroots-event-popover-close {
+        .grassroots-event-inline-close {
           width: 32px;
           height: 32px;
           border: 1px solid ${C.borderLight};
@@ -1604,7 +1565,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           place-items: center;
           padding: 0;
         }
-        .grassroots-event-popover-body { max-height: calc(100% - 62px); overflow: auto; padding: 16px; background: ${C.bg}; }
+        .grassroots-event-inline-body { padding: 14px; background: ${C.bg}; }
         .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
         .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
         .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
@@ -1904,7 +1865,30 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           ) : (
             <>
               <TrackerHeader categoryConfig={activeConfig} />
+              {canEditTargets && newDraft && activeConfig.id === "events" && (
+                <EventTargetInlineEditor
+                  key="new-event-draft"
+                  draft={newDraft}
+                  saving={savingDraft}
+                  onChange={updateDraft}
+                  onSave={saveDraft}
+                  onCancel={closeEditor}
+                />
+              )}
               {visibleTargets.map((target, index) => {
+                if (canEditTargets && activeConfig.id === "events" && editDraft?.id === target.id) {
+                  return (
+                    <EventTargetInlineEditor
+                      key={target.id}
+                      draft={editDraft}
+                      saving={savingDraft}
+                      onChange={updateDraft}
+                      onSave={saveDraft}
+                      onCancel={closeEditor}
+                      onDelete={() => deleteTarget(editDraft)}
+                    />
+                  );
+                }
                 if (canEditTargets && activeConfig.id !== "events" && editDraft?.id === target.id) {
                   return (
                     <TargetEditor
@@ -1938,9 +1922,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     })}
                     onLog={(event) => openLogPopover(target, event)}
                     onMove={(event) => openMovePopover(target, event)}
-                    onEdit={(event) => {
+                    onEdit={() => {
                       setNewDraft(null);
-                      setEditorAnchor(getEditorAnchorFromEvent(event));
                       setEditDraft(buildEditorDraft(target));
                     }}
                   />
@@ -1949,18 +1932,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             </>
           )}
         </div>
-      )}
-
-      {canEditTargets && activeConfig.id === "events" && (newDraft || editDraft) && (
-        <EventTargetPopover
-          draft={editDraft || newDraft}
-          saving={savingDraft}
-          anchor={editorAnchor}
-          onChange={updateDraft}
-          onSave={saveDraft}
-          onCancel={closeEditor}
-          onDelete={() => deleteTarget(editDraft)}
-        />
       )}
 
       {canEditTargets && movePopover && (

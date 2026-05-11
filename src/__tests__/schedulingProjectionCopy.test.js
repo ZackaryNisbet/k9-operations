@@ -204,11 +204,27 @@ describe("scheduling projection explanation copy", () => {
       { comparison: { yoy_total: 60 } },
     ], row, "current");
     const withoutHistory = summarizeAggregateMatrixCell([
-      { comparison: { current_total: 80 } },
+      { comparison: { yoy_total: null, current_total: 80 } },
       { comparison: {} },
+    ], row, "current");
+    const withLegacyHistoricalTotal = summarizeAggregateMatrixCell([
+      {
+        matrix: {
+          detail_json: {
+            projection: {
+              comparisons: {
+                current_year: { total: 82 },
+                yoy_total: null,
+                last_year_total_dog_volume: 76,
+              },
+            },
+          },
+        },
+      },
     ], row, "current");
 
     expect(withHistory).toMatchObject({ hasValue: true, value: 130 });
+    expect(withLegacyHistoricalTotal).toMatchObject({ hasValue: true, value: 76 });
     expect(withoutHistory).toMatchObject({
       hasValue: false,
       unavailableLabel: "No history",

@@ -2968,6 +2968,41 @@ export function buildLaborModelCrossRoleCoverageSummary(settings = {}) {
     }));
 }
 
+export function buildPlannedCrossRoleCoverageRows({ modelCoverageRows = [], personRows = [] } = {}) {
+  const modelRows = toObjectRows(modelCoverageRows).map((row) => ({
+    key: `model:${row.key}`,
+    type: "model",
+    source_label: `${row.from_label} model row`,
+    home_label: row.from_label,
+    covers_label: row.to_label,
+    hours: normalizeHourAnalysisNumber(row.hours, 0),
+    detail_label: (Array.isArray(row.day_labels) ? row.day_labels : []).filter(Boolean).join(", ") || "Active model",
+    sort_key: `1:${row.from_label}:${row.to_label}`,
+  }));
+  const splitRows = toObjectRows(personRows)
+    .filter((row) => row.isSplit && row.split?.floor_group && normalizeHourAnalysisNumber(row.split?.floor_hours, 0) > 0)
+    .map((row) => {
+      const homeLabel = row.groupLabel || getHourAnalysisGroupLabel(row.groupKey);
+      const floorLabel = getHourAnalysisGroupLabel(row.split.floor_group);
+      const primaryHours = normalizeHourAnalysisNumber(row.split.primary_hours ?? row.split.admin_hours ?? row.preferredHours, 0);
+      const floorHours = normalizeHourAnalysisNumber(row.split.floor_hours, 0);
+      return {
+        key: `split:${row.employeeKey || row.id || row.full_name}`,
+        type: row.isWhatIf ? "what_if_split" : "person_split",
+        source_label: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unnamed employee",
+        home_label: homeLabel,
+        covers_label: floorLabel,
+        hours: floorHours,
+        detail_label: `${formatHourAnalysisHours(primaryHours)} ${homeLabel} + ${formatHourAnalysisHours(floorHours)} ${floorLabel}`,
+        sort_key: `0:${row.full_name || ""}:${floorLabel}`,
+      };
+    });
+
+  return [...splitRows, ...modelRows]
+    .filter((row) => row.hours > 0)
+    .sort((left, right) => left.sort_key.localeCompare(right.sort_key));
+}
+
 export function normalizeLaborCapacityModelVersionRow(row = {}) {
   const source = isObjectRow(row) ? row : {};
   const createdAt = source.created_at || source.createdAt || null;
@@ -9131,6 +9166,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const activeLaborModelCrossRoleCoverage = useMemo(() => (
     buildLaborModelCrossRoleCoverageSummary(staffingCapacityHourAnalysisSettings)
   ), [staffingCapacityHourAnalysisSettings]);
+  const plannedCrossRoleCoverageRows = useMemo(() => buildPlannedCrossRoleCoverageRows({
+    modelCoverageRows: activeLaborModelCrossRoleCoverage,
+    personRows: hourAnalysisModel.rows,
+  }), [activeLaborModelCrossRoleCoverage, hourAnalysisModel.rows]);
   const selectedLaborCapacityVersion = useMemo(() => (
     normalizeLaborCapacityModelVersions(laborCapacityModelVersions).find((version) => version.id === selectedLaborCapacityVersionId)
     || normalizeLaborCapacityModelVersions(laborCapacityModelVersions)[0]
@@ -13595,6 +13634,30 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-weight: 900;
           line-height: 1;
           padding: 6px 8px;
+        }
+        .out-of-position-planned-block {
+          display: grid;
+          gap: 8px;
+          padding: 12px 14px 2px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #fff;
+        }
+        .out-of-position-planned-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .out-of-position-planned-heading strong {
+          font-size: 12px;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .out-of-position-planned-heading span {
+          font-size: 10.5px;
+          font-weight: 800;
+          color: ${C.textMut};
         }
         .out-of-position-table-wrap {
           max-height: 260px;
@@ -19202,6 +19265,44 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               ) : (
                 <span>{staffingCapacityPlansLoaded ? "No classified out-of-position shifts found for this week." : "Loading schedule rows..."}</span>
               )}
+            </div>
+            <div className="out-of-position-planned-block">
+              <div className="out-of-position-planned-heading">
+                <strong>Planned cross-role coverage</strong>
+                <span>Active model rows plus person-level Expected Hours splits.</span>
+              </div>
+              <div className="out-of-position-table-wrap">
+                <table className="out-of-position-table">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Home / Model Row</th>
+                      <th>Covers</th>
+                      <th>Hours</th>
+                      <th>Split / Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plannedCrossRoleCoverageRows.map((row) => (
+                      <tr key={row.key} className={row.type === "model" ? "is-planned-model" : "is-planned-split"}>
+                        <td>
+                          <strong>{row.source_label}</strong>
+                          {row.type === "what_if_split" ? <small>What-if split</small> : row.type === "person_split" ? <small>Expected Hours split</small> : <small>Labor Model coverage</small>}
+                        </td>
+                        <td>{row.home_label}</td>
+                        <td>{row.covers_label}</td>
+                        <td>{formatHourAnalysisHours(row.hours)}</td>
+                        <td>{row.detail_label}</td>
+                      </tr>
+                    ))}
+                    {plannedCrossRoleCoverageRows.length === 0 && (
+                      <tr>
+                        <td colSpan={5}>No planned cross-role coverage or employee coverage splits configured.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
             <div className="out-of-position-table-wrap">
               <table className="out-of-position-table">

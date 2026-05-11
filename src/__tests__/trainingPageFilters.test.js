@@ -6,6 +6,7 @@ import {
   buildHourAnalysisCapacityRowVisualModel,
   buildDefaultLaborCapacityModelPayload,
   buildLaborModelCrossRoleCoverageSummary,
+  buildPlannedCrossRoleCoverageRows,
   buildLaborModulePanelKey,
   buildTrainingHistoryRows,
   buildHourAnalysisModel,
@@ -417,6 +418,50 @@ describe("applyLaborRosterFilters", () => {
       }),
     ]);
     expect(actualOutOfPosition.totalShifts).toBe(0);
+  });
+
+  it("builds planned cross-role rows from active model coverage and expected-hours splits", () => {
+    const rows = buildPlannedCrossRoleCoverageRows({
+      modelCoverageRows: [
+        { key: "assistant_manager->csr", from_label: "AM", to_label: "CSR", hours: 12, day_labels: ["Mon", "Tue"] },
+      ],
+      personRows: [
+        {
+          employeeKey: "gm-1",
+          full_name: "Gina Manager",
+          groupKey: "general_manager",
+          groupLabel: "General Manager",
+          preferredHours: 40,
+          isSplit: true,
+          split: {
+            floor_group: "csr",
+            primary_hours: 30,
+            floor_hours: 10,
+          },
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        key: "split:gm-1",
+        type: "person_split",
+        source_label: "Gina Manager",
+        home_label: "General Manager",
+        covers_label: "Customer Service Representative",
+        hours: 10,
+        detail_label: "30 General Manager + 10 Customer Service Representative",
+      }),
+      expect.objectContaining({
+        key: "model:assistant_manager->csr",
+        type: "model",
+        source_label: "AM model row",
+        home_label: "AM",
+        covers_label: "CSR",
+        hours: 12,
+        detail_label: "Mon, Tue",
+      }),
+    ]);
   });
 
   it("keeps only one active labor model and isolates draft edits from Staffing Capacity", () => {
