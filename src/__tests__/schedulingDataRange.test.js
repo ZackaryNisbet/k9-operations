@@ -27,7 +27,7 @@ describe("scheduling data range helpers", () => {
         },
         {
           matrix_date: "2026-05-12",
-          detail_json: { projection: { as_of_date: "2026-05-11" } },
+          detail_json: { projection: { as_of_date: "2026-05-11", comparisons: { yoy_total: 80 } } },
         },
       ],
       ["2026-05-12", "2026-05-17"],
