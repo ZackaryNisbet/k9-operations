@@ -3918,7 +3918,7 @@ function formatHourAnalysisCapacityRangeDelta(expected = 0, standard = null) {
     const delta = normalizeHourAnalysisDelta(value - healthyHigh);
     return {
       value: `+${formatHourAnalysisHours(delta)} hrs`,
-      tone: "short",
+      tone: "surplus",
       label: "Above target range",
     };
   }
@@ -3954,23 +3954,156 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     : deltaToTarget;
   const deltaToFloor = normalizeHourAnalysisDelta(expected - floor);
   const delta = isFrontline ? formatHourAnalysisCapacityRangeDelta(expected, capacityStandard) : formatHourAnalysisCapacityDelta(deltaToTarget);
-  const maxWeekly = Math.max(expected, targetHigh, targetMid, floor, 1) * 1.1;
-  const expectedPct = clampHourAnalysisPercent((expected / maxWeekly) * 100, 1.5, 100);
-  const floorPct = clampHourAnalysisPercent((floor / maxWeekly) * 100);
-  const targetPct = clampHourAnalysisPercent((targetMid / maxWeekly) * 100);
-  const targetLowPct = clampHourAnalysisPercent((targetLow / maxWeekly) * 100);
-  const targetHighPct = clampHourAnalysisPercent((targetHigh / maxWeekly) * 100);
-  const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 89);
+  const measurementValues = [expected, floor, targetMid, targetLow, targetHigh]
+    .map((value) => normalizeHourAnalysisNumber(value, 0))
+    .filter((value) => Number.isFinite(value));
+  const lowestWeekly = measurementValues.length ? Math.min(...measurementValues) : 0;
+  const highestWeekly = measurementValues.length ? Math.max(...measurementValues, 1) : 1;
+  const domainPadding = 10;
+  const domainMin = Math.max(0, normalizeHourAnalysisNumber(lowestWeekly - domainPadding, 0));
+  const domainMax = normalizeHourAnalysisNumber(Math.max(highestWeekly + domainPadding, domainMin + 20), domainMin + 20);
+  const domainWidth = Math.max(1, domainMax - domainMin);
+  const valueToPct = (value, min = 0, max = 100) => clampHourAnalysisPercent(((normalizeHourAnalysisNumber(value, 0) - domainMin) / domainWidth) * 100, min, max);
+  const maxWeekly = domainMax;
+  const expectedPct = valueToPct(expected, 1.5, 98.5);
+  const floorPct = valueToPct(floor);
+  const targetPct = valueToPct(targetMid);
+  const targetLowPct = valueToPct(targetLow);
+  const targetHighPct = valueToPct(targetHigh);
+  const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 87);
   const rangeLabelPct = labelPct((targetLowPct + targetHighPct) / 2);
+  const makeDimensionLine = ({ key, label, start, end, tone = "neutral" }) => {
+    const startPct = valueToPct(start);
+    const endPct = valueToPct(end);
+    const leftPct = Math.min(startPct, endPct);
+    const rawWidthPct = Math.abs(endPct - startPct);
+    const midpointPct = valueToPct((normalizeHourAnalysisNumber(start, 0) + normalizeHourAnalysisNumber(end, 0)) / 2);
+    return {
+      key,
+      label,
+      tone,
+      leftPct,
+      widthPct: Math.max(rawWidthPct, 1.2),
+      midpointPct,
+      labelPct: clampHourAnalysisPercent(midpointPct, 12, 88),
+      isZero: rawWidthPct < 0.8,
+    };
+  };
+  const sameFloorTarget = Math.abs(floor - targetMid) < 0.05;
   const tone = isFrontline
-    ? deltaToRange < 0 || deltaToRange > 0
+    ? deltaToRange < 0
       ? "short"
+      : deltaToRange > 0
+        ? "surplus"
       : "healthy"
     : deltaToTarget < 0
       ? "short"
       : deltaToTarget > 0
         ? "surplus"
         : "healthy";
+  const primaryDelta = isFrontline ? deltaToRange : deltaToTarget;
+  const magnitudeBase = Math.max(8, Math.max(expected, targetHigh, targetMid, floor, 1) * 0.22);
+  const magnitudeRatio = Math.min(1, Math.abs(primaryDelta || deltaToFloor || deltaToTarget) / magnitudeBase);
+  const measurementIntensity = normalizeHourAnalysisNumber(0.34 + (magnitudeRatio * 0.48), 2);
+  const targetDeltaLabel = deltaToTarget < 0
+    ? `${formatHourAnalysisHours(Math.abs(deltaToTarget))} hrs short to target`
+    : deltaToTarget > 0
+      ? `${formatHourAnalysisHours(deltaToTarget)} hrs over target`
+      : "aligned to target";
+  const floorDeltaLabel = deltaToFloor < 0
+    ? `${formatHourAnalysisHours(Math.abs(deltaToFloor))} hrs short to floor`
+    : deltaToFloor > 0
+      ? `${formatHourAnalysisHours(deltaToFloor)} hrs over floor`
+      : "aligned to operational floor";
+  const topLabels = [
+    {
+      key: "expected",
+      label: "Expected / actual",
+      value: `${formatHourAnalysisHours(expected)} hrs`,
+      pct: labelPct(expectedPct),
+      markerPct: expectedPct,
+      lane: 2,
+      tone: deltaToFloor < 0 ? "short" : "surplus",
+    },
+    sameFloorTarget
+      ? {
+        key: "floor-target",
+        label: "Floor / target",
+        value: `${formatHourAnalysisHours(floor)} hrs`,
+        pct: labelPct(floorPct),
+        markerPct: floorPct,
+        lane: 0,
+        tone: "floor",
+      }
+      : {
+        key: "floor",
+        label: "Operational floor",
+        value: `${formatHourAnalysisHours(floor)} hrs`,
+        pct: labelPct(floorPct),
+        markerPct: floorPct,
+        lane: 0,
+        tone: "floor",
+      },
+    !sameFloorTarget ? {
+      key: "target",
+      label: "Target",
+      value: `${formatHourAnalysisHours(targetMid)} hrs`,
+      pct: labelPct(targetPct),
+      markerPct: targetPct,
+      lane: 1,
+      tone: "target",
+    } : null,
+    isFrontline && Math.abs(targetHigh - targetMid) > 0.05 ? {
+      key: "upper-range",
+      label: "Upper range",
+      value: `${formatHourAnalysisHours(targetHigh)} hrs`,
+      pct: labelPct(targetHighPct),
+      markerPct: targetHighPct,
+      lane: 0,
+      tone: "target",
+    } : null,
+  ].filter(Boolean);
+  const dimensionLines = [
+    makeDimensionLine({
+      key: "expected",
+      label: `${formatHourAnalysisHours(expected)} hrs expected`,
+      start: domainMin,
+      end: expected,
+      tone: deltaToFloor < 0 ? "short" : "surplus",
+    }),
+    makeDimensionLine({
+      key: "floor",
+      label: floorDeltaLabel,
+      start: expected,
+      end: floor,
+      tone: deltaToFloor < 0 ? "short" : deltaToFloor > 0 ? "surplus" : "neutral",
+    }),
+    makeDimensionLine({
+      key: "target",
+      label: targetDeltaLabel,
+      start: expected,
+      end: targetMid,
+      tone: deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "neutral",
+    }),
+  ];
+  if (isFrontline && targetHigh > targetLow) {
+    dimensionLines.push(makeDimensionLine({
+      key: "target-range",
+      label: `${formatHourAnalysisHours(targetLow)}-${formatHourAnalysisHours(targetHigh)} hrs target range`,
+      start: targetLow,
+      end: targetHigh,
+      tone: "range",
+    }));
+  }
+  if (isFrontline && expected > targetHigh && targetHigh > 0) {
+    dimensionLines.push(makeDimensionLine({
+      key: "overage",
+      label: `${formatHourAnalysisHours(expected - targetHigh)} hrs over upper range`,
+      start: targetHigh,
+      end: expected,
+      tone: "surplus",
+    }));
+  }
 
   return {
     key: row.key || "",
@@ -3981,16 +4114,22 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     target,
     targetLow,
     targetHigh,
+    domainMin,
+    domainMax,
+    maxWeekly,
     deltaToTarget,
     deltaToRange,
     deltaToFloor,
     tone,
     delta,
+    measurementIntensity,
     expectedPct,
     floorPct,
     targetPct,
     targetLowPct,
     targetHighPct,
+    topLabels,
+    dimensionLines,
     floorLabelPct: labelPct(floorPct),
     targetLabelPct: labelPct(targetPct),
     targetRangeLabelPct: rangeLabelPct,
@@ -5095,7 +5234,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborModelBreakerEditorDay, setLaborModelBreakerEditorDay] = useState("monday");
   const [laborModelBreakerCopyTargets, setLaborModelBreakerCopyTargets] = useState([]);
   const [hourAnalysisChangedKeys, setHourAnalysisChangedKeys] = useState(() => new Set());
-  const [hourAnalysisCapacityHover, setHourAnalysisCapacityHover] = useState(null);
   const [whatIfEmployeeName, setWhatIfEmployeeName] = useState("");
   const [whatIfPosition, setWhatIfPosition] = useState("");
   const [whatIfCommitment, setWhatIfCommitment] = useState("full_time");
@@ -9082,30 +9220,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter((row) => preferredOrder.has(row.key))
       .sort((left, right) => preferredOrder.get(left.key) - preferredOrder.get(right.key));
   }, [hourAnalysisModel.weeklyRows]);
-  const hourAnalysisCapacityLayoutColumns = useMemo(() => [
-    hourAnalysisCapacityRows.filter((row) => !HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
-    hourAnalysisCapacityRows.filter((row) => HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key)),
-  ], [hourAnalysisCapacityRows]);
-  const updateHourAnalysisCapacityHover = useCallback((event, detail) => {
-    const bar = event.currentTarget.closest(".hour-analysis-capacity-bar");
-    if (!bar) return;
-    const rect = bar.getBoundingClientRect();
-    const rawX = event.clientX - rect.left;
-    const rawY = event.clientY - rect.top;
-    const xPadding = Math.min(68, Math.max(18, rect.width / 2 - 4));
-    const x = rect.width <= 140
-      ? rect.width / 2
-      : Math.max(xPadding, Math.min(rect.width - xPadding, rawX));
-    const y = Math.max(10, Math.min(rect.height - 8, rawY));
-    setHourAnalysisCapacityHover({
-      ...detail,
-      x,
-      y,
-    });
-  }, []);
-  const clearHourAnalysisCapacityHover = useCallback(() => {
-    setHourAnalysisCapacityHover(null);
-  }, []);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
   const laborModelCoveragePositionOptions = useMemo(() => {
     const configuredGroups = new Set(approvedLaborPositionOptions.flatMap((option) => {
@@ -14243,6 +14357,323 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           transform: translateY(-1px);
           box-shadow: 0 10px 22px rgba(15,23,42,0.12);
         }
+        @keyframes hourAnalysisCapacitySpanLoad {
+          from { transform: scaleX(0); opacity: 0.38; }
+          to { transform: scaleX(1); opacity: 1; }
+        }
+        .hour-analysis-capacity-dashboard {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+          padding: 10px 16px 8px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #fbfdff;
+        }
+        .hour-analysis-capacity-total {
+          border-radius: 6px;
+          background: #ffffff;
+          padding: 8px 10px;
+          min-height: 36px;
+          box-shadow: none;
+        }
+        .hour-analysis-capacity-total strong {
+          font-size: 18px;
+        }
+        .hour-analysis-capacity-buffer-note {
+          justify-self: auto;
+          max-width: none;
+          border: 1px dashed rgba(20, 83, 45, 0.18);
+          border-radius: 6px;
+          background: #ffffff;
+          padding: 7px 9px;
+          font-size: 10.5px;
+          box-shadow: none;
+        }
+        .hour-analysis-capacity-visual {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 10px;
+          padding: 14px 16px 16px;
+        }
+        .hour-analysis-capacity-row {
+          --capacity-tone-rgb: 20, 83, 45;
+          --capacity-ink: #334155;
+          --capacity-dim: #94a3b8;
+          display: grid;
+          grid-template-columns: minmax(122px, 0.18fr) minmax(0, 1fr);
+          gap: 14px;
+          align-items: stretch;
+          border-radius: 6px;
+          background: #ffffff;
+          padding: 12px 14px 12px 12px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+          transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hour-analysis-capacity-row::after {
+          opacity: 0.12;
+        }
+        .hour-analysis-capacity-row:hover {
+          transform: none;
+          outline: none;
+          border-color: rgba(var(--capacity-tone-rgb), 0.34);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.94), 0 12px 28px rgba(15, 23, 42, 0.07);
+        }
+        .hour-analysis-capacity-row:hover::after {
+          opacity: 0.24;
+          animation-duration: 1.4s;
+        }
+        .hour-analysis-capacity-row.is-short {
+          --capacity-tone-rgb: 185, 28, 28;
+          background: linear-gradient(90deg, rgba(254,242,242,0.9), #ffffff 18%);
+        }
+        .hour-analysis-capacity-row.is-surplus {
+          --capacity-tone-rgb: 4, 120, 87;
+          background: linear-gradient(90deg, rgba(236,253,245,0.84), #ffffff 18%);
+        }
+        .hour-analysis-capacity-row.is-healthy {
+          --capacity-tone-rgb: 13, 148, 136;
+          background: linear-gradient(90deg, rgba(240,253,244,0.78), #ffffff 18%);
+        }
+        .hour-analysis-capacity-role {
+          position: relative;
+          z-index: 2;
+          display: grid;
+          align-content: start;
+          gap: 8px;
+          min-width: 0;
+          padding-top: 82px;
+        }
+        .hour-analysis-capacity-delta {
+          display: inline-flex;
+          width: fit-content;
+          border-radius: 999px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: #f8fafc;
+          color: ${C.textSec};
+          padding: 4px 7px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          white-space: nowrap;
+        }
+        .hour-analysis-capacity-delta.is-short {
+          border-color: rgba(185, 28, 28, 0.18);
+          background: #fef2f2;
+          color: #b91c1c;
+        }
+        .hour-analysis-capacity-delta.is-surplus,
+        .hour-analysis-capacity-delta.is-healthy {
+          border-color: rgba(20, 83, 45, 0.18);
+          background: #ecfdf5;
+          color: #047857;
+        }
+        .hour-analysis-capacity-scale {
+          position: relative;
+          z-index: 2;
+          min-height: 236px;
+          margin: 0 42px;
+          overflow: visible;
+          outline: none;
+        }
+        .hour-analysis-capacity-label-field {
+          position: relative;
+          z-index: 5;
+          height: 88px;
+        }
+        .hour-analysis-capacity-top-label {
+          position: absolute;
+          left: var(--label-left);
+          top: calc(var(--label-lane, 0) * 28px);
+          transform: translateX(-50%);
+          display: grid;
+          justify-items: center;
+          gap: 2px;
+          min-width: 78px;
+          max-width: 118px;
+          color: var(--capacity-ink);
+          text-align: center;
+          white-space: normal;
+        }
+        .hour-analysis-capacity-top-label small {
+          color: ${C.textMut};
+          font-size: 9px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+        .hour-analysis-capacity-top-label strong {
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 999px;
+          background: rgba(255,255,255,0.95);
+          color: ${C.text};
+          padding: 3px 6px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          box-shadow: 0 5px 12px rgba(15, 23, 42, 0.04);
+        }
+        .hour-analysis-capacity-top-label.is-short strong {
+          border-color: rgba(185, 28, 28, 0.18);
+          color: #b91c1c;
+        }
+        .hour-analysis-capacity-top-label.is-surplus strong,
+        .hour-analysis-capacity-top-label.is-healthy strong {
+          border-color: rgba(20, 83, 45, 0.18);
+          color: #047857;
+        }
+        .hour-analysis-capacity-top-label.is-target strong {
+          border-color: rgba(63, 98, 18, 0.18);
+          color: #3f6212;
+        }
+        .hour-analysis-capacity-reference {
+          position: absolute;
+          z-index: 1;
+          left: var(--reference-left);
+          top: 83px;
+          bottom: 8px;
+          width: 1px;
+          border-left: 1px dashed rgba(100, 116, 139, 0.36);
+          transform: translateX(-0.5px);
+        }
+        .hour-analysis-capacity-reference.is-short {
+          border-left-color: rgba(185, 28, 28, 0.32);
+        }
+        .hour-analysis-capacity-reference.is-surplus,
+        .hour-analysis-capacity-reference.is-healthy {
+          border-left-color: rgba(20, 83, 45, 0.3);
+        }
+        .hour-analysis-capacity-rail {
+          position: absolute;
+          z-index: 4;
+          left: 0;
+          right: 0;
+          top: 94px;
+          height: 52px;
+          border-top: 1px solid rgba(51, 65, 85, 0.42);
+          border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+          background:
+            linear-gradient(90deg, rgba(148, 163, 184, 0.18) 1px, transparent 1px) 0 0 / 10% 100%,
+            linear-gradient(180deg, #ffffff, #f8fafc);
+        }
+        .hour-analysis-capacity-zero-tick,
+        .hour-analysis-capacity-marker {
+          position: absolute;
+          top: 6px;
+          bottom: 6px;
+          width: 2px;
+          background: rgba(51, 65, 85, 0.72);
+          transform: translateX(-1px);
+        }
+        .hour-analysis-capacity-zero-tick {
+          left: 0;
+          background: rgba(15, 23, 42, 0.32);
+        }
+        .hour-analysis-capacity-range-span {
+          position: absolute;
+          top: 9px;
+          bottom: 9px;
+          border-left: 1px solid rgba(20, 83, 45, 0.22);
+          border-right: 1px solid rgba(20, 83, 45, 0.22);
+          background: repeating-linear-gradient(135deg, rgba(22, 163, 74, 0.08) 0 6px, rgba(22, 163, 74, 0.2) 6px 12px);
+        }
+        .hour-analysis-capacity-expected-span {
+          position: absolute;
+          left: 0;
+          top: 25px;
+          height: 4px;
+          border-radius: 0 999px 999px 0;
+          background: rgba(var(--capacity-tone-rgb), var(--measurement-intensity, 0.58));
+          box-shadow: 0 0 0 1px rgba(var(--capacity-tone-rgb), 0.1), 0 7px 14px rgba(var(--capacity-tone-rgb), 0.1);
+          transform-origin: left center;
+          animation: hourAnalysisCapacitySpanLoad 820ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          animation-delay: var(--capacity-row-delay, 0ms);
+        }
+        .hour-analysis-capacity-marker.is-expected {
+          top: 0;
+          bottom: 0;
+          width: 3px;
+          background: rgba(var(--capacity-tone-rgb), 0.88);
+          transform: translateX(-1.5px);
+        }
+        .hour-analysis-capacity-marker.is-floor {
+          background: rgba(15, 23, 42, 0.72);
+        }
+        .hour-analysis-capacity-marker.is-target,
+        .hour-analysis-capacity-marker.is-upper-range {
+          background: rgba(63, 98, 18, 0.64);
+        }
+        .hour-analysis-capacity-marker.is-upper-range {
+          top: 12px;
+          bottom: 12px;
+        }
+        .hour-analysis-capacity-dimensions {
+          position: absolute;
+          z-index: 5;
+          left: 0;
+          right: 0;
+          top: 160px;
+          height: 104px;
+        }
+        .hour-analysis-capacity-dimension {
+          --dimension-rgb: 100, 116, 139;
+          position: absolute;
+          left: var(--dimension-left);
+          top: calc(var(--dimension-index, 0) * 24px);
+          width: var(--dimension-width);
+          min-width: 11px;
+          height: 18px;
+          border-top: 1px solid rgba(var(--dimension-rgb), 0.72);
+          color: rgb(var(--dimension-rgb));
+        }
+        .hour-analysis-capacity-dimension::before,
+        .hour-analysis-capacity-dimension::after {
+          content: "";
+          position: absolute;
+          top: -6px;
+          width: 1px;
+          height: 11px;
+          background: rgba(var(--dimension-rgb), 0.72);
+        }
+        .hour-analysis-capacity-dimension::before {
+          left: 0;
+        }
+        .hour-analysis-capacity-dimension::after {
+          right: 0;
+        }
+        .hour-analysis-capacity-dimension span {
+          position: absolute;
+          left: 50%;
+          top: -9px;
+          transform: translateX(-50%);
+          display: inline-flex;
+          border-radius: 999px;
+          background: #ffffff;
+          padding: 0 5px;
+          color: currentColor;
+          font-size: 9.5px;
+          font-weight: 950;
+          line-height: 1.1;
+          white-space: nowrap;
+        }
+        .hour-analysis-capacity-dimension.is-short {
+          --dimension-rgb: 185, 28, 28;
+        }
+        .hour-analysis-capacity-dimension.is-surplus {
+          --dimension-rgb: 4, 120, 87;
+        }
+        .hour-analysis-capacity-dimension.is-range {
+          --dimension-rgb: 63, 98, 18;
+        }
+        .hour-analysis-capacity-dimension.is-overage span {
+          left: auto;
+          right: 0;
+          transform: none;
+        }
+        .hour-analysis-capacity-dimension.is-zero {
+          width: 18px;
+          transform: translateX(-9px);
+        }
         .hour-analysis-hire-list {
           display: grid;
           gap: 8px;
@@ -17117,6 +17548,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-capacity-total::after,
             .hour-analysis-capacity-row,
             .hour-analysis-capacity-row::after,
+            .hour-analysis-capacity-expected-span,
             .hour-analysis-capacity-fill::after,
             .labor-model-role-color-settings { animation: none; }
 	          .labor-tab-indicator,
@@ -17134,6 +17566,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-position-trigger,
             .hour-analysis-picker-option,
             .hour-analysis-progress-fill,
+            .hour-analysis-capacity-reference,
+            .hour-analysis-capacity-expected-span,
             .hour-analysis-capacity-fill,
             .hour-analysis-capacity-marker { transition: none; }
 	        }
@@ -17170,14 +17604,63 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .hour-analysis-summary-grid { grid-template-columns: 1fr; }
           .hour-analysis-roster-summary { grid-template-columns: 1fr; }
           .hour-analysis-decision-grid { grid-template-columns: 1fr; }
-          .hour-analysis-capacity-dashboard { grid-template-columns: 1fr; }
-          .hour-analysis-capacity-visual { grid-template-columns: 1fr; }
+          .hour-analysis-capacity-dashboard {
+            display: grid;
+            grid-template-columns: 1fr;
+            justify-items: start;
+          }
+          .hour-analysis-capacity-visual {
+            grid-template-columns: 1fr;
+            padding-left: 10px;
+            padding-right: 10px;
+          }
           .hour-analysis-capacity-buffer-note { justify-self: start; }
-          .hour-analysis-capacity-row-header { align-items: flex-start; }
-          .hour-analysis-capacity-bar { height: 52px; }
-          .hour-analysis-capacity-fill { top: 24px; }
-          .hour-analysis-capacity-hover-zone.is-expected { top: 16px; }
-          .hour-analysis-capacity-delta-float { top: 8px; right: 8px; }
+          .hour-analysis-capacity-row {
+            grid-template-columns: minmax(0, 1fr);
+            padding-left: 10px;
+            padding-right: 10px;
+          }
+          .hour-analysis-capacity-role {
+            padding-top: 0;
+            grid-template-columns: minmax(0, 1fr);
+            justify-items: start;
+            align-items: start;
+            gap: 6px;
+          }
+          .hour-analysis-capacity-scale {
+            margin: 0;
+            min-height: 244px;
+          }
+          .hour-analysis-capacity-label-field {
+            height: 88px;
+          }
+          .hour-analysis-capacity-top-label {
+            top: calc(var(--label-lane, 0) * 28px);
+            min-width: 62px;
+            max-width: 88px;
+          }
+          .hour-analysis-capacity-top-label small {
+            font-size: 8px;
+          }
+          .hour-analysis-capacity-top-label strong {
+            font-size: 9px;
+            padding-left: 5px;
+            padding-right: 5px;
+          }
+          .hour-analysis-capacity-reference {
+            top: 83px;
+          }
+          .hour-analysis-capacity-rail {
+            top: 94px;
+          }
+          .hour-analysis-capacity-dimensions {
+            top: 160px;
+          }
+          .hour-analysis-capacity-dimension span {
+            font-size: 8.5px;
+            padding-left: 3px;
+            padding-right: 3px;
+          }
           .hour-analysis-capacity-standard { grid-template-columns: 1fr; }
           .hour-analysis-capacity-grid { grid-template-columns: 1fr; }
           .hour-analysis-card-header { align-items: flex-start; flex-direction: column; }
@@ -19108,122 +19591,87 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </div>
             </div>
             <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
-              {hourAnalysisCapacityLayoutColumns.map((columnRows, columnIndex) => (
-                <div className="hour-analysis-capacity-column" key={columnIndex === 0 ? "leadership" : "frontline"}>
-                  {columnRows.map((row) => {
-                    const visual = buildHourAnalysisCapacityRowVisualModel(row);
-                    const rowIndex = hourAnalysisCapacityRows.findIndex((item) => item.key === row.key);
-                    const expectedHover = {
-                      rowKey: row.key,
-                      label: "Expected",
-                      value: `${formatHourAnalysisHours(visual.expected)} hrs`,
-                      caption: "planned weekly hours",
-                      tone: visual.delta.tone,
-                    };
-                    const floorHover = {
-                      rowKey: row.key,
-                      label: "Operational floor",
-                      value: `${formatHourAnalysisHours(visual.floor)} hrs`,
-                      caption: "minimum weekly coverage",
-                      tone: "floor",
-                    };
-                    const targetLowHover = {
-                      rowKey: row.key,
-                      label: "Lower bound",
-                      value: `${formatHourAnalysisHours(visual.targetLow)} hrs`,
-                      caption: `${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}% above floor`,
-                      tone: "target",
-                    };
-                    const targetHighHover = {
-                      rowKey: row.key,
-                      label: "Upper bound",
-                      value: `${formatHourAnalysisHours(visual.targetHigh)} hrs`,
-                      caption: `${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% above floor`,
-                      tone: "target",
-                    };
-                    const activeHover = hourAnalysisCapacityHover?.rowKey === row.key ? hourAnalysisCapacityHover : null;
-                    return (
-                      <div
-                        key={row.key}
-                        className={`hour-analysis-capacity-row is-${visual.tone}`}
-                        tabIndex={0}
-                        onPointerLeave={clearHourAnalysisCapacityHover}
-                        onBlur={clearHourAnalysisCapacityHover}
-                        style={{ "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms` }}
-                      >
-                        <div className="hour-analysis-capacity-row-header">
-                          <div className="hour-analysis-capacity-role">
-                            <strong>{visual.roleLabel}</strong>
-                          </div>
-                        </div>
-                        <div
-                          className="hour-analysis-capacity-bar"
-                          aria-label={`${visual.roleLabel} expected ${formatHourAnalysisHours(visual.expected)} hours, floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.isFrontline ? `target range ${formatHourAnalysisHours(visual.targetLow)} to ${formatHourAnalysisHours(visual.targetHigh)} hours` : `target ${formatHourAnalysisHours(visual.target)} hours`}, variance ${visual.delta.value}`}
-                        >
-                          {visual.isFrontline && (
-                            <div
-                              className="hour-analysis-capacity-buffer"
-                              style={{ left: `${visual.bufferLeftPct}%`, width: `${visual.bufferWidthPct}%` }}
-                            />
-                          )}
-                          <div className="hour-analysis-capacity-fill" style={{ width: `${visual.expectedPct}%` }} />
-                          <div className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
-                          {visual.isFrontline && (
-                            <>
-                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetLowPct}%` }} />
-                              <div className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetHighPct}%` }} />
-                            </>
-                          )}
-                          <div
-                            className="hour-analysis-capacity-hover-zone is-expected"
-                            style={{ width: `${visual.expectedPct}%` }}
-                            onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, expectedHover)}
-                            onPointerMove={(event) => updateHourAnalysisCapacityHover(event, expectedHover)}
-                            aria-hidden="true"
-                          />
-                          <div
-                            className="hour-analysis-capacity-hover-zone is-marker is-floor"
-                            style={{ left: `${visual.floorPct}%` }}
-                            onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, floorHover)}
-                            onPointerMove={(event) => updateHourAnalysisCapacityHover(event, floorHover)}
-                            aria-hidden="true"
-                          />
-                          {visual.isFrontline && (
-                            <>
-                              <div
-                                className="hour-analysis-capacity-hover-zone is-marker is-target"
-                                style={{ left: `${visual.targetLowPct}%` }}
-                                onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, targetLowHover)}
-                                onPointerMove={(event) => updateHourAnalysisCapacityHover(event, targetLowHover)}
-                                aria-hidden="true"
-                              />
-                              <div
-                                className="hour-analysis-capacity-hover-zone is-marker is-target"
-                                style={{ left: `${visual.targetHighPct}%` }}
-                                onPointerEnter={(event) => updateHourAnalysisCapacityHover(event, targetHighHover)}
-                                onPointerMove={(event) => updateHourAnalysisCapacityHover(event, targetHighHover)}
-                                aria-hidden="true"
-                              />
-                            </>
-                          )}
-                          <span className={`hour-analysis-capacity-delta-float is-${visual.delta.tone}`}>
-                            {visual.delta.value}
+              {hourAnalysisCapacityRows.map((row, rowIndex) => {
+                const visual = buildHourAnalysisCapacityRowVisualModel(row);
+                return (
+                  <div
+                    key={row.key}
+                    className={`hour-analysis-capacity-row is-${visual.tone}`}
+                    tabIndex={0}
+                    style={{
+                      "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms`,
+                      "--measurement-intensity": visual.measurementIntensity,
+                    }}
+                  >
+                    <div className="hour-analysis-capacity-role">
+                      <strong>{visual.roleLabel}</strong>
+                      <span className={`hour-analysis-capacity-delta is-${visual.delta.tone}`}>
+                        {visual.delta.value}
+                      </span>
+                    </div>
+                    <div
+                      className="hour-analysis-capacity-scale"
+                      role="img"
+                      aria-label={`${visual.roleLabel} expected actual ${formatHourAnalysisHours(visual.expected)} hours, operational floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.isFrontline ? `target ${formatHourAnalysisHours(visual.target)} hours with upper range ${formatHourAnalysisHours(visual.targetHigh)} hours` : `target ${formatHourAnalysisHours(visual.target)} hours`}, variance ${visual.delta.value}`}
+                    >
+                      <div className="hour-analysis-capacity-label-field">
+                        {visual.topLabels.map((label) => (
+                          <span
+                            key={label.key}
+                            className={`hour-analysis-capacity-top-label is-${label.tone}`}
+                            style={{
+                              "--label-left": `${label.pct}%`,
+                              "--label-lane": label.lane,
+                            }}
+                          >
+                            <small>{label.label}</small>
+                            <strong>{label.value}</strong>
                           </span>
-                          {activeHover && (
-                            <span
-                              className={`hour-analysis-capacity-cursor-tooltip is-${activeHover.tone}`}
-                              style={{ left: `${activeHover.x}px`, top: `${activeHover.y}px` }}
-                            >
-                              <span>{activeHover.label} {activeHover.value}</span>
-                              {activeHover.caption ? <small>{activeHover.caption}</small> : null}
-                            </span>
-                          )}
-                        </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-              ))}
+                      {visual.topLabels.map((label) => (
+                        <span
+                          key={`${label.key}-reference`}
+                          className={`hour-analysis-capacity-reference is-${label.tone}`}
+                          style={{ "--reference-left": `${label.markerPct}%` }}
+                          aria-hidden="true"
+                        />
+                      ))}
+                      <div className="hour-analysis-capacity-rail" aria-hidden="true">
+                        <span className="hour-analysis-capacity-zero-tick" />
+                        {visual.isFrontline && (
+                          <span
+                            className="hour-analysis-capacity-range-span"
+                            style={{ left: `${visual.targetLowPct}%`, width: `${visual.bufferWidthPct}%` }}
+                          />
+                        )}
+                        <span className={`hour-analysis-capacity-expected-span is-${visual.tone}`} style={{ width: `${visual.expectedPct}%` }} />
+                        <span className="hour-analysis-capacity-marker is-expected" style={{ left: `${visual.expectedPct}%` }} />
+                        <span className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
+                        <span className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
+                        {visual.isFrontline && (
+                          <span className="hour-analysis-capacity-marker is-upper-range" style={{ left: `${visual.targetHighPct}%` }} />
+                        )}
+                      </div>
+                      <div className="hour-analysis-capacity-dimensions" aria-hidden="true">
+                        {visual.dimensionLines.map((line, lineIndex) => (
+                          <span
+                            key={line.key}
+                            className={`hour-analysis-capacity-dimension is-${line.tone} is-${line.key}${line.isZero ? " is-zero" : ""}`}
+                            style={{
+                              "--dimension-index": lineIndex,
+                              "--dimension-left": `${line.leftPct}%`,
+                              "--dimension-width": `${line.widthPct}%`,
+                            }}
+                          >
+                            <span>{line.label}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
