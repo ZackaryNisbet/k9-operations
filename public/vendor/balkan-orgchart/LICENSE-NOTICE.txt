@@ -1,0 +1,9 @@
+Balkan OrgChartJS Professional 9.2.49
+
+This vendored runtime was provided from the paid licensed package:
+/<path>/Downloads/BALKAN_OrgChartJS_PROFESSIONAL_9.2.49-min.zip
+
+Authorized production domain for this K9 Operations integration:
+k9operations.com
+
+Do not commit license-account credentials or purchase/account secrets.
