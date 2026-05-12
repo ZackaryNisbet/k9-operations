@@ -3972,6 +3972,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
   const targetHighPct = valueToPct(targetHigh);
   const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 87);
   const rangeLabelPct = labelPct((targetLowPct + targetHighPct) / 2);
+  const hasTargetRange = isFrontline && targetHigh > targetLow + 0.05;
   const makeDimensionLine = ({ key, label, start, end, tone = "neutral" }) => {
     const startPct = valueToPct(start);
     const endPct = valueToPct(end);
@@ -3989,7 +3990,6 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       isZero: rawWidthPct < 0.8,
     };
   };
-  const sameFloorTarget = Math.abs(floor - targetMid) < 0.05;
   const tone = isFrontline
     ? deltaToRange < 0
       ? "short"
@@ -4017,43 +4017,33 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       : "aligned to operational floor";
   const topLabels = [
     {
-      key: "expected",
-      label: "Expected / actual",
-      value: `${formatHourAnalysisHours(expected)} hrs`,
-      pct: labelPct(expectedPct),
-      markerPct: expectedPct,
-      lane: 2,
-      tone: deltaToFloor < 0 ? "short" : "surplus",
+      key: "floor",
+      label: "Floor",
+      value: `${formatHourAnalysisHours(floor)} hrs`,
+      pct: labelPct(floorPct),
+      markerPct: floorPct,
+      lane: 0,
+      tone: "floor",
     },
-    sameFloorTarget
-      ? {
-        key: "floor-target",
-        label: "Floor / target",
-        value: `${formatHourAnalysisHours(floor)} hrs`,
-        pct: labelPct(floorPct),
-        markerPct: floorPct,
-        lane: 0,
-        tone: "floor",
-      }
-      : {
-        key: "floor",
-        label: "Operational floor",
-        value: `${formatHourAnalysisHours(floor)} hrs`,
-        pct: labelPct(floorPct),
-        markerPct: floorPct,
-        lane: 0,
-        tone: "floor",
-      },
-    !sameFloorTarget ? {
+    hasTargetRange ? {
+      key: "lower-range",
+      label: "Lower range",
+      value: `${formatHourAnalysisHours(targetLow)} hrs`,
+      pct: labelPct(targetLowPct),
+      markerPct: targetLowPct,
+      lane: 0,
+      tone: "target",
+    } : null,
+    hasTargetRange ? {
       key: "target",
       label: "Target",
       value: `${formatHourAnalysisHours(targetMid)} hrs`,
       pct: labelPct(targetPct),
       markerPct: targetPct,
-      lane: 1,
+      lane: 0,
       tone: "target",
     } : null,
-    isFrontline && Math.abs(targetHigh - targetMid) > 0.05 ? {
+    hasTargetRange ? {
       key: "upper-range",
       label: "Upper range",
       value: `${formatHourAnalysisHours(targetHigh)} hrs`,
@@ -4078,15 +4068,15 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       end: floor,
       tone: deltaToFloor < 0 ? "short" : deltaToFloor > 0 ? "surplus" : "neutral",
     }),
-    makeDimensionLine({
+    hasTargetRange ? makeDimensionLine({
       key: "target",
       label: targetDeltaLabel,
       start: expected,
       end: targetMid,
       tone: deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "neutral",
-    }),
-  ];
-  if (isFrontline && targetHigh > targetLow) {
+    }) : null,
+  ].filter(Boolean);
+  if (hasTargetRange) {
     dimensionLines.push(makeDimensionLine({
       key: "target-range",
       label: `${formatHourAnalysisHours(targetLow)}-${formatHourAnalysisHours(targetHigh)} hrs target range`,
@@ -4095,7 +4085,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       tone: "range",
     }));
   }
-  if (isFrontline && expected > targetHigh && targetHigh > 0) {
+  if (hasTargetRange && expected > targetHigh && targetHigh > 0) {
     dimensionLines.push(makeDimensionLine({
       key: "overage",
       label: `${formatHourAnalysisHours(expected - targetHigh)} hrs over upper range`,
@@ -4114,6 +4104,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     target,
     targetLow,
     targetHigh,
+    hasTargetRange,
     domainMin,
     domainMax,
     maxWeekly,
@@ -14442,7 +14433,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           align-content: start;
           gap: 8px;
           min-width: 0;
-          padding-top: 82px;
+          padding-top: 58px;
         }
         .hour-analysis-capacity-delta {
           display: inline-flex;
@@ -14471,7 +14462,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-scale {
           position: relative;
           z-index: 2;
-          min-height: 236px;
+          min-height: 204px;
           margin: 0 42px;
           overflow: visible;
           outline: none;
@@ -14479,12 +14470,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-label-field {
           position: relative;
           z-index: 5;
-          height: 88px;
+          height: 36px;
         }
         .hour-analysis-capacity-top-label {
           position: absolute;
           left: var(--label-left);
-          top: calc(var(--label-lane, 0) * 28px);
+          top: 4px;
           transform: translateX(-50%);
           display: grid;
           justify-items: center;
@@ -14530,7 +14521,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           position: absolute;
           z-index: 1;
           left: var(--reference-left);
-          top: 83px;
+          top: 34px;
           bottom: 8px;
           width: 1px;
           border-left: 1px dashed rgba(100, 116, 139, 0.36);
@@ -14548,8 +14539,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           z-index: 4;
           left: 0;
           right: 0;
-          top: 94px;
-          height: 52px;
+          top: 42px;
+          height: 46px;
           border-top: 1px solid rgba(51, 65, 85, 0.42);
           border-bottom: 1px solid rgba(148, 163, 184, 0.24);
           background:
@@ -14612,14 +14603,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           z-index: 5;
           left: 0;
           right: 0;
-          top: 160px;
-          height: 104px;
+          top: 102px;
+          height: 98px;
         }
         .hour-analysis-capacity-dimension {
           --dimension-rgb: 100, 116, 139;
           position: absolute;
           left: var(--dimension-left);
-          top: calc(var(--dimension-index, 0) * 24px);
+          top: calc(var(--dimension-index, 0) * 20px);
           width: var(--dimension-width);
           min-width: 11px;
           height: 18px;
@@ -17629,13 +17620,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           }
           .hour-analysis-capacity-scale {
             margin: 0;
-            min-height: 244px;
+            min-height: 204px;
           }
           .hour-analysis-capacity-label-field {
-            height: 88px;
+            height: 36px;
           }
           .hour-analysis-capacity-top-label {
-            top: calc(var(--label-lane, 0) * 28px);
+            top: 4px;
             min-width: 62px;
             max-width: 88px;
           }
@@ -17648,13 +17639,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             padding-right: 5px;
           }
           .hour-analysis-capacity-reference {
-            top: 83px;
+            top: 34px;
           }
           .hour-analysis-capacity-rail {
-            top: 94px;
+            top: 42px;
           }
           .hour-analysis-capacity-dimensions {
-            top: 160px;
+            top: 102px;
           }
           .hour-analysis-capacity-dimension span {
             font-size: 8.5px;
@@ -19612,7 +19603,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <div
                       className="hour-analysis-capacity-scale"
                       role="img"
-                      aria-label={`${visual.roleLabel} expected actual ${formatHourAnalysisHours(visual.expected)} hours, operational floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.isFrontline ? `target ${formatHourAnalysisHours(visual.target)} hours with upper range ${formatHourAnalysisHours(visual.targetHigh)} hours` : `target ${formatHourAnalysisHours(visual.target)} hours`}, variance ${visual.delta.value}`}
+                      aria-label={`${visual.roleLabel} expected actual ${formatHourAnalysisHours(visual.expected)} hours, operational floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.hasTargetRange ? `lower range ${formatHourAnalysisHours(visual.targetLow)} hours, target ${formatHourAnalysisHours(visual.target)} hours, upper range ${formatHourAnalysisHours(visual.targetHigh)} hours` : "no target range"}, variance ${visual.delta.value}`}
                     >
                       <div className="hour-analysis-capacity-label-field">
                         {visual.topLabels.map((label) => (
@@ -19639,7 +19630,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       ))}
                       <div className="hour-analysis-capacity-rail" aria-hidden="true">
                         <span className="hour-analysis-capacity-zero-tick" />
-                        {visual.isFrontline && (
+                        {visual.hasTargetRange && (
                           <span
                             className="hour-analysis-capacity-range-span"
                             style={{ left: `${visual.targetLowPct}%`, width: `${visual.bufferWidthPct}%` }}
@@ -19648,8 +19639,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         <span className={`hour-analysis-capacity-expected-span is-${visual.tone}`} style={{ width: `${visual.expectedPct}%` }} />
                         <span className="hour-analysis-capacity-marker is-expected" style={{ left: `${visual.expectedPct}%` }} />
                         <span className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
-                        <span className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
-                        {visual.isFrontline && (
+                        {visual.hasTargetRange && (
+                          <span className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
+                        )}
+                        {visual.hasTargetRange && (
                           <span className="hour-analysis-capacity-marker is-upper-range" style={{ left: `${visual.targetHighPct}%` }} />
                         )}
                       </div>
