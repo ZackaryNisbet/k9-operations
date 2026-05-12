@@ -618,6 +618,34 @@ const testDescriptions = {
 
   "resSvcIncludes > returns false for empty services array":
     "If the services list exists but is empty ([]), the system should return false. No services means no match.",
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // COMPANY DIRECTORY — Manual directory source of truth and generated chart
+  // ═══════════════════════════════════════════════════════════════════════
+
+  "company directory canonical org model > maps Supabase people and reports_to edges into Balkan id/pid nodes":
+    "The org chart renderer should receive id/pid nodes derived from Supabase directory people and reporting edges, so the chart never becomes a separately maintained data source.",
+
+  "company directory canonical org model > does not create a visible synthetic K9 Operations root":
+    "The chart should not show a fake K9 Operations parent node because leadership hierarchy must come only from canonical directory relationships.",
+
+  "company directory canonical org model > passes Supabase profile photos and initials into org chart render metadata":
+    "The org chart adapter should receive profile photo URLs and initials derived from Supabase people rows so card photos render without making Balkan a data source.",
+
+  "company directory canonical org model > uses partner render metadata for secondary co-leader edges without changing reports_to":
+    "Secondary co-leader relationships should be rendered as partner metadata for the chart adapter without creating a false direct reporting chain.",
+
+  "company directory canonical org model > derives side-by-side leader and assistant placement from K9 presentation metadata":
+    "Side-by-side leader and assistant placement should come from K9-owned presentation metadata rather than opaque Balkan chart state.",
+
+  "company directory canonical org model > does not include inactive people in the chart unless requested":
+    "Inactive directory people should stay available in the table but stay out of the default org chart unless the user explicitly includes inactive records.",
+
+  "company directory canonical org model > detects illegal reporting cycles before persistence":
+    "Changing a manager should be blocked when it would put a person under one of their own reports and create a reporting cycle.",
+
+  "company directory canonical org model > rejects inactive managers and self-reporting":
+    "The manager selector should reject invalid relationships, including self-reporting and assigning an inactive person as a manager.",
 };
 
 export default testDescriptions;
