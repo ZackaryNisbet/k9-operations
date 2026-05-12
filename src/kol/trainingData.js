@@ -1008,6 +1008,118 @@ export function readLaborEmploymentCommitment(employee = {}) {
   );
 }
 
+export const LABOR_SHIRT_SIZE_OPTIONS = [
+  { value: "XS", label: "XS" },
+  { value: "S", label: "S" },
+  { value: "M", label: "M" },
+  { value: "L", label: "L" },
+  { value: "XL", label: "XL" },
+  { value: "2XL", label: "2XL" },
+  { value: "3XL", label: "3XL" },
+  { value: "4XL", label: "4XL" },
+  { value: "unknown", label: "Other/Unknown" },
+];
+
+const LABOR_SHIRT_SIZE_LABELS = Object.fromEntries(
+  LABOR_SHIRT_SIZE_OPTIONS.map((option) => [option.value, option.label])
+);
+
+export function normalizeLaborShirtSize(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/^XXL$/, "2XL")
+    .replace(/^XXXL$/, "3XL")
+    .replace(/^XXXXL$/, "4XL");
+  if (!normalized) return null;
+  if (["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL"].includes(normalized)) return normalized;
+  if (["OTHER", "UNKNOWN", "OTHER/UNKNOWN", "N/A", "NA"].includes(normalized)) return "unknown";
+  return "unknown";
+}
+
+export function getLaborShirtSizeLabel(value) {
+  const normalized = normalizeLaborShirtSize(value);
+  return normalized ? LABOR_SHIRT_SIZE_LABELS[normalized] || LABOR_SHIRT_SIZE_LABELS.unknown : "Not listed";
+}
+
+export function readLaborEmployeeShirtSize(employee = {}) {
+  if (!employee || typeof employee !== "object") return null;
+  return normalizeLaborShirtSize(
+    employee.shirt_size
+    || employee.shirtSize
+    || employee.uniform_shirt_size
+    || employee.metadata?.shirt_size
+    || employee.metadata?.shirtSize
+    || employee.metadata?.uniform_shirt_size
+  );
+}
+
+export function isValidLaborContactEmail(value) {
+  const email = String(value || "").trim();
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email);
+}
+
+export function buildLaborEmailRecipient(employee = {}) {
+  if (!employee || typeof employee !== "object") return "";
+  const email = readLaborEmployeeContactValue(employee, "contact_email") || employee.email || "";
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!isValidLaborContactEmail(normalizedEmail)) return "";
+  const name = String(employee.full_name || employee.name || [employee.first_name, employee.last_name].filter(Boolean).join(" ") || "")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return name ? `${name} <${normalizedEmail}>` : normalizedEmail;
+}
+
+export function buildLaborEmailRecipients(employees = []) {
+  const seen = new Set();
+  return (Array.isArray(employees) ? employees : [])
+    .filter((employee) => isLaborEmployeeActive(employee))
+    .map((employee) => buildLaborEmailRecipient(employee))
+    .filter((recipient) => {
+      const email = recipient.match(/<([^>]+)>$/)?.[1] || recipient;
+      const key = email.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+export function buildLaborEmailRecipientList(employees = []) {
+  return buildLaborEmailRecipients(employees).join(", ");
+}
+
+export function buildLaborEmployeeShirtSizeHistoryEvent({
+  laborEmployeeId,
+  oldValue = null,
+  newValue = null,
+  actorUserId = null,
+  actorName = null,
+  occurredAt = null,
+} = {}) {
+  const normalizedOld = normalizeLaborShirtSize(oldValue);
+  const normalizedNew = normalizeLaborShirtSize(newValue);
+  if (!laborEmployeeId || normalizedOld === normalizedNew) return null;
+  return {
+    labor_employee_id: laborEmployeeId,
+    event_category: "employee",
+    event_type: "employee_field_changed",
+    source_table: "labor_employees",
+    source_id: laborEmployeeId,
+    field_name: "shirt_size",
+    title: "Shirt size changed",
+    summary: "Employee shirt size changed",
+    old_value: normalizedOld ? getLaborShirtSizeLabel(normalizedOld) : null,
+    new_value: normalizedNew ? getLaborShirtSizeLabel(normalizedNew) : null,
+    old_values: { shirt_size: normalizedOld },
+    new_values: { shirt_size: normalizedNew },
+    actor_user_id: normalizeOptionalUuid(actorUserId),
+    actor_name: actorName?.trim?.() || null,
+    occurred_at: occurredAt || new Date().toISOString(),
+  };
+}
+
 export const LABOR_ROSTER_POSITION_GROUPS = [
   { key: "manager", label: "Managers" },
   { key: "supervisor", label: "Supervisors" },

@@ -15,6 +15,7 @@ import {
   LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
   LABOR_EMPLOYEE_ATTACHMENT_MAX_FILES,
   LABOR_EMPLOYMENT_COMMITMENT_OPTIONS,
+  LABOR_SHIRT_SIZE_OPTIONS,
   LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
   LABOR_TRAINING_REQUIREMENT_SLUGS,
   buildEmployeeHistoryTimeline,
@@ -24,6 +25,9 @@ import {
   buildEmployeeRecordMetricCards,
   buildLaborEmployeeContactCardFile,
   buildLaborEmployeeContactCardFilename,
+  buildLaborEmailRecipient,
+  buildLaborEmailRecipientList,
+  buildLaborEmployeeShirtSizeHistoryEvent,
   buildLaborEmployeeAttachmentPath,
   buildLaborEmployeeRequirementEvidencePath,
   buildLaborDashboardMetrics,
@@ -38,6 +42,7 @@ import {
   formatTrainingTimeRange,
   formatTrainingTimestamp,
   getLaborEmploymentCommitmentLabel,
+  getLaborShirtSizeLabel,
   getLaborAttachmentPreviewKind,
   getLaborRosterPositionGroup,
   getPctReadinessStatusPresentation,
@@ -51,9 +56,11 @@ import {
   isLaborEmployeeActive,
   normalizePctReadinessStatus,
   normalizeOptionalUuid,
+  normalizeLaborShirtSize,
   PCT_READINESS_STATUS_OPTIONS,
   readLaborEmploymentCommitment,
   readLaborEmployeeContactValue,
+  readLaborEmployeeShirtSize,
   resolveTrainingLocationId,
   summarizeEmployeeTrainingRequirementCompliance,
   validateLaborEmployeeAttachmentFiles,
@@ -551,7 +558,10 @@ const HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT = 15;
 const HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT = 20;
 const HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT = 25;
 const HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT = 30;
+const HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT = 2;
+const HOUR_ANALYSIS_MIN_TOLERANCE_HOURS = 1;
 const HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS = new Set(["csr", "pct"]);
+const HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS = ["general_manager", "assistant_manager", "supervisor", "csr", "pct"];
 const HOUR_ANALYSIS_SPLIT_TARGET_OPTIONS = [
   { value: "", label: "Primary role" },
   { value: "csr", label: "Customer Service Representative floor" },
@@ -1829,6 +1839,7 @@ function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
   const nextMetadata = { ...(existingMetadata || {}) };
   const hasEmail = Object.prototype.hasOwnProperty.call(updates, "email");
   const hasPhone = Object.prototype.hasOwnProperty.call(updates, "phone");
+  const hasShirtSize = Object.prototype.hasOwnProperty.call(updates, "shirtSize");
   const hasPerformanceReviewTemplateRole = Object.prototype.hasOwnProperty.call(updates, "performanceReviewTemplateRole");
 
   if (hasEmail) {
@@ -1841,6 +1852,12 @@ function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
     const normalizedPhone = normalizeLaborContactPhone(updates.phone);
     if (normalizedPhone) nextMetadata.contact_phone = normalizedPhone;
     else delete nextMetadata.contact_phone;
+  }
+
+  if (hasShirtSize) {
+    const normalizedShirtSize = normalizeLaborShirtSize(updates.shirtSize);
+    if (normalizedShirtSize) nextMetadata.shirt_size = normalizedShirtSize;
+    else delete nextMetadata.shirt_size;
   }
 
   if (hasPerformanceReviewTemplateRole) {
@@ -1896,6 +1913,54 @@ function EmptyState({ icon, title, subtitle }) {
       <div style={{ fontSize: 16, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>{title}</div>
       {subtitle && <div style={{ fontSize: 13 }}>{subtitle}</div>}
     </div>
+  );
+}
+
+function LaborRosterCopyValue({ value, displayValue, copied = false, onCopy, ariaLabel }) {
+  if (!value) return "—";
+  return (
+    <span className="labor-roster-copy-value">
+      <span className="labor-roster-copy-text">{displayValue || value}</span>
+      <button
+        type="button"
+        className={`labor-roster-copy-button${copied ? " is-copied" : ""}`}
+        aria-label={ariaLabel}
+        title={copied ? "Copied" : "Copy"}
+        onMouseDown={(event) => {
+          event.stopPropagation();
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onCopy?.();
+        }}
+      >
+        {copied ? <I.Check /> : <I.Clipboard />}
+      </button>
+    </span>
+  );
+}
+
+function CapacitySectionHeader({ title, subtitle, summary, collapsed, onToggle }) {
+  return (
+    <button
+      type="button"
+      className={`capacity-section-header${collapsed ? " is-collapsed" : ""}`}
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+    >
+      <span className="capacity-section-title-block">
+        <span className="hour-analysis-card-title">{title}</span>
+        {subtitle ? <span className="hour-analysis-card-subtitle">{subtitle}</span> : null}
+      </span>
+      <span className="capacity-section-summary">
+        {summary}
+        <span className="capacity-section-chevron" aria-hidden="true"><I.ChevronDown /></span>
+      </span>
+    </button>
   );
 }
 
@@ -2098,6 +2163,11 @@ function formatHourAnalysisHours(value) {
   const normalized = normalizeHourAnalysisNumber(value, 0);
   if (Number.isInteger(normalized)) return String(normalized);
   return normalized.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatHourAnalysisHoursWithUnit(value) {
+  const normalized = normalizeHourAnalysisNumber(value, 0);
+  return `${formatHourAnalysisHours(normalized)} hr${normalized === 1 ? "" : "s"}`;
 }
 
 function normalizeHourAnalysisDelta(value) {
@@ -3313,25 +3383,85 @@ function normalizeHourAnalysisSkeletonMap(input = {}) {
   }));
 }
 
+function getDefaultStaffingCapacityRoleSettings(groupKey = "other") {
+  const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(groupKey);
+  return {
+    tolerancePercent: HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT,
+    lowerBufferPercent: isFrontline ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0,
+    targetBufferPercent: isFrontline ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0,
+    upperBufferPercent: isFrontline ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0,
+    overRosteredBufferPercent: isFrontline ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0,
+  };
+}
+
+function readStaffingCapacityPercent(source = {}, keys = [], fallback = 0) {
+  const matchedKey = keys.find((key) => source[key] != null && source[key] !== "");
+  return clampHourAnalysisPercent(matchedKey ? source[matchedKey] : fallback, 0, 90);
+}
+
+export function normalizeStaffingCapacitySettings(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const roleSource = source.roles || source.role_settings || source.roleSettings || source.groups || source.position_groups || {};
+  const normalizedRoles = Object.fromEntries(HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.map((groupKey) => {
+    const rawRole = isObjectRow(roleSource[groupKey]) ? roleSource[groupKey] : {};
+    const defaults = getDefaultStaffingCapacityRoleSettings(groupKey);
+    const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(groupKey);
+    const tolerancePercent = readStaffingCapacityPercent(rawRole, ["tolerancePercent", "tolerance_percent", "varianceTolerancePercent", "variance_tolerance_percent"], defaults.tolerancePercent);
+    if (!isFrontline) {
+      return [groupKey, {
+        ...defaults,
+        tolerancePercent,
+      }];
+    }
+    const rawLower = readStaffingCapacityPercent(rawRole, ["lowerBufferPercent", "lower_buffer_percent", "healthyMinPercent", "healthy_min_percent"], defaults.lowerBufferPercent);
+    const rawTarget = readStaffingCapacityPercent(rawRole, ["targetBufferPercent", "target_buffer_percent", "reservePercent", "reserve_percent"], defaults.targetBufferPercent);
+    const rawUpper = readStaffingCapacityPercent(rawRole, ["upperBufferPercent", "upper_buffer_percent", "healthyMaxPercent", "healthy_max_percent"], defaults.upperBufferPercent);
+    const lowerBufferPercent = Math.min(rawLower, rawUpper);
+    const upperBufferPercent = Math.max(rawLower, rawUpper);
+    const targetBufferPercent = clampHourAnalysisPercent(rawTarget, lowerBufferPercent, upperBufferPercent);
+    const overRosteredBufferPercent = Math.max(
+      upperBufferPercent,
+      readStaffingCapacityPercent(rawRole, ["overRosteredBufferPercent", "over_rostered_buffer_percent", "overRosteredPercent", "over_rostered_percent"], defaults.overRosteredBufferPercent),
+    );
+    return [groupKey, {
+      tolerancePercent,
+      lowerBufferPercent,
+      targetBufferPercent,
+      upperBufferPercent,
+      overRosteredBufferPercent,
+    }];
+  }));
+  return { roles: normalizedRoles };
+}
+
+function getStaffingCapacityRoleSettings(settings = {}, groupKey = "other") {
+  const normalized = normalizeStaffingCapacitySettings(settings);
+  return normalized.roles[groupKey] || getDefaultStaffingCapacityRoleSettings(groupKey);
+}
+
 function normalizeHourAnalysisThresholds(value = {}) {
   const source = isObjectRow(value) ? value : {};
   const skeletonSource = source.daily_skeleton || source.dailySkeleton || source.skeleton_daily || source.skeletonDaily;
+  const staffingCapacitySource = source.staffing_capacity || source.staffingCapacity || source.staffingCapacitySettings || source.capacity_settings || source.capacitySettings;
   const hasSavedThresholds = isObjectRow(skeletonSource);
   if (!hasSavedThresholds) {
     return {
       reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
       daily_skeleton: normalizeHourAnalysisSkeletonMap(DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON),
+      staffing_capacity: normalizeStaffingCapacitySettings(staffingCapacitySource),
     };
   }
   const normalized = {
     reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
     daily_skeleton: normalizeHourAnalysisSkeletonMap(skeletonSource),
+    staffing_capacity: normalizeStaffingCapacitySettings(staffingCapacitySource),
   };
   const allSkeletonValuesAreZero = Object.values(normalized.daily_skeleton).every((hours) => normalizeHourAnalysisNumber(hours, 0) === 0);
   if (allSkeletonValuesAreZero) {
     return {
       reserve_percent: HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT,
       daily_skeleton: normalizeHourAnalysisSkeletonMap(DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON),
+      staffing_capacity: normalized.staffing_capacity,
     };
   }
   return normalized;
@@ -3340,6 +3470,10 @@ function normalizeHourAnalysisThresholds(value = {}) {
 export function normalizeHourAnalysisSettings(value = {}) {
   const source = isObjectRow(value) ? value : {};
   const laborModelSource = source.laborModel || source.labor_model || source.laborModelSettings || source.labor_model_settings;
+  const thresholdSource = isObjectRow(source.thresholds || source.coverage || source.capacity)
+    ? (source.thresholds || source.coverage || source.capacity)
+    : {};
+  const topLevelStaffingCapacity = source.staffing_capacity || source.staffingCapacity || source.staffingCapacitySettings;
   return {
     expectations: normalizeHourAnalysisExpectationMap(source.expectations),
     overrides: normalizeHourAnalysisOverrides(source.overrides),
@@ -3347,7 +3481,9 @@ export function normalizeHourAnalysisSettings(value = {}) {
     splits: normalizeHourAnalysisSplits(source.splits || source.coverage_splits || source.coverageSplits),
     positionMovements: normalizeHourAnalysisPositionMovements(source.positionMovements || source.position_movements || source.movements || source.roleMovements || source.role_movements),
     whatIfRows: normalizeHourAnalysisWhatIfRows(source.whatIfRows || source.what_if_rows),
-    thresholds: normalizeHourAnalysisThresholds(source.thresholds || source.coverage || source.capacity),
+    thresholds: normalizeHourAnalysisThresholds(topLevelStaffingCapacity
+      ? { ...thresholdSource, staffing_capacity: topLevelStaffingCapacity }
+      : thresholdSource),
     laborModel: normalizeHourAnalysisLaborModel(laborModelSource),
     laborModelRoleColors: normalizeLaborModelRolePalette(
       source.laborModelRoleColors
@@ -3776,13 +3912,30 @@ function calculateHourAnalysisRecommendedTarget(requiredWeekly = 0, reservePerce
   return normalizeHourAnalysisNumber(required * (1 + (reserve / 100)), 0);
 }
 
-function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
+function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT, settings = {}) {
   const floor = normalizeHourAnalysisNumber(requiredWeekly, 0);
-  const relief = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reliefPercent, 0)));
+  const source = isObjectRow(settings) ? settings : {};
+  const relief = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(source.targetBufferPercent ?? source.target_buffer_percent ?? reliefPercent, 0)));
+  const healthyMinPercent = relief > 0
+    ? readStaffingCapacityPercent(source, ["lowerBufferPercent", "lower_buffer_percent", "healthyMinPercent", "healthy_min_percent"], HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT)
+    : 0;
+  const healthyMaxPercent = relief > 0
+    ? Math.max(
+      healthyMinPercent,
+      readStaffingCapacityPercent(source, ["upperBufferPercent", "upper_buffer_percent", "healthyMaxPercent", "healthy_max_percent"], HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT),
+    )
+    : 0;
+  const overRosteredPercent = relief > 0
+    ? Math.max(
+      healthyMaxPercent,
+      readStaffingCapacityPercent(source, ["overRosteredBufferPercent", "over_rostered_buffer_percent", "overRosteredPercent", "over_rostered_percent"], HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT),
+    )
+    : 0;
+  const tolerancePercent = readStaffingCapacityPercent(source, ["tolerancePercent", "tolerance_percent", "varianceTolerancePercent", "variance_tolerance_percent"], HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT);
   const targetWeekly = calculateHourAnalysisRecommendedTarget(floor, relief);
-  const healthyLowWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0);
-  const healthyHighWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0);
-  const overRosteredWeekly = calculateHourAnalysisRecommendedTarget(floor, relief > 0 ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0);
+  const healthyLowWeekly = calculateHourAnalysisRecommendedTarget(floor, healthyMinPercent);
+  const healthyHighWeekly = calculateHourAnalysisRecommendedTarget(floor, healthyMaxPercent);
+  const overRosteredWeekly = calculateHourAnalysisRecommendedTarget(floor, overRosteredPercent);
   return {
     floor,
     healthyLowWeekly,
@@ -3794,9 +3947,10 @@ function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = H
     healthyHighSurplus: normalizeHourAnalysisDelta(healthyHighWeekly - floor),
     overRosteredSurplus: normalizeHourAnalysisDelta(overRosteredWeekly - floor),
     targetBufferPercent: relief,
-    healthyMinPercent: relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT : 0,
-    healthyMaxPercent: relief > 0 ? HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT : 0,
-    overRosteredPercent: relief > 0 ? HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT : 0,
+    healthyMinPercent,
+    healthyMaxPercent,
+    overRosteredPercent,
+    tolerancePercent,
     targetUtilization: targetWeekly > 0 ? normalizeHourAnalysisNumber((floor / targetWeekly) * 100, 0) : 0,
   };
 }
@@ -3851,6 +4005,18 @@ function buildHourAnalysisCapacityStatus({ requiredWeekly = 0, targetWeekly = 0,
   if (required <= 0) {
     return { key: "unset", label: "No floor", tone: "default", message: "No Labor Model floor is assigned to this role." };
   }
+  const toleranceState = buildHourAnalysisCapacityToleranceState({
+    expected,
+    floor: required,
+    targetLow: healthyLow,
+    targetHigh: healthyHigh,
+    target,
+    hasTargetRange,
+    tolerancePercent: capacityStandard.tolerancePercent,
+  });
+  if (toleranceState.withinTolerance && toleranceState.delta !== 0 && !["aligned", "in-range"].includes(toleranceState.relation)) {
+    return { key: "within_tolerance", label: "Within tolerance", tone: "success", message: `Expected capacity is ${formatHourAnalysisHours(Math.abs(toleranceState.delta))} hrs/wk outside the ${toleranceState.boundaryLabel}, inside the configured ${formatHourAnalysisHours(toleranceState.toleranceHours)} hrs/wk tolerance.` };
+  }
   if (reliefPercent <= 0 && expected > required) {
     return { key: "admin_surplus", label: "Surplus", tone: "warning", message: `No relief buffer is applied to General Manager, Assistant Manager, or Supervisor coverage. Reassign ${formatHourAnalysisHours(expected - required)} hrs/wk to a floor split or reduce planned admin coverage.` };
   }
@@ -3896,11 +4062,95 @@ export function formatHourAnalysisCapacityDelta(value = 0) {
   };
 }
 
+function getHourAnalysisToleranceHours(boundaryValue = 0, tolerancePercent = HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT) {
+  const boundary = normalizeHourAnalysisNumber(Math.abs(Number(boundaryValue) || 0), 0);
+  const tolerance = clampHourAnalysisPercent(tolerancePercent, 0, 90);
+  if (boundary <= 0 || tolerance <= 0) return 0;
+  return normalizeHourAnalysisDelta(Math.max(HOUR_ANALYSIS_MIN_TOLERANCE_HOURS, boundary * (tolerance / 100)));
+}
+
+function formatHourAnalysisSignedDelta(value = 0) {
+  const delta = normalizeHourAnalysisDelta(value);
+  if (delta === 0) return "0 hrs";
+  const sign = delta > 0 ? "+" : "-";
+  return `${sign}${formatHourAnalysisHours(Math.abs(delta))} hrs`;
+}
+
+function buildHourAnalysisCapacityToleranceState({
+  expected = 0,
+  floor = 0,
+  targetLow = 0,
+  targetHigh = 0,
+  target = 0,
+  hasTargetRange = false,
+  tolerancePercent = HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT,
+} = {}) {
+  const value = normalizeHourAnalysisNumber(expected, 0);
+  const targetFloor = normalizeHourAnalysisNumber(floor, 0);
+  const targetMid = normalizeHourAnalysisNumber(target, targetFloor);
+  const lower = normalizeHourAnalysisNumber(targetLow, targetMid);
+  const upper = normalizeHourAnalysisNumber(targetHigh, lower);
+  if (hasTargetRange && value < lower) {
+    const delta = normalizeHourAnalysisDelta(value - lower);
+    const toleranceHours = getHourAnalysisToleranceHours(lower, tolerancePercent);
+    return {
+      relation: "below-range",
+      delta,
+      boundary: lower,
+      boundaryLabel: "lower range",
+      toleranceHours,
+      withinTolerance: Math.abs(delta) <= toleranceHours,
+    };
+  }
+  if (hasTargetRange && value > upper) {
+    const delta = normalizeHourAnalysisDelta(value - upper);
+    const toleranceHours = getHourAnalysisToleranceHours(upper, tolerancePercent);
+    return {
+      relation: "above-range",
+      delta,
+      boundary: upper,
+      boundaryLabel: "upper range",
+      toleranceHours,
+      withinTolerance: Math.abs(delta) <= toleranceHours,
+    };
+  }
+  if (hasTargetRange) {
+    return {
+      relation: "in-range",
+      delta: 0,
+      boundary: targetMid,
+      boundaryLabel: "target range",
+      toleranceHours: getHourAnalysisToleranceHours(targetMid, tolerancePercent),
+      withinTolerance: true,
+    };
+  }
+  const delta = normalizeHourAnalysisDelta(value - targetMid);
+  const toleranceHours = getHourAnalysisToleranceHours(targetMid || targetFloor, tolerancePercent);
+  return {
+    relation: delta < 0 ? "below-target" : delta > 0 ? "above-target" : "aligned",
+    delta,
+    boundary: targetMid,
+    boundaryLabel: targetMid === targetFloor ? "floor / target" : "target",
+    toleranceHours,
+    withinTolerance: Math.abs(delta) <= toleranceHours,
+  };
+}
+
 function formatHourAnalysisCapacityRangeDelta(expected = 0, standard = null) {
   const capacityStandard = standard || buildHourAnalysisCapacityStandard(0);
   const targetBufferPercent = normalizeHourAnalysisNumber(capacityStandard.targetBufferPercent, 0);
+  const tolerancePercent = normalizeHourAnalysisNumber(capacityStandard.tolerancePercent, HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT);
   if (targetBufferPercent <= 0) {
-    return formatHourAnalysisCapacityDelta(normalizeHourAnalysisDelta(expected - normalizeHourAnalysisNumber(capacityStandard.targetWeekly, capacityStandard.floor)));
+    const delta = normalizeHourAnalysisDelta(expected - normalizeHourAnalysisNumber(capacityStandard.targetWeekly, capacityStandard.floor));
+    const toleranceHours = getHourAnalysisToleranceHours(capacityStandard.targetWeekly || capacityStandard.floor, tolerancePercent);
+    if (Math.abs(delta) <= toleranceHours) {
+      return {
+        value: formatHourAnalysisSignedDelta(delta),
+        tone: "healthy",
+        label: "Within tolerance",
+      };
+    }
+    return formatHourAnalysisCapacityDelta(delta);
   }
   const healthyLow = normalizeHourAnalysisNumber(capacityStandard.healthyLowWeekly, 0);
   const healthyHigh = normalizeHourAnalysisNumber(capacityStandard.healthyHighWeekly, healthyLow);
@@ -3908,6 +4158,14 @@ function formatHourAnalysisCapacityRangeDelta(expected = 0, standard = null) {
 
   if (healthyLow > 0 && value < healthyLow) {
     const delta = normalizeHourAnalysisDelta(value - healthyLow);
+    const toleranceHours = getHourAnalysisToleranceHours(healthyLow, tolerancePercent);
+    if (Math.abs(delta) <= toleranceHours) {
+      return {
+        value: formatHourAnalysisSignedDelta(delta),
+        tone: "healthy",
+        label: "Within tolerance",
+      };
+    }
     return {
       value: `-${formatHourAnalysisHours(Math.abs(delta))} hrs`,
       tone: "short",
@@ -3916,6 +4174,14 @@ function formatHourAnalysisCapacityRangeDelta(expected = 0, standard = null) {
   }
   if (healthyHigh > 0 && value > healthyHigh) {
     const delta = normalizeHourAnalysisDelta(value - healthyHigh);
+    const toleranceHours = getHourAnalysisToleranceHours(healthyHigh, tolerancePercent);
+    if (Math.abs(delta) <= toleranceHours) {
+      return {
+        value: formatHourAnalysisSignedDelta(delta),
+        tone: "healthy",
+        label: "Within tolerance",
+      };
+    }
     return {
       value: `+${formatHourAnalysisHours(delta)} hrs`,
       tone: "surplus",
@@ -3953,7 +4219,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
         : 0
     : deltaToTarget;
   const deltaToFloor = normalizeHourAnalysisDelta(expected - floor);
-  const delta = isFrontline ? formatHourAnalysisCapacityRangeDelta(expected, capacityStandard) : formatHourAnalysisCapacityDelta(deltaToTarget);
+  const rawDelta = isFrontline ? formatHourAnalysisCapacityRangeDelta(expected, capacityStandard) : formatHourAnalysisCapacityDelta(deltaToTarget);
   const measurementValues = [expected, floor, targetMid, targetLow, targetHigh]
     .map((value) => normalizeHourAnalysisNumber(value, 0))
     .filter((value) => Number.isFinite(value));
@@ -3973,6 +4239,26 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
   const labelPct = (pct) => clampHourAnalysisPercent(pct, 11, 87);
   const rangeLabelPct = labelPct((targetLowPct + targetHighPct) / 2);
   const hasTargetRange = isFrontline && targetHigh > targetLow + 0.05;
+  const tolerancePercent = normalizeHourAnalysisNumber(capacityStandard.tolerancePercent, HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT);
+  const toleranceState = buildHourAnalysisCapacityToleranceState({
+    expected,
+    floor,
+    targetLow,
+    targetHigh,
+    target: targetMid,
+    hasTargetRange,
+    tolerancePercent,
+  });
+  const isOutsideButTolerated = toleranceState.withinTolerance && !["aligned", "in-range"].includes(toleranceState.relation) && toleranceState.delta !== 0;
+  const delta = isOutsideButTolerated
+    ? {
+      value: formatHourAnalysisSignedDelta(toleranceState.delta),
+      tone: "healthy",
+      label: "Within tolerance",
+    }
+    : rawDelta;
+  const hasSeparateTargetMetric = hasTargetRange || Math.abs(normalizeHourAnalysisDelta(targetMid - floor)) > 0.05;
+  const floorMetricLabel = hasSeparateTargetMetric ? "Floor" : "Floor / Target";
   const makeDimensionLine = ({ key, label, start, end, tone = "neutral" }) => {
     const startPct = valueToPct(start);
     const endPct = valueToPct(end);
@@ -3990,17 +4276,51 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       isZero: rawWidthPct < 0.8,
     };
   };
-  const tone = isFrontline
-    ? deltaToRange < 0
-      ? "short"
-      : deltaToRange > 0
-        ? "surplus"
-      : "healthy"
-    : deltaToTarget < 0
-      ? "short"
-      : deltaToTarget > 0
-        ? "surplus"
-        : "healthy";
+  const tone = isOutsideButTolerated
+    ? "healthy"
+    : isFrontline
+      ? deltaToRange < 0
+        ? "short"
+        : deltaToRange > 0
+          ? "surplus"
+          : "healthy"
+      : deltaToTarget < 0
+        ? "short"
+        : deltaToTarget > 0
+          ? "surplus"
+          : "healthy";
+  const statusLabel = isOutsideButTolerated
+    ? "Within tolerance"
+    : isFrontline
+      ? expected < targetLow
+        ? (deltaToFloor < 0 ? "Short" : "Below range")
+        : expected > targetHigh
+          ? "Over range"
+          : expected > targetMid
+            ? "Over target"
+            : "In range"
+      : deltaToFloor < 0
+        ? "Short"
+        : deltaToFloor > 0
+          ? "Above floor"
+          : "In range";
+  const statusDetail = isOutsideButTolerated
+    ? `${formatHourAnalysisHoursWithUnit(Math.abs(toleranceState.delta))} ${toleranceState.delta < 0 ? "below" : "above"} ${toleranceState.boundaryLabel}, within ${formatHourAnalysisHoursWithUnit(toleranceState.toleranceHours)} tolerance`
+    : isFrontline
+      ? expected < targetLow
+        ? deltaToFloor < 0
+          ? `${formatHourAnalysisHoursWithUnit(Math.abs(deltaToRange))} below lower range (${formatHourAnalysisHoursWithUnit(Math.abs(deltaToFloor))} below floor)`
+          : `${formatHourAnalysisHoursWithUnit(Math.abs(deltaToRange))} below lower range`
+        : expected > targetHigh
+          ? `${formatHourAnalysisHoursWithUnit(expected - targetHigh)} over upper range`
+          : expected > targetMid
+            ? `${formatHourAnalysisHoursWithUnit(expected - targetMid)} over target, still in range`
+            : `Inside ${formatHourAnalysisHours(targetLow)}-${formatHourAnalysisHours(targetHigh)} hr range`
+      : deltaToFloor < 0
+        ? `${formatHourAnalysisHoursWithUnit(Math.abs(deltaToFloor))} below floor`
+        : deltaToFloor > 0
+          ? `${formatHourAnalysisHoursWithUnit(deltaToFloor)} above floor`
+          : "Expected equals floor";
   const primaryDelta = isFrontline ? deltaToRange : deltaToTarget;
   const magnitudeBase = Math.max(8, Math.max(expected, targetHigh, targetMid, floor, 1) * 0.22);
   const magnitudeRatio = Math.min(1, Math.abs(primaryDelta || deltaToFloor || deltaToTarget) / magnitudeBase);
@@ -4059,21 +4379,21 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
       label: `${formatHourAnalysisHours(expected)} hrs expected`,
       start: domainMin,
       end: expected,
-      tone: deltaToFloor < 0 ? "short" : "surplus",
+      tone: isOutsideButTolerated ? "neutral" : deltaToFloor < 0 ? "short" : "surplus",
     }),
     makeDimensionLine({
       key: "floor",
       label: floorDeltaLabel,
       start: expected,
       end: floor,
-      tone: deltaToFloor < 0 ? "short" : deltaToFloor > 0 ? "surplus" : "neutral",
+      tone: isOutsideButTolerated ? "neutral" : deltaToFloor < 0 ? "short" : deltaToFloor > 0 ? "surplus" : "neutral",
     }),
     hasTargetRange ? makeDimensionLine({
       key: "target",
       label: targetDeltaLabel,
       start: expected,
       end: targetMid,
-      tone: deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "neutral",
+      tone: isOutsideButTolerated ? "neutral" : deltaToTarget < 0 ? "short" : deltaToTarget > 0 ? "surplus" : "neutral",
     }) : null,
   ].filter(Boolean);
   if (hasTargetRange) {
@@ -4105,6 +4425,11 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     targetLow,
     targetHigh,
     hasTargetRange,
+    hasSeparateTargetMetric,
+    floorMetricLabel,
+    tolerancePercent,
+    toleranceHours: toleranceState.toleranceHours,
+    withinTolerance: isOutsideButTolerated,
     domainMin,
     domainMax,
     maxWeekly,
@@ -4112,8 +4437,10 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     deltaToRange,
     deltaToFloor,
     tone,
-    delta,
-    measurementIntensity,
+	    delta,
+	    statusLabel,
+	    statusDetail,
+	    measurementIntensity,
     expectedPct,
     floorPct,
     targetPct,
@@ -4347,8 +4674,9 @@ export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) 
         : normalizeHourAnalysisNumber(legacyDailySkeleton * 7, 0);
       const requiredDaily = normalizeHourAnalysisNumber(requiredWeekly / 7, 0);
       const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(group.key);
-      const reliefPercent = isFrontline ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0;
-      const capacityStandard = buildHourAnalysisCapacityStandard(requiredWeekly, reliefPercent);
+      const roleCapacitySettings = getStaffingCapacityRoleSettings(normalizedSettings.thresholds.staffing_capacity, group.key);
+      const reliefPercent = isFrontline ? roleCapacitySettings.targetBufferPercent : 0;
+      const capacityStandard = buildHourAnalysisCapacityStandard(requiredWeekly, reliefPercent, roleCapacitySettings);
       const targetWeekly = capacityStandard.targetWeekly;
       const expectedHireHours = normalizeHourAnalysisNumber(
         normalizedSettings.expectations[group.key]?.full_time?.expected,
@@ -4555,6 +4883,72 @@ function openPdfBlob(filename, bytes, { print = false } = {}) {
   }
   window.setTimeout(() => window.URL.revokeObjectURL(url), 120000);
   return true;
+}
+
+export async function copyTextToClipboard(value, environment = {}) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const runtimeNavigator = environment.navigator || (typeof navigator !== "undefined" ? navigator : null);
+  const runtimeDocument = environment.document || (typeof document !== "undefined" ? document : null);
+  const runtimeWindow = environment.window || (typeof window !== "undefined" ? window : null);
+
+  if (runtimeNavigator?.clipboard?.writeText) {
+    try {
+      await runtimeNavigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the textarea copy path when browser permission checks reject.
+    }
+  }
+
+  if (!runtimeDocument?.createElement || !runtimeDocument?.body?.appendChild || typeof runtimeDocument.execCommand !== "function") {
+    return false;
+  }
+
+  const activeElement = runtimeDocument.activeElement;
+  const selection = runtimeWindow?.getSelection?.();
+  const ranges = [];
+  if (selection?.rangeCount) {
+    for (let index = 0; index < selection.rangeCount; index += 1) {
+      ranges.push(selection.getRangeAt(index));
+    }
+  }
+
+  const textarea = runtimeDocument.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+
+  try {
+    runtimeDocument.body.appendChild(textarea);
+    textarea.focus?.({ preventScroll: true });
+    textarea.select?.();
+    textarea.setSelectionRange?.(0, text.length);
+    return Boolean(runtimeDocument.execCommand("copy"));
+  } catch {
+    return false;
+  } finally {
+    textarea.remove?.();
+    if (selection && ranges.length > 0) {
+      try {
+        selection.removeAllRanges();
+        ranges.forEach((range) => selection.addRange(range));
+      } catch {
+        // Restoring selection is best-effort only.
+      }
+    }
+    if (activeElement && activeElement !== textarea && typeof activeElement.focus === "function") {
+      try {
+        activeElement.focus({ preventScroll: true });
+      } catch {
+        activeElement.focus();
+      }
+    }
+  }
 }
 
 function arrayBufferToBase64(buffer) {
@@ -5087,6 +5481,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborEmployeeEmail, setLaborEmployeeEmail] = useState("");
   const [laborEmployeeRole, setLaborEmployeeRole] = useState("");
   const [laborEmployeeCommitment, setLaborEmployeeCommitment] = useState("");
+  const [laborEmployeeShirtSize, setLaborEmployeeShirtSize] = useState("");
   const [laborEmployeeReviewTemplateRole, setLaborEmployeeReviewTemplateRole] = useState("");
   const [laborEmployeeStartDate, setLaborEmployeeStartDate] = useState("");
   const [laborEmployeeEndDate, setLaborEmployeeEndDate] = useState("");
@@ -5147,6 +5542,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [globalNoteText, setGlobalNoteText] = useState("");
   const [savingGlobalNote, setSavingGlobalNote] = useState(false);
   const [contactCardDownloadKey, setContactCardDownloadKey] = useState("");
+  const [copiedRosterContactKey, setCopiedRosterContactKey] = useState("");
   const [noteFilterEmployeeId, setNoteFilterEmployeeId] = useState("");
   const [noteFilterSource, setNoteFilterSource] = useState("all");
   const [noteFilterType, setNoteFilterType] = useState("all");
@@ -5212,11 +5608,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [creatingLaborCapacityModel, setCreatingLaborCapacityModel] = useState(false);
   const [laborCapacityModelDialog, setLaborCapacityModelDialog] = useState(null);
   const [laborCapacityModelDialogName, setLaborCapacityModelDialogName] = useState("");
-  const [staffingCapacityWeekStart, setStaffingCapacityWeekStart] = useState(() => getLaborCapacityWeekStart(todayStr()));
+  const [staffingCapacityWeekStart] = useState(() => getLaborCapacityWeekStart(todayStr()));
   const [staffingCapacityStaffPlans, setStaffingCapacityStaffPlans] = useState([]);
   const [staffingCapacityPlansLoaded, setStaffingCapacityPlansLoaded] = useState(false);
   const [showHourAnalysisWhatIfModal, setShowHourAnalysisWhatIfModal] = useState(false);
   const [showHourAnalysisAudit, setShowHourAnalysisAudit] = useState(false);
+  const [capacityCollapsedSections, setCapacityCollapsedSections] = useState({ outOfPositionLabor: true });
+  const [showStaffingCapacitySettings, setShowStaffingCapacitySettings] = useState(false);
   const [hourAnalysisLaborModelTab, setHourAnalysisLaborModelTab] = useState(LABOR_MODEL_SUMMARY_TAB);
   const [laborModelDragSelection, setLaborModelDragSelection] = useState(null);
   const laborModelDragSelectionRef = useRef(null);
@@ -5235,6 +5633,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pendingEmployeeRecordTabRef = useRef("");
   const hourAnalysisLoadedSnapshotRef = useRef("");
   const hourAnalysisSaveTimerRef = useRef(null);
+  const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
 
   // Notes
@@ -6152,10 +6551,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	      employment_commitment: readLaborEmploymentCommitment(selectedLaborEmployee) || readLaborEmploymentCommitment(selectedLaborEmployeeSnapshot) || readLaborEmploymentCommitment(selectedLaborEmployeeSeed) || null,
 	      start_date: selectedLaborEmployee?.start_date || selectedLaborEmployeeSnapshot?.start_date || selectedLaborEmployeeSeed?.start_date || null,
       end_date: selectedLaborEmployee?.end_date || selectedLaborEmployeeSnapshot?.end_date || selectedLaborEmployeeSeed?.end_date || null,
-      contact_email: selectedLaborEmployeeSnapshot?.contact_email || selectedLaborEmployeeSeed?.contact_email || "",
-      contact_phone: selectedLaborEmployeeSnapshot?.contact_phone || selectedLaborEmployeeSeed?.contact_phone || "",
-      metadata: employeeMetadata,
-    };
+	      contact_email: selectedLaborEmployeeSnapshot?.contact_email || selectedLaborEmployeeSeed?.contact_email || "",
+	      contact_phone: selectedLaborEmployeeSnapshot?.contact_phone || selectedLaborEmployeeSeed?.contact_phone || "",
+	      shirt_size: readLaborEmployeeShirtSize(selectedLaborEmployee) || readLaborEmployeeShirtSize(selectedLaborEmployeeSnapshot) || readLaborEmployeeShirtSize(selectedLaborEmployeeSeed) || null,
+	      metadata: employeeMetadata,
+	    };
   }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedLaborEmployeeSnapshot, selectedRecord, selectedRecordEmployeeId]);
   const hasSelectedLaborEmployee = Boolean(selectedLaborEmployeeId || selectedLaborEmployeeSeed);
   const laborEmployeeMap = useMemo(() => {
@@ -7375,6 +7775,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeeEmail("");
     setLaborEmployeeRole("");
     setLaborEmployeeCommitment("");
+    setLaborEmployeeShirtSize("");
     setLaborEmployeeReviewTemplateRole("");
     setLaborEmployeeStartDate("");
     setLaborEmployeeEndDate("");
@@ -7431,6 +7832,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeeEmail(readLaborEmployeeContact(employee, "contact_email"));
     setLaborEmployeeRole(employee.position_title || "");
     setLaborEmployeeCommitment(readLaborEmploymentCommitment(employee) || "");
+    setLaborEmployeeShirtSize(readLaborEmployeeShirtSize(employee) || "");
     setLaborEmployeeReviewTemplateRole(getPerformanceReviewTemplateOverrideKey(employee));
     setLaborEmployeeStartDate(employee.start_date || "");
     setLaborEmployeeEndDate(employee.end_date || "");
@@ -7438,13 +7840,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [addGlobalToast, canEditRoster, closeInlineLaborEmployeeComposer, openInlineLaborEmployeeComposer]);
 
   const persistLaborEmployeeContact = useCallback(async (employeeId, existingMetadata = {}, updates = {}) => {
+    const hasShirtSizeUpdate = Object.prototype.hasOwnProperty.call(updates, "shirtSize");
+    const previousShirtSize = readLaborEmployeeShirtSize({ metadata: existingMetadata });
+    const nextShirtSize = hasShirtSizeUpdate ? normalizeLaborShirtSize(updates.shirtSize) : previousShirtSize;
     const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, updates);
     const { error } = await supabase
       .from("labor_employees")
       .update({ metadata: nextMetadata, updated_by_user_id: actorUserId })
       .eq("id", employeeId);
-    return { error };
-  }, [actorUserId]);
+    if (error) return { error };
+
+    if (hasShirtSizeUpdate && previousShirtSize !== nextShirtSize) {
+      const historyEvent = buildLaborEmployeeShirtSizeHistoryEvent({
+        laborEmployeeId: employeeId,
+        oldValue: previousShirtSize,
+        newValue: nextShirtSize,
+        actorUserId,
+        actorName,
+      });
+      if (historyEvent) {
+        const { error: historyError } = await supabase
+          .from("labor_employee_history_events")
+          .insert(historyEvent);
+        if (historyError) return { error: historyError };
+      }
+    }
+
+    return { error: null, metadata: nextMetadata };
+  }, [actorName, actorUserId]);
 
   const persistLaborEmployeePerformanceReviewTemplate = useCallback(async (employeeId, existingMetadata = {}, roleKey = "") => {
     const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, { performanceReviewTemplateRole: roleKey });
@@ -7480,6 +7903,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return () => window.clearTimeout(timer);
   }, [justCreatedLaborEmployeeId]);
 
+  useEffect(() => () => {
+    if (copiedRosterContactTimerRef.current) {
+      window.clearTimeout(copiedRosterContactTimerRef.current);
+    }
+  }, []);
+
   const handleSaveLaborEmployee = useCallback(async () => {
     if (!canEditRoster) {
       addGlobalToast("You do not have permission to edit the labor roster", "error");
@@ -7511,10 +7940,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const { error: contactError } = await persistLaborEmployeeContact(editingLaborEmployeeId, employeeBeforeUpdate?.metadata, {
         email: laborEmployeeEmail,
         phone: laborEmployeePhone,
+        shirtSize: laborEmployeeShirtSize,
         performanceReviewTemplateRole: laborEmployeeReviewTemplateRole,
       });
       if (contactError) {
-        addGlobalToast("Employee updated, but contact info did not save", "error");
+        addGlobalToast("Employee updated, but profile details did not save", "error");
         setSavingLaborEmployee(false);
         return;
       }
@@ -7540,10 +7970,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const { error: contactError } = await persistLaborEmployeeContact(createdEmployee.id, createdEmployee.metadata, {
           email: laborEmployeeEmail,
           phone: laborEmployeePhone,
+          shirtSize: laborEmployeeShirtSize,
           performanceReviewTemplateRole: laborEmployeeReviewTemplateRole,
         });
         if (contactError) {
-          addGlobalToast("Employee added, but contact info did not save", "error");
+          addGlobalToast("Employee added, but profile details did not save", "error");
           setSavingLaborEmployee(false);
           return;
         }
@@ -7555,7 +7986,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setSavingLaborEmployee(false);
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
-  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeCommitment, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeCommitment, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeShirtSize, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
 
   const handleCreateLaborEmployeeInline = useCallback(async () => {
     if (!canEditRoster) {
@@ -9049,6 +9480,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const contactEmployee = laborEmployeeMap[employeeId] || null;
       const contactEmail = readLaborEmployeeContact(contactEmployee, "contact_email");
       const contactPhone = readLaborEmployeeContact(contactEmployee, "contact_phone");
+      const shirtSize = readLaborEmployeeShirtSize(contactEmployee || row);
       const fullName = row.full_name || contactEmployee?.full_name || "";
       const positionTitle = formatLaborPositionTitle(row.position_title || contactEmployee?.position_title || "");
       const { firstName, lastName } = splitEmployeeName(fullName);
@@ -9097,6 +9529,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         last_name: lastName,
         contact_email: contactEmail,
         contact_phone: contactPhone,
+        shirt_size: shirtSize,
         training_compliance: trainingCompliance,
         training_requirement_rows: requirementRows,
         training_requirement_summary: requirementSummary,
@@ -9173,6 +9606,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     editingSettings: hourAnalysisSettings,
     legacySettings: legacyHourAnalysisSettings,
   }), [editingLaborCapacityModelId, hourAnalysisSettings, laborCapacityModels, laborCapacityModelsAvailable, legacyHourAnalysisSettings]);
+  const staffingCapacitySettings = useMemo(() => (
+    normalizeStaffingCapacitySettings(staffingCapacityHourAnalysisSettings.thresholds?.staffing_capacity)
+  ), [staffingCapacityHourAnalysisSettings.thresholds?.staffing_capacity]);
   const hourAnalysisModel = useMemo(() => buildHourAnalysisModel({
     rosterRows: preparedRosterRows,
     settings: staffingCapacityHourAnalysisSettings,
@@ -9275,6 +9711,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     modelCoverageRows: activeLaborModelCrossRoleCoverage,
     personRows: hourAnalysisModel.rows,
   }), [activeLaborModelCrossRoleCoverage, hourAnalysisModel.rows]);
+  const toggleCapacitySection = useCallback((sectionKey) => {
+    setCapacityCollapsedSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
+  }, []);
+  const staffingCapacityCollapsed = capacityCollapsedSections.staffingCapacityVariance === true;
+  const outOfPositionCollapsed = capacityCollapsedSections.outOfPositionLabor === true;
+  const headcountExpectedCollapsed = capacityCollapsedSections.headcountExpectedHours === true;
+  const csrCapacitySettings = staffingCapacitySettings.roles.csr || getDefaultStaffingCapacityRoleSettings("csr");
+  const pctCapacitySettings = staffingCapacitySettings.roles.pct || getDefaultStaffingCapacityRoleSettings("pct");
+  const staffingCapacityRangeSummary = csrCapacitySettings.lowerBufferPercent === pctCapacitySettings.lowerBufferPercent
+    && csrCapacitySettings.upperBufferPercent === pctCapacitySettings.upperBufferPercent
+    ? `CSR/PCT: ${formatHourAnalysisHours(csrCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(csrCapacitySettings.upperBufferPercent)}% range`
+    : `CSR: ${formatHourAnalysisHours(csrCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(csrCapacitySettings.upperBufferPercent)}% / PCT: ${formatHourAnalysisHours(pctCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(pctCapacitySettings.upperBufferPercent)}%`;
+  const staffingCapacitySummarySignal = `${hourAnalysisCapacityDelta.label}: ${hourAnalysisCapacityDelta.value}`;
+  const outOfPositionSummarySignal = `${outOfPositionLaborSummary.totalShifts} shifts / ${formatHourAnalysisHours(outOfPositionLaborSummary.totalHours)} hrs`;
+  const headcountExpectedSummarySignal = `${hourAnalysisModel.totals.projectedHeadcount} people / ${formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} hrs`;
   const selectedLaborCapacityVersion = useMemo(() => (
     normalizeLaborCapacityModelVersions(laborCapacityModelVersions).find((version) => version.id === selectedLaborCapacityVersionId)
     || normalizeLaborCapacityModelVersions(laborCapacityModelVersions)[0]
@@ -9644,6 +10095,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             ...normalized.thresholds.daily_skeleton,
             [normalizedGroup]: after,
           },
+        },
+      };
+    });
+  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  const updateStaffingCapacityRoleSetting = useCallback((groupKey, settingKey, value) => {
+    const normalizedGroup = HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.includes(groupKey) ? groupKey : "";
+    const normalizedSettingKey = ["tolerancePercent", "lowerBufferPercent", "targetBufferPercent", "upperBufferPercent", "overRosteredBufferPercent"].includes(settingKey) ? settingKey : "";
+    if (!normalizedGroup || !normalizedSettingKey) return;
+    if (!HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(normalizedGroup) && normalizedSettingKey !== "tolerancePercent") return;
+    setHourAnalysisSettings((prev) => {
+      const normalized = normalizeHourAnalysisSettings(prev);
+      const currentSettings = normalizeStaffingCapacitySettings(normalized.thresholds.staffing_capacity);
+      const currentRole = currentSettings.roles[normalizedGroup] || getDefaultStaffingCapacityRoleSettings(normalizedGroup);
+      const before = normalizeHourAnalysisNumber(currentRole[normalizedSettingKey], 0);
+      const draftRoles = {
+        ...currentSettings.roles,
+        [normalizedGroup]: {
+          ...currentRole,
+          [normalizedSettingKey]: value,
+        },
+      };
+      const nextCapacitySettings = normalizeStaffingCapacitySettings({ roles: draftRoles });
+      const after = normalizeHourAnalysisNumber(nextCapacitySettings.roles[normalizedGroup]?.[normalizedSettingKey], before);
+      if (before === after) return normalized;
+      const settingLabel = normalizedSettingKey === "tolerancePercent"
+        ? "tolerated variance"
+        : normalizedSettingKey === "lowerBufferPercent"
+          ? "lower range buffer"
+          : normalizedSettingKey === "overRosteredBufferPercent"
+            ? "overbuilt buffer"
+          : normalizedSettingKey === "upperBufferPercent"
+            ? "upper range buffer"
+            : "target buffer";
+      markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`, "staffing-capacity-settings"]);
+      return {
+        ...appendHourAnalysisAudit(normalized, {
+          action: "staffing_capacity_setting_changed",
+          entity_id: `staffing-capacity:${normalizedGroup}:${normalizedSettingKey}`,
+          entity_label: `${getHourAnalysisGroupLabel(normalizedGroup)} ${settingLabel}`,
+          summary: `Changed ${getHourAnalysisGroupLabel(normalizedGroup)} ${settingLabel} from ${formatHourAnalysisHours(before)}% to ${formatHourAnalysisHours(after)}%.`,
+          before,
+          after,
+        }),
+        thresholds: {
+          ...normalized.thresholds,
+          staffing_capacity: nextCapacitySettings,
         },
       };
     });
@@ -10850,6 +11347,45 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         return true;
       });
   }, [laborEmployeeMap, preparedRosterRows]);
+  const activeRosterEmailRecipientList = useMemo(() => (
+    buildLaborEmailRecipientList(activeContactCardEmployees)
+  ), [activeContactCardEmployees]);
+  const activeRosterEmailRecipientCount = useMemo(() => (
+    activeRosterEmailRecipientList
+      ? activeRosterEmailRecipientList.split(", ").filter(Boolean).length
+      : 0
+  ), [activeRosterEmailRecipientList]);
+  const handleCopyRosterContact = useCallback(async ({ key, value, label = "Value" }) => {
+    const text = String(value || "").trim();
+    if (!text) return;
+    try {
+      const copied = await copyTextToClipboard(text);
+      if (!copied) throw new Error("Clipboard copy was not available");
+      setCopiedRosterContactKey(key);
+      if (copiedRosterContactTimerRef.current) {
+        window.clearTimeout(copiedRosterContactTimerRef.current);
+      }
+      copiedRosterContactTimerRef.current = window.setTimeout(() => {
+        setCopiedRosterContactKey("");
+        copiedRosterContactTimerRef.current = null;
+      }, 1600);
+      addGlobalToast(`${label} copied`, "success");
+    } catch (error) {
+      console.error("Roster copy failed:", error);
+      addGlobalToast(`Could not copy ${label.toLowerCase()}`, "error");
+    }
+  }, [addGlobalToast]);
+  const handleCopyAllRosterEmails = useCallback(() => {
+    if (!activeRosterEmailRecipientList) {
+      addGlobalToast("No active associates have valid emails to copy", "error");
+      return;
+    }
+    handleCopyRosterContact({
+      key: "all-emails",
+      value: activeRosterEmailRecipientList,
+      label: `${activeRosterEmailRecipientCount} email recipient${activeRosterEmailRecipientCount === 1 ? "" : "s"}`,
+    });
+  }, [activeRosterEmailRecipientCount, activeRosterEmailRecipientList, addGlobalToast, handleCopyRosterContact]);
   const recordLaborContactCardDownload = useCallback(async ({ employees = [], mode = "single" }) => {
     const employeeRows = toObjectRows(employees);
     if (!laborLocationRef || employeeRows.length === 0) {
@@ -11268,7 +11804,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             onChange={setLaborEmployeeEmail}
           />
         </div>
-	        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.8fr", gap: 12 }}>
+	        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.8fr 0.75fr", gap: 12 }}>
             <HourAnalysisAnimatedPicker
               label="Position Title"
               value={formatLaborPositionTitle(laborEmployeeRole)}
@@ -11282,10 +11818,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              value={laborEmployeeCommitment}
 	              onChange={setLaborEmployeeCommitment}
 	              options={LABOR_COMMITMENT_SELECT_OPTIONS}
-	              placeholder="Unassigned"
-	            />
-	          </label>
-	        </div>
+		              placeholder="Unassigned"
+		            />
+		          </label>
+		          <label style={{ display: "block" }}>
+		            <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Shirt Size</span>
+		            <CustomSelect
+		              value={laborEmployeeShirtSize}
+		              onChange={(value) => setLaborEmployeeShirtSize(normalizeLaborShirtSize(value) || "")}
+		              options={[
+		                { value: "", label: "Not listed" },
+		                ...LABOR_SHIRT_SIZE_OPTIONS,
+		              ]}
+		              placeholder="Not listed"
+		            />
+		          </label>
+		        </div>
 	        <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Performance Review PDF Template</span>
           <CustomSelect
@@ -11498,6 +12046,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
     const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
+    const employeeShirtSize = readLaborEmployeeShirtSize(selectedLaborEmployeeView);
+    const employeeShirtSizeLabel = getLaborShirtSizeLabel(employeeShirtSize);
     const reviewCycleRows = [
       {
         id: "30_day",
@@ -12128,6 +12678,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </Card>
           ))}
         </div>
+
+        <Card style={{ padding: 16, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0, marginBottom: 10 }}>Associate Profile</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 850 }}>Phone</div>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 850, marginTop: 3 }}>{employeePhone ? fmtPhoneInput(employeePhone) : "Not listed"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 850 }}>Email</div>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 850, marginTop: 3, overflowWrap: "anywhere" }}>{employeeEmail || "Not listed"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 850 }}>Shirt Size</div>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 850, marginTop: 3 }}>{employeeShirtSizeLabel}</div>
+            </div>
+          </div>
+        </Card>
 
         <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surfaceHover, marginBottom: 18, overflowX: "auto" }}>
           {employeeRecordTabOptions.map((option) => {
@@ -13135,10 +13703,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           72% { opacity: 0.26; }
           100% { transform: translate3d(420%, 0, 0) skewX(-18deg); opacity: 0; }
         }
-        @keyframes laborRosterFreshRow {
-          0% { background: rgba(132, 204, 22, 0.22); }
-          100% { background: transparent; }
-        }
+	        @keyframes laborRosterFreshRow {
+	          0% { background: rgba(132, 204, 22, 0.22); }
+	          100% { background: transparent; }
+	        }
+	        @keyframes laborRosterCopyConfirm {
+	          0% { transform: translateX(0) scale(0.82); }
+	          70% { transform: translateX(0) scale(1.08); }
+	          100% { transform: translateX(0) scale(1); }
+	        }
         @keyframes filterSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
         @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
         @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
@@ -13242,12 +13815,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          width: 34px;
 	          padding: 0;
 	        }
-	        .labor-roster-action-button.is-active,
-	        .labor-roster-action-bar .labor-sort-trigger.is-active {
-	          border-color: rgba(20, 83, 45, 0.32);
-	          background: #f0fdf4;
-	          color: ${C.pri};
-	        }
+		        .labor-roster-action-button.is-active,
+		        .labor-roster-action-button.is-copied,
+		        .labor-roster-action-bar .labor-sort-trigger.is-active {
+		          border-color: rgba(20, 83, 45, 0.32);
+		          background: #f0fdf4;
+		          color: ${C.pri};
+		        }
 	        .labor-roster-action-button.is-primary {
 	          border-color: ${C.pri};
 	          background: ${C.pri};
@@ -13353,9 +13927,61 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          text-overflow: ellipsis;
 	          white-space: nowrap;
 	        }
-	        .labor-roster-secondary-cell.is-empty {
-	          color: ${C.textMut};
-	        }
+		        .labor-roster-secondary-cell.is-empty {
+		          color: ${C.textMut};
+		        }
+		        .labor-roster-copy-value {
+		          display: inline-flex;
+		          align-items: center;
+		          gap: 6px;
+		          max-width: 100%;
+		          min-width: 0;
+		        }
+		        .labor-roster-copy-text {
+		          min-width: 0;
+		          overflow: hidden;
+		          text-overflow: ellipsis;
+		        }
+		        .labor-roster-copy-button {
+		          width: 24px;
+		          height: 24px;
+		          flex: 0 0 24px;
+		          display: inline-flex;
+		          align-items: center;
+		          justify-content: center;
+		          border: 1px solid rgba(15, 23, 42, 0.09);
+		          border-radius: 7px;
+		          background: #fff;
+		          color: ${C.textMut};
+		          cursor: pointer;
+		          opacity: 0;
+		          transform: translateX(-3px) scale(0.92);
+		          transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, color 140ms ease, background 140ms ease;
+		        }
+		        .labor-roster-copy-button svg {
+		          width: 13px;
+		          height: 13px;
+		        }
+		        .labor-roster-row:hover .labor-roster-copy-button,
+		        .labor-roster-row:focus-within .labor-roster-copy-button,
+		        .labor-roster-copy-button:focus-visible,
+		        .labor-roster-copy-button.is-copied {
+		          opacity: 1;
+		          transform: translateX(0) scale(1);
+		        }
+		        .labor-roster-copy-button:hover,
+		        .labor-roster-copy-button:focus-visible {
+		          border-color: rgba(20, 83, 45, 0.32);
+		          color: ${C.pri};
+		          background: #f0fdf4;
+		          outline: none;
+		        }
+		        .labor-roster-copy-button.is-copied {
+		          border-color: rgba(20, 83, 45, 0.26);
+		          background: #dcfce7;
+		          color: ${C.pri};
+		          animation: laborRosterCopyConfirm 260ms ease-out;
+		        }
 	        .labor-roster-new-grid {
 	          display: grid;
 	          grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -13493,11 +14119,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          .labor-roster-new-field.is-email,
 	          .labor-roster-new-field.is-position,
 	          .labor-roster-new-field.is-commitment,
-	          .labor-roster-new-field.is-start,
-	          .labor-roster-new-actions {
-	            grid-column: span 12;
-	          }
-	        }
+		          .labor-roster-new-field.is-start,
+		          .labor-roster-new-actions {
+		            grid-column: span 12;
+		          }
+		          .labor-roster-pdf-toggle-grid {
+		            grid-template-columns: 1fr;
+		          }
+		        }
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
@@ -13646,41 +14275,232 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-weight: 950;
           letter-spacing: 0;
         }
-        .hour-analysis-card-subtitle {
-          margin-top: 4px;
-          color: ${C.textMut};
-          font-size: 12px;
-          line-height: 1.35;
-          font-weight: 650;
-        }
-        .out-of-position-card {
-          overflow: visible;
-        }
-        .out-of-position-week-controls {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-        .out-of-position-week-controls button,
-        .labor-capacity-model-command-row button {
-          border: 1px solid ${C.border};
-          border-radius: 8px;
-          background: #fff;
+	        .hour-analysis-card-subtitle {
+	          margin-top: 4px;
+	          color: ${C.textMut};
+	          font-size: 12px;
+	          line-height: 1.35;
+	          font-weight: 650;
+	        }
+	        .capacity-section-header {
+	          width: 100%;
+	          display: grid;
+	          grid-template-columns: minmax(0, 1fr) auto;
+	          gap: 12px;
+	          align-items: center;
+	          border: none;
+	          border-bottom: 1px solid ${C.borderLight};
+	          background: transparent;
+	          padding: 12px 16px;
+	          color: inherit;
+	          cursor: pointer;
+	          text-align: left;
+	          font-family: inherit;
+	        }
+	        .capacity-section-header:hover,
+	        .capacity-section-header:focus-visible {
+	          background: #fbfdff;
+	          outline: none;
+	        }
+	        .capacity-section-title-block {
+	          display: grid;
+	          min-width: 0;
+	        }
+	        .capacity-section-title-block .hour-analysis-card-title,
+	        .capacity-section-title-block .hour-analysis-card-subtitle {
+	          display: block;
+	        }
+	        .capacity-section-summary {
+	          display: inline-flex;
+	          align-items: center;
+	          justify-content: flex-end;
+	          gap: 8px;
+	          flex-wrap: wrap;
+	          min-width: 0;
+	        }
+	        .capacity-section-chevron {
+	          display: inline-flex;
+	          color: ${C.textMut};
+	          transform: rotate(0deg);
+	          transition: transform 160ms ease;
+	        }
+	        .capacity-section-header.is-collapsed .capacity-section-chevron {
+	          transform: rotate(-90deg);
+	        }
+	        .capacity-section-pill {
+	          display: inline-flex;
+	          align-items: center;
+	          min-height: 30px;
+	          border: 1px solid ${C.borderLight};
+	          border-radius: 999px;
+	          background: #fff;
+	          color: ${C.textSec};
+	          padding: 7px 10px;
+	          font-size: 11px;
+	          font-weight: 950;
+	          line-height: 1;
+	          white-space: nowrap;
+	        }
+	        .capacity-section-pill.is-warning {
+	          border-color: rgba(194, 65, 12, 0.18);
+	          background: #fff7ed;
+	          color: #9a3412;
+	        }
+	        .staffing-capacity-settings-strip {
+	          display: flex;
+	          align-items: center;
+	          justify-content: space-between;
+	          gap: 10px;
+	          flex-wrap: wrap;
+	          padding: 10px 16px;
+	          border-bottom: 1px solid ${C.borderLight};
+	          background: #fbfdff;
+	          color: ${C.textMut};
+	          font-size: 12px;
+	          font-weight: 700;
+	        }
+	        .staffing-capacity-settings-toggle {
+	          display: inline-flex;
+	          align-items: center;
+	          gap: 6px;
+	          min-height: 32px;
+	          border: 1px solid ${C.border};
+	          border-radius: 8px;
+	          background: #fff;
+	          color: ${C.textSec};
+	          padding: 7px 10px;
+	          font-family: inherit;
+	          font-size: 12px;
+	          font-weight: 850;
+	          cursor: pointer;
+	        }
+	        .staffing-capacity-settings-toggle svg {
+	          width: 14px;
+	          height: 14px;
+	        }
+	        .staffing-capacity-settings-toggle:hover,
+	        .staffing-capacity-settings-toggle:focus-visible,
+	        .staffing-capacity-settings-toggle.is-active {
+	          border-color: rgba(20, 83, 45, 0.28);
+	          background: #f0fdf4;
+	          color: ${C.pri};
+	          outline: none;
+	        }
+	        .staffing-capacity-settings-panel {
+	          padding: 14px 16px 16px;
+	          border-bottom: 1px solid ${C.borderLight};
+	          background: #fff;
+	        }
+	        .staffing-capacity-settings-heading {
+	          display: flex;
+	          justify-content: space-between;
+	          gap: 12px;
+	          flex-wrap: wrap;
+	          margin-bottom: 12px;
+	        }
+	        .staffing-capacity-settings-heading strong {
+	          color: ${C.text};
+	          font-size: 13px;
+	          font-weight: 950;
+	        }
+	        .staffing-capacity-settings-heading span {
+	          color: ${C.textMut};
+	          font-size: 12px;
+	          font-weight: 650;
+	        }
+	        .staffing-capacity-settings-grid {
+	          display: grid;
+	          gap: 8px;
+	        }
+	        .staffing-capacity-settings-row {
+	          display: grid;
+	          grid-template-columns: minmax(150px, 1.2fr) repeat(5, minmax(82px, 0.5fr));
+	          gap: 8px;
+	          align-items: end;
+	          padding: 10px;
+	          border: 1px solid ${C.borderLight};
+	          border-radius: 8px;
+	          background: #fbfdff;
+	        }
+	        .staffing-capacity-settings-role {
+	          min-width: 0;
+	        }
+	        .staffing-capacity-settings-role strong,
+	        .staffing-capacity-settings-role span {
+	          display: block;
+	          min-width: 0;
+	        }
+	        .staffing-capacity-settings-role strong {
+	          color: ${C.pri};
+	          font-size: 12px;
+	          font-weight: 950;
+	        }
+	        .staffing-capacity-settings-role span {
+	          margin-top: 2px;
+	          color: ${C.textMut};
+	          font-size: 11px;
+	          font-weight: 700;
+	        }
+	        .staffing-capacity-settings-row label {
+	          display: grid;
+	          gap: 4px;
+	          min-width: 0;
+	        }
+	        .staffing-capacity-settings-row label span,
+	        .staffing-capacity-settings-static {
+	          color: ${C.textMut};
+	          font-size: 10px;
+	          font-weight: 950;
+	          text-transform: uppercase;
+	        }
+	        .staffing-capacity-settings-row input {
+	          width: 100%;
+	          min-width: 0;
+	          box-sizing: border-box;
+	          border: 1px solid ${C.border};
+	          border-radius: 7px;
+	          background: #fff;
+	          color: ${C.text};
+	          padding: 7px 8px;
+	          font-family: inherit;
+	          font-size: 12px;
+	          font-weight: 850;
+	        }
+	        .staffing-capacity-settings-row input:focus {
+	          border-color: ${C.acc};
+	          box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.14);
+	          outline: none;
+	        }
+	        .staffing-capacity-settings-static {
+	          grid-column: span 4;
+	          align-self: center;
+	          min-height: 32px;
+	          display: inline-flex;
+	          align-items: center;
+	          padding: 0 8px;
+	          border: 1px dashed ${C.border};
+	          border-radius: 7px;
+	          background: #fff;
+	        }
+	        .out-of-position-card {
+	          overflow: visible;
+	        }
+	        .labor-capacity-model-command-row button {
+	          border: 1px solid ${C.border};
+	          border-radius: 8px;
+	          background: #fff;
           color: ${C.textSec};
           cursor: pointer;
           font-family: inherit;
           font-size: 11px;
           font-weight: 900;
-          line-height: 1;
-          padding: 8px 10px;
-        }
-        .out-of-position-week-controls button:hover,
-        .labor-capacity-model-command-row button:hover {
-          border-color: rgba(20, 83, 45, 0.34);
-          background: #f0fdf4;
-          color: ${C.pri};
+	          line-height: 1;
+	          padding: 8px 10px;
+	        }
+	        .labor-capacity-model-command-row button:hover {
+	          border-color: rgba(20, 83, 45, 0.34);
+	          background: #f0fdf4;
+	          color: ${C.pri};
         }
         .out-of-position-metrics {
           display: grid;
@@ -13764,10 +14584,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-weight: 800;
           color: ${C.textMut};
         }
-        .out-of-position-table-wrap {
-          max-height: 260px;
-          overflow: auto;
-        }
+	        .out-of-position-table-wrap {
+	          max-height: none;
+	          overflow-x: auto;
+	          overflow-y: visible;
+	        }
         .out-of-position-table {
           width: 100%;
           border-collapse: separate;
@@ -14388,14 +15209,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 5px;
           padding: 8px 12px 10px;
         }
-        .hour-analysis-capacity-row {
-          --capacity-tone-rgb: 20, 83, 45;
-          --capacity-ink: #334155;
-          --capacity-dim: #94a3b8;
-          display: grid;
-          grid-template-columns: minmax(96px, 0.14fr) minmax(0, 1fr);
-          gap: 8px;
-          align-items: stretch;
+	        .hour-analysis-capacity-row {
+	          --capacity-tone-rgb: 20, 83, 45;
+	          --capacity-ink: #334155;
+	          --capacity-dim: #94a3b8;
+	          display: grid;
+	          grid-template-columns: minmax(92px, 0.12fr) minmax(260px, 0.34fr) minmax(0, 1fr);
+	          gap: 10px;
+	          align-items: stretch;
           border-radius: 6px;
           background: #ffffff;
           padding: 6px 9px;
@@ -14427,15 +15248,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           --capacity-tone-rgb: 13, 148, 136;
           background: linear-gradient(90deg, rgba(240,253,244,0.78), #ffffff 18%);
         }
-        .hour-analysis-capacity-role {
-          position: relative;
-          z-index: 2;
-          display: grid;
-          align-content: start;
-          gap: 5px;
-          min-width: 0;
-          padding-top: 37px;
-        }
+	        .hour-analysis-capacity-role {
+	          position: relative;
+	          z-index: 2;
+	          display: grid;
+	          align-content: start;
+	          gap: 5px;
+	          min-width: 0;
+	          padding-top: 8px;
+	        }
         .hour-analysis-capacity-delta {
           display: inline-flex;
           width: fit-content;
@@ -14454,13 +15275,95 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: #fef2f2;
           color: #b91c1c;
         }
-        .hour-analysis-capacity-delta.is-surplus,
-        .hour-analysis-capacity-delta.is-healthy {
-          border-color: rgba(20, 83, 45, 0.18);
-          background: #ecfdf5;
-          color: #047857;
-        }
-        .hour-analysis-capacity-scale {
+	        .hour-analysis-capacity-delta.is-surplus,
+	        .hour-analysis-capacity-delta.is-healthy {
+	          border-color: rgba(20, 83, 45, 0.18);
+	          background: #ecfdf5;
+	          color: #047857;
+	        }
+	        .hour-analysis-capacity-status {
+	          display: inline-flex;
+	          width: fit-content;
+	          border-radius: 6px;
+	          background: #fff;
+	          color: ${C.textSec};
+	          padding: 4px 7px;
+	          font-size: 10px;
+	          font-weight: 950;
+	          line-height: 1;
+	          white-space: nowrap;
+	          border: 1px solid rgba(15, 23, 42, 0.08);
+	        }
+	        .hour-analysis-capacity-status.is-short {
+	          border-color: rgba(185, 28, 28, 0.18);
+	          color: #b91c1c;
+	          background: #fef2f2;
+	        }
+	        .hour-analysis-capacity-status.is-surplus {
+	          border-color: rgba(194, 65, 12, 0.18);
+	          color: #9a3412;
+	          background: #fff7ed;
+	        }
+	        .hour-analysis-capacity-status.is-healthy {
+	          border-color: rgba(20, 83, 45, 0.18);
+	          color: #047857;
+	          background: #ecfdf5;
+	        }
+	        .hour-analysis-capacity-row-metrics {
+	          position: relative;
+	          z-index: 2;
+	          display: grid;
+	          grid-template-columns: repeat(3, minmax(0, 1fr));
+	          gap: 6px;
+	          align-content: start;
+	          min-width: 0;
+	        }
+	        .hour-analysis-capacity-row-metrics > div {
+	          min-width: 0;
+	          border: 1px solid ${C.borderLight};
+	          border-radius: 6px;
+	          background: rgba(255, 255, 255, 0.88);
+	          padding: 6px 7px;
+	        }
+	        .hour-analysis-capacity-row-metrics span,
+	        .hour-analysis-capacity-row-metrics strong {
+	          display: block;
+	          min-width: 0;
+	        }
+	        .hour-analysis-capacity-row-metrics span {
+	          color: ${C.textMut};
+	          font-size: 8.8px;
+	          font-weight: 950;
+	          line-height: 1;
+	          text-transform: uppercase;
+	        }
+	        .hour-analysis-capacity-row-metrics strong {
+	          margin-top: 3px;
+	          color: ${C.text};
+	          font-size: 10.5px;
+	          font-weight: 950;
+	          line-height: 1.12;
+	        }
+	        .hour-analysis-capacity-row-metrics > div.is-status {
+	          grid-column: 1 / -1;
+	          border-color: rgba(var(--capacity-tone-rgb), 0.2);
+	          background: rgba(var(--capacity-tone-rgb), 0.045);
+	        }
+	        .hour-analysis-capacity-row-metrics > div.is-status strong {
+	          color: ${C.textSec};
+	          font-size: 11px;
+	          line-height: 1.2;
+	        }
+	        .hour-analysis-capacity-row-metrics > div.is-status.is-short strong {
+	          color: #991b1b;
+	        }
+	        .hour-analysis-capacity-row-metrics > div.is-status.is-surplus strong {
+	          color: #9a3412;
+	        }
+	        .hour-analysis-capacity-row-metrics > div.is-status.is-healthy strong {
+	          color: #047857;
+	        }
+	        .hour-analysis-capacity-scale {
           position: relative;
           z-index: 2;
           min-height: var(--capacity-scale-height, 204px);
@@ -15033,16 +15936,77 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 11px;
           font-weight: 950;
         }
-        .labor-model-role-color-settings {
-          display: grid;
-          gap: 10px;
-          padding: 12px;
-          border-radius: 8px;
+	        .labor-model-role-color-settings {
+	          display: grid;
+	          gap: 10px;
+	          padding: 12px;
+	          border-radius: 8px;
           border: 1px solid ${C.border};
           background: linear-gradient(135deg, rgba(248,250,252,0.92), rgba(255,255,255,0.98));
-          animation: filterSlideIn 0.24s ease-out both;
-        }
-        .labor-model-role-color-header {
+	          animation: filterSlideIn 0.24s ease-out both;
+	        }
+	        .labor-roster-pdf-settings {
+	          display: grid;
+	          gap: 10px;
+	          padding: 12px;
+	          border-radius: 8px;
+	          border: 1px solid ${C.border};
+	          background: #fff;
+	          animation: filterSlideIn 0.24s ease-out both;
+	        }
+	        .labor-roster-pdf-settings-header strong,
+	        .labor-roster-pdf-settings-header span {
+	          display: block;
+	        }
+	        .labor-roster-pdf-settings-header strong {
+	          color: ${C.text};
+	          font-size: 13px;
+	          font-weight: 950;
+	        }
+	        .labor-roster-pdf-settings-header span {
+	          margin-top: 2px;
+	          color: ${C.textMut};
+	          font-size: 11px;
+	          font-weight: 750;
+	        }
+	        .labor-roster-pdf-toggle-grid {
+	          display: grid;
+	          grid-template-columns: repeat(2, minmax(0, 1fr));
+	          gap: 8px;
+	        }
+	        .labor-roster-pdf-toggle {
+	          display: grid;
+	          grid-template-columns: auto minmax(0, 1fr);
+	          gap: 10px;
+	          align-items: start;
+	          padding: 10px;
+	          border: 1px solid ${C.borderLight};
+	          border-radius: 8px;
+	          background: #f8fafc;
+	          cursor: pointer;
+	        }
+	        .labor-roster-pdf-toggle input {
+	          margin-top: 2px;
+	          accent-color: ${C.pri};
+	        }
+	        .labor-roster-pdf-toggle strong,
+	        .labor-roster-pdf-toggle small {
+	          display: block;
+	        }
+	        .labor-roster-pdf-toggle strong {
+	          color: ${C.text};
+	          font-size: 12px;
+	          font-weight: 950;
+	          line-height: 1.2;
+	        }
+	        .labor-roster-pdf-toggle small {
+	          margin-top: 3px;
+	          color: ${C.textMut};
+	          font-size: 10.5px;
+	          font-weight: 750;
+	          line-height: 1.25;
+	        }
+	        .labor-model-role-color-header {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
@@ -16023,14 +16987,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
-        @media (max-width: 720px) {
-          .out-of-position-metrics {
-            grid-template-columns: minmax(0, 1fr);
-          }
-          .out-of-position-week-controls {
-            justify-content: flex-start;
-          }
-        }
+	        @media (max-width: 720px) {
+	          .out-of-position-metrics {
+	            grid-template-columns: minmax(0, 1fr);
+	          }
+	        }
         @keyframes laborModelGridIn {
           0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.996); filter: blur(3px); }
           100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
@@ -17620,8 +18581,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .labor-view-switcher-indicator { display: none; }
           .hour-analysis-summary-grid { grid-template-columns: 1fr; }
           .hour-analysis-roster-summary { grid-template-columns: 1fr; }
-          .hour-analysis-decision-grid { grid-template-columns: 1fr; }
-          .hour-analysis-capacity-dashboard {
+	          .hour-analysis-decision-grid { grid-template-columns: 1fr; }
+	          .capacity-section-header {
+	            grid-template-columns: 1fr;
+	            align-items: start;
+	          }
+	          .capacity-section-summary {
+	            justify-content: flex-start;
+	          }
+	          .staffing-capacity-settings-row {
+	            grid-template-columns: 1fr 1fr;
+	          }
+	          .staffing-capacity-settings-role,
+	          .staffing-capacity-settings-static {
+	            grid-column: 1 / -1;
+	          }
+	          .hour-analysis-capacity-dashboard {
             display: grid;
             grid-template-columns: 1fr;
             justify-items: start;
@@ -17637,14 +18612,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             padding-left: 10px;
             padding-right: 10px;
           }
-          .hour-analysis-capacity-role {
+	          .hour-analysis-capacity-role {
             padding-top: 0;
             grid-template-columns: minmax(0, 1fr);
             justify-items: start;
             align-items: start;
-            gap: 6px;
-          }
-          .hour-analysis-capacity-scale {
+	            gap: 6px;
+	          }
+	          .hour-analysis-capacity-row-metrics {
+	            grid-template-columns: repeat(2, minmax(0, 1fr));
+	          }
+	          .hour-analysis-capacity-scale {
             margin: 0;
             min-height: var(--capacity-scale-height-mobile, 204px);
           }
@@ -18052,6 +19030,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <I.Download />
                 <span>{generatingRosterPdf ? "Generating PDF..." : "Roster PDF"}</span>
               </button>
+              <button
+                type="button"
+                className={`labor-roster-action-button${copiedRosterContactKey === "all-emails" ? " is-copied" : ""}`}
+                onClick={handleCopyAllRosterEmails}
+                disabled={activeRosterEmailRecipientCount === 0}
+                title={activeRosterEmailRecipientCount > 0 ? `Copy ${activeRosterEmailRecipientCount} active email recipients` : "No active email recipients"}
+              >
+                {copiedRosterContactKey === "all-emails" ? <I.Check /> : <I.Clipboard />}
+                <span>{copiedRosterContactKey === "all-emails" ? "Copied Emails" : "Copy All Emails"}</span>
+              </button>
               <LaborSortControl
                 sort={rosterSort}
                 defaultSort={LABOR_DEFAULT_SORT}
@@ -18304,9 +19292,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </td>
                     </tr>
                   )}
-                  {sortedRosterRows.map((row) => {
-                    const rowEmployeeId = getLaborEmployeeRowId(row);
-                    return (
+	                  {sortedRosterRows.map((row) => {
+	                    const rowEmployeeId = getLaborEmployeeRowId(row);
+	                    const rowPhoneDisplay = row.contact_phone ? fmtPhoneInput(row.contact_phone) : "";
+	                    const rowEmailRecipient = buildLaborEmailRecipient(row);
+	                    return (
 	                      <tr
 	                        key={rowEmployeeId || row.full_name || row.position_title}
 	                        className={`labor-roster-row${rowEmployeeId === justCreatedLaborEmployeeId ? " is-new" : ""}`}
@@ -18333,15 +19323,35 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                        <td className="labor-roster-secondary-cell is-commitment">
 		                          <LaborCommitmentBadge value={row.employment_commitment} />
 		                        </td>
-		                        <td className={`labor-roster-secondary-cell is-nowrap${row.contact_phone ? "" : " is-empty"}`}>
-		                          {row.contact_phone ? fmtPhoneInput(row.contact_phone) : "—"}
-		                        </td>
-                        <td
-                          title={row.contact_email || ""}
-                          className={`labor-roster-secondary-cell is-email${row.contact_email ? "" : " is-empty"}`}
-                        >
-                          {row.contact_email || "—"}
-                        </td>
+			                        <td className={`labor-roster-secondary-cell is-nowrap${row.contact_phone ? "" : " is-empty"}`}>
+			                          <LaborRosterCopyValue
+			                            value={rowPhoneDisplay}
+			                            displayValue={rowPhoneDisplay}
+			                            copied={copiedRosterContactKey === `phone:${rowEmployeeId || row.contact_phone}`}
+			                            ariaLabel={`Copy phone for ${row.full_name || "employee"}`}
+			                            onCopy={() => handleCopyRosterContact({
+			                              key: `phone:${rowEmployeeId || row.contact_phone}`,
+			                              value: rowPhoneDisplay,
+			                              label: "Phone",
+			                            })}
+			                          />
+			                        </td>
+	                        <td
+	                          title={row.contact_email || ""}
+	                          className={`labor-roster-secondary-cell is-email${row.contact_email ? "" : " is-empty"}`}
+	                        >
+	                          <LaborRosterCopyValue
+	                            value={rowEmailRecipient}
+	                            displayValue={row.contact_email}
+	                            copied={copiedRosterContactKey === `email:${rowEmployeeId || row.contact_email}`}
+	                            ariaLabel={`Copy email recipient for ${row.full_name || "employee"}`}
+	                            onCopy={() => handleCopyRosterContact({
+	                              key: `email:${rowEmployeeId || row.contact_email}`,
+	                              value: rowEmailRecipient,
+	                              label: "Email recipient",
+	                            })}
+	                          />
+	                        </td>
 		                      </tr>
                     );
                   })}
@@ -19601,26 +20611,120 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           />
           {capacityPlanningView === "staffing-capacity" && (
         <div className="hour-analysis-shell">
-          <div className="hour-analysis-card hour-analysis-capacity-card">
-            <div className="hour-analysis-card-header">
-              <div>
-                <h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>
-                <div className="hour-analysis-card-subtitle">
-                  Using active model: {activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}
-                </div>
-              </div>
-              <div className="hour-analysis-capacity-summary">
-                <div className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
-                  <strong>{hourAnalysisCapacityDelta.value}</strong>
-                </div>
-                <div className="hour-analysis-capacity-buffer-note">
-                  CSR/PCT: 15%-25% range
-                </div>
-              </div>
-            </div>
-            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
-              {hourAnalysisCapacityRows.map((row, rowIndex) => {
-                const visual = buildHourAnalysisCapacityRowVisualModel(row);
+	          <div className="hour-analysis-card hour-analysis-capacity-card">
+	            <CapacitySectionHeader
+	              title="Staffing Capacity Variance"
+	              subtitle={`Using active model: ${activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}`}
+	              collapsed={staffingCapacityCollapsed}
+	              onToggle={() => toggleCapacitySection("staffingCapacityVariance")}
+	              summary={(
+	                <>
+	                  <span className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
+	                    <strong>{staffingCapacitySummarySignal}</strong>
+	                  </span>
+	                  <span className="hour-analysis-capacity-buffer-note">{staffingCapacityRangeSummary}</span>
+	                </>
+	              )}
+	            />
+	            <div className="staffing-capacity-settings-strip">
+	              <span>Tolerance defaults to {HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT}% with a {HOUR_ANALYSIS_MIN_TOLERANCE_HOURS}-hour decimal guard unless changed for a role.</span>
+	              <button
+	                type="button"
+	                className={`staffing-capacity-settings-toggle${showStaffingCapacitySettings ? " is-active" : ""}`}
+	                onClick={() => setShowStaffingCapacitySettings((current) => !current)}
+	                aria-expanded={showStaffingCapacitySettings}
+	              >
+	                <I.Settings />
+	                <span>Capacity Settings</span>
+	              </button>
+	            </div>
+	            {showStaffingCapacitySettings && (
+	              <div className="staffing-capacity-settings-panel">
+	                <div className="staffing-capacity-settings-heading">
+	                  <strong>Staffing Capacity Settings</strong>
+	                  <span>Adjust tolerated variance by role. CSR and PCT also control the target range above floor.</span>
+	                </div>
+	                <div className="staffing-capacity-settings-grid">
+	                  {HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.map((groupKey) => {
+	                    const roleSettings = staffingCapacitySettings.roles[groupKey] || getDefaultStaffingCapacityRoleSettings(groupKey);
+	                    const isFrontlineRole = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(groupKey);
+	                    return (
+	                      <div key={groupKey} className={`staffing-capacity-settings-row${isFrontlineRole ? " is-frontline" : ""}`}>
+	                        <div className="staffing-capacity-settings-role">
+	                          <strong>{getHourAnalysisGroupShortLabel(groupKey)}</strong>
+	                          <span>{getHourAnalysisGroupLabel(groupKey)}</span>
+	                        </div>
+	                        <label>
+	                          <span>Tolerance %</span>
+	                          <input
+	                            type="number"
+	                            min="0"
+	                            max="20"
+	                            step="0.1"
+	                            value={roleSettings.tolerancePercent}
+	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "tolerancePercent", event.target.value)}
+	                          />
+	                        </label>
+	                        {isFrontlineRole ? (
+	                          <>
+	                            <label>
+	                              <span>Lower %</span>
+	                              <input
+	                                type="number"
+	                                min="0"
+	                                max="90"
+	                                step="0.5"
+	                                value={roleSettings.lowerBufferPercent}
+	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "lowerBufferPercent", event.target.value)}
+	                              />
+	                            </label>
+	                            <label>
+	                              <span>Target %</span>
+	                              <input
+	                                type="number"
+	                                min="0"
+	                                max="90"
+	                                step="0.5"
+	                                value={roleSettings.targetBufferPercent}
+	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "targetBufferPercent", event.target.value)}
+	                              />
+	                            </label>
+	                            <label>
+	                              <span>Upper %</span>
+	                              <input
+	                                type="number"
+	                                min="0"
+	                                max="90"
+	                                step="0.5"
+	                                value={roleSettings.upperBufferPercent}
+	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "upperBufferPercent", event.target.value)}
+	                              />
+	                            </label>
+	                            <label>
+	                              <span>Over %</span>
+	                              <input
+	                                type="number"
+	                                min="0"
+	                                max="90"
+	                                step="0.5"
+	                                value={roleSettings.overRosteredBufferPercent}
+	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "overRosteredBufferPercent", event.target.value)}
+	                              />
+	                            </label>
+	                          </>
+	                        ) : (
+	                          <div className="staffing-capacity-settings-static">No range buffer</div>
+	                        )}
+	                      </div>
+	                    );
+	                  })}
+	                </div>
+	              </div>
+	            )}
+	            {!staffingCapacityCollapsed && (
+	            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
+	              {hourAnalysisCapacityRows.map((row, rowIndex) => {
+	                const visual = buildHourAnalysisCapacityRowVisualModel(row);
                 const dimensionLineCount = Math.max(2, visual.dimensionLines.length);
                 const capacityScaleHeightPx = 76 + (dimensionLineCount * 14);
                 const capacityScaleMobileHeightPx = 104 + (dimensionLineCount * 20);
@@ -19636,15 +20740,53 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       "--capacity-scale-height-mobile": `${capacityScaleMobileHeightPx}px`,
                     }}
                   >
-                    <div className="hour-analysis-capacity-role">
-                      <strong>{visual.roleLabel}</strong>
-                      <span className={`hour-analysis-capacity-delta is-${visual.delta.tone}`}>
-                        {visual.delta.value}
-                      </span>
-                    </div>
-                    <div
-                      className="hour-analysis-capacity-scale"
-                      role="img"
+	                    <div className="hour-analysis-capacity-role">
+	                      <strong>{visual.roleLabel}</strong>
+	                      <span className={`hour-analysis-capacity-delta is-${visual.delta.tone}`}>
+	                        {visual.delta.value}
+	                      </span>
+	                      <span className={`hour-analysis-capacity-status is-${visual.tone}`}>
+	                        {visual.statusLabel}
+	                      </span>
+	                    </div>
+	                    <div className="hour-analysis-capacity-row-metrics">
+	                      <div>
+	                        <span>Expected</span>
+	                        <strong>{formatHourAnalysisHours(visual.expected)} hrs</strong>
+	                      </div>
+	                      <div>
+	                        <span>{visual.floorMetricLabel}</span>
+	                        <strong>{formatHourAnalysisHours(visual.floor)} hrs</strong>
+	                      </div>
+	                      {visual.hasTargetRange ? (
+	                        <>
+	                          <div>
+	                            <span>Lower</span>
+	                            <strong>{formatHourAnalysisHours(visual.targetLow)} hrs</strong>
+	                          </div>
+	                          <div>
+	                            <span>Target</span>
+	                            <strong>{formatHourAnalysisHours(visual.target)} hrs</strong>
+	                          </div>
+	                          <div>
+	                            <span>Upper</span>
+	                            <strong>{formatHourAnalysisHours(visual.targetHigh)} hrs</strong>
+	                          </div>
+	                        </>
+	                      ) : visual.hasSeparateTargetMetric ? (
+	                        <div>
+	                          <span>Target</span>
+	                          <strong>{formatHourAnalysisHours(visual.target)} hrs</strong>
+	                        </div>
+	                      ) : null}
+	                      <div className={`is-status is-${visual.tone}`}>
+	                        <span>Status</span>
+	                        <strong>{visual.statusDetail}</strong>
+	                      </div>
+	                    </div>
+	                    <div
+	                      className="hour-analysis-capacity-scale"
+	                      role="img"
                       aria-label={`${visual.roleLabel} expected actual ${formatHourAnalysisHours(visual.expected)} hours, operational floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.hasTargetRange ? `lower range ${formatHourAnalysisHours(visual.targetLow)} hours, target ${formatHourAnalysisHours(visual.target)} hours, upper range ${formatHourAnalysisHours(visual.targetHigh)} hours` : "no target range"}, variance ${visual.delta.value}`}
                     >
                       <div className="hour-analysis-capacity-label-field">
@@ -19703,140 +20845,146 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           </span>
                         ))}
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+	                    </div>
+	                  </div>
+	                );
+	              })}
+	            </div>
+	            )}
+	          </div>
 
-          <div className="hour-analysis-card out-of-position-card">
-            <div className="hour-analysis-card-header">
-              <div>
-                <h3 className="hour-analysis-card-title">Out-of-Position Labor</h3>
-                <div className="hour-analysis-card-subtitle">Week of {staffingCapacityWeekLabel}</div>
-              </div>
-              <div className="out-of-position-week-controls">
-                <button type="button" onClick={() => setStaffingCapacityWeekStart((prev) => addDaysToDateString(prev, -7))}>Prev</button>
-                <button type="button" onClick={() => setStaffingCapacityWeekStart(getLaborCapacityWeekStart(todayStr()))}>This Week</button>
-                <button type="button" onClick={() => setStaffingCapacityWeekStart((prev) => addDaysToDateString(prev, 7))}>Next</button>
-              </div>
-            </div>
-            <div className="out-of-position-metrics">
-              <div className="out-of-position-metric is-primary">
-                <span>Out-of-position shifts</span>
-                <strong>{outOfPositionLaborSummary.totalShifts}</strong>
-              </div>
-              <div className="out-of-position-metric">
-                <span>Out-of-position hours</span>
-                <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.totalHours)}</strong>
-              </div>
-              <div className="out-of-position-metric">
-                <span>Unclassified shifts</span>
-                <strong>{outOfPositionLaborSummary.unclassifiedShifts}</strong>
-              </div>
-              <div className="out-of-position-metric">
-                <span>Unclassified hours</span>
-                <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.unclassifiedHours)}</strong>
-              </div>
-            </div>
-            <div className="out-of-position-topline">
-              {outOfPositionLaborSummary.topMismatches.length > 0 ? (
-                outOfPositionLaborSummary.topMismatches.map((item) => (
-                  <span key={item.key}>{item.key}: {item.shifts} shift{item.shifts === 1 ? "" : "s"} / {formatHourAnalysisHours(item.hours)} hrs</span>
-                ))
-              ) : (
-                <span>{staffingCapacityPlansLoaded ? "No classified out-of-position shifts found for this week." : "Loading schedule rows..."}</span>
-              )}
-            </div>
-            <div className="out-of-position-planned-block">
-              <div className="out-of-position-planned-heading">
-                <strong>Planned cross-role coverage</strong>
-                <span>Active model rows plus person-level Expected Hours splits.</span>
-              </div>
-              <div className="out-of-position-table-wrap">
-                <table className="out-of-position-table">
-                  <thead>
-                    <tr>
-                      <th>Source</th>
-                      <th>Home / Model Row</th>
-                      <th>Covers</th>
-                      <th>Hours</th>
-                      <th>Split / Days</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {plannedCrossRoleCoverageRows.map((row) => (
-                      <tr key={row.key} className={row.type === "model" ? "is-planned-model" : "is-planned-split"}>
-                        <td>
-                          <strong>{row.source_label}</strong>
-                          {row.type === "what_if_split" ? <small>What-if split</small> : row.type === "person_split" ? <small>Expected Hours split</small> : <small>Labor Model coverage</small>}
-                        </td>
-                        <td>{row.home_label}</td>
-                        <td>{row.covers_label}</td>
-                        <td>{formatHourAnalysisHours(row.hours)}</td>
-                        <td>{row.detail_label}</td>
-                      </tr>
-                    ))}
-                    {plannedCrossRoleCoverageRows.length === 0 && (
-                      <tr>
-                        <td colSpan={5}>No planned cross-role coverage or employee coverage splits configured.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="out-of-position-table-wrap">
-              <table className="out-of-position-table">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Date</th>
-                    <th>Home</th>
-                    <th>Worked</th>
-                    <th>Hours</th>
-                    <th>Shift</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outOfPositionLaborSummary.rows.map((row) => (
-                    <tr key={row.id} className={row.classification === "unclassified" ? "is-unclassified" : ""}>
-                      <td>
-                        <strong>{row.employee_name}</strong>
-                        {row.reason ? <small>{row.reason}</small> : null}
-                      </td>
-                      <td>{row.day_label} {fmtDate(row.date)}</td>
-                      <td>{row.home_role_label}</td>
-                      <td>{row.worked_role_label}</td>
-                      <td>{formatHourAnalysisHours(row.hours)}</td>
-                      <td>{row.shift_label}</td>
-                    </tr>
-                  ))}
-                  {outOfPositionLaborSummary.rows.length === 0 && (
-                    <tr>
-                      <td colSpan={6}>{staffingCapacityPlansLoaded ? "No mismatch or unclassified schedule rows to show." : "Loading schedule rows..."}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+	          <div className="hour-analysis-card out-of-position-card">
+	            <CapacitySectionHeader
+	              title="Out-of-Position Labor"
+	              subtitle={`Current schedule rows: week of ${staffingCapacityWeekLabel}`}
+	              collapsed={outOfPositionCollapsed}
+	              onToggle={() => toggleCapacitySection("outOfPositionLabor")}
+	              summary={<span className="capacity-section-pill is-warning">{outOfPositionSummarySignal}</span>}
+	            />
+	            {!outOfPositionCollapsed && (
+	              <>
+	                <div className="out-of-position-metrics">
+	                  <div className="out-of-position-metric is-primary">
+	                    <span>Out-of-position shifts</span>
+	                    <strong>{outOfPositionLaborSummary.totalShifts}</strong>
+	                  </div>
+	                  <div className="out-of-position-metric">
+	                    <span>Out-of-position hours</span>
+	                    <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.totalHours)}</strong>
+	                  </div>
+	                  <div className="out-of-position-metric">
+	                    <span>Unclassified shifts</span>
+	                    <strong>{outOfPositionLaborSummary.unclassifiedShifts}</strong>
+	                  </div>
+	                  <div className="out-of-position-metric">
+	                    <span>Unclassified hours</span>
+	                    <strong>{formatHourAnalysisHours(outOfPositionLaborSummary.unclassifiedHours)}</strong>
+	                  </div>
+	                </div>
+	                <div className="out-of-position-topline">
+	                  {outOfPositionLaborSummary.topMismatches.length > 0 ? (
+	                    outOfPositionLaborSummary.topMismatches.map((item) => (
+	                      <span key={item.key}>{item.key}: {item.shifts} shift{item.shifts === 1 ? "" : "s"} / {formatHourAnalysisHours(item.hours)} hrs</span>
+	                    ))
+	                  ) : (
+	                    <span>{staffingCapacityPlansLoaded ? "No classified out-of-position shifts found for this week." : "Loading schedule rows..."}</span>
+	                  )}
+	                </div>
+	                <div className="out-of-position-planned-block">
+	                  <div className="out-of-position-planned-heading">
+	                    <strong>Planned cross-role coverage</strong>
+	                    <span>Active model rows plus person-level Expected Hours splits.</span>
+	                  </div>
+	                  <div className="out-of-position-table-wrap">
+	                    <table className="out-of-position-table">
+	                      <thead>
+	                        <tr>
+	                          <th>Source</th>
+	                          <th>Home / Model Row</th>
+	                          <th>Covers</th>
+	                          <th>Hours</th>
+	                          <th>Split / Days</th>
+	                        </tr>
+	                      </thead>
+	                      <tbody>
+	                        {plannedCrossRoleCoverageRows.map((row) => (
+	                          <tr key={row.key} className={row.type === "model" ? "is-planned-model" : "is-planned-split"}>
+	                            <td>
+	                              <strong>{row.source_label}</strong>
+	                              {row.type === "what_if_split" ? <small>What-if split</small> : row.type === "person_split" ? <small>Expected Hours split</small> : <small>Labor Model coverage</small>}
+	                            </td>
+	                            <td>{row.home_label}</td>
+	                            <td>{row.covers_label}</td>
+	                            <td>{formatHourAnalysisHours(row.hours)}</td>
+	                            <td>{row.detail_label}</td>
+	                          </tr>
+	                        ))}
+	                        {plannedCrossRoleCoverageRows.length === 0 && (
+	                          <tr>
+	                            <td colSpan={5}>No planned cross-role coverage or employee coverage splits configured.</td>
+	                          </tr>
+	                        )}
+	                      </tbody>
+	                    </table>
+	                  </div>
+	                </div>
+	                <div className="out-of-position-table-wrap">
+	                  <table className="out-of-position-table">
+	                    <thead>
+	                      <tr>
+	                        <th>Employee</th>
+	                        <th>Date</th>
+	                        <th>Home</th>
+	                        <th>Worked</th>
+	                        <th>Hours</th>
+	                        <th>Shift</th>
+	                      </tr>
+	                    </thead>
+	                    <tbody>
+	                      {outOfPositionLaborSummary.rows.map((row) => (
+	                        <tr key={row.id} className={row.classification === "unclassified" ? "is-unclassified" : ""}>
+	                          <td>
+	                            <strong>{row.employee_name}</strong>
+	                            {row.reason ? <small>{row.reason}</small> : null}
+	                          </td>
+	                          <td>{row.day_label} {fmtDate(row.date)}</td>
+	                          <td>{row.home_role_label}</td>
+	                          <td>{row.worked_role_label}</td>
+	                          <td>{formatHourAnalysisHours(row.hours)}</td>
+	                          <td>{row.shift_label}</td>
+	                        </tr>
+	                      ))}
+	                      {outOfPositionLaborSummary.rows.length === 0 && (
+	                        <tr>
+	                          <td colSpan={6}>{staffingCapacityPlansLoaded ? "No mismatch or unclassified schedule rows to show." : "Loading schedule rows..."}</td>
+	                        </tr>
+	                      )}
+	                    </tbody>
+	                  </table>
+	                </div>
+	              </>
+	            )}
+	          </div>
 
-          <div className="hour-analysis-card">
-            <div className="hour-analysis-card-header">
-              <div>
-                <h3 className="hour-analysis-card-title">Headcount & Expected Hours</h3>
-                <div className="hour-analysis-card-subtitle">Active roster and planning rows by role and commitment.</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                {hourAnalysisModel.whatIfRows.length > 0 && (
-                  <span className="hour-analysis-what-if-tag">WHAT IF {hourAnalysisModel.whatIfRows.length}</span>
-                )}
-                {!canEditRoster && <span className="hour-analysis-status-pill" style={{ background: "#f8fafc", borderColor: C.border, color: C.textMut }}>Read Only</span>}
-              </div>
-            </div>
-            <div className="hour-analysis-roster-summary">
+		          <div className="hour-analysis-card">
+	            <CapacitySectionHeader
+	              title="Headcount & Expected Hours"
+	              subtitle="Active roster and planning rows by role and commitment."
+	              collapsed={headcountExpectedCollapsed}
+	              onToggle={() => toggleCapacitySection("headcountExpectedHours")}
+	              summary={(
+	                <>
+	                  <span className="capacity-section-pill">{headcountExpectedSummarySignal}</span>
+	                  {hourAnalysisModel.whatIfRows.length > 0 && (
+	                    <span className="hour-analysis-what-if-tag">WHAT IF {hourAnalysisModel.whatIfRows.length}</span>
+	                  )}
+	                  {!canEditRoster && <span className="hour-analysis-status-pill" style={{ background: "#f8fafc", borderColor: C.border, color: C.textMut }}>Read Only</span>}
+	                </>
+	              )}
+	            />
+	            {!headcountExpectedCollapsed && (
+	            <>
+	            <div className="hour-analysis-roster-summary">
               <div className="hour-analysis-roster-summary-item is-primary">
                 <div className="hour-analysis-summary-label">Total Headcount</div>
                 <div className="hour-analysis-summary-value">{hourAnalysisModel.totals.projectedHeadcount}</div>
@@ -19946,15 +21094,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     </td>
                   </tr>
                 </tbody>
-              </table>
-            </div>
-          </div>
+	              </table>
+	            </div>
+	            </>
+	            )}
+	          </div>
 
-          <div className="hour-analysis-card">
-            <div className="hour-analysis-card-header">
-              <div>
-                <h3 className="hour-analysis-card-title">Expected Hours By Person</h3>
-                <div className="hour-analysis-card-subtitle">Click a position to model a role movement. Override hours only when a person differs from the default.</div>
+	          {!headcountExpectedCollapsed && (
+	          <div className="hour-analysis-card">
+	            <div className="hour-analysis-card-header">
+	              <div>
+	                <h3 className="hour-analysis-card-title">Expected Hours By Person</h3>
+	                <div className="hour-analysis-card-subtitle">Click a position to model a role movement. Override hours only when a person differs from the default.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <LaborSortControl
@@ -20107,10 +21258,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     </tr>
                   )}
                 </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+	              </table>
+	            </div>
+	          </div>
+	          )}
+	        </div>
           )}
 
           {capacityPlanningView === "labor-model" && (
@@ -20824,6 +21976,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
               Approved titles are the only positions shown in movement and what-if pickers. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Capacity Planning use this order until a manager chooses another sort.
+            </div>
+            <div className="labor-roster-pdf-settings">
+              <div className="labor-roster-pdf-settings-header">
+                <strong>Roster PDF Contact Fields</strong>
+                <span>Controls printed K9 Resorts roster output only.</span>
+              </div>
+              <div className="labor-roster-pdf-toggle-grid">
+                <label className="labor-roster-pdf-toggle">
+                  <input
+                    type="checkbox"
+                    checked={rosterPrintOptions.showPhone}
+                    onChange={(event) => updateRosterPrintOption("showPhone", event.target.checked)}
+                  />
+                  <span>
+                    <strong>Phone</strong>
+                    <small>Print associate phone numbers</small>
+                  </span>
+                </label>
+                <label className="labor-roster-pdf-toggle">
+                  <input
+                    type="checkbox"
+                    checked={rosterPrintOptions.showEmail}
+                    onChange={(event) => updateRosterPrintOption("showEmail", event.target.checked)}
+                  />
+                  <span>
+                    <strong>Email</strong>
+                    <small>Print associate email addresses</small>
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="labor-model-role-color-settings">
               <div className="labor-model-role-color-header">

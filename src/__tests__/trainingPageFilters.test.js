@@ -15,6 +15,7 @@ import {
   buildLaborModelCoverageValue,
   CAPACITY_PLANNING_VIEWS,
   clearHourAnalysisPlanningState,
+  copyTextToClipboard,
   copyLaborModelBreakers,
   formatHourAnalysisCapacityDelta,
   getLaborModelDefaultCoverageValueForRow,
@@ -31,6 +32,7 @@ import {
   normalizeLaborModelCoverageCell,
   normalizeLaborModelRolePalette,
   normalizeHourAnalysisSettings,
+  normalizeStaffingCapacitySettings,
   noteMatchesSearch,
   resolveVerifiedActorDisplayName,
   removeLaborModelColumnFromDay,
@@ -88,7 +90,8 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("Staffing Matrix");
     expect(source).not.toContain("Roster Output");
     expect(source).not.toContain("Download Roster PDF");
-    expect((source.match(/Roster PDF/g) || []).length).toBe(1);
+    expect((source.match(/generatingRosterPdf \? "Generating PDF\.\.\." : "Roster PDF"/g) || []).length).toBe(1);
+    expect(source).toContain("Roster PDF Contact Fields");
     expect(source).toContain("labor-roster-action-bar");
     expect(source).toContain("labor-roster-table");
   });
@@ -109,6 +112,20 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("endDate: null,");
   });
 
+  it("wires shirt size through the employee edit metadata and history path", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("setLaborEmployeeShirtSize(readLaborEmployeeShirtSize(employee) || \"\")");
+    expect(source).toContain("shirtSize: laborEmployeeShirtSize");
+    expect(source).toContain("const nextMetadata = buildUpdatedLaborMetadata(existingMetadata, updates)");
+    expect(source).toContain("const previousShirtSize = readLaborEmployeeShirtSize({ metadata: existingMetadata })");
+    expect(source).toContain("const historyEvent = buildLaborEmployeeShirtSizeHistoryEvent({");
+    expect(source).toContain(".from(\"labor_employee_history_events\")");
+    expect(source).toContain(".insert(historyEvent)");
+    expect(source).toContain("readLaborEmployeeShirtSize(contactEmployee || row)");
+    expect(source).toContain("getLaborShirtSizeLabel(employeeShirtSize)");
+  });
+
   it("adds a Capacity Planning subpage selector for Staffing Capacity and Labor Model", () => {
     expect(CAPACITY_PLANNING_VIEWS.map((view) => view.id)).toEqual(["staffing-capacity", "labor-model"]);
     expect(CAPACITY_PLANNING_VIEWS.map((view) => view.label)).toEqual(["Staffing Capacity", "Labor Model"]);
@@ -120,11 +137,19 @@ describe("applyLaborRosterFilters", () => {
 
   it("renders Staffing Capacity before Headcount and uses neutral capacity variance copy", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
-    const staffingHeading = '<h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>';
-    const headcountHeading = '<h3 className="hour-analysis-card-title">Headcount & Expected Hours</h3>';
+    const staffingHeading = 'title="Staffing Capacity Variance"';
+    const headcountHeading = 'title="Headcount & Expected Hours"';
 
     expect(source.indexOf(staffingHeading)).toBeLessThan(source.indexOf(headcountHeading));
     expect(source).toContain("Capacity Variance");
+    expect(source).toContain("CapacitySectionHeader");
+    expect(source).toContain("staffingCapacityCollapsed");
+    expect(source).toContain("outOfPositionCollapsed");
+    expect(source).toContain("headcountExpectedCollapsed");
+    expect(source.lastIndexOf("!headcountExpectedCollapsed && (", source.indexOf("Expected Hours By Person"))).toBeGreaterThan(0);
+    expect(source).toContain("hour-analysis-capacity-row-metrics");
+    expect(source).toContain("visual.statusLabel");
+    expect(source).toContain("visual.statusDetail");
     expect(source).not.toContain("Gross Position Gap");
     expect(source).not.toContain("Expected hours measured against role targets from the Labor Model.");
     expect(source).not.toContain("Floor target");
@@ -137,7 +162,9 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("hour-analysis-capacity-detail-popover");
     expect(source).not.toContain("hour-analysis-capacity-hover-zone is-expected");
     expect(source).not.toContain("updateHourAnalysisCapacityHover");
-    expect(source).toContain("CSR/PCT: 15%-25% range");
+    expect(source).toContain("staffingCapacityRangeSummary");
+    expect(source).toContain("Capacity Settings");
+    expect(source).toContain("Tolerance defaults to");
     expect(source).toContain("hour-analysis-capacity-top-label");
     expect(source).toContain("hour-analysis-capacity-reference");
     expect(source).toContain("hour-analysis-capacity-dimension");
@@ -146,6 +173,63 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("no target range");
     expect(source).not.toContain("hourAnalysisCapacityLayoutColumns");
     expect(source).not.toContain('"leadership" : "frontline"');
+    expect(source).not.toContain("out-of-position-week-controls");
+    expect(source).not.toContain(">Prev<");
+    expect(source).not.toContain("This Week");
+    expect(source).not.toContain(">Next<");
+    const tableWrapStyle = source.match(/\.out-of-position-table-wrap\s*\{([^}]*)\}/s)?.[1] || "";
+    expect(tableWrapStyle).toContain("max-height: none");
+    expect(tableWrapStyle).toContain("overflow-y: visible");
+    expect(tableWrapStyle).not.toContain("overflow: auto");
+    expect(tableWrapStyle).not.toContain("overflow-y: auto");
+  });
+
+  it("defaults Out-of-Position Labor collapsed while keeping capacity and headcount sections expandable", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("useState({ outOfPositionLabor: true })");
+    expect(source).toContain('toggleCapacitySection("outOfPositionLabor")');
+    expect(source).toContain('toggleCapacitySection("staffingCapacityVariance")');
+    expect(source).toContain('toggleCapacitySection("headcountExpectedHours")');
+  });
+
+  it("copies roster values through clipboard API and textarea fallback", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    await expect(copyTextToClipboard("  Jane Smith <jane@example.com>  ", {
+      navigator: { clipboard: { writeText } },
+    })).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("Jane Smith <jane@example.com>");
+
+    const textarea = {
+      value: "",
+      style: {},
+      setAttribute: vi.fn(),
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+      remove: vi.fn(),
+    };
+    const appendChild = vi.fn();
+    const execCommand = vi.fn().mockReturnValue(true);
+    const activeElement = { focus: vi.fn() };
+    const failingWriteText = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
+
+    await expect(copyTextToClipboard("(555) 123-4567", {
+      navigator: { clipboard: { writeText: failingWriteText } },
+      document: {
+        activeElement,
+        body: { appendChild },
+        createElement: vi.fn(() => textarea),
+        execCommand,
+      },
+      window: { getSelection: () => ({ rangeCount: 0 }) },
+    })).resolves.toBe(true);
+
+    expect(failingWriteText).toHaveBeenCalledWith("(555) 123-4567");
+    expect(appendChild).toHaveBeenCalledWith(textarea);
+    expect(textarea.value).toBe("(555) 123-4567");
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(activeElement.focus).toHaveBeenCalled();
   });
 
   it("formats signed capacity delta hours for surplus, deficit, and aligned states", () => {
@@ -167,6 +251,18 @@ describe("applyLaborRosterFilters", () => {
   });
 
   it("builds Staffing Capacity row visuals with frontline target range and signed tones", () => {
+    const frontlineShort = buildHourAnalysisCapacityRowVisualModel({
+      key: "csr",
+      expected: 18,
+      requiredWeekly: 20,
+      targetWeekly: 24,
+      capacityStandard: {
+        healthyLowWeekly: 23,
+        targetWeekly: 24,
+        healthyHighWeekly: 25,
+        targetBufferPercent: 20,
+      },
+    });
     const frontlineDeficit = buildHourAnalysisCapacityRowVisualModel({
       key: "csr",
       expected: 20,
@@ -182,6 +278,18 @@ describe("applyLaborRosterFilters", () => {
     const frontlineInRange = buildHourAnalysisCapacityRowVisualModel({
       key: "pct",
       expected: 47,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+      },
+    });
+    const frontlineOverTarget = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 49,
       requiredWeekly: 40,
       targetWeekly: 48,
       capacityStandard: {
@@ -222,11 +330,18 @@ describe("applyLaborRosterFilters", () => {
       },
     });
 
+    expect(frontlineShort).toMatchObject({
+      roleLabel: "CSR",
+      tone: "short",
+      statusLabel: "Short",
+      statusDetail: "5 hrs below lower range (2 hrs below floor)",
+    });
     expect(frontlineDeficit).toMatchObject({
       roleLabel: "CSR",
       isFrontline: true,
       hasTargetRange: true,
       tone: "short",
+      statusLabel: "Below range",
       deltaToTarget: -4,
       deltaToRange: -3,
       delta: { value: "-3 hrs", tone: "short", label: "Below target range" },
@@ -254,16 +369,24 @@ describe("applyLaborRosterFilters", () => {
       roleLabel: "PCT",
       isFrontline: true,
       tone: "healthy",
+      statusLabel: "In range",
       deltaToTarget: -1,
       deltaToRange: 0,
       delta: { value: "In range", tone: "healthy", label: "Target range" },
       targetLow: 46,
       targetHigh: 50,
     });
+    expect(frontlineOverTarget).toMatchObject({
+      roleLabel: "PCT",
+      tone: "healthy",
+      statusLabel: "Over target",
+      statusDetail: "1 hr over target, still in range",
+    });
     expect(frontlineAboveRange).toMatchObject({
       roleLabel: "PCT",
       isFrontline: true,
       tone: "surplus",
+      statusLabel: "Over range",
       deltaToTarget: 6,
       deltaToRange: 4,
       delta: { value: "+4 hrs", tone: "surplus", label: "Above target range" },
@@ -284,13 +407,188 @@ describe("applyLaborRosterFilters", () => {
       roleLabel: "GM",
       isFrontline: false,
       hasTargetRange: false,
+      hasSeparateTargetMetric: false,
+      floorMetricLabel: "Floor / Target",
       tone: "surplus",
+      statusLabel: "Above floor",
       deltaToTarget: 2,
       bufferWidthPct: 0,
       delta: { value: "+2 hrs", tone: "surplus" },
     });
     expect(adminSurplus.topLabels.map((label) => label.label)).toEqual(["Floor"]);
     expect(adminSurplus.dimensionLines.map((line) => line.key)).toEqual(["expected", "floor"]);
+  });
+
+  it("classifies Staffing Capacity tolerance without urgent short or over styling", () => {
+    const gmSlightlyShort = buildHourAnalysisCapacityRowVisualModel({
+      key: "general_manager",
+      expected: 39.3,
+      requiredWeekly: 40,
+      targetWeekly: 40,
+      capacityStandard: {
+        floor: 40,
+        targetWeekly: 40,
+        targetBufferPercent: 0,
+        tolerancePercent: 2,
+      },
+    });
+    const gmOutsideTolerance = buildHourAnalysisCapacityRowVisualModel({
+      key: "general_manager",
+      expected: 38.9,
+      requiredWeekly: 40,
+      targetWeekly: 40,
+      capacityStandard: {
+        floor: 40,
+        targetWeekly: 40,
+        targetBufferPercent: 0,
+        tolerancePercent: 2,
+      },
+    });
+    const pctInRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 47,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+        tolerancePercent: 2,
+      },
+    });
+    const pctSlightlyUnderRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 45.2,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+        tolerancePercent: 2,
+      },
+    });
+    const pctOutsideUnderRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 44.8,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+        tolerancePercent: 2,
+      },
+    });
+    const pctSlightlyOverRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 50.8,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+        tolerancePercent: 2,
+      },
+    });
+    const pctOutsideOverRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 51.2,
+      requiredWeekly: 40,
+      targetWeekly: 48,
+      capacityStandard: {
+        healthyLowWeekly: 46,
+        targetWeekly: 48,
+        healthyHighWeekly: 50,
+        targetBufferPercent: 20,
+        tolerancePercent: 2,
+      },
+    });
+
+    expect(gmSlightlyShort).toMatchObject({
+      tone: "healthy",
+      statusLabel: "Within tolerance",
+      delta: { value: "-0.7 hrs", tone: "healthy", label: "Within tolerance" },
+      toleranceHours: 1,
+      withinTolerance: true,
+    });
+    expect(gmSlightlyShort.statusDetail).toContain("0.7 hrs below floor / target");
+    expect(gmOutsideTolerance).toMatchObject({
+      tone: "short",
+      statusLabel: "Short",
+      delta: { value: "-1.1 hrs", tone: "short" },
+      withinTolerance: false,
+    });
+    expect(pctInRange).toMatchObject({
+      tone: "healthy",
+      statusLabel: "In range",
+      delta: { value: "In range", tone: "healthy" },
+    });
+    expect(pctSlightlyUnderRange).toMatchObject({
+      tone: "healthy",
+      statusLabel: "Within tolerance",
+      delta: { value: "-0.8 hrs", tone: "healthy", label: "Within tolerance" },
+      withinTolerance: true,
+    });
+    expect(pctOutsideUnderRange).toMatchObject({
+      tone: "short",
+      statusLabel: "Below range",
+      delta: { value: "-1.2 hrs", tone: "short" },
+    });
+    expect(pctSlightlyOverRange).toMatchObject({
+      tone: "healthy",
+      statusLabel: "Within tolerance",
+      delta: { value: "+0.8 hrs", tone: "healthy", label: "Within tolerance" },
+      withinTolerance: true,
+    });
+    expect(pctOutsideOverRange).toMatchObject({
+      tone: "surplus",
+      statusLabel: "Over range",
+      delta: { value: "+1.2 hrs", tone: "surplus" },
+    });
+  });
+
+  it("normalizes configurable Staffing Capacity tolerance and buffer settings", () => {
+    const normalized = normalizeStaffingCapacitySettings({
+      roles: {
+        general_manager: {
+          tolerance_percent: "3.5",
+          lower_buffer_percent: 12,
+          upper_buffer_percent: 24,
+        },
+        csr: {
+          tolerancePercent: 4,
+          lower_buffer_percent: 30,
+          target_buffer_percent: 26,
+          upper_buffer_percent: 20,
+        },
+      },
+    });
+
+    expect(normalized.roles.general_manager).toMatchObject({
+      tolerancePercent: 3.5,
+      lowerBufferPercent: 0,
+      targetBufferPercent: 0,
+      upperBufferPercent: 0,
+    });
+    expect(normalized.roles.csr).toMatchObject({
+      tolerancePercent: 4,
+      lowerBufferPercent: 20,
+      targetBufferPercent: 26,
+      upperBufferPercent: 30,
+      overRosteredBufferPercent: 30,
+    });
+    expect(normalized.roles.pct).toMatchObject({
+      tolerancePercent: 2,
+      lowerBufferPercent: 15,
+      targetBufferPercent: 20,
+      upperBufferPercent: 25,
+    });
   });
 
   it("defaults the roster employment status filter to active employees", () => {
