@@ -124,6 +124,46 @@ describe("labor roster PDF", () => {
     expect(pdfDoc.getPageCount()).toBe(1);
   });
 
+  it("omits PDF contact fields cleanly when phone and email are disabled", async () => {
+    const bytes = await buildLaborRosterPdfBytes({
+      ...basePayload,
+      options: {
+        showPhone: false,
+        showEmail: false,
+      },
+    });
+    const pdfDoc = await PDFDocument.load(bytes);
+    const text = await extractPdfText(bytes);
+
+    expect(pdfDoc.getPageCount()).toBe(1);
+    expect(text).toContain("Adair Forsythe Team Roster");
+    expect(text).not.toContain("(856) 555-0100");
+    expect(text).not.toContain("zackary.nisbet@example.com");
+    expect(text).not.toContain("Phone Email");
+  });
+
+  it("can print only phone or only email contact fields", async () => {
+    const phoneOnlyText = await extractPdfText(await buildLaborRosterPdfBytes({
+      ...basePayload,
+      options: {
+        showPhone: true,
+        showEmail: false,
+      },
+    }));
+    const emailOnlyText = await extractPdfText(await buildLaborRosterPdfBytes({
+      ...basePayload,
+      options: {
+        showPhone: false,
+        showEmail: true,
+      },
+    }));
+
+    expect(phoneOnlyText).toContain("(856) 555-0100");
+    expect(phoneOnlyText).not.toContain("zackary.nisbet@example.com");
+    expect(emailOnlyText).not.toContain("(856) 555-0100");
+    expect(emailOnlyText).toContain("zackary.nisbet@example.com");
+  });
+
   it("keeps commitment, phone, and email on one page without report metrics", async () => {
     const bytes = await buildLaborRosterPdfBytes({
       ...basePayload,
