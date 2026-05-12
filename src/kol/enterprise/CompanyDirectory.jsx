@@ -3,7 +3,7 @@ import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import useEnterpriseDirectory from "../../hooks/useEnterpriseDirectory";
-import { createBalkanOrgChart, loadBalkanOrgChart } from "./balkanOrgChartAdapter";
+import { createBalkanOrgChart, loadBalkanOrgChart, toBalkanNodes } from "./balkanOrgChartAdapter";
 
 const VIEWS = [
   { key: "people", label: "People", icon: I.Users },
@@ -51,9 +51,15 @@ const DIRECTORY_CSS = `
 .dir-gap-list { display: grid; gap: 10px; padding: 14px; }
 .dir-gap { border: 1px solid ${C.border}; border-left: 4px solid ${C.warn}; border-radius: 8px; padding: 14px; background: #fff; }
 .dir-gap h3 { margin: 0 0 5px; font-size: 15px; color: ${C.text}; }
-.dir-chart-shell { padding: 14px; }
-.dir-chart-card { height: 680px; border: 1px solid ${C.border}; border-radius: 8px; background: #fff; overflow: hidden; }
-.dir-chart-status { padding: 12px 14px; color: ${C.textSec}; font-size: 13px; border-bottom: 1px solid ${C.border}; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.dir-chart-head { padding: 16px 18px; border-bottom: 1px solid ${C.border}; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: linear-gradient(180deg, #fff 0%, #F8FAF7 100%); }
+.dir-chart-head h2 { margin: 0; font-size: 20px; line-height: 1.15; color: ${C.text}; }
+.dir-chart-head p { margin: 5px 0 0; color: ${C.textSec}; font-size: 13px; line-height: 1.35; max-width: 760px; }
+.dir-chart-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.dir-chart-action { height: 36px; min-width: 36px; border: 1px solid ${C.border}; border-radius: 8px; background: #fff; color: ${C.text}; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: 12px; font-weight: 850; padding: 0 10px; }
+.dir-chart-action:hover { border-color: ${C.pri}; color: ${C.pri}; background: ${C.priLt}; }
+.dir-chart-shell { padding: 14px; background: #fff; }
+.dir-chart-card { height: clamp(920px, calc(100vh - 120px), 1280px); border: 1px solid ${C.border}; border-radius: 8px; background: radial-gradient(circle at 50% 0%, rgba(148,216,45,.10), transparent 34%), #FCFEFB; overflow: hidden; }
+.dir-chart-card svg { display: block; }
 .dir-fallback-tree { padding: 16px; max-height: 620px; overflow: auto; }
 .dir-tree-row { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-bottom: 1px solid ${C.border}; }
 .dir-drawer-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.28); z-index: 2000; }
@@ -77,6 +83,8 @@ const DIRECTORY_CSS = `
   .dir-table th:nth-child(3), .dir-table td:nth-child(3),
   .dir-table th:nth-child(4), .dir-table td:nth-child(4) { display: none; }
   .dir-chart-card { height: 560px; }
+  .dir-chart-head { align-items: stretch; flex-direction: column; }
+  .dir-chart-actions { flex-wrap: wrap; }
 }
 `;
 
@@ -375,26 +383,32 @@ function buildFallbackRows(nodes) {
 function OrgChartView({ data }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
-  const [status, setStatus] = useState("Loading Balkan OrgChartJS...");
+  const [status, setStatus] = useState("Preparing org chart");
   const [fallback, setFallback] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function mountChart() {
       if (!ref.current || !data.orgNodes.length) return;
       setFallback(false);
-      setStatus("Loading Balkan OrgChartJS...");
+      setChartReady(false);
+      setStatus("Preparing org chart");
       try {
         await loadBalkanOrgChart();
         if (cancelled || !ref.current) return;
         if (chartRef.current?.destroy) chartRef.current.destroy();
         ref.current.innerHTML = "";
         chartRef.current = createBalkanOrgChart(ref.current, data.orgNodes);
-        setStatus("Org chart rendered from Supabase id/pid nodes.");
+        setStatus("Leadership and resort reporting lines");
+        window.setTimeout(() => {
+          if (!cancelled) setChartReady(true);
+        }, 250);
       } catch (err) {
         console.warn("[Enterprise Directory] Org chart fallback:", err);
         if (!cancelled) {
           setFallback(true);
+          setChartReady(false);
           setStatus("Balkan unavailable in this runtime. Showing mobile-safe hierarchy fallback.");
         }
       }
@@ -407,12 +421,32 @@ function OrgChartView({ data }) {
   }, [data.orgNodes]);
 
   const fallbackRows = useMemo(() => buildFallbackRows(data.orgNodes), [data.orgNodes]);
+  const chartNodeCount = useMemo(() => toBalkanNodes(data.orgNodes).length, [data.orgNodes]);
+  const fitChart = () => chartRef.current?.fit?.();
+  const zoom = (delta) => {
+    const chart = chartRef.current;
+    if (!chart?.getScale || !chart?.setScale) return;
+    const next = Math.max(0.55, Math.min(1.8, chart.getScale() + delta));
+    chart.setScale(next);
+  };
 
   return (
     <div className="dir-panel">
-      <div className="dir-chart-status">
-        <span>{status}</span>
-        <span className="dir-pill">{data.orgNodes.length} nodes</span>
+      <div className="dir-chart-head">
+        <div>
+          <h2>Company Org Chart</h2>
+          <p>{status}</p>
+        </div>
+        <div className="dir-chart-actions" aria-label="Org chart controls">
+          <span className="dir-pill">{chartNodeCount} nodes</span>
+          {!fallback && (
+            <>
+              <button className="dir-chart-action" type="button" onClick={() => zoom(-0.15)} disabled={!chartReady} title="Zoom out" aria-label="Zoom out">-</button>
+              <button className="dir-chart-action" type="button" onClick={fitChart} disabled={!chartReady} title="Fit chart" aria-label="Fit chart"><I.RefreshCw /> Fit</button>
+              <button className="dir-chart-action" type="button" onClick={() => zoom(0.15)} disabled={!chartReady} title="Zoom in" aria-label="Zoom in"><I.Plus /></button>
+            </>
+          )}
+        </div>
       </div>
       <div className="dir-chart-shell">
         {fallback ? (
