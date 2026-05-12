@@ -141,8 +141,9 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("hour-analysis-capacity-top-label");
     expect(source).toContain("hour-analysis-capacity-reference");
     expect(source).toContain("hour-analysis-capacity-dimension");
-    expect(source).toContain("Expected / actual");
-    expect(source).toContain("target ${formatHourAnalysisHours(visual.target)} hours with upper range");
+    expect(source).not.toContain("Expected / actual");
+    expect(source).toContain("Lower range");
+    expect(source).toContain("no target range");
     expect(source).not.toContain("hourAnalysisCapacityLayoutColumns");
     expect(source).not.toContain('"leadership" : "frontline"');
   });
@@ -224,6 +225,7 @@ describe("applyLaborRosterFilters", () => {
     expect(frontlineDeficit).toMatchObject({
       roleLabel: "CSR",
       isFrontline: true,
+      hasTargetRange: true,
       tone: "short",
       deltaToTarget: -4,
       deltaToRange: -3,
@@ -233,8 +235,8 @@ describe("applyLaborRosterFilters", () => {
     });
     expect(frontlineDeficit.bufferWidthPct).toBeGreaterThan(0);
     expect(frontlineDeficit.topLabels.map((label) => label.label)).toEqual([
-      "Expected / actual",
-      "Operational floor",
+      "Floor",
+      "Lower range",
       "Target",
       "Upper range",
     ]);
@@ -271,18 +273,24 @@ describe("applyLaborRosterFilters", () => {
     expect(highVolumePct.domainMax).toBeCloseTo(430);
     expect(highVolumePct.floorPct).toBeLessThan(12);
     expect(highVolumePct.expectedPct).toBeGreaterThan(89);
-    expect(highVolumePct.topLabels.find((label) => label.key === "expected")).toMatchObject({
-      pct: 87,
-      markerPct: expect.any(Number),
-    });
+    expect(highVolumePct.topLabels.map((label) => label.key)).toEqual([
+      "floor",
+      "lower-range",
+      "target",
+      "upper-range",
+    ]);
+    expect(highVolumePct.topLabels.find((label) => label.key === "expected")).toBeUndefined();
     expect(adminSurplus).toMatchObject({
       roleLabel: "GM",
       isFrontline: false,
+      hasTargetRange: false,
       tone: "surplus",
       deltaToTarget: 2,
       bufferWidthPct: 0,
       delta: { value: "+2 hrs", tone: "surplus" },
     });
+    expect(adminSurplus.topLabels.map((label) => label.label)).toEqual(["Floor"]);
+    expect(adminSurplus.dimensionLines.map((line) => line.key)).toEqual(["expected", "floor"]);
   });
 
   it("defaults the roster employment status filter to active employees", () => {
