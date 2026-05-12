@@ -4,6 +4,9 @@ import {
   buildLaborEmployeeContactCard,
   buildLaborEmployeeContactCardFile,
   buildLaborEmployeeContactCardFilename,
+  buildLaborEmailRecipient,
+  buildLaborEmailRecipientList,
+  buildLaborEmployeeShirtSizeHistoryEvent,
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
@@ -12,6 +15,7 @@ import {
   buildPctReadinessEmployeeOptions,
   getLaborEmploymentCommitmentLabel,
   getLaborRosterPositionGroup,
+  getLaborShirtSizeLabel,
   getPctReadinessStatusPresentation,
   hasActivePctReadinessRecord,
   matchPctReadinessEmployeeByName,
@@ -23,6 +27,8 @@ import {
   normalizePctReadinessText,
   normalizePctWorkbookStatus,
   normalizeLaborEmploymentCommitment,
+  normalizeLaborShirtSize,
+  readLaborEmployeeShirtSize,
   reconcilePctReadinessLegacyActorName,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
@@ -479,6 +485,66 @@ describe("trainingData helpers", () => {
     expect(file).toContain("FN:Pat Lee");
     expect(file).not.toContain("Status: Inactive");
     expect(buildLaborEmployeeContactCardFilename({}, { locationName: "Adair Forsythe", bulk: true })).toBe("cherry-hill-active-employee-contacts.vcf");
+  });
+
+  it("formats roster email recipients with display name and normalized email", () => {
+    expect(
+      buildLaborEmailRecipient({
+        full_name: "  Jane <Manager> Vance  ",
+        metadata: { contact_email: " JANE.SMITH@EXAMPLE.COM " },
+      })
+    ).toBe("Jane Manager Vance <jane.smith@example.com>");
+
+    expect(buildLaborEmailRecipient({ full_name: "No Email", metadata: { contact_email: "not-an-email" } })).toBe("");
+  });
+
+  it("builds a comma-separated active associate email recipient list", () => {
+    expect(
+      buildLaborEmailRecipientList([
+        { id: "e1", full_name: "Jane Vance", employment_status: "active", metadata: { contact_email: "jane@example.com" } },
+        { id: "e2", full_name: "Alex Lee", employment_status: "active", metadata: { contact_email: "ALEX@example.com" } },
+        { id: "e3", full_name: "Duplicate Jane", employment_status: "active", metadata: { contact_email: "JANE@example.com" } },
+        { id: "e4", full_name: "Inactive Pat", employment_status: "inactive", metadata: { contact_email: "pat@example.com" } },
+        { id: "e5", full_name: "Missing Email", employment_status: "active", metadata: { contact_email: "" } },
+      ])
+    ).toBe("Jane Vance <jane@example.com>, Alex Lee <alex@example.com>");
+  });
+
+  it("normalizes labor shirt size values and builds shirt-size history events", () => {
+    expect(normalizeLaborShirtSize("xxl")).toBe("2XL");
+    expect(normalizeLaborShirtSize(" 3 xl ")).toBe("3XL");
+    expect(normalizeLaborShirtSize("unknown")).toBe("unknown");
+    expect(normalizeLaborShirtSize("")).toBeNull();
+    expect(readLaborEmployeeShirtSize({ metadata: { shirt_size: "xxxxl" } })).toBe("4XL");
+    expect(getLaborShirtSizeLabel("unknown")).toBe("Other/Unknown");
+
+    expect(
+      buildLaborEmployeeShirtSizeHistoryEvent({
+        laborEmployeeId: "employee-1",
+        oldValue: "M",
+        newValue: "xxl",
+        actorUserId: "not-a-uuid",
+        actorName: "  Skyler  ",
+        occurredAt: "2026-05-12T12:00:00.000Z",
+      })
+    ).toEqual({
+      labor_employee_id: "employee-1",
+      event_category: "employee",
+      event_type: "employee_field_changed",
+      source_table: "labor_employees",
+      source_id: "employee-1",
+      field_name: "shirt_size",
+      title: "Shirt size changed",
+      summary: "Employee shirt size changed",
+      old_value: "M",
+      new_value: "2XL",
+      old_values: { shirt_size: "M" },
+      new_values: { shirt_size: "2XL" },
+      actor_user_id: null,
+      actor_name: "Skyler",
+      occurred_at: "2026-05-12T12:00:00.000Z",
+    });
+    expect(buildLaborEmployeeShirtSizeHistoryEvent({ laborEmployeeId: "employee-1", oldValue: "XL", newValue: "xl" })).toBeNull();
   });
 
   it("builds labor dashboard metrics using active employee and compliance rules", () => {
