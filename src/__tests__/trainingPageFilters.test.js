@@ -135,12 +135,16 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("hour-analysis-capacity-expected-label");
     expect(source).not.toContain("hour-analysis-capacity-marker-label");
     expect(source).not.toContain("hour-analysis-capacity-detail-popover");
-    expect(source).toContain("hour-analysis-capacity-hover-zone is-expected");
-    expect(source).toContain("hour-analysis-capacity-cursor-tooltip");
+    expect(source).not.toContain("hour-analysis-capacity-hover-zone is-expected");
+    expect(source).not.toContain("updateHourAnalysisCapacityHover");
     expect(source).toContain("CSR/PCT: 15%-25% range");
-    expect(source).toContain("target range ${formatHourAnalysisHours(visual.targetLow)} to ${formatHourAnalysisHours(visual.targetHigh)} hours");
-    expect(source).toContain("hourAnalysisCapacityLayoutColumns");
-    expect(source).toContain('"leadership" : "frontline"');
+    expect(source).toContain("hour-analysis-capacity-top-label");
+    expect(source).toContain("hour-analysis-capacity-reference");
+    expect(source).toContain("hour-analysis-capacity-dimension");
+    expect(source).toContain("Expected / actual");
+    expect(source).toContain("target ${formatHourAnalysisHours(visual.target)} hours with upper range");
+    expect(source).not.toContain("hourAnalysisCapacityLayoutColumns");
+    expect(source).not.toContain('"leadership" : "frontline"');
   });
 
   it("formats signed capacity delta hours for surplus, deficit, and aligned states", () => {
@@ -204,6 +208,18 @@ describe("applyLaborRosterFilters", () => {
       requiredWeekly: 10,
       targetWeekly: 10,
     });
+    const highVolumePct = buildHourAnalysisCapacityRowVisualModel({
+      key: "pct",
+      expected: 420,
+      requiredWeekly: 335.5,
+      targetWeekly: 402.6,
+      capacityStandard: {
+        healthyLowWeekly: 385.8,
+        targetWeekly: 402.6,
+        healthyHighWeekly: 419.4,
+        targetBufferPercent: 20,
+      },
+    });
 
     expect(frontlineDeficit).toMatchObject({
       roleLabel: "CSR",
@@ -216,6 +232,22 @@ describe("applyLaborRosterFilters", () => {
       targetHigh: 25,
     });
     expect(frontlineDeficit.bufferWidthPct).toBeGreaterThan(0);
+    expect(frontlineDeficit.topLabels.map((label) => label.label)).toEqual([
+      "Expected / actual",
+      "Operational floor",
+      "Target",
+      "Upper range",
+    ]);
+    expect(frontlineDeficit.dimensionLines.map((line) => line.key)).toEqual([
+      "expected",
+      "floor",
+      "target",
+      "target-range",
+    ]);
+    expect(frontlineDeficit.dimensionLines[2]).toMatchObject({
+      label: "4 hrs short to target",
+      tone: "short",
+    });
     expect(frontlineInRange).toMatchObject({
       roleLabel: "PCT",
       isFrontline: true,
@@ -229,10 +261,19 @@ describe("applyLaborRosterFilters", () => {
     expect(frontlineAboveRange).toMatchObject({
       roleLabel: "PCT",
       isFrontline: true,
-      tone: "short",
+      tone: "surplus",
       deltaToTarget: 6,
       deltaToRange: 4,
-      delta: { value: "+4 hrs", tone: "short", label: "Above target range" },
+      delta: { value: "+4 hrs", tone: "surplus", label: "Above target range" },
+    });
+    expect(frontlineAboveRange.dimensionLines.map((line) => line.key)).toContain("overage");
+    expect(highVolumePct.domainMin).toBeCloseTo(325.5);
+    expect(highVolumePct.domainMax).toBeCloseTo(430);
+    expect(highVolumePct.floorPct).toBeLessThan(12);
+    expect(highVolumePct.expectedPct).toBeGreaterThan(89);
+    expect(highVolumePct.topLabels.find((label) => label.key === "expected")).toMatchObject({
+      pct: 87,
+      markerPct: expect.any(Number),
     });
     expect(adminSurplus).toMatchObject({
       roleLabel: "GM",
