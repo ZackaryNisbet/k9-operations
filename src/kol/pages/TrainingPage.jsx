@@ -14352,25 +14352,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           from { transform: scaleX(0); opacity: 0.38; }
           to { transform: scaleX(1); opacity: 1; }
         }
-        .hour-analysis-capacity-dashboard {
+        .hour-analysis-capacity-card .hour-analysis-card-header {
+          align-items: center;
+          padding: 11px 16px;
+        }
+        .hour-analysis-capacity-summary {
           display: flex;
           align-items: center;
-          justify-content: space-between;
+          justify-content: flex-end;
           gap: 8px;
           flex-wrap: wrap;
-          padding: 10px 16px 8px;
-          border-bottom: 1px solid ${C.borderLight};
-          background: #fbfdff;
         }
         .hour-analysis-capacity-total {
           border-radius: 6px;
           background: #ffffff;
-          padding: 8px 10px;
-          min-height: 36px;
+          padding: 7px 9px;
+          min-height: 32px;
           box-shadow: none;
         }
         .hour-analysis-capacity-total strong {
-          font-size: 18px;
+          font-size: 16px;
         }
         .hour-analysis-capacity-buffer-note {
           justify-self: auto;
@@ -14378,26 +14379,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border: 1px dashed rgba(20, 83, 45, 0.18);
           border-radius: 6px;
           background: #ffffff;
-          padding: 7px 9px;
+          padding: 6px 8px;
           font-size: 10.5px;
           box-shadow: none;
         }
         .hour-analysis-capacity-visual {
           grid-template-columns: minmax(0, 1fr);
-          gap: 10px;
-          padding: 14px 16px 16px;
+          gap: 5px;
+          padding: 8px 12px 10px;
         }
         .hour-analysis-capacity-row {
           --capacity-tone-rgb: 20, 83, 45;
           --capacity-ink: #334155;
           --capacity-dim: #94a3b8;
           display: grid;
-          grid-template-columns: minmax(122px, 0.18fr) minmax(0, 1fr);
-          gap: 14px;
+          grid-template-columns: minmax(96px, 0.14fr) minmax(0, 1fr);
+          gap: 8px;
           align-items: stretch;
           border-radius: 6px;
           background: #ffffff;
-          padding: 12px 14px 12px 12px;
+          padding: 6px 9px;
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
           transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
@@ -14431,9 +14432,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           z-index: 2;
           display: grid;
           align-content: start;
-          gap: 8px;
+          gap: 5px;
           min-width: 0;
-          padding-top: 58px;
+          padding-top: 37px;
         }
         .hour-analysis-capacity-delta {
           display: inline-flex;
@@ -14463,32 +14464,32 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           position: relative;
           z-index: 2;
           min-height: var(--capacity-scale-height, 204px);
-          margin: 0 42px;
+          margin: 0 24px;
           overflow: visible;
           outline: none;
         }
         .hour-analysis-capacity-label-field {
           position: relative;
           z-index: 5;
-          height: 36px;
+          height: 25px;
         }
         .hour-analysis-capacity-top-label {
           position: absolute;
           left: var(--label-left);
-          top: 4px;
+          top: 0;
           transform: translateX(-50%);
           display: grid;
           justify-items: center;
-          gap: 2px;
-          min-width: 78px;
-          max-width: 118px;
+          gap: 1px;
+          min-width: 62px;
+          max-width: 100px;
           color: var(--capacity-ink);
           text-align: center;
           white-space: normal;
         }
         .hour-analysis-capacity-top-label small {
           color: ${C.textMut};
-          font-size: 9px;
+          font-size: 8px;
           font-weight: 950;
           line-height: 1;
           text-transform: uppercase;
@@ -14498,8 +14499,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border-radius: 999px;
           background: rgba(255,255,255,0.95);
           color: ${C.text};
-          padding: 3px 6px;
-          font-size: 10px;
+          padding: 2px 5px;
+          font-size: 8.8px;
           font-weight: 950;
           line-height: 1;
           box-shadow: 0 5px 12px rgba(15, 23, 42, 0.04);
@@ -14521,8 +14522,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           position: absolute;
           z-index: 1;
           left: var(--reference-left);
-          top: 34px;
-          bottom: 8px;
+          top: 27px;
+          bottom: 4px;
           width: 1px;
           border-left: 1px dashed rgba(100, 116, 139, 0.36);
           transform: translateX(-0.5px);
@@ -14539,8 +14540,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           z-index: 4;
           left: 0;
           right: 0;
-          top: 42px;
-          height: 46px;
+          top: 31px;
+          height: 31px;
           border-top: 1px solid rgba(51, 65, 85, 0.42);
           border-bottom: 1px solid rgba(148, 163, 184, 0.24);
           background:
@@ -14550,8 +14551,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-zero-tick,
         .hour-analysis-capacity-marker {
           position: absolute;
-          top: 6px;
-          bottom: 6px;
+          top: 4px;
+          bottom: 4px;
           width: 2px;
           background: rgba(51, 65, 85, 0.72);
           transform: translateX(-1px);
@@ -14562,8 +14563,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
         .hour-analysis-capacity-range-span {
           position: absolute;
-          top: 9px;
-          bottom: 9px;
+          top: 6px;
+          bottom: 6px;
           border-left: 1px solid rgba(20, 83, 45, 0.22);
           border-right: 1px solid rgba(20, 83, 45, 0.22);
           background: repeating-linear-gradient(135deg, rgba(22, 163, 74, 0.08) 0 6px, rgba(22, 163, 74, 0.2) 6px 12px);
@@ -14571,7 +14572,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-expected-span {
           position: absolute;
           left: 0;
-          top: 25px;
+          top: 15px;
           height: 4px;
           border-radius: 0 999px 999px 0;
           background: rgba(var(--capacity-tone-rgb), var(--measurement-intensity, 0.58));
@@ -14595,25 +14596,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: rgba(63, 98, 18, 0.64);
         }
         .hour-analysis-capacity-marker.is-upper-range {
-          top: 12px;
-          bottom: 12px;
+          top: 9px;
+          bottom: 9px;
         }
         .hour-analysis-capacity-dimensions {
           position: absolute;
           z-index: 5;
           left: 0;
           right: 0;
-          top: 102px;
-          height: 98px;
+          top: 72px;
+          height: 74px;
         }
         .hour-analysis-capacity-dimension {
           --dimension-rgb: 100, 116, 139;
           position: absolute;
           left: var(--dimension-left);
-          top: calc(var(--dimension-index, 0) * 20px);
+          top: calc(var(--dimension-index, 0) * 14px);
           width: var(--dimension-width);
           min-width: 11px;
-          height: 18px;
+          height: 13px;
           border-top: 1px solid rgba(var(--dimension-rgb), 0.72);
           color: rgb(var(--dimension-rgb));
         }
@@ -14621,9 +14622,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-dimension::after {
           content: "";
           position: absolute;
-          top: -6px;
+          top: -4px;
           width: 1px;
-          height: 11px;
+          height: 8px;
           background: rgba(var(--dimension-rgb), 0.72);
         }
         .hour-analysis-capacity-dimension::before {
@@ -14635,14 +14636,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-dimension span {
           position: absolute;
           left: 50%;
-          top: -9px;
+          top: -7px;
           transform: translateX(-50%);
           display: inline-flex;
           border-radius: 999px;
           background: #ffffff;
-          padding: 0 5px;
+          padding: 0 4px;
           color: currentColor;
-          font-size: 9.5px;
+          font-size: 8.1px;
           font-weight: 950;
           line-height: 1.1;
           white-space: nowrap;
@@ -15633,7 +15634,32 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
         .capacity-planning-page {
           display: grid;
-          gap: 16px;
+          gap: 10px;
+        }
+        .capacity-planning-page > .labor-view-switcher {
+          min-height: 62px;
+          margin-bottom: 0;
+          padding: 5px;
+          border-radius: 12px;
+        }
+        .capacity-planning-page > .labor-view-switcher .labor-view-switcher-indicator {
+          top: 5px;
+          bottom: 5px;
+          left: 5px;
+          width: calc((100% - 10px) / var(--labor-view-count));
+          border-radius: 8px;
+        }
+        .capacity-planning-page > .labor-view-switcher .labor-view-option {
+          border-radius: 8px;
+          padding: 9px 14px;
+          gap: 2px;
+        }
+        .capacity-planning-page > .labor-view-switcher .labor-view-option span {
+          font-size: 13px;
+        }
+        .capacity-planning-page > .labor-view-switcher .labor-view-option small {
+          font-size: 11px;
+          line-height: 1.2;
         }
         .labor-capacity-model-control {
           display: grid;
@@ -17620,7 +17646,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           }
           .hour-analysis-capacity-scale {
             margin: 0;
-            min-height: var(--capacity-scale-height, 204px);
+            min-height: var(--capacity-scale-height-mobile, 204px);
           }
           .hour-analysis-capacity-label-field {
             height: 36px;
@@ -17646,9 +17672,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           }
           .hour-analysis-capacity-dimensions {
             top: 102px;
+            height: 98px;
+          }
+          .hour-analysis-capacity-dimension {
+            top: calc(var(--dimension-index, 0) * 20px);
+            height: 18px;
+          }
+          .hour-analysis-capacity-dimension::before,
+          .hour-analysis-capacity-dimension::after {
+            top: -6px;
+            height: 11px;
           }
           .hour-analysis-capacity-dimension span {
             font-size: 8.5px;
+            top: -9px;
             padding-left: 3px;
             padding-right: 3px;
           }
@@ -19564,7 +19601,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           />
           {capacityPlanningView === "staffing-capacity" && (
         <div className="hour-analysis-shell">
-          <div className="hour-analysis-card">
+          <div className="hour-analysis-card hour-analysis-capacity-card">
             <div className="hour-analysis-card-header">
               <div>
                 <h3 className="hour-analysis-card-title">Staffing Capacity Variance</h3>
@@ -19572,20 +19609,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   Using active model: {activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}
                 </div>
               </div>
-            </div>
-            <div className="hour-analysis-capacity-dashboard">
-              <div className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
-                <strong>{hourAnalysisCapacityDelta.value}</strong>
-              </div>
-              <div className="hour-analysis-capacity-buffer-note">
-                CSR/PCT: 15%-25% range
+              <div className="hour-analysis-capacity-summary">
+                <div className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
+                  <strong>{hourAnalysisCapacityDelta.value}</strong>
+                </div>
+                <div className="hour-analysis-capacity-buffer-note">
+                  CSR/PCT: 15%-25% range
+                </div>
               </div>
             </div>
             <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
               {hourAnalysisCapacityRows.map((row, rowIndex) => {
                 const visual = buildHourAnalysisCapacityRowVisualModel(row);
                 const dimensionLineCount = Math.max(2, visual.dimensionLines.length);
-                const capacityScaleHeightPx = 104 + (dimensionLineCount * 20);
+                const capacityScaleHeightPx = 76 + (dimensionLineCount * 14);
+                const capacityScaleMobileHeightPx = 104 + (dimensionLineCount * 20);
                 return (
                   <div
                     key={row.key}
@@ -19595,6 +19633,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms`,
                       "--measurement-intensity": visual.measurementIntensity,
                       "--capacity-scale-height": `${capacityScaleHeightPx}px`,
+                      "--capacity-scale-height-mobile": `${capacityScaleMobileHeightPx}px`,
                     }}
                   >
                     <div className="hour-analysis-capacity-role">
