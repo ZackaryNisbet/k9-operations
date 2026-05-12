@@ -36,6 +36,8 @@ import RefundsPage from "./pages/RefundsPage";
 import EnterpriseOpsMatrix from "./enterprise/OpsMatrix";
 import EnterpriseAttendance from "./enterprise/Attendance";
 import EnterpriseUserManagement from "./enterprise/UserManagement";
+import CompanyDirectory from "./enterprise/CompanyDirectory";
+import EnterpriseOrgChart from "./enterprise/OrgChart";
 import InventoryPage from "./pages/InventoryPage";
 import InventoryReportPage from "./pages/InventoryReportPage";
 import CashTipsPage from "./pages/CashTipsPage";
@@ -104,6 +106,8 @@ const LITE_PAGE_SLUGS = {
   "settings": "settings",
   "inventory": "inventory",
   "inventory-report": "inventory/report",
+  "enterprise-directory": "enterprise/directory",
+  "enterprise-org-chart": "enterprise/org-chart",
   "enterprise-ops": "enterprise/operations",
   "enterprise-attendance": "enterprise/attendance",
   "enterprise-users": "enterprise/users",
@@ -196,7 +200,7 @@ function parseLiteUrl(pathname, dataRef) {
   if (parts[0] === "pricing") return { locSlug: null, page: "pricing", params: {} };
   const locSlug = parts[0];
   if (locSlug === "enterprise") {
-    const epSlug = parts.slice(1).join("/") || "operations";
+    const epSlug = parts.slice(1).join("/") || "directory";
     const pg = LITE_SLUG_TO_PAGE["enterprise/" + epSlug] || LITE_SLUG_TO_PAGE[epSlug] || "enterprise-ops";
     return { locSlug: "enterprise", page: pg, params: {} };
   }
@@ -329,10 +333,11 @@ const IS_ANALYTICS_MODE = new URLSearchParams(window.location.search).get("mode"
 const ENABLE_SUBSCRIPTION_GATE = false;
 
 const LEAN_ENTERPRISE_NAV_ITEMS = [
+  { id: "enterprise-directory", label: "Company Directory", icon: "Users" },
+  { id: "enterprise-org-chart", label: "Org Chart", icon: "Layers" },
   { id: "enterprise-ops", label: "Operations Matrix", icon: "Dashboard" },
   { id: "enterprise-attendance", label: "Attendance", icon: "Calendar" },
   { id: "enterprise-users", label: "User Management", icon: "Users" },
-  { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
 const PAGE_PERMISSION_MAP = {
@@ -379,6 +384,8 @@ const PAGE_PERMISSION_MAP = {
   "cash-tips": "Financial Reporting",
   "test-health": null,
   "checkout-tv": "Checkout TV Access",
+  "enterprise-directory": null,
+  "enterprise-org-chart": null,
   "enterprise-ops": "Enterprise View",
   "enterprise-attendance": "Enterprise View",
   "enterprise-users": "Enterprise View",
@@ -405,6 +412,7 @@ function getPagePermissionRequirements(page, params = {}) {
 }
 
 function canAccessLitePage(profile, page, params = {}) {
+  if (page === "enterprise-directory" || page === "enterprise-org-chart") return true;
   if (page === "training" && !params?.laborTab) {
     return hasEveryLeanPermission(profile, ["Labor Management"])
       && hasAnyLeanPermission(profile, Object.values(LABOR_TAB_PERMISSION_MAP));
@@ -629,8 +637,8 @@ function LeanAppInner() {
     // null means "all locations" (enterprise_admin, developer, owner)
     if (userLocationIds === null) return allLocations;
     return allLocations.filter(loc => {
-      // Always include enterprise view for multi_location_admin
-      if (loc.isEnterprise) return profile.role === "multi_location_admin" || profile.role === "enterprise_admin" || profile.role === "owner" || profile.role === "developer";
+      // Directory and org chart are universal authenticated Enterprise surfaces.
+      if (loc.isEnterprise) return true;
       // Demo/POS launchers are internal shortcuts, not part of normal staff location access.
       if (loc.isPOS || loc.isDemoLink) {
         return profile.role === "owner" || profile.role === "developer" || profile.role === "enterprise_admin";
@@ -867,7 +875,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -919,6 +927,8 @@ function LeanAppInner() {
       case "refunds": return "Refunds";
       case "photos": return "Photos";
       case "settings": return "Settings";
+      case "enterprise-directory": return "Company Directory";
+      case "enterprise-org-chart": return "Org Chart";
       case "enterprise-ops": return "Operations Matrix";
       case "enterprise-attendance": return "Attendance";
       case "enterprise-users": return "User Management";
@@ -985,9 +995,9 @@ function LeanAppInner() {
     const isEnterprise = locId === "enterprise";
     const wasEnterprise = currentLocation === "enterprise";
     if (isEnterprise && !wasEnterprise) {
-      setPage("enterprise-ops");
+      setPage("enterprise-directory");
       setParams({});
-      setNavStack([{ page: "enterprise-ops", params: {} }]);
+      setNavStack([{ page: "enterprise-directory", params: {} }]);
     } else if (!isEnterprise && wasEnterprise) {
       setPage("home");
       setParams({});
@@ -1149,6 +1159,10 @@ function LeanAppInner() {
         return <RefundsPage data={data} nav={nav} profile={profile} />;
       case "photos":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Photos not available on Enterprise view</div> : <PhotosPage data={data} nav={nav} profile={profile} />;
+      case "enterprise-directory":
+        return <CompanyDirectory initialView="people" />;
+      case "enterprise-org-chart":
+        return <EnterpriseOrgChart />;
       case "enterprise-ops":
         return <EnterpriseOpsMatrix profile={profile} userLocationIds={userLocationIds} />;
       case "enterprise-attendance":
