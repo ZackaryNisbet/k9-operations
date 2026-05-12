@@ -14462,7 +14462,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .hour-analysis-capacity-scale {
           position: relative;
           z-index: 2;
-          min-height: 204px;
+          min-height: var(--capacity-scale-height, 204px);
           margin: 0 42px;
           overflow: visible;
           outline: none;
@@ -17620,7 +17620,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           }
           .hour-analysis-capacity-scale {
             margin: 0;
-            min-height: 204px;
+            min-height: var(--capacity-scale-height, 204px);
           }
           .hour-analysis-capacity-label-field {
             height: 36px;
@@ -19584,6 +19584,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
               {hourAnalysisCapacityRows.map((row, rowIndex) => {
                 const visual = buildHourAnalysisCapacityRowVisualModel(row);
+                const dimensionLineCount = Math.max(2, visual.dimensionLines.length);
+                const capacityScaleHeightPx = 104 + (dimensionLineCount * 20);
                 return (
                   <div
                     key={row.key}
@@ -19592,6 +19594,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     style={{
                       "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms`,
                       "--measurement-intensity": visual.measurementIntensity,
+                      "--capacity-scale-height": `${capacityScaleHeightPx}px`,
                     }}
                   >
                     <div className="hour-analysis-capacity-role">
