@@ -10,6 +10,7 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
+  CSR_READINESS_TEMPLATE_SLUG,
   buildPctReadinessCellUpdateArgs,
   buildPctReadinessCategoryHotspots,
   buildPctReadinessEmployeeOptions,
@@ -17,7 +18,9 @@ import {
   getLaborRosterPositionGroup,
   getLaborShirtSizeLabel,
   getPctReadinessStatusPresentation,
+  getTeamReadinessTemplateOption,
   hasActivePctReadinessRecord,
+  isTeamReadinessRecord,
   matchPctReadinessEmployeeByName,
   buildUpdateLaborEmployeeRpcArgs,
   buildTrainingTemplateScopeClause,
@@ -28,10 +31,12 @@ import {
   normalizePctWorkbookStatus,
   normalizeLaborEmploymentCommitment,
   normalizeLaborShirtSize,
+  PCT_READINESS_TEMPLATE_SLUG,
   readLaborEmployeeShirtSize,
   reconcilePctReadinessLegacyActorName,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
+  TEAM_READINESS_TEMPLATE_OPTIONS,
 } from "../kol/trainingData";
 
 function createMockSupabase({
@@ -198,6 +203,17 @@ describe("trainingData helpers", () => {
     expect(
       normalizePctWorkbookStatus({
         checkboxStatus: false,
+        demonstratedBy: "Angelina D",
+        verifierValue: "",
+      })
+    ).toMatchObject({
+      readinessStatus: "demonstrated",
+      itemStatus: "in_progress",
+    });
+
+    expect(
+      normalizePctWorkbookStatus({
+        checkboxStatus: false,
         verifierValue: "moves too fast quality is not great",
       })
     ).toMatchObject({
@@ -347,6 +363,20 @@ describe("trainingData helpers", () => {
       records: uuidRecords,
     });
     expect(options.map((option) => option.value)).toEqual(["new", "old"]);
+  });
+
+  it("recognizes PCT and CSR team readiness templates", () => {
+    expect(TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => option.slug)).toEqual([
+      PCT_READINESS_TEMPLATE_SLUG,
+      CSR_READINESS_TEMPLATE_SLUG,
+    ]);
+    expect(getTeamReadinessTemplateOption(CSR_READINESS_TEMPLATE_SLUG)).toMatchObject({
+      roleLabel: "CSR",
+      label: "CSR Team Readiness Board",
+    });
+    expect(isTeamReadinessRecord({ template_slug: CSR_READINESS_TEMPLATE_SLUG })).toBe(true);
+    expect(isTeamReadinessRecord({ template_name_snapshot: "PCT Team Readiness Board" })).toBe(true);
+    expect(isTeamReadinessRecord({ template_name_snapshot: "Training Plan - CSR" })).toBe(false);
   });
 
   it("groups leadership, supervisor, CSR, PCT, and other roster positions", () => {
