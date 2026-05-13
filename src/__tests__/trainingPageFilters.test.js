@@ -43,6 +43,7 @@ import {
   shouldCycleLaborModelCoveragePointer,
   summarizeLaborCapacityModelSnapshotDiff,
   toObjectRows,
+  TRAINING_REALTIME_TABLES,
   updateLaborModelBreakersForDay,
 } from "../kol/pages/TrainingPage.jsx";
 import { isLaborEmployeeActive } from "../kol/trainingData.js";
@@ -61,6 +62,25 @@ describe("applyLaborRosterFilters", () => {
 
     expect(firstDetailBranchIndex).toBeGreaterThan(0);
     expect(remainingHookIndex).toBe(-1);
+  });
+
+  it("keeps training live refresh wired to canonical record and history tables", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const migration = readFileSync(new URL("../../supabase/migrations/20260513175409_training_realtime_publication.sql", import.meta.url), "utf8");
+
+    expect(TRAINING_REALTIME_TABLES).toEqual([
+      "training_records",
+      "training_record_item_results",
+      "training_record_notes",
+      "training_record_events",
+    ]);
+    expect(source).toContain("refreshLaborData({ includeTraining: true, includeSupport: true })");
+    expect(source).toContain("reloadRecordDetailData(selectedRecordId)");
+    expect(source).toContain("trainingRealtimeRefreshTimerRef");
+    TRAINING_REALTIME_TABLES.forEach((table) => {
+      expect(migration).toContain(`'${table}'`);
+      expect(migration).toContain("ALTER PUBLICATION supabase_realtime ADD TABLE");
+    });
   });
 
   it("renames labor navigation to Roster and Capacity Planning routes", () => {

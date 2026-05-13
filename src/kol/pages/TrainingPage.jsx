@@ -135,6 +135,15 @@ const DEFAULT_PCT_READINESS_FILTERS = {
   showNeedsCoaching: false,
 };
 
+export const TRAINING_REALTIME_TABLES = [
+  "training_records",
+  "training_record_item_results",
+  "training_record_notes",
+  "training_record_events",
+];
+
+const TRAINING_REALTIME_REFRESH_DELAY_MS = 150;
+
 export const LABOR_MANAGEMENT_TABS = [
   { id: "home", label: "Roster" },
   { id: "attendance", label: "Attendance" },
@@ -5783,6 +5792,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hourAnalysisSaveTimerRef = useRef(null);
   const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
+  const trainingRealtimeRefreshTimerRef = useRef(null);
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -6467,6 +6477,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await loadTrainingBundle(true, laborLocationRef || null);
   }, [laborLocationRef, loadTrainingBundle]);
 
+  const reloadRecordDetailData = useCallback(async (recordId = selectedRecordId) => {
+    if (!recordId) return;
+    const [irRes, nRes, eRes] = await Promise.all([
+      supabase.from("training_record_item_results").select("*").eq("record_id", recordId),
+      supabase.from("training_record_notes").select("*").eq("record_id", recordId).order("created_at", { ascending: false }),
+      supabase.from("training_record_events").select("*").eq("record_id", recordId).order("created_at", { ascending: false }),
+    ]);
+    if (irRes.error || nRes.error || eRes.error) {
+      throw irRes.error || nRes.error || eRes.error;
+    }
+    setItemResults(irRes.data || []);
+    setNotes(nRes.data || []);
+    setRecordEvents(eRes.data || []);
+  }, [selectedRecordId]);
+
   const loadPctReadinessBoard = useCallback(async (force = false) => {
     if (!laborLocationRef || (!force && (pctReadinessLoaded || pctReadinessLoading))) return;
     setPctReadinessLoading(true);
@@ -6513,22 +6538,44 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   useEffect(() => {
     if (!laborLocationRef || tab !== "training") return undefined;
-    const reloadBoard = () => {
-      setPctReadinessLoaded(false);
-      loadPctReadinessBoard(true);
-      if (trainingView === "history") loadSupportBundle(true);
+    const scheduleTrainingRealtimeRefresh = () => {
+      if (trainingRealtimeRefreshTimerRef.current) clearTimeout(trainingRealtimeRefreshTimerRef.current);
+      trainingRealtimeRefreshTimerRef.current = setTimeout(async () => {
+        trainingRealtimeRefreshTimerRef.current = null;
+        try {
+          await refreshLaborData({ includeTraining: true, includeSupport: true });
+          setPctReadinessLoaded(false);
+          if (trainingView === "board") {
+            await loadPctReadinessBoard(true);
+          }
+          if (Boolean(selectedRecordId)) {
+            await reloadRecordDetailData(selectedRecordId);
+          }
+        } catch (error) {
+          console.error("Training realtime refresh failed:", error);
+        }
+      }, TRAINING_REALTIME_REFRESH_DELAY_MS);
     };
-    const channel = supabase
-      .channel(`pct-readiness-live-${laborLocationRef}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "training_records", filter: `location_id=eq.${laborLocationRef}` }, reloadBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_item_results" }, reloadBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_notes" }, reloadBoard)
-      .on("postgres_changes", { event: "*", schema: "public", table: "training_record_events" }, reloadBoard)
-      .subscribe();
+    const channel = TRAINING_REALTIME_TABLES.reduce((nextChannel, table) => (
+      nextChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table,
+          ...(table === "training_records" ? { filter: `location_id=eq.${laborLocationRef}` } : {}),
+        },
+        scheduleTrainingRealtimeRefresh
+      )
+    ), supabase.channel(`training-live-${laborLocationRef}`)).subscribe();
     return () => {
+      if (trainingRealtimeRefreshTimerRef.current) {
+        clearTimeout(trainingRealtimeRefreshTimerRef.current);
+        trainingRealtimeRefreshTimerRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
-  }, [laborLocationRef, loadPctReadinessBoard, loadSupportBundle, tab, trainingView]);
+  }, [laborLocationRef, loadPctReadinessBoard, refreshLaborData, reloadRecordDetailData, selectedRecordId, tab, trainingView]);
 
   useEffect(() => {
     if (tab === "home" || tab === "performance-reviews" || tab === "notes" || (tab === "training" && trainingView === "history") || !!selectedLaborEmployeeId || !!selectedReviewInstanceId) {
@@ -6569,17 +6616,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // Load record detail data when a record is selected
   useEffect(() => {
     if (!selectedRecordId) return;
-    (async () => {
-      const [irRes, nRes, eRes] = await Promise.all([
-        supabase.from("training_record_item_results").select("*").eq("record_id", selectedRecordId),
-        supabase.from("training_record_notes").select("*").eq("record_id", selectedRecordId).order("created_at", { ascending: false }),
-        supabase.from("training_record_events").select("*").eq("record_id", selectedRecordId).order("created_at", { ascending: false }),
-      ]);
-      setItemResults(irRes.data || []);
-      setNotes(nRes.data || []);
-      setRecordEvents(eRes.data || []);
-    })();
-  }, [selectedRecordId]);
+    reloadRecordDetailData(selectedRecordId).catch((error) => {
+      console.error("Training record detail load error:", error);
+    });
+  }, [reloadRecordDetailData, selectedRecordId]);
 
   // ── Derived data ──
   const activeRecords = useMemo(() => toObjectRows(records).filter((record) => ACTIVE_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [records]);
