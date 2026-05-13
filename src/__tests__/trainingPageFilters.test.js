@@ -1117,6 +1117,41 @@ describe("applyLaborRosterFilters", () => {
     });
   });
 
+  it("builds Training History rows from location-joined event records and status transitions", () => {
+    const rows = buildTrainingHistoryRows({
+      getItemById: (itemId) => (itemId === "item-1" ? { id: "item-1", label: "Where everything is" } : null),
+      events: [
+        {
+          id: "event-1",
+          record_id: "record-1",
+          template_item_id: "item-1",
+          event_type: "item_status_changed",
+          created_at: "2026-05-12T11:20:00Z",
+          actor_name: "zach.cruz@k9resorts.com",
+          training_records: {
+            id: "record-1",
+            labor_employee_id: "employee-1",
+            employee_full_name: "Sarah Gonzalez",
+            template_name_snapshot: "PCT Team Readiness Board",
+          },
+          before_state: { status: "not_started" },
+          after_state: { status: "in_progress", metadata: { pct_readiness_status: "demonstrated" } },
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actionLabel: "Status changed",
+      employeeName: "Sarah Gonzalez",
+      summary: "Where everything is",
+      statusChange: {
+        previousLabel: "Not Started",
+        nextLabel: "Demonstrated",
+      },
+    });
+  });
+
   it("falls back to email only when no verified actor name is available", () => {
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com" })).toBe("manager@example.com");
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com", actor_full_name: "Maria Manager" })).toBe("Maria Manager");
