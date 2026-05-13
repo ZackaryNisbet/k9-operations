@@ -15,6 +15,35 @@ export const COMPLETED_TRAINING_RECORD_STATUSES = [
 ];
 
 export const PCT_READINESS_TEMPLATE_SLUG = "pct_team_readiness_board";
+export const CSR_READINESS_TEMPLATE_SLUG = "csr_team_readiness_board";
+
+export const TEAM_READINESS_TEMPLATE_OPTIONS = [
+  {
+    value: PCT_READINESS_TEMPLATE_SLUG,
+    slug: PCT_READINESS_TEMPLATE_SLUG,
+    label: "PCT Team Readiness Board",
+    roleLabel: "PCT",
+    roleName: "Pet Care Technician",
+  },
+  {
+    value: CSR_READINESS_TEMPLATE_SLUG,
+    slug: CSR_READINESS_TEMPLATE_SLUG,
+    label: "CSR Team Readiness Board",
+    roleLabel: "CSR",
+    roleName: "Customer Service Representative",
+  },
+];
+
+const TEAM_READINESS_TEMPLATE_SLUG_SET = new Set(TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => option.slug));
+
+export function getTeamReadinessTemplateOption(slug = PCT_READINESS_TEMPLATE_SLUG) {
+  return TEAM_READINESS_TEMPLATE_OPTIONS.find((option) => option.slug === slug || option.value === slug)
+    || TEAM_READINESS_TEMPLATE_OPTIONS[0];
+}
+
+export function isTeamReadinessTemplateSlug(slug = "") {
+  return TEAM_READINESS_TEMPLATE_SLUG_SET.has(String(slug || ""));
+}
 
 export const PCT_READINESS_STATUS_OPTIONS = [
   { value: "not_started", label: "Not Started", itemStatus: "not_started", tone: "muted" },
@@ -126,6 +155,16 @@ export function normalizePctWorkbookStatus({
   }
 
   if (checked) {
+    return {
+      readinessStatus: "demonstrated",
+      itemStatus: "in_progress",
+      demonstratedBy: demoName,
+      verifiedBy: "",
+      noteText: "",
+    };
+  }
+
+  if (demoName) {
     return {
       readinessStatus: "demonstrated",
       itemStatus: "in_progress",
@@ -293,12 +332,18 @@ export function isPctReadinessRecord(record = {}) {
     || String(record?.template_name_snapshot || "").trim().toLowerCase() === "pct team readiness board";
 }
 
+export function isTeamReadinessRecord(record = {}) {
+  const templateSlug = String(record?.template_slug || record?.metadata?.template_slug || "");
+  const templateName = String(record?.template_name_snapshot || "").trim().toLowerCase();
+  return isTeamReadinessTemplateSlug(templateSlug) || ["pct team readiness board", "csr team readiness board"].includes(templateName);
+}
+
 export function hasActivePctReadinessRecord(records = [], laborEmployeeId = "") {
   const normalizedEmployeeId = normalizeOptionalUuid(laborEmployeeId);
   if (!normalizedEmployeeId) return false;
   return (Array.isArray(records) ? records : []).some((record) => {
     if (!record || typeof record !== "object") return false;
-    if (!isPctReadinessRecord(record)) return false;
+    if (!isTeamReadinessRecord(record)) return false;
     if (String(record.labor_employee_id || record.employee_id || "") !== normalizedEmployeeId) return false;
     return String(record.overall_status || "") !== "archived";
   });
