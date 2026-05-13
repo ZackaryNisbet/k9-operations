@@ -38,6 +38,7 @@ import {
   buildPctReadinessEmployeeOptions,
   buildUpdateTrainingRecordConfigArgs,
   buildTrainingTemplateScopeClause,
+  getTeamReadinessTemplateOption,
   formatLaborAttachmentFileSize,
   formatTrainingTimeRange,
   formatTrainingTimestamp,
@@ -54,10 +55,12 @@ import {
   isLaborEmployeeNoteDeleted,
   isLaborEmployeeDocumentDeleted,
   isLaborEmployeeActive,
+  isTeamReadinessRecord,
   normalizePctReadinessStatus,
   normalizeOptionalUuid,
   normalizeLaborShirtSize,
   PCT_READINESS_STATUS_OPTIONS,
+  PCT_READINESS_TEMPLATE_SLUG,
   readLaborEmploymentCommitment,
   readLaborEmployeeContactValue,
   readLaborEmployeeShirtSize,
@@ -65,6 +68,7 @@ import {
   summarizeEmployeeTrainingRequirementCompliance,
   validateLaborEmployeeAttachmentFiles,
   validateLaborTrainingRequirementEvidenceFile,
+  TEAM_READINESS_TEMPLATE_OPTIONS,
 } from "../trainingData";
 import { getAttendanceIncidentLabel } from "../attendanceData";
 import {
@@ -122,7 +126,7 @@ const PCT_READINESS_STATUS_STYLES = {
 };
 
 const TRAINING_VIEW_OPTIONS = [
-  { id: "board", label: "Team Readiness Board", subtitle: "PCT skills by employee" },
+  { id: "board", label: "Team Readiness Board", subtitle: "Skills by employee" },
   { id: "records", label: "Records", subtitle: "Active and completed training records" },
   { id: "history", label: "History", subtitle: "Training audit trail" },
 ];
@@ -2242,6 +2246,59 @@ function isObjectRow(value) {
 
 export function toObjectRows(rows = []) {
   return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
+}
+
+function isMissingTeamReadinessRpcError(error) {
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  return error?.code === "PGRST202"
+    || (
+      message.includes("schema cache")
+      && (
+        message.includes("get_training_readiness_board")
+        || message.includes("create_training_readiness_record")
+        || message.includes("update_training_readiness_cell")
+      )
+    );
+}
+
+function buildEmptyReadinessBoard(option = TEAM_READINESS_TEMPLATE_OPTIONS[0]) {
+  return {
+    template: null,
+    sections: [],
+    records: [],
+    cells: {},
+    available_employees: [],
+    summary: {
+      template_slug: option.slug,
+      total_active_trainees: 0,
+      total_active_pct_trainees: 0,
+      average_demonstrated: 0,
+      average_completion: 0,
+      average_readiness: 0,
+      needs_coaching_count: 0,
+      weakest_task_gaps: [],
+    },
+    import_report: {},
+  };
+}
+
+function normalizeLegacyPctReadinessBoard(boardData = null) {
+  if (!isObjectRow(boardData)) return buildEmptyReadinessBoard(getTeamReadinessTemplateOption(PCT_READINESS_TEMPLATE_SLUG));
+  const summary = isObjectRow(boardData.summary) ? boardData.summary : {};
+  const totalActiveTrainees = Number(summary.total_active_trainees ?? summary.total_active_pct_trainees ?? 0);
+  const averageReadiness = Number(summary.average_readiness ?? summary.average_completion ?? 0);
+  return {
+    ...boardData,
+    summary: {
+      ...summary,
+      template_slug: PCT_READINESS_TEMPLATE_SLUG,
+      total_active_trainees: totalActiveTrainees,
+      total_active_pct_trainees: Number(summary.total_active_pct_trainees ?? totalActiveTrainees),
+      average_demonstrated: Number(summary.average_demonstrated ?? averageReadiness),
+      average_completion: Number(summary.average_completion ?? averageReadiness),
+      average_readiness: averageReadiness,
+    },
+  };
 }
 
 export function getLaborEmployeeRowId(row = {}) {
@@ -5708,7 +5765,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [rosterSort, setRosterSort] = useState(LABOR_DEFAULT_SORT);
   const [trainingSort, setTrainingSort] = useState(LABOR_DEFAULT_SORT);
   const [trainingView, setTrainingView] = useState("board");
+  const [selectedReadinessTemplateSlug, setSelectedReadinessTemplateSlug] = useState(PCT_READINESS_TEMPLATE_SLUG);
   const [pctReadinessBoard, setPctReadinessBoard] = useState(null);
+  const [readinessSummaryBoards, setReadinessSummaryBoards] = useState({});
   const [pctReadinessLoading, setPctReadinessLoading] = useState(false);
   const [pctReadinessLoaded, setPctReadinessLoaded] = useState(false);
   const [pctReadinessError, setPctReadinessError] = useState("");
@@ -6497,32 +6556,61 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPctReadinessLoading(true);
     setPctReadinessError("");
     try {
-      const { data: boardData, error } = await supabase.rpc("get_pct_readiness_board", {
-        p_location_ref: laborLocationRef,
-        p_actor_user_id: actorUserId,
-      });
-      if (error) throw error;
-      setPctReadinessBoard(boardData || null);
+      const fetchReadinessBoard = async (option) => {
+        const { data: boardData, error } = await supabase.rpc("get_training_readiness_board", {
+          p_location_ref: laborLocationRef,
+          p_template_slug: option.slug,
+          p_actor_user_id: actorUserId,
+        });
+        if (!error) return boardData || buildEmptyReadinessBoard(option);
+        if (!isMissingTeamReadinessRpcError(error)) throw error;
+        if (option.slug !== PCT_READINESS_TEMPLATE_SLUG) return buildEmptyReadinessBoard(option);
+
+        const { data: legacyBoardData, error: legacyError } = await supabase.rpc("get_pct_readiness_board", {
+          p_location_ref: laborLocationRef,
+          p_actor_user_id: actorUserId,
+        });
+        if (legacyError) throw legacyError;
+        return normalizeLegacyPctReadinessBoard(legacyBoardData);
+      };
+
+      const boardResponses = await Promise.all(TEAM_READINESS_TEMPLATE_OPTIONS.map(async (option) => {
+        const boardData = await fetchReadinessBoard(option);
+        return [option.slug, boardData];
+      }));
+      const boardsBySlug = Object.fromEntries(boardResponses);
+      setReadinessSummaryBoards(boardsBySlug);
+      setPctReadinessBoard(boardsBySlug[selectedReadinessTemplateSlug] || null);
       setPctReadinessLoaded(true);
     } catch (error) {
-      console.error("PCT readiness board load error:", error);
+      console.error("Team readiness board load error:", error);
       setPctReadinessError(error?.message || "Failed to load Team Readiness Board");
       addGlobalToast?.("Failed to load Team Readiness Board", "error");
     } finally {
       setPctReadinessLoading(false);
     }
-  }, [actorUserId, addGlobalToast, laborLocationRef, pctReadinessLoaded, pctReadinessLoading]);
+  }, [actorUserId, addGlobalToast, laborLocationRef, pctReadinessLoaded, pctReadinessLoading, selectedReadinessTemplateSlug]);
 
   useEffect(() => { loadCoreData(); }, [loadCoreData]);
 
   useEffect(() => {
     setPctReadinessBoard(null);
+    setReadinessSummaryBoards({});
     setPctReadinessLoaded(false);
     setPctReadinessError("");
     setNewPctReadinessEmployeeId("");
     setSelectedPctReadinessRecordId("");
     setActivePctReadinessSectionId("");
   }, [laborLocationRef]);
+
+  useEffect(() => {
+    setPctReadinessBoard(readinessSummaryBoards[selectedReadinessTemplateSlug] || null);
+    setPctReadinessLoaded(Boolean(readinessSummaryBoards[selectedReadinessTemplateSlug]));
+    setNewPctReadinessEmployeeId("");
+    setSelectedPctReadinessRecordId("");
+    setActivePctReadinessSectionId("");
+    setPctReadinessCollapsedSections({});
+  }, [readinessSummaryBoards, selectedReadinessTemplateSlug]);
 
   useEffect(() => {
     if (tab === "training" || tab === "performance-reviews" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
@@ -7116,14 +7204,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const recordId = event?.record_id || event?.record?.id;
     if (!recordId) return;
     const joinedRecord = isObjectRow(event?.record) ? event.record : {};
-    const isPctReadinessRecord = pctReadinessRecords.some((record) => record.id === recordId)
-      || /pct|team readiness/i.test(String(joinedRecord.template_name_snapshot || ""));
+    const readinessBoardRecords = TEAM_READINESS_TEMPLATE_OPTIONS.flatMap((option) => (
+      Array.isArray(readinessSummaryBoards[option.slug]?.records) ? readinessSummaryBoards[option.slug].records : []
+    ));
+    const matchedReadinessRecord = readinessBoardRecords.find((record) => record.id === recordId)
+      || pctReadinessRecords.find((record) => record.id === recordId)
+      || null;
+    const inferredTemplateSlug = matchedReadinessRecord?.template_slug
+      || (isTeamReadinessRecord(joinedRecord)
+        ? TEAM_READINESS_TEMPLATE_OPTIONS.find((option) => (
+          String(joinedRecord.template_name_snapshot || "").toLowerCase().includes(option.roleLabel.toLowerCase())
+        ))?.slug || PCT_READINESS_TEMPLATE_SLUG
+        : "");
 
     setSelectedLaborEmployeeId(null);
     setSelectedLaborEmployeeSeed(null);
     setExpandedSections({});
-    if (isPctReadinessRecord) {
+    if (inferredTemplateSlug) {
       setSelectedRecordId(null);
+      setSelectedReadinessTemplateSlug(inferredTemplateSlug);
       setSelectedPctReadinessRecordId(recordId);
       setTrainingView("board");
       loadPctReadinessBoard(true);
@@ -7132,7 +7231,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
     setSelectedPctReadinessRecordId("");
     setSelectedRecordId(recordId);
-  }, [loadPctReadinessBoard, pctReadinessRecords]);
+  }, [loadPctReadinessBoard, pctReadinessRecords, readinessSummaryBoards]);
   const pctReadinessAvailableEmployees = useMemo(() => (
     Array.isArray(pctReadinessBoard?.available_employees) ? pctReadinessBoard.available_employees : []
   ), [pctReadinessBoard]);
@@ -7220,6 +7319,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pctReadinessImportReport = useMemo(() => (
     isObjectRow(pctReadinessBoard?.import_report) ? pctReadinessBoard.import_report : {}
   ), [pctReadinessBoard]);
+  const selectedReadinessTemplateOption = useMemo(
+    () => getTeamReadinessTemplateOption(selectedReadinessTemplateSlug),
+    [selectedReadinessTemplateSlug]
+  );
+  const readinessRoleSummaries = useMemo(() => (
+    TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => {
+      const board = option.slug === selectedReadinessTemplateSlug
+        ? (pctReadinessBoard || readinessSummaryBoards[option.slug])
+        : readinessSummaryBoards[option.slug];
+      const summary = isObjectRow(board?.summary) ? board.summary : {};
+      return {
+        ...option,
+        activeTraineeCount: Number(summary.total_active_trainees ?? summary.total_active_pct_trainees ?? 0),
+        averageDemonstrated: Number(summary.average_demonstrated ?? summary.average_readiness ?? 0),
+        averageCompletion: Number(summary.average_completion ?? summary.average_readiness ?? 0),
+      };
+    })
+  ), [pctReadinessBoard, readinessSummaryBoards, selectedReadinessTemplateSlug]);
   const trainingHistoryRows = useMemo(() => (
     buildTrainingHistoryRows({
       events: allTrainingEvents,
@@ -8953,6 +9070,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setActivePctReadinessSectionId("");
   }, []);
 
+  const changeReadinessTemplate = useCallback((nextTemplateSlug) => {
+    const nextOption = getTeamReadinessTemplateOption(nextTemplateSlug);
+    setSelectedReadinessTemplateSlug(nextOption.slug);
+    setPctReadinessFilters(DEFAULT_PCT_READINESS_FILTERS);
+    setShowPctReadinessFilterPanel(false);
+    setNewPctReadinessEmployeeId("");
+    setSelectedPctReadinessRecordId("");
+    setActivePctReadinessSectionId("");
+    setPctReadinessCollapsedSections({});
+  }, []);
+
   const scrollToPctReadinessSection = useCallback((sectionId) => {
     if (!sectionId || typeof window === "undefined") return;
     window.setTimeout(() => {
@@ -9017,14 +9145,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         actorUserId,
         actorName,
       });
-      const { error } = await supabase.rpc("update_pct_readiness_cell", args);
-      if (error) throw error;
+      const templateSlug = pctReadinessCellEditor.record.template_slug || selectedReadinessTemplateSlug;
+      const { error } = await supabase.rpc("update_training_readiness_cell", args);
+      if (error) {
+        if (templateSlug === PCT_READINESS_TEMPLATE_SLUG && isMissingTeamReadinessRpcError(error)) {
+          const { error: legacyError } = await supabase.rpc("update_pct_readiness_cell", args);
+          if (legacyError) throw legacyError;
+        } else {
+          throw error;
+        }
+      }
       await loadPctReadinessBoard(true);
       await refreshLaborData({ includeTraining: true, includeSupport: true });
       closePctReadinessCellEditor();
       addGlobalToast?.("Readiness cell updated", "success");
     } catch (error) {
-      console.error("PCT readiness cell save error:", error);
+      console.error("Team readiness cell save error:", error);
       addGlobalToast?.(error?.message || "Failed to update readiness cell", "error");
       setSavingPctReadinessCell(false);
     }
@@ -9038,6 +9174,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     pctReadinessEditorComment,
     pctReadinessEditorStatus,
     refreshLaborData,
+    selectedReadinessTemplateSlug,
   ]);
 
   const handleCreatePctReadinessRecord = useCallback(async () => {
@@ -9047,25 +9184,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     setCreatingPctReadinessRecord(true);
     try {
-      const { error } = await supabase.rpc("create_pct_readiness_record", {
+      const args = {
         p_labor_employee_id: newPctReadinessEmployeeId,
         p_location_ref: laborLocationRef,
+        p_template_slug: selectedReadinessTemplateSlug,
         p_actor_user_id: actorUserId,
         p_actor_name: actorName,
-      });
-      if (error) throw error;
+      };
+      const { error } = await supabase.rpc("create_training_readiness_record", args);
+      if (error) {
+        if (selectedReadinessTemplateSlug === PCT_READINESS_TEMPLATE_SLUG && isMissingTeamReadinessRpcError(error)) {
+          const { error: legacyError } = await supabase.rpc("create_pct_readiness_record", {
+            p_labor_employee_id: newPctReadinessEmployeeId,
+            p_location_ref: laborLocationRef,
+            p_actor_user_id: actorUserId,
+            p_actor_name: actorName,
+          });
+          if (legacyError) throw legacyError;
+        } else {
+          throw error;
+        }
+      }
       setShowPctReadinessNewRecord(false);
       setNewPctReadinessEmployeeId("");
       await loadPctReadinessBoard(true);
       await refreshLaborData({ includeTraining: true, includeSupport: true });
-      addGlobalToast?.("Trainee added to Team Readiness Board", "success");
+      addGlobalToast?.(`Trainee added to ${selectedReadinessTemplateOption.label}`, "success");
     } catch (error) {
-      console.error("PCT readiness record create error:", error);
+      console.error("Team readiness record create error:", error);
       addGlobalToast?.(error?.message || "Failed to add trainee", "error");
     } finally {
       setCreatingPctReadinessRecord(false);
     }
-  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, loadPctReadinessBoard, newPctReadinessEmployeeId, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, loadPctReadinessBoard, newPctReadinessEmployeeId, refreshLaborData, selectedReadinessTemplateOption.label, selectedReadinessTemplateSlug]);
 
   const handleAddEmployeeNote = useCallback(async () => {
     if (!canAccessEmployeeNotes) {
@@ -13826,6 +13977,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       </div>
       <div style={{ fontSize: 28, fontWeight: 800, color }}>{value}</div>
       {helper ? <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>{helper}</div> : null}
+    </Card>
+  );
+
+  const ReadinessRoleMetricCard = ({ summary }) => (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>
+        {summary.roleLabel} Trainees
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: C.pri }}>{summary.activeTraineeCount}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>Avg Demonstrated</div>
+          <div style={{ fontSize: 18, color: "#0369A1", fontWeight: 900 }}>{Math.round(summary.averageDemonstrated)}%</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>Avg Completion</div>
+          <div style={{ fontSize: 18, color: C.suc, fontWeight: 900 }}>{Math.round(summary.averageCompletion)}%</div>
+        </div>
+      </div>
     </Card>
   );
 
@@ -20167,22 +20337,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               ) : (
               <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 16 }}>
-                <MetricCard
-                  label="Active Trainees"
-                  value={pctReadinessBoard?.summary?.total_active_pct_trainees ?? pctReadinessRecords.length}
-                  color={C.pri}
-                />
-                <MetricCard
-                  label="Average Readiness"
-                  value={`${Math.round(Number(pctReadinessBoard?.summary?.average_readiness || 0))}%`}
-                  helper="Verified or waived tasks"
-                  color={C.suc}
-                />
-                <MetricCard
-                  label="Needs Coaching"
-                  value={pctReadinessBoard?.summary?.needs_coaching_count ?? 0}
-                  color={C.warn}
-                />
+                {readinessRoleSummaries.map((summary) => (
+                  <ReadinessRoleMetricCard key={summary.slug} summary={summary} />
+                ))}
                 <button
                   type="button"
                   onClick={() => pctReadinessTopHotspot && jumpToPctReadinessSection(pctReadinessTopHotspot.sectionId, { filter: true })}
@@ -20203,10 +20360,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <div style={{ minWidth: 240 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Role / Template</div>
                     <CustomSelect
-                      value="pct_team_readiness_board"
-                      onChange={() => {}}
-                      disabled
-                      options={[{ value: "pct_team_readiness_board", label: "PCT Team Readiness Board" }]}
+                      value={selectedReadinessTemplateSlug}
+                      onChange={changeReadinessTemplate}
+                      options={TEAM_READINESS_TEMPLATE_OPTIONS}
                     />
                   </div>
                   <div style={{ minWidth: 260, flex: "1 1 340px" }}>
@@ -20279,7 +20435,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </Card>
 
               {pctReadinessRecords.length === 0 && !pctReadinessLoading ? (
-                <EmptyState icon="ClipboardCheck" title="No PCT readiness records yet" subtitle="Add a trainee to start the board." />
+                <EmptyState icon="ClipboardCheck" title={`No ${selectedReadinessTemplateOption.roleLabel} readiness records yet`} subtitle="Add a trainee to start the board." />
               ) : (
                 <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8, position: "relative" }}>
                   <div
@@ -22643,7 +22799,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {canUseLaborTab("training") && showPctReadinessNewRecord && (
-        <Modal title="Add PCT Readiness Trainee" onClose={() => { setShowPctReadinessNewRecord(false); setNewPctReadinessEmployeeId(""); }}>
+        <Modal title={`Add ${selectedReadinessTemplateOption.roleLabel} Readiness Trainee`} onClose={() => { setShowPctReadinessNewRecord(false); setNewPctReadinessEmployeeId(""); }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee</div>
