@@ -64,6 +64,13 @@ const INVENTORY_VIEW_COLS = INVENTORY_CATALOG_COLS;
 const INVENTORY_EDIT_COLS = INVENTORY_CATALOG_COLS;
 const INVENTORY_VIEW_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
 const INVENTORY_EDIT_HEADERS = ["", "Product", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
+export const INVENTORY_REALTIME_TABLES = [
+  "inventory_catalog",
+  "inventory_snapshots",
+  "inventory_counts",
+  "inventory_adhoc_items",
+];
+const INVENTORY_REALTIME_REFRESH_DELAY_MS = 200;
 
 function catalogSortPayload(items) {
   return (items || []).map((item) => ({
@@ -2605,6 +2612,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const countsRef = useRef({});
   const countedDateRef = useRef(countedDate);
   const profileRef = useRef(profile);
+  const inventoryRealtimeRefreshTimerRef = useRef(null);
+  const inventorySaveActiveRef = useRef(false);
+  const pendingInventoryRealtimeRefreshRef = useRef(false);
 
   useEffect(() => {
     catalogEditModeRef.current = catalogEditMode;
@@ -2781,9 +2791,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   }, [locationId]);
 
   // ── Data loading ──
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ quiet = false } = {}) => {
     if (!locationId) return;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setLoadError(null);
     try {
       // 1. Load catalog items (sorted: category → subcategory → sort_order)
@@ -2887,6 +2897,42 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!locationId) return undefined;
+    const scheduleRealtimeRefresh = () => {
+      if (Object.keys(pendingSave.current).length > 0 || saveTimer.current || inventorySaveActiveRef.current) {
+        pendingInventoryRealtimeRefreshRef.current = true;
+        return;
+      }
+      if (inventoryRealtimeRefreshTimerRef.current) clearTimeout(inventoryRealtimeRefreshTimerRef.current);
+      inventoryRealtimeRefreshTimerRef.current = setTimeout(() => {
+        inventoryRealtimeRefreshTimerRef.current = null;
+        loadData({ quiet: true }).catch((error) => {
+          console.error("Inventory realtime refresh failed:", error);
+        });
+      }, INVENTORY_REALTIME_REFRESH_DELAY_MS);
+    };
+    const channel = INVENTORY_REALTIME_TABLES.reduce((nextChannel, table) => (
+      nextChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table,
+          ...(table === "inventory_snapshots" ? { filter: `location_id=eq.${locationId}` } : {}),
+        },
+        scheduleRealtimeRefresh
+      )
+    ), supabase.channel(`inventory-live-${locationId}`)).subscribe();
+    return () => {
+      if (inventoryRealtimeRefreshTimerRef.current) {
+        clearTimeout(inventoryRealtimeRefreshTimerRef.current);
+        inventoryRealtimeRefreshTimerRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [loadData, locationId]);
+
   // ── Auto-save logic ──
   const flushSave = useCallback(async () => {
     const snap = snapshotRef.current;
@@ -2899,6 +2945,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     setSaveStatus("saving");
 
     try {
+      inventorySaveActiveRef.current = true;
       const itemIds = Object.keys(pendingSave.current);
       // Build upserts
       const userName = currentProfile?.full_name || currentProfile?.email || "Unknown";
@@ -2966,12 +3013,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       console.error("Auto-save error:", err);
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
+    } finally {
+      inventorySaveActiveRef.current = false;
+      if (pendingInventoryRealtimeRefreshRef.current) {
+        pendingInventoryRealtimeRefreshRef.current = false;
+        loadData({ quiet: true }).catch((error) => {
+          console.error("Inventory realtime refresh failed:", error);
+        });
+      }
     }
-  }, []);
+  }, [loadData]);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
       flushSave();
     }, 400); // Save quickly so data isn't lost on refresh
   }, [flushSave]);
