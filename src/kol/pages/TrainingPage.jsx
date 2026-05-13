@@ -1905,6 +1905,99 @@ function ProgressBar({ percent, height = 6 }) {
   );
 }
 
+function CompactProgressBar({ percent, color = C.info, height = 5 }) {
+  const p = safeTrainingProgress(percent);
+  return (
+    <div style={{ width: "100%", height, borderRadius: height / 2, background: C.borderLight, overflow: "hidden" }}>
+      <div style={{ width: `${p}%`, height: "100%", borderRadius: height / 2, background: color, transition: "width 0.3s" }} />
+    </div>
+  );
+}
+
+function PctReadinessDualProgress({ demonstratedPercent = 0, verifiedPercent = 0 }) {
+  const rows = [
+    { key: "D", title: "Demonstrated", percent: demonstratedPercent, color: "#0ea5e9" },
+    { key: "V", title: "Verified / Qualified", percent: verifiedPercent, color: C.suc },
+  ];
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      {rows.map((row) => (
+        <div key={row.key} title={row.title} style={{ display: "grid", gridTemplateColumns: "12px 1fr 28px", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 9.5, fontWeight: 950, color: C.textMut, lineHeight: 1 }}>{row.key}</span>
+          <CompactProgressBar percent={row.percent} color={row.color} />
+          <span style={{ fontSize: 9.5, fontWeight: 900, color: C.textMut, textAlign: "right", lineHeight: 1 }}>{Math.round(safeTrainingProgress(row.percent))}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrainingHistoryStatusChange({ statusChange }) {
+  if (!statusChange?.nextLabel) return null;
+  const nextStyle = PCT_READINESS_STATUS_STYLES[statusChange.nextStatus] || PCT_READINESS_STATUS_STYLES.not_started;
+  const previousStyle = PCT_READINESS_STATUS_STYLES[statusChange.previousStatus] || PCT_READINESS_STATUS_STYLES.not_started;
+  return (
+    <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {statusChange.previousLabel ? (
+        <span style={{
+          display: "inline-flex",
+          alignItems: "center",
+          borderRadius: 999,
+          border: `1px solid ${previousStyle.border}`,
+          background: previousStyle.bg,
+          color: previousStyle.text,
+          padding: "2px 7px",
+          fontSize: 10.5,
+          fontWeight: 900,
+          textDecoration: "line-through",
+          opacity: 0.72,
+        }}>
+          {statusChange.previousLabel}
+        </span>
+      ) : null}
+      {statusChange.previousLabel ? <span style={{ color: C.textMut, fontSize: 11, fontWeight: 900 }}>-&gt;</span> : null}
+      <span style={{
+        display: "inline-flex",
+        alignItems: "center",
+        borderRadius: 999,
+        border: `1px solid ${nextStyle.border}`,
+        background: nextStyle.bg,
+        color: nextStyle.text,
+        padding: "2px 7px",
+        fontSize: 10.5,
+        fontWeight: 950,
+      }}>
+        {statusChange.nextLabel}
+      </span>
+    </div>
+  );
+}
+
+function getTrainingResultReadinessStatus(result = {}) {
+  const metadata = isObjectRow(result?.metadata) ? result.metadata : {};
+  const metadataStatus = metadata.pct_readiness_status
+    || result.pct_readiness_status
+    || result.readiness_status
+    || "";
+  const normalizedMetadataStatus = normalizePctReadinessStatus(metadataStatus);
+  if (normalizedMetadataStatus && normalizedMetadataStatus !== "not_started") return normalizedMetadataStatus;
+
+  const rawStatus = String(result?.status || "").trim().toLowerCase();
+  if (rawStatus === "complete" || rawStatus === "completed" || rawStatus === "passed") return "verified";
+  if (rawStatus === "waived") return "waived";
+  if (rawStatus === "in_progress") return "demonstrated";
+  return normalizePctReadinessStatus(rawStatus);
+}
+
+function isReadinessVerifiedStatus(status = "") {
+  return ["verified", "waived"].includes(normalizePctReadinessStatus(status));
+}
+
+function isReadinessDemonstratedStatus(status = "") {
+  const normalized = normalizePctReadinessStatus(status);
+  return normalized === "demonstrated" || isReadinessVerifiedStatus(normalized);
+}
+
 function EmptyState({ icon, title, subtitle }) {
   const IconComp = I[icon];
   return (
@@ -5126,6 +5219,57 @@ export function resolveVerifiedActorDisplayName(row = {}, fallback = "Staff") {
   return fullName || candidates[0] || fallback;
 }
 
+function getTrainingHistoryStateStatus(state = {}) {
+  if (!isObjectRow(state)) return "";
+  const metadata = isObjectRow(state.metadata) ? state.metadata : {};
+  return normalizePctReadinessStatus(
+    metadata.pct_readiness_status
+    || state.pct_readiness_status
+    || state.readiness_status
+    || state.status
+    || state.item_status
+    || state.training_item_status
+    || ""
+  );
+}
+
+function formatTrainingHistoryStatusLabel(status = "") {
+  const normalized = normalizePctReadinessStatus(status);
+  return getPctReadinessStatusPresentation(normalized).label || String(normalized || "").replace(/_/g, " ");
+}
+
+function getTrainingHistoryStatusChange(event = {}) {
+  const nextStatus = getTrainingHistoryStateStatus(event.after_state);
+  if (!nextStatus || nextStatus === "not_started") return null;
+  const previousStatus = getTrainingHistoryStateStatus(event.before_state);
+  if (previousStatus && previousStatus !== nextStatus) {
+    return {
+      previousStatus,
+      previousLabel: formatTrainingHistoryStatusLabel(previousStatus),
+      nextStatus,
+      nextLabel: formatTrainingHistoryStatusLabel(nextStatus),
+    };
+  }
+  return {
+    previousStatus: "",
+    previousLabel: "",
+    nextStatus,
+    nextLabel: formatTrainingHistoryStatusLabel(nextStatus),
+  };
+}
+
+function resolveTrainingHistoryRecord(row = {}, recordMap = {}) {
+  return recordMap[row.record_id] || (isObjectRow(row.training_records) ? row.training_records : {}) || {};
+}
+
+function getTrainingHistoryActionLabel(event = {}) {
+  if (event.event_type === "item_status_changed") return "Status changed";
+  if (event.event_type === "note_added") return "Observation added";
+  if (event.event_type === "record_created") return "Record created";
+  if (event.event_type === "record_reopened") return "Record updated";
+  return String(event.event_type || "training_event").replace(/_/g, " ");
+}
+
 export function buildTrainingHistoryRows({
   events = [],
   notes = [],
@@ -5135,7 +5279,7 @@ export function buildTrainingHistoryRows({
   getSectionById: sectionLookup = () => null,
 } = {}) {
   const noteRows = toObjectRows(notes).map((note) => {
-    const record = recordMap[note.record_id] || {};
+    const record = resolveTrainingHistoryRecord(note, recordMap);
     const item = note.template_item_id ? itemLookup(note.template_item_id) : null;
     const section = note.template_section_id ? sectionLookup(note.template_section_id) : null;
     const employee = laborEmployeeMap[record.labor_employee_id] || {};
@@ -5148,6 +5292,7 @@ export function buildTrainingHistoryRows({
       item,
       employeeName: employee.full_name || record.employee_full_name || "Unknown employee",
       event_type: note.template_item_id ? "task_note_added" : "record_note_added",
+      actionLabel: note.template_item_id ? "Observation added" : "Record note added",
       actorDisplayName: resolveVerifiedActorDisplayName(note),
       summary: [
         item?.label || section?.title || record.template_name_snapshot || "Training Record",
@@ -5163,9 +5308,10 @@ export function buildTrainingHistoryRows({
       return !afterState.id || !noteEntityIds.has(afterState.id);
     })
     .map((event) => {
-      const record = recordMap[event.record_id] || {};
+      const record = resolveTrainingHistoryRecord(event, recordMap);
       const item = event.template_item_id ? itemLookup(event.template_item_id) : null;
       const employee = laborEmployeeMap[record.labor_employee_id] || {};
+      const statusChange = getTrainingHistoryStatusChange(event);
       return {
         ...event,
         id: `event_${event.id}`,
@@ -5174,7 +5320,9 @@ export function buildTrainingHistoryRows({
         record,
         item,
         employeeName: employee.full_name || record.employee_full_name || "Unknown employee",
+        actionLabel: getTrainingHistoryActionLabel(event),
         actorDisplayName: resolveVerifiedActorDisplayName(event),
+        statusChange,
         summary: item?.label || record.template_name_snapshot || String(event.event_type || "Training event").replace(/_/g, " "),
       };
     });
@@ -6166,7 +6314,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         ...(Array.isArray(seedData?.laborEmployees) ? seedData.laborEmployees : laborEmployees),
         ...(Array.isArray(seedData?.rosterSnapshot) ? seedData.rosterSnapshot : rosterSnapshot),
       ];
-      const recordSource = Array.isArray(seedData?.records) ? seedData.records : records;
       let employeeRowsForBundle = toObjectRows(employeeSource);
       if (employeeRowsForBundle.length === 0) {
 	        const { data: fallbackEmployees, error: fallbackEmployeeError } = await supabase
@@ -6181,7 +6328,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
       }
       const employeeIds = Array.from(new Set(employeeRowsForBundle.map(getLaborEmployeeRowId).filter(Boolean)));
-      const recordIds = toObjectRows(recordSource).map((record) => record.id).filter(Boolean);
 
       const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
         employeeIds.length > 0
@@ -6229,20 +6375,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               .in("review_instance_id", reviewInstanceIds)
               .order("created_at", { ascending: true })
           : Promise.resolve({ data: [], error: null }),
-        recordIds.length > 0
-          ? supabase
-              .from("training_record_notes")
-              .select("*")
-              .in("record_id", recordIds)
-              .order("created_at", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-        recordIds.length > 0
-          ? supabase
-              .from("training_record_events")
-              .select("*")
-              .in("record_id", recordIds)
-              .order("created_at", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
+        supabase
+          .from("training_record_notes")
+          .select("*, training_records!inner(id, location_id, labor_employee_id, employee_full_name, template_name_snapshot)")
+          .eq("training_records.location_id", locationIdForBundle)
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase
+          .from("training_record_events")
+          .select("*, training_records!inner(id, location_id, labor_employee_id, employee_full_name, template_name_snapshot)")
+          .eq("training_records.location_id", locationIdForBundle)
+          .order("created_at", { ascending: false })
+          .limit(500),
       ]);
 
       if (responseRes.error) throw responseRes.error;
@@ -6778,38 +6922,70 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pctReadinessCells = useMemo(() => (
     isObjectRow(pctReadinessBoard?.cells) ? pctReadinessBoard.cells : {}
   ), [pctReadinessBoard]);
+  const pctReadinessRecordProgressById = useMemo(() => {
+    const items = pctReadinessSections.flatMap((section) => toObjectRows(section.items));
+    const total = items.length;
+    const progressById = {};
+    pctReadinessRecords.forEach((record) => {
+      let demonstratedCount = 0;
+      let verifiedCount = 0;
+      items.forEach((item) => {
+        const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+        const status = normalizePctReadinessStatus(cell.readiness_status || cell.status);
+        if (isReadinessDemonstratedStatus(status)) demonstratedCount += 1;
+        if (isReadinessVerifiedStatus(status)) verifiedCount += 1;
+      });
+      progressById[record.id] = {
+        demonstratedCount,
+        verifiedCount,
+        total,
+        demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : 0,
+        verifiedPercent: total > 0 ? Math.round((verifiedCount / total) * 100) : Math.round(safeTrainingProgress(record.progress_percent)),
+      };
+    });
+    return progressById;
+  }, [pctReadinessCells, pctReadinessRecords, pctReadinessSections]);
   const buildPctReadinessEmployeeProfile = useCallback((record) => {
     if (!record) return null;
     const recordId = record.id;
-    const categoryRows = pctReadinessSections.map((section) => {
+    const categoryRows = [];
+    const sectionRows = pctReadinessSections.map((section) => {
       const sectionItems = toObjectRows(section.items);
       const cells = sectionItems.map((item) => pctReadinessCells[`${recordId}:${item.id}`]).filter(Boolean);
-      const verifiedCount = cells.filter((cell) => ["verified", "waived"].includes(normalizePctReadinessStatus(cell.readiness_status))).length;
+      const verifiedCount = cells.filter((cell) => isReadinessVerifiedStatus(cell.readiness_status || cell.status)).length;
+      const demonstratedCount = cells.filter((cell) => isReadinessDemonstratedStatus(cell.readiness_status || cell.status)).length;
       const needsCoachingCount = cells.filter((cell) => normalizePctReadinessStatus(cell.readiness_status) === "needs_coaching").length;
       const total = sectionItems.length;
-      return {
+      const progress = {
         id: section.id,
         title: section.title,
         verifiedCount,
+        demonstratedCount,
         needsCoachingCount,
         total,
         percent: total > 0 ? Math.round((verifiedCount / total) * 100) : 0,
+        demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : 0,
+      };
+      categoryRows.push(progress);
+      return {
+        ...section,
+        progress,
+        taskRows: sectionItems.map((item) => {
+          const cell = pctReadinessCells[`${recordId}:${item.id}`] || {};
+          return {
+            section,
+            item,
+            cell,
+            status: normalizePctReadinessStatus(cell.readiness_status || cell.status),
+          };
+        }),
       };
     });
-    const taskRows = pctReadinessSections.flatMap((section) => (
-      toObjectRows(section.items).map((item) => {
-        const cell = pctReadinessCells[`${recordId}:${item.id}`] || {};
-        return {
-          section,
-          item,
-          cell,
-          status: normalizePctReadinessStatus(cell.readiness_status || cell.status),
-        };
-      })
-    ));
+    const taskRows = sectionRows.flatMap((section) => section.taskRows);
     return {
       record,
       categoryRows,
+      sectionRows,
       gaps: taskRows.filter((row) => !["verified", "waived"].includes(row.status)),
       coachingNotes: taskRows.filter((row) => row.status === "needs_coaching" || row.cell.latest_note),
       taskRows,
@@ -6822,6 +6998,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const selectedEmployeePctReadinessProfile = useMemo(() => {
     return buildPctReadinessEmployeeProfile(selectedEmployeePctReadinessRecord);
   }, [buildPctReadinessEmployeeProfile, selectedEmployeePctReadinessRecord]);
+  const selectedEmployeePctReadinessProgress = useMemo(() => {
+    const record = selectedEmployeePctReadinessProfile?.record;
+    if (!record) return { demonstratedCount: 0, verifiedCount: 0, total: 0, demonstratedPercent: 0, verifiedPercent: 0 };
+    const mapped = pctReadinessRecordProgressById[record.id];
+    const total = Number(mapped?.total || record.required_item_count || 0);
+    const verifiedCount = Number(mapped?.verifiedCount || record.required_item_completed_count || 0);
+    const demonstratedCount = Number(mapped?.demonstratedCount || verifiedCount || 0);
+    return {
+      demonstratedCount,
+      verifiedCount,
+      total,
+      demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : Number(mapped?.demonstratedPercent || 0),
+      verifiedPercent: total > 0 ? Math.round((verifiedCount / total) * 100) : Math.round(safeTrainingProgress(record.progress_percent)),
+    };
+  }, [pctReadinessRecordProgressById, selectedEmployeePctReadinessProfile]);
   const pctReadinessEmployeeBoardRecord = useMemo(() => (
     selectedPctReadinessRecordId
       ? pctReadinessRecords.find((record) => record.id === selectedPctReadinessRecordId) || null
@@ -6830,6 +7021,78 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pctReadinessEmployeeBoardProfile = useMemo(() => (
     buildPctReadinessEmployeeProfile(pctReadinessEmployeeBoardRecord)
   ), [buildPctReadinessEmployeeProfile, pctReadinessEmployeeBoardRecord]);
+  const pctReadinessEmployeeBoardProgress = useMemo(() => {
+    const record = pctReadinessEmployeeBoardProfile?.record;
+    if (!record) return { demonstratedCount: 0, verifiedCount: 0, total: 0, demonstratedPercent: 0, verifiedPercent: 0 };
+    const mapped = pctReadinessRecordProgressById[record.id];
+    const total = Number(mapped?.total || record.required_item_count || 0);
+    const verifiedCount = Number(mapped?.verifiedCount || record.required_item_completed_count || 0);
+    const demonstratedCount = Number(mapped?.demonstratedCount || verifiedCount || 0);
+    return {
+      demonstratedCount,
+      verifiedCount,
+      total,
+      demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : Number(mapped?.demonstratedPercent || 0),
+      verifiedPercent: total > 0 ? Math.round((verifiedCount / total) * 100) : Math.round(safeTrainingProgress(record.progress_percent)),
+    };
+  }, [pctReadinessEmployeeBoardProfile, pctReadinessRecordProgressById]);
+  const filteredPctReadinessEmployeeBoardSections = useMemo(() => {
+    if (!pctReadinessEmployeeBoardProfile) return [];
+    const taskQuery = String(pctReadinessFilters.task || "").trim().toLowerCase();
+    return toObjectRows(pctReadinessEmployeeBoardProfile.sectionRows)
+      .map((section) => {
+        if (pctReadinessFilters.category && section.id !== pctReadinessFilters.category) return null;
+        const sectionMatchesQuery = taskQuery
+          ? String(section.title || "").toLowerCase().includes(taskQuery)
+          : false;
+        const rows = toObjectRows(section.taskRows).filter((row) => {
+          if (taskQuery && !sectionMatchesQuery && !String(row.item?.label || "").toLowerCase().includes(taskQuery)) {
+            return false;
+          }
+          if (pctReadinessFilters.showNeedsCoaching) {
+            return row.status === "needs_coaching";
+          }
+          if (pctReadinessFilters.showGapsOnly) {
+            return !isReadinessVerifiedStatus(row.status);
+          }
+          return true;
+        });
+        if (rows.length === 0 && (taskQuery || pctReadinessFilters.showNeedsCoaching || pctReadinessFilters.showGapsOnly)) return null;
+        return { ...section, taskRows: rows };
+      })
+      .filter(Boolean);
+  }, [
+    pctReadinessEmployeeBoardProfile,
+    pctReadinessFilters.category,
+    pctReadinessFilters.showGapsOnly,
+    pctReadinessFilters.showNeedsCoaching,
+    pctReadinessFilters.task,
+  ]);
+  const filteredPctReadinessEmployeeBoardCategoryRows = useMemo(() => {
+    const visibleSectionIds = new Set(filteredPctReadinessEmployeeBoardSections.map((section) => section.id));
+    return toObjectRows(pctReadinessEmployeeBoardProfile?.categoryRows).filter((category) => visibleSectionIds.has(category.id));
+  }, [filteredPctReadinessEmployeeBoardSections, pctReadinessEmployeeBoardProfile]);
+  const openTrainingHistoryRecord = useCallback((event) => {
+    const recordId = event?.record_id || event?.record?.id;
+    if (!recordId) return;
+    const joinedRecord = isObjectRow(event?.record) ? event.record : {};
+    const isPctReadinessRecord = pctReadinessRecords.some((record) => record.id === recordId)
+      || /pct|team readiness/i.test(String(joinedRecord.template_name_snapshot || ""));
+
+    setSelectedLaborEmployeeId(null);
+    setSelectedLaborEmployeeSeed(null);
+    setExpandedSections({});
+    if (isPctReadinessRecord) {
+      setSelectedRecordId(null);
+      setSelectedPctReadinessRecordId(recordId);
+      setTrainingView("board");
+      loadPctReadinessBoard(true);
+      return;
+    }
+
+    setSelectedPctReadinessRecordId("");
+    setSelectedRecordId(recordId);
+  }, [loadPctReadinessBoard, pctReadinessRecords]);
   const pctReadinessAvailableEmployees = useMemo(() => (
     Array.isArray(pctReadinessBoard?.available_employees) ? pctReadinessBoard.available_employees : []
   ), [pctReadinessBoard]);
@@ -11488,14 +11751,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter(Boolean);
   }, [laborEmployees, rosterSnapshot]);
 
-  const sectionCompletionMap = useMemo(() => {
+	  const sectionCompletionMap = useMemo(() => {
     const map = {};
     if (!selectedRecord) return map;
 
     recordSections.forEach(sec => {
       const childSecs = getChildSections(sec.id);
       let total = 0;
-      let done = 0;
+      let verified = 0;
+      let demonstrated = 0;
+      let attentionCount = 0;
 
       const collectItems = (sectionIds) => {
         sectionIds.forEach((sid) => {
@@ -11504,8 +11769,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             if (!item.required) return;
             total += 1;
             const res = getItemResult(item.id);
-            if (res && (res.status === "complete" || res.status === "passed")) {
-              done += 1;
+            const readinessStatus = getTrainingResultReadinessStatus(res || {});
+            if (isReadinessVerifiedStatus(readinessStatus)) {
+              verified += 1;
+            }
+            if (isReadinessDemonstratedStatus(readinessStatus)) {
+              demonstrated += 1;
+            }
+            if (readinessStatus === "needs_coaching" || readinessStatus === "blocked") {
+              attentionCount += 1;
             }
           });
         });
@@ -11517,11 +11789,42 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         collectItems([sec.id]);
       }
 
-      map[sec.id] = { total, done };
+      map[sec.id] = {
+        total,
+        done: verified,
+        verified,
+        demonstrated,
+        attentionCount,
+        verifiedPercent: total > 0 ? Math.round((verified / total) * 100) : 0,
+        demonstratedPercent: total > 0 ? Math.round((demonstrated / total) * 100) : 0,
+      };
     });
 
     return map;
   }, [getChildSections, getItemResult, getSectionItems, recordSections, selectedRecord]);
+
+  const selectedRecordReadinessProgress = useMemo(() => {
+    const totals = Object.values(sectionCompletionMap).reduce((acc, section) => {
+      acc.total += Number(section?.total || 0);
+      acc.verified += Number(section?.verified || section?.done || 0);
+      acc.demonstrated += Number(section?.demonstrated || 0);
+      acc.attentionCount += Number(section?.attentionCount || 0);
+      return acc;
+    }, { total: 0, verified: 0, demonstrated: 0, attentionCount: 0 });
+    const fallbackTotal = Number(selectedRecord?.required_item_count || 0);
+    const fallbackVerified = Number(selectedRecord?.required_item_completed_count || 0);
+    const total = totals.total || fallbackTotal;
+    const verified = totals.total ? totals.verified : fallbackVerified;
+    const demonstrated = totals.total ? totals.demonstrated : Math.max(fallbackVerified, totals.demonstrated);
+    return {
+      total,
+      verified,
+      demonstrated,
+      attentionCount: totals.attentionCount,
+      verifiedPercent: total > 0 ? Math.round((verified / total) * 100) : Math.round(safeTrainingProgress(selectedRecord?.progress_percent)),
+      demonstratedPercent: total > 0 ? Math.round((demonstrated / total) * 100) : 0,
+    };
+  }, [sectionCompletionMap, selectedRecord]);
 
   const aggregatedNoteFeed = useMemo(() => {
     return [...notes]
@@ -12733,13 +13036,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <div>
                     <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>Team Readiness Board</div>
                     <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
-                      {selectedEmployeePctReadinessProfile.record.required_item_completed_count || 0}/{selectedEmployeePctReadinessProfile.record.required_item_count || 0} verified or waived
+                      {selectedEmployeePctReadinessProgress.demonstratedCount}/{selectedEmployeePctReadinessProgress.total} demonstrated · {selectedEmployeePctReadinessProgress.verifiedCount}/{selectedEmployeePctReadinessProgress.total} verified
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <div style={{ minWidth: 150 }}>
-                      <ProgressBar percent={selectedEmployeePctReadinessProfile.record.progress_percent} />
-                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 4 }}>{Math.round(safeTrainingProgress(selectedEmployeePctReadinessProfile.record.progress_percent))}% ready</div>
+                    <div style={{ minWidth: 190 }}>
+                      <PctReadinessDualProgress
+                        demonstratedPercent={selectedEmployeePctReadinessProgress.demonstratedPercent}
+                        verifiedPercent={selectedEmployeePctReadinessProgress.verifiedPercent}
+                      />
                     </div>
                     <Btn
                       variant="primary"
@@ -12777,10 +13082,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   {selectedEmployeePctReadinessProfile.categoryRows.map((category) => (
                     <div key={category.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff" }}>
                       <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 6 }}>{category.title}</div>
-                      <ProgressBar percent={category.percent} />
+                      <PctReadinessDualProgress
+                        demonstratedPercent={category.demonstratedPercent}
+                        verifiedPercent={category.percent}
+                      />
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-                        <span>{category.percent}%</span>
-                        {category.needsCoachingCount > 0 ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span> : <span>{category.verifiedCount}/{category.total}</span>}
+                        <span>{category.demonstratedPercent}% / {category.percent}%</span>
+                        {category.needsCoachingCount > 0
+                          ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span>
+                          : category.demonstratedCount > category.verifiedCount
+                            ? <span>{category.demonstratedCount}/{category.total} demonstrated · {category.verifiedCount}/{category.total} verified</span>
+                            : <span>{category.verifiedCount}/{category.total} verified</span>}
                       </div>
                     </div>
                   ))}
@@ -13246,13 +13558,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }
 
   if (selectedRecordId && selectedRecord) {
-    const recordProgress = safeTrainingProgress(selectedRecord.progress_percent);
-    const requiredCompletedCount = Number.isFinite(Number(selectedRecord.required_item_completed_count))
-      ? Number(selectedRecord.required_item_completed_count)
-      : 0;
-    const requiredItemCount = Number.isFinite(Number(selectedRecord.required_item_count))
-      ? Number(selectedRecord.required_item_count)
-      : 0;
+    const recordProgress = selectedRecordReadinessProgress.verifiedPercent;
+    const requiredCompletedCount = selectedRecordReadinessProgress.verified;
+    const requiredDemonstratedCount = selectedRecordReadinessProgress.demonstrated;
+    const requiredItemCount = selectedRecordReadinessProgress.total;
     const recordEmployeeName = selectedRecord.employee_full_name || selectedLaborEmployeeView?.full_name || "Employee";
     const recordTargetRole = formatLaborPositionTitle(selectedRecord.target_role || selectedLaborEmployeeView?.position_title) || "Employee";
     const recordTemplateName = selectedRecord.template_name_snapshot || selectedVersion?.name || "Training Plan";
@@ -13286,14 +13595,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
             <div style={{ textAlign: "right" }}>
               <StatusBadge status={selectedRecord.overall_status} />
-              <div style={{ marginTop: 8, fontSize: 24, fontWeight: 800, color: C.pri }}>{Math.round(recordProgress)}%</div>
-              <div style={{ fontSize: 11, color: C.textMut }}>{requiredCompletedCount} / {requiredItemCount} items</div>
+              <div style={{ width: 190, marginTop: 10 }}>
+                <PctReadinessDualProgress
+                  demonstratedPercent={selectedRecordReadinessProgress.demonstratedPercent}
+                  verifiedPercent={recordProgress}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 6 }}>
+                {requiredDemonstratedCount} / {requiredItemCount} demonstrated · {requiredCompletedCount} / {requiredItemCount} verified
+              </div>
               <div style={{ marginTop: 10 }}>
                 <Btn variant="secondary" size="sm" onClick={openRecordConfigModal}>Edit Configuration</Btn>
               </div>
             </div>
           </div>
-          <div style={{ marginTop: 12 }}><ProgressBar percent={recordProgress} height={8} /></div>
+          <div style={{ marginTop: 16 }}>
+            <PctReadinessDualProgress
+              demonstratedPercent={selectedRecordReadinessProgress.demonstratedPercent}
+              verifiedPercent={recordProgress}
+            />
+          </div>
         </Card>
 
         {/* Sections */}
@@ -13311,10 +13632,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </Card>
         ) : recordSections.map(sec => {
           const isOpen = expandedSections[sec.id];
-          const comp = sectionCompletionMap[sec.id] || { total: 0, done: 0 };
+          const comp = sectionCompletionMap[sec.id] || { total: 0, done: 0, verified: 0, demonstrated: 0, verifiedPercent: 0, demonstratedPercent: 0 };
           const childSecs = getChildSections(sec.id);
           const directItems = getSectionItems(sec.id);
-          const secPercent = comp.total > 0 ? Math.round((comp.done / comp.total) * 100) : 0;
+          const secVerifiedPercent = Number.isFinite(Number(comp.verifiedPercent))
+            ? Number(comp.verifiedPercent)
+            : comp.total > 0 ? Math.round((Number(comp.verified || comp.done || 0) / comp.total) * 100) : 0;
+          const secDemonstratedPercent = Number.isFinite(Number(comp.demonstratedPercent))
+            ? Number(comp.demonstratedPercent)
+            : comp.total > 0 ? Math.round((Number(comp.demonstrated || 0) / comp.total) * 100) : 0;
 
           return (
             <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
@@ -13332,8 +13658,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{comp.done}/{comp.total}</span>
-                  <div style={{ width: 60 }}><ProgressBar percent={secPercent} /></div>
+                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800, whiteSpace: "nowrap" }}>
+                    {comp.demonstrated}/{comp.total} D · {comp.verified || comp.done}/{comp.total} V
+                  </span>
+                  <div style={{ width: 130 }}>
+                    <PctReadinessDualProgress
+                      demonstratedPercent={secDemonstratedPercent}
+                      verifiedPercent={secVerifiedPercent}
+                    />
+                  </div>
                 </div>
               </button>
 
@@ -13456,30 +13789,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Card>
   );
 
-  const RecordRow = ({ rec }) => (
-    <tr
+  const RecordRow = ({ rec }) => {
+    const mappedProgress = pctReadinessRecordProgressById[rec.id];
+    const verifiedPercent = Number.isFinite(Number(mappedProgress?.verifiedPercent))
+      ? Number(mappedProgress.verifiedPercent)
+      : safeTrainingProgress(rec.progress_percent);
+    const demonstratedPercent = Number.isFinite(Number(mappedProgress?.demonstratedPercent))
+      ? Number(mappedProgress.demonstratedPercent)
+      : verifiedPercent;
+    return (
+      <tr
 	      onClick={() => {
 	        setSelectedLaborEmployeeId(null);
 	        setSelectedLaborEmployeeSeed(null);
 	        setSelectedRecordId(rec.id);
 	      }}
-      style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-    >
-      <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.text }}>{rec.employee_full_name}</td>
-      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{formatLaborPositionTitle(rec.target_role) || "—"}</td>
-      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{rec.template_name_snapshot}</td>
-      <td style={{ padding: "10px 12px" }}>
-        <div style={{ minWidth: 110 }}>
-          <ProgressBar percent={rec.progress_percent} />
-          <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>{Math.round(rec.progress_percent || 0)}%</div>
-        </div>
-      </td>
-      <td style={{ padding: "10px 12px" }}><StatusBadge status={rec.overall_status} /></td>
-      <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{rec.target_end_date ? formatLaborDate(rec.target_end_date) : "—"}</td>
-    </tr>
-  );
+        style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+      >
+        <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.text }}>{rec.employee_full_name}</td>
+        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{formatLaborPositionTitle(rec.target_role) || "—"}</td>
+        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{rec.template_name_snapshot}</td>
+        <td style={{ padding: "10px 12px" }}>
+          <div style={{ minWidth: 135 }}>
+            <PctReadinessDualProgress
+              demonstratedPercent={demonstratedPercent}
+              verifiedPercent={verifiedPercent}
+            />
+          </div>
+        </td>
+        <td style={{ padding: "10px 12px" }}><StatusBadge status={rec.overall_status} /></td>
+        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut }}>{rec.target_end_date ? formatLaborDate(rec.target_end_date) : "—"}</td>
+      </tr>
+    );
+  };
 
 		  const tableHeaderStyle = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
   const pctReadinessEmployeeBoardTableHeaderStyle = {
@@ -19579,9 +19923,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        <div style={{ minWidth: 170 }}>
-                          <ProgressBar percent={pctReadinessEmployeeBoardProfile.record.progress_percent} />
-                          <div style={{ marginTop: 5, fontSize: 12, fontWeight: 900, color: C.textMut }}>{Math.round(safeTrainingProgress(pctReadinessEmployeeBoardProfile.record.progress_percent))}% ready</div>
+                        <div style={{ minWidth: 210 }}>
+                          <PctReadinessDualProgress
+                            demonstratedPercent={pctReadinessEmployeeBoardProgress.demonstratedPercent}
+                            verifiedPercent={pctReadinessEmployeeBoardProgress.verifiedPercent}
+                          />
+                          <div style={{ marginTop: 6, fontSize: 11, fontWeight: 900, color: C.textMut, textAlign: "right" }}>
+                            {pctReadinessEmployeeBoardProgress.demonstratedCount}/{pctReadinessEmployeeBoardProgress.total} demonstrated · {pctReadinessEmployeeBoardProgress.verifiedCount}/{pctReadinessEmployeeBoardProgress.total} verified
+                          </div>
                         </div>
                         <Btn
                           variant="secondary"
@@ -19603,8 +19952,58 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     </div>
                   </div>
                   <div style={{ padding: 18 }}>
+                    <Card style={{ padding: 14, marginBottom: 16 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(190px, 260px) auto", gap: 12, alignItems: "end" }}>
+                        <Inp
+                          label="Search Trainee Board"
+                          value={pctReadinessFilters.task}
+                          onChange={(value) => updatePctReadinessFilter("task", value)}
+                          placeholder="Search tasks or categories"
+                        />
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Category</div>
+                          <CustomSelect
+                            value={pctReadinessFilters.category}
+                            onChange={(value) => {
+                              updatePctReadinessFilter("category", value);
+                              if (value) jumpToPctReadinessSection(value);
+                            }}
+                            options={pctReadinessCategoryFilterOptions}
+                            placeholder="All categories"
+                            searchable
+                          />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                          <Btn
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPctReadinessCollapsedSections((prev) => ({
+                              ...prev,
+                              ...Object.fromEntries(filteredPctReadinessEmployeeBoardSections.map((section) => [section.id, true])),
+                            }))}
+                          >
+                            Collapse All
+                          </Btn>
+                          <Btn
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPctReadinessCollapsedSections((prev) => ({
+                              ...prev,
+                              ...Object.fromEntries(filteredPctReadinessEmployeeBoardSections.map((section) => [section.id, false])),
+                            }))}
+                          >
+                            Expand All
+                          </Btn>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+                        <Inp label="Show gaps only" type="checkbox" value={pctReadinessFilters.showGapsOnly} onChange={(value) => updatePctReadinessFilter("showGapsOnly", value)} />
+                        <Inp label="Show needs coaching" type="checkbox" value={pctReadinessFilters.showNeedsCoaching} onChange={(value) => updatePctReadinessFilter("showNeedsCoaching", value)} />
+                        <Btn variant="ghost" size="sm" onClick={clearPctReadinessFilters}>Clear</Btn>
+                      </div>
+                    </Card>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 16 }}>
-                      {pctReadinessEmployeeBoardProfile.categoryRows.map((category) => (
+                      {filteredPctReadinessEmployeeBoardCategoryRows.map((category) => (
                         <button
                           key={category.id}
                           type="button"
@@ -19612,10 +20011,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
                         >
                           <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 7 }}>{category.title}</div>
-                          <ProgressBar percent={category.percent} />
+                          <PctReadinessDualProgress
+                            demonstratedPercent={category.demonstratedPercent}
+                            verifiedPercent={category.percent}
+                          />
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-                            <span>{category.percent}%</span>
-                            {category.needsCoachingCount > 0 ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span> : <span>{category.verifiedCount}/{category.total}</span>}
+                            <span>{category.demonstratedPercent}% / {category.percent}%</span>
+                            {category.needsCoachingCount > 0
+                              ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span>
+                              : category.demonstratedCount > category.verifiedCount
+                                ? <span>{category.demonstratedCount}/{category.total} demonstrated · {category.verifiedCount}/{category.total} verified</span>
+                                : <span>{category.verifiedCount}/{category.total} verified</span>}
                           </div>
                         </button>
                       ))}
@@ -19642,7 +20048,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         ))}
                       </div>
                     </div>
-                    <div style={{ maxHeight: "62vh", overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
+                    <div ref={pctReadinessScrollRef} onScroll={handlePctReadinessMatrixScroll} style={{ maxHeight: "62vh", overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                           <tr>
@@ -19653,26 +20059,64 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           </tr>
                         </thead>
                         <tbody>
-                          {pctReadinessEmployeeBoardProfile.taskRows.map((row) => {
-                            const presentation = getPctReadinessStatusPresentation(row.status);
-                            const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                          {filteredPctReadinessEmployeeBoardSections.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: 18, fontSize: 13, color: C.textMut, textAlign: "center" }}>
+                                No tasks match the current filters.
+                              </td>
+                            </tr>
+                          ) : filteredPctReadinessEmployeeBoardSections.map((section) => {
+                            const collapsed = pctReadinessCollapsedSections[section.id] === true;
+                            const sectionProgress = section.progress || {};
+                            const totalTasks = toObjectRows(section.items).length;
                             return (
-                              <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
-                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec, lineHeight: 1.45, verticalAlign: "top" }}>{row.item.label}</td>
-                                <td style={{ padding: "9px 12px", verticalAlign: "top", width: 190 }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
-                                    style={{ display: "inline-flex", gap: 6, alignItems: "center", padding: "6px 9px", borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
-                                  >
-                                    {style.icon} {presentation.label}
-                                  </button>
-                                </td>
-                                <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
-                                  {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
-                                </td>
-                              </tr>
+                              <React.Fragment key={`single-section-${section.id}`}>
+                                <tr data-pct-section-id={section.id}>
+                                  <td colSpan={4} style={{ padding: 0, background: C.surfaceHover, borderBottom: `1px solid ${C.border}` }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPctReadinessCollapsedSections((prev) => ({ ...prev, [section.id]: !collapsed }))}
+                                      style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "none", background: "transparent", padding: "11px 12px", fontFamily: "inherit", cursor: "pointer", textAlign: "left" }}
+                                    >
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                        <span style={{ display: "inline-flex", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 160ms ease", flexShrink: 0 }}><I.ChevronDown /></span>
+                                        <span style={{ fontSize: 13, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{section.title}</span>
+                                        <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800, whiteSpace: "nowrap" }}>
+                                          {section.taskRows.length}/{totalTasks} shown
+                                        </span>
+                                      </div>
+                                      <div style={{ width: 150, flexShrink: 0 }}>
+                                        <PctReadinessDualProgress
+                                          demonstratedPercent={sectionProgress.demonstratedPercent}
+                                          verifiedPercent={sectionProgress.percent}
+                                        />
+                                      </div>
+                                    </button>
+                                  </td>
+                                </tr>
+                                {!collapsed && section.taskRows.map((row) => {
+                                  const presentation = getPctReadinessStatusPresentation(row.status);
+                                  const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                                  return (
+                                    <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                                      <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
+                                      <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec, lineHeight: 1.45, verticalAlign: "top" }}>{row.item.label}</td>
+                                      <td style={{ padding: "9px 12px", verticalAlign: "top", width: 190 }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
+                                          style={{ display: "inline-flex", gap: 6, alignItems: "center", padding: "6px 9px", borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                        >
+                                          {style.icon} {presentation.label}
+                                        </button>
+                                      </td>
+                                      <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
+                                        {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </React.Fragment>
                             );
                           })}
                         </tbody>
@@ -19877,36 +20321,44 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           >
                             Task / Skill
                           </th>
-                          {filteredPctReadinessRecords.map((record) => (
-                            <th
-                              key={record.id}
-                              style={{
-                                ...tableHeaderStyle,
-                                position: "sticky",
-                                top: 0,
-                                zIndex: 3,
-                                minWidth: 156,
-                                maxWidth: 180,
-                                background: "#fff",
-                                verticalAlign: "bottom",
-                              }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => setSelectedPctReadinessRecordId(record.id)}
-                                style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontFamily: "inherit", fontSize: 12, fontWeight: 900, textAlign: "left", cursor: "pointer", lineHeight: 1.25 }}
+                          {filteredPctReadinessRecords.map((record) => {
+                            const progress = pctReadinessRecordProgressById[record.id] || {
+                              demonstratedPercent: 0,
+                              verifiedPercent: safeTrainingProgress(record.progress_percent),
+                            };
+                            return (
+                              <th
+                                key={record.id}
+                                style={{
+                                  ...tableHeaderStyle,
+                                  position: "sticky",
+                                  top: 0,
+                                  zIndex: 3,
+                                  minWidth: 156,
+                                  maxWidth: 180,
+                                  background: "#fff",
+                                  verticalAlign: "bottom",
+                                }}
                               >
-                                {record.employee_full_name || "Employee"}
-                              </button>
-                              <div style={{ fontSize: 10.5, color: C.textMut, fontWeight: 700, marginTop: 4, textTransform: "none" }}>
-                                {record.employee?.start_date ? `Start Date: ${formatLaborDate(record.employee.start_date)}` : "Start Date: Not set"}
-                              </div>
-                              <div style={{ marginTop: 6 }}>
-                                <ProgressBar percent={record.progress_percent} />
-                                <div style={{ fontSize: 10.5, color: C.textMut, marginTop: 3, fontWeight: 800 }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</div>
-                              </div>
-                            </th>
-                          ))}
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPctReadinessRecordId(record.id)}
+                                  style={{ border: "none", background: "transparent", padding: 0, color: C.pri, fontFamily: "inherit", fontSize: 12, fontWeight: 900, textAlign: "left", cursor: "pointer", lineHeight: 1.25 }}
+                                >
+                                  {record.employee_full_name || "Employee"}
+                                </button>
+                                <div style={{ fontSize: 10.5, color: C.textMut, fontWeight: 700, marginTop: 4, textTransform: "none" }}>
+                                  {record.employee?.start_date ? `Start Date: ${formatLaborDate(record.employee.start_date)}` : "Start Date: Not set"}
+                                </div>
+                                <div style={{ marginTop: 6 }}>
+                                  <PctReadinessDualProgress
+                                    demonstratedPercent={progress.demonstratedPercent}
+                                    verifiedPercent={progress.verifiedPercent}
+                                  />
+                                </div>
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -20116,15 +20568,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </tr>
                     </thead>
                     <tbody>
-                      {trainingHistoryRows.map((event) => (
-                        <tr key={event.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      {trainingHistoryRows.map((event) => {
+                        const canOpenRecord = !!(event.record_id || event.record?.id);
+                        return (
+                        <tr
+                          key={event.id}
+                          role={canOpenRecord ? "link" : undefined}
+                          tabIndex={canOpenRecord ? 0 : undefined}
+                          onClick={() => openTrainingHistoryRecord(event)}
+                          onKeyDown={(keyboardEvent) => {
+                            if (!canOpenRecord) return;
+                            if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+                              keyboardEvent.preventDefault();
+                              openTrainingHistoryRecord(event);
+                            }
+                          }}
+                          title={canOpenRecord ? "Open this trainee's training page" : undefined}
+                          style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: canOpenRecord ? "pointer" : "default" }}
+                          onMouseEnter={(mouseEvent) => {
+                            if (canOpenRecord) mouseEvent.currentTarget.style.background = C.surfaceHover;
+                          }}
+                          onMouseLeave={(mouseEvent) => {
+                            mouseEvent.currentTarget.style.background = "transparent";
+                          }}
+                        >
                           <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatTrainingTimestamp(event.created_at)}</td>
                           <td style={{ ...rosterCellStyle, minWidth: 180 }}>{event.employeeName}</td>
-                          <td style={{ ...rosterCellStyle, minWidth: 170 }}>{String(event.event_type || "training_event").replace(/_/g, " ")}</td>
-                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 260, lineHeight: 1.45 }}>{event.summary}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 170 }}>{event.actionLabel || String(event.event_type || "training_event").replace(/_/g, " ")}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 300, lineHeight: 1.45 }}>
+                            <div style={{ color: C.text, fontWeight: 800 }}>{event.summary}</div>
+                            <TrainingHistoryStatusChange statusChange={event.statusChange} />
+                          </td>
                           <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{event.actorDisplayName || "Staff"}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
