@@ -16,25 +16,36 @@ export const COMPLETED_TRAINING_RECORD_STATUSES = [
 
 export const PCT_READINESS_TEMPLATE_SLUG = "pct_team_readiness_board";
 export const CSR_READINESS_TEMPLATE_SLUG = "csr_team_readiness_board";
+export const PCT_READINESS_TEMPLATE_LABEL = "Angelina's PCT Training Guide v1";
+export const CSR_READINESS_TEMPLATE_LABEL = "Angelina's CSR Training Guide v1";
 
 export const TEAM_READINESS_TEMPLATE_OPTIONS = [
   {
     value: PCT_READINESS_TEMPLATE_SLUG,
     slug: PCT_READINESS_TEMPLATE_SLUG,
-    label: "PCT Team Readiness Board",
+    label: PCT_READINESS_TEMPLATE_LABEL,
     roleLabel: "PCT",
     roleName: "Pet Care Technician",
   },
   {
     value: CSR_READINESS_TEMPLATE_SLUG,
     slug: CSR_READINESS_TEMPLATE_SLUG,
-    label: "CSR Team Readiness Board",
+    label: CSR_READINESS_TEMPLATE_LABEL,
     roleLabel: "CSR",
     roleName: "Customer Service Representative",
   },
 ];
 
 const TEAM_READINESS_TEMPLATE_SLUG_SET = new Set(TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => option.slug));
+const PCT_READINESS_TEMPLATE_NAMES = new Set([
+  PCT_READINESS_TEMPLATE_LABEL.toLowerCase(),
+  "pct team readiness board",
+]);
+const TEAM_READINESS_TEMPLATE_NAMES = new Set([
+  ...PCT_READINESS_TEMPLATE_NAMES,
+  CSR_READINESS_TEMPLATE_LABEL.toLowerCase(),
+  "csr team readiness board",
+]);
 
 export function getTeamReadinessTemplateOption(slug = PCT_READINESS_TEMPLATE_SLUG) {
   return TEAM_READINESS_TEMPLATE_OPTIONS.find((option) => option.slug === slug || option.value === slug)
@@ -329,13 +340,13 @@ export function isPctReadinessTemplate(template = {}) {
 
 export function isPctReadinessRecord(record = {}) {
   return String(record?.template_slug || record?.metadata?.template_slug || "") === PCT_READINESS_TEMPLATE_SLUG
-    || String(record?.template_name_snapshot || "").trim().toLowerCase() === "pct team readiness board";
+    || PCT_READINESS_TEMPLATE_NAMES.has(String(record?.template_name_snapshot || "").trim().toLowerCase());
 }
 
 export function isTeamReadinessRecord(record = {}) {
   const templateSlug = String(record?.template_slug || record?.metadata?.template_slug || "");
   const templateName = String(record?.template_name_snapshot || "").trim().toLowerCase();
-  return isTeamReadinessTemplateSlug(templateSlug) || ["pct team readiness board", "csr team readiness board"].includes(templateName);
+  return isTeamReadinessTemplateSlug(templateSlug) || TEAM_READINESS_TEMPLATE_NAMES.has(templateName);
 }
 
 export function hasActivePctReadinessRecord(records = [], laborEmployeeId = "") {
