@@ -7073,13 +7073,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     });
     return progressById;
   }, [pctReadinessCells, pctReadinessRecords, pctReadinessSections]);
-  const buildPctReadinessEmployeeProfile = useCallback((record) => {
+  const buildPctReadinessEmployeeProfile = useCallback((record, boardOverride = pctReadinessBoard) => {
     if (!record) return null;
     const recordId = record.id;
+    const boardSections = Array.isArray(boardOverride?.sections) ? boardOverride.sections : [];
+    const boardCells = isObjectRow(boardOverride?.cells) ? boardOverride.cells : {};
     const categoryRows = [];
-    const sectionRows = pctReadinessSections.map((section) => {
+    const sectionRows = boardSections.map((section) => {
       const sectionItems = toObjectRows(section.items);
-      const cells = sectionItems.map((item) => pctReadinessCells[`${recordId}:${item.id}`]).filter(Boolean);
+      const cells = sectionItems.map((item) => boardCells[`${recordId}:${item.id}`]).filter(Boolean);
       const verifiedCount = cells.filter((cell) => isReadinessVerifiedStatus(cell.readiness_status || cell.status)).length;
       const demonstratedCount = cells.filter((cell) => isReadinessDemonstratedStatus(cell.readiness_status || cell.status)).length;
       const needsCoachingCount = cells.filter((cell) => normalizePctReadinessStatus(cell.readiness_status) === "needs_coaching").length;
@@ -7099,7 +7101,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         ...section,
         progress,
         taskRows: sectionItems.map((item) => {
-          const cell = pctReadinessCells[`${recordId}:${item.id}`] || {};
+          const cell = boardCells[`${recordId}:${item.id}`] || {};
           return {
             section,
             item,
@@ -7110,29 +7112,57 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       };
     });
     const taskRows = sectionRows.flatMap((section) => section.taskRows);
+    const total = taskRows.length;
+    const demonstratedCount = taskRows.filter((row) => isReadinessDemonstratedStatus(row.status)).length;
+    const verifiedCount = taskRows.filter((row) => isReadinessVerifiedStatus(row.status)).length;
+    const templateSlug = boardOverride?.template?.slug || record.template_slug || selectedReadinessTemplateSlug;
     return {
       record,
+      templateSlug,
+      templateOption: getTeamReadinessTemplateOption(templateSlug),
+      recordProgress: {
+        demonstratedCount,
+        verifiedCount,
+        total,
+        demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : 0,
+        verifiedPercent: total > 0 ? Math.round((verifiedCount / total) * 100) : Math.round(safeTrainingProgress(record.progress_percent)),
+      },
       categoryRows,
       sectionRows,
       gaps: taskRows.filter((row) => !["verified", "waived"].includes(row.status)),
       coachingNotes: taskRows.filter((row) => row.status === "needs_coaching" || row.cell.latest_note),
       taskRows,
     };
-  }, [pctReadinessCells, pctReadinessSections]);
-  const selectedEmployeePctReadinessRecord = useMemo(() => {
+  }, [pctReadinessBoard, selectedReadinessTemplateSlug]);
+  const selectedEmployeePctReadinessContext = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return null;
-    return pctReadinessRecords.find((record) => record.labor_employee_id === selectedLaborEmployeeView.id) || null;
-  }, [pctReadinessRecords, selectedLaborEmployeeView]);
+    const candidateSlugs = [
+      selectedReadinessTemplateSlug,
+      ...TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => option.slug).filter((slug) => slug !== selectedReadinessTemplateSlug),
+    ];
+    for (const slug of candidateSlugs) {
+      const board = readinessSummaryBoards[slug] || (slug === selectedReadinessTemplateSlug ? pctReadinessBoard : null);
+      const recordsForBoard = Array.isArray(board?.records) ? board.records : [];
+      const record = recordsForBoard.find((entry) => entry.labor_employee_id === selectedLaborEmployeeView.id);
+      if (record) return { record, board, templateSlug: slug };
+    }
+    return null;
+  }, [pctReadinessBoard, readinessSummaryBoards, selectedLaborEmployeeView, selectedReadinessTemplateSlug]);
+  const selectedEmployeePctReadinessRecord = selectedEmployeePctReadinessContext?.record || null;
   const selectedEmployeePctReadinessProfile = useMemo(() => {
-    return buildPctReadinessEmployeeProfile(selectedEmployeePctReadinessRecord);
-  }, [buildPctReadinessEmployeeProfile, selectedEmployeePctReadinessRecord]);
+    return buildPctReadinessEmployeeProfile(selectedEmployeePctReadinessRecord, selectedEmployeePctReadinessContext?.board);
+  }, [buildPctReadinessEmployeeProfile, selectedEmployeePctReadinessContext, selectedEmployeePctReadinessRecord]);
+  const selectedEmployeeReadinessTemplateOption = selectedEmployeePctReadinessProfile?.templateOption || getTeamReadinessTemplateOption(selectedEmployeePctReadinessContext?.templateSlug);
   const selectedEmployeePctReadinessProgress = useMemo(() => {
     const record = selectedEmployeePctReadinessProfile?.record;
     if (!record) return { demonstratedCount: 0, verifiedCount: 0, total: 0, demonstratedPercent: 0, verifiedPercent: 0 };
-    const mapped = pctReadinessRecordProgressById[record.id];
+    const mapped = selectedEmployeePctReadinessContext?.templateSlug === selectedReadinessTemplateSlug
+      ? pctReadinessRecordProgressById[record.id]
+      : null;
     const total = Number(mapped?.total || record.required_item_count || 0);
     const verifiedCount = Number(mapped?.verifiedCount || record.required_item_completed_count || 0);
     const demonstratedCount = Number(mapped?.demonstratedCount || verifiedCount || 0);
+    if (!mapped && selectedEmployeePctReadinessProfile.recordProgress) return selectedEmployeePctReadinessProfile.recordProgress;
     return {
       demonstratedCount,
       verifiedCount,
@@ -7140,7 +7170,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       demonstratedPercent: total > 0 ? Math.round((demonstratedCount / total) * 100) : Number(mapped?.demonstratedPercent || 0),
       verifiedPercent: total > 0 ? Math.round((verifiedCount / total) * 100) : Math.round(safeTrainingProgress(record.progress_percent)),
     };
-  }, [pctReadinessRecordProgressById, selectedEmployeePctReadinessProfile]);
+  }, [pctReadinessRecordProgressById, selectedEmployeePctReadinessContext, selectedEmployeePctReadinessProfile, selectedReadinessTemplateSlug]);
   const pctReadinessEmployeeBoardRecord = useMemo(() => (
     selectedPctReadinessRecordId
       ? pctReadinessRecords.find((record) => record.id === selectedPctReadinessRecordId) || null
@@ -13225,7 +13255,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <Card style={{ padding: 18, marginBottom: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>Team Readiness Board</div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>{selectedEmployeeReadinessTemplateOption.roleLabel} Team Readiness Board</div>
                     <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
                       {selectedEmployeePctReadinessProgress.demonstratedCount}/{selectedEmployeePctReadinessProgress.total} demonstrated · {selectedEmployeePctReadinessProgress.verifiedCount}/{selectedEmployeePctReadinessProgress.total} verified
                     </div>
@@ -13242,6 +13272,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       size="sm"
                       icon={<I.Eye />}
                       onClick={() => {
+                        setSelectedReadinessTemplateSlug(selectedEmployeePctReadinessProfile.templateSlug || PCT_READINESS_TEMPLATE_SLUG);
+                        setPctReadinessBoard(readinessSummaryBoards[selectedEmployeePctReadinessProfile.templateSlug] || pctReadinessBoard);
                         setSelectedPctReadinessRecordId(selectedEmployeePctReadinessProfile.record.id);
                         setSelectedLaborEmployeeId(null);
                         setSelectedLaborEmployeeSeed(null);
@@ -13257,6 +13289,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       size="sm"
                       icon={<I.Back />}
                       onClick={() => {
+                        setSelectedReadinessTemplateSlug(selectedEmployeePctReadinessProfile.templateSlug || PCT_READINESS_TEMPLATE_SLUG);
+                        setPctReadinessBoard(readinessSummaryBoards[selectedEmployeePctReadinessProfile.templateSlug] || pctReadinessBoard);
                         setSelectedLaborEmployeeId(null);
                         setSelectedLaborEmployeeSeed(null);
                         setSelectedReviewInstanceId(null);
