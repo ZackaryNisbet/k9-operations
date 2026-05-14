@@ -5868,6 +5868,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const routeInterviewView = normalizeInterviewView(params?.interviewView);
   const routeCapacityPlanningView = normalizeCapacityPlanningView(params?.capacityPlanningView || (params?.laborTab === "labor-model" ? "labor-model" : ""));
   const routeInterviewId = typeof params?.interviewId === "string" ? params.interviewId : "";
+  const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : "";
   const [tab, setTab] = useState(routeLaborTab);
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
@@ -5914,7 +5915,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // UI state
   const [showNewRecord, setShowNewRecord] = useState(false);
   const [showRecordConfig, setShowRecordConfig] = useState(false);
-  const [selectedRecordId, setSelectedRecordId] = useState(null);
+  const [selectedRecordId, setSelectedRecordId] = useState(routeTrainingRecordId || null);
   const [selectedLaborEmployeeId, setSelectedLaborEmployeeId] = useState(null);
   const [selectedLaborEmployeeSeed, setSelectedLaborEmployeeSeed] = useState(null);
   const [selectedReviewInstanceId, setSelectedReviewInstanceId] = useState(null);
@@ -5956,6 +5957,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     } else {
       delete nextRouteParams.interviewView;
       delete nextRouteParams.interviewId;
+    }
+    if (nextLaborTab === "training") {
+      if (nextRouteParams.trainingRecordId) nextRouteParams.trainingRecordId = String(nextRouteParams.trainingRecordId);
+      else delete nextRouteParams.trainingRecordId;
+    } else {
+      delete nextRouteParams.trainingRecordId;
     }
     if (nextLaborTab === "attendance") {
       nextRouteParams.attendanceView = normalizeAttendanceView(nextRouteParams.attendanceView);
@@ -6233,6 +6240,62 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
   const trainingRealtimeRefreshTimerRef = useRef(null);
+  const lastRouteTrainingRecordIdRef = useRef(routeTrainingRecordId);
+
+  const openTrainingRecord = useCallback((recordId) => {
+    const nextRecordId = String(recordId || "");
+    if (!nextRecordId) return;
+    setTab("training");
+    setSelectedLaborEmployeeId(null);
+    setSelectedLaborEmployeeSeed(null);
+    setSelectedReviewInstanceId(null);
+    setSelectedPctReadinessRecordId("");
+    setShowNewRecord(false);
+    setShowRecordConfig(false);
+    setPreviewTemplateId(null);
+    setPreviewTemplateVersionId(null);
+    setExpandedSections({});
+    setSelectedRecordId(nextRecordId);
+    navigateLaborRoute("training", { trainingRecordId: nextRecordId });
+  }, [navigateLaborRoute]);
+
+  const closeTrainingRecord = useCallback(() => {
+    setSelectedRecordId(null);
+    setExpandedSections({});
+    setItemResults([]);
+    setNotes([]);
+    setRecordEvents([]);
+    setShowRecordConfig(false);
+    navigateLaborRoute("training");
+  }, [navigateLaborRoute]);
+
+  useEffect(() => {
+    if (routeLaborTab !== "training") return;
+    const previousRouteRecordId = lastRouteTrainingRecordIdRef.current;
+    lastRouteTrainingRecordIdRef.current = routeTrainingRecordId;
+
+    if (routeTrainingRecordId) {
+      if (routeTrainingRecordId !== selectedRecordId) {
+        setTab("training");
+        setSelectedLaborEmployeeId(null);
+        setSelectedLaborEmployeeSeed(null);
+        setSelectedReviewInstanceId(null);
+        setSelectedPctReadinessRecordId("");
+        setExpandedSections({});
+        setSelectedRecordId(routeTrainingRecordId);
+      }
+      return;
+    }
+
+    if (previousRouteRecordId && selectedRecordId === previousRouteRecordId) {
+      setSelectedRecordId(null);
+      setExpandedSections({});
+      setItemResults([]);
+      setNotes([]);
+      setRecordEvents([]);
+      setShowRecordConfig(false);
+    }
+  }, [routeLaborTab, routeTrainingRecordId, selectedRecordId]);
 
   // Notes
   const [generalNoteText, setGeneralNoteText] = useState("");
@@ -7650,6 +7713,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setExpandedSections({});
     if (inferredTemplateSlug) {
       setSelectedRecordId(null);
+      if (routeTrainingRecordId) navigateLaborRoute("training");
       setSelectedReadinessTemplateSlug(inferredTemplateSlug);
       setSelectedPctReadinessRecordId(recordId);
       setTrainingView("board");
@@ -7658,8 +7722,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
 
     setSelectedPctReadinessRecordId("");
-    setSelectedRecordId(recordId);
-  }, [loadPctReadinessBoard, pctReadinessRecords, readinessSummaryBoards]);
+    openTrainingRecord(recordId);
+  }, [loadPctReadinessBoard, navigateLaborRoute, openTrainingRecord, pctReadinessRecords, readinessSummaryBoards, routeTrainingRecordId]);
   const pctReadinessAvailableEmployees = useMemo(() => (
     Array.isArray(pctReadinessBoard?.available_employees) ? pctReadinessBoard.available_employees : []
   ), [pctReadinessBoard]);
@@ -8474,14 +8538,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setShowNewRecord(false);
       resetNewRecordForm();
       await refreshLaborData();
-      setSelectedRecordId(record.id);
-      changeLaborTab("training");
+      openTrainingRecord(record.id);
     } catch (err) {
       console.error("Create record error:", err);
       addGlobalToast("Failed to create record: " + (err.message || "Unknown error"), "error");
     }
     setCreating(false);
-  }, [actorName, actorUserId, addGlobalToast, changeLaborTab, laborLocationRef, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId, refreshLaborData]);
+  }, [actorName, actorUserId, addGlobalToast, laborLocationRef, newEmployeeName, newHireDate, newLaborEmployeeId, newStartDate, newTargetEndDate, newTargetRole, newTemplateId, openTrainingRecord, refreshLaborData]);
 
   const resetNewRecordForm = () => {
     setNewLaborEmployeeId("");
@@ -8642,11 +8705,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     };
     setRecords((prev) => prev.map((record) => (record.id === selectedRecordId ? archivedRecord : record)));
     setShowRecordConfig(false);
-    setSelectedRecordId(null);
-    setExpandedSections({});
-    setItemResults([]);
-    setNotes([]);
-    setRecordEvents([]);
+    closeTrainingRecord();
     try {
       await refreshLaborData({ includeTraining: true, includeSupport: true });
       addGlobalToast("Training record deleted", "success");
@@ -8656,7 +8715,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     } finally {
       setDeletingRecord(false);
     }
-  }, [actorUserId, addGlobalToast, deletingRecord, refreshLaborData, selectedRecord, selectedRecordId]);
+  }, [actorUserId, addGlobalToast, closeTrainingRecord, deletingRecord, refreshLaborData, selectedRecord, selectedRecordId]);
 
   const resetLaborEmployeeEditor = useCallback(() => {
     setEditingLaborEmployeeId(null);
@@ -9521,6 +9580,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     pendingEmployeeRecordTabRef.current = options.recordTab || "";
     setSelectedRecordId(null);
+    if (routeTrainingRecordId) navigateLaborRoute(tab || "home");
     setSelectedLaborEmployeeId(resolvedEmployeeId);
     setSelectedLaborEmployeeSeed(isObjectRow(seedRow) ? seedRow : null);
     setSelectedReviewInstanceId(null);
@@ -9529,7 +9589,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPreviewTemplateId(null);
     setPreviewTemplateVersionId(null);
     setSelectedPctReadinessRecordId("");
-  }, [addGlobalToast]);
+  }, [addGlobalToast, navigateLaborRoute, routeTrainingRecordId, tab]);
 
   const updatePctReadinessFilter = useCallback((key, value) => {
     setPctReadinessFilters((prev) => ({ ...prev, [key]: value }));
@@ -13834,11 +13894,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <Btn
                   variant="primary"
                   size="sm"
-                  onClick={() => {
-                    setSelectedLaborEmployeeId(null);
-                    setSelectedLaborEmployeeSeed(null);
-                    setSelectedRecordId(selectedLaborEmployeeSnapshot.active_training_record_id);
-                  }}
+                  onClick={() => openTrainingRecord(selectedLaborEmployeeSnapshot.active_training_record_id)}
                 >
                   Open Active Training
                 </Btn>
@@ -14141,11 +14197,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     {employeeTrainingRecords.map((record) => (
                       <tr
                         key={record.id}
-                        onClick={() => {
-                          setSelectedLaborEmployeeId(null);
-                          setSelectedLaborEmployeeSeed(null);
-                          setSelectedRecordId(record.id);
-                        }}
+                        onClick={() => openTrainingRecord(record.id)}
                         style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
                       >
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{formatLaborPositionTitle(record.target_role) || "—"}</td>
@@ -14440,7 +14492,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   if (selectedRecordId && !selectedRecord) {
     return (
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
-        <button onClick={() => { setSelectedRecordId(null); setExpandedSections({}); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
+        <button onClick={closeTrainingRecord} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
           <I.Back /> Back to Labor
         </button>
         <Card style={{ padding: 24 }}>
@@ -14491,7 +14543,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(190px, 210px)", gap: 16, alignItems: "start" }}>
           <main style={{ minWidth: 0 }}>
             {/* Back button */}
-            <button onClick={() => { setSelectedRecordId(null); setExpandedSections({}); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
+            <button onClick={closeTrainingRecord} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
               <I.Back /> Back to Labor
             </button>
 
@@ -14789,11 +14841,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       : verifiedPercent;
     return (
       <tr
-	      onClick={() => {
-	        setSelectedLaborEmployeeId(null);
-	        setSelectedLaborEmployeeSeed(null);
-	        setSelectedRecordId(rec.id);
-	      }}
+	      onClick={() => openTrainingRecord(rec.id)}
         style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
         onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
