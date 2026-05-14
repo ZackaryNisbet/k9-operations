@@ -16,8 +16,10 @@ export const COMPLETED_TRAINING_RECORD_STATUSES = [
 
 export const PCT_READINESS_TEMPLATE_SLUG = "pct_team_readiness_board";
 export const CSR_READINESS_TEMPLATE_SLUG = "csr_team_readiness_board";
-export const PCT_READINESS_TEMPLATE_LABEL = "Angelina's PCT Training Guide v1";
-export const CSR_READINESS_TEMPLATE_LABEL = "Angelina's CSR Training Guide v1";
+export const PCT_READINESS_TEMPLATE_LABEL = "Angelina's PCT Training Plan v1";
+export const CSR_READINESS_TEMPLATE_LABEL = "Angelina's CSR Training Plan v1";
+const LEGACY_PCT_READINESS_TEMPLATE_LABEL = "Angelina's PCT Training Guide v1";
+const LEGACY_CSR_READINESS_TEMPLATE_LABEL = "Angelina's CSR Training Guide v1";
 
 export const TEAM_READINESS_TEMPLATE_OPTIONS = [
   {
@@ -39,17 +41,32 @@ export const TEAM_READINESS_TEMPLATE_OPTIONS = [
 const TEAM_READINESS_TEMPLATE_SLUG_SET = new Set(TEAM_READINESS_TEMPLATE_OPTIONS.map((option) => option.slug));
 const PCT_READINESS_TEMPLATE_NAMES = new Set([
   PCT_READINESS_TEMPLATE_LABEL.toLowerCase(),
+  LEGACY_PCT_READINESS_TEMPLATE_LABEL.toLowerCase(),
   "pct team readiness board",
 ]);
 const TEAM_READINESS_TEMPLATE_NAMES = new Set([
   ...PCT_READINESS_TEMPLATE_NAMES,
   CSR_READINESS_TEMPLATE_LABEL.toLowerCase(),
+  LEGACY_CSR_READINESS_TEMPLATE_LABEL.toLowerCase(),
   "csr team readiness board",
 ]);
 
 export function getTeamReadinessTemplateOption(slug = PCT_READINESS_TEMPLATE_SLUG) {
   return TEAM_READINESS_TEMPLATE_OPTIONS.find((option) => option.slug === slug || option.value === slug)
     || TEAM_READINESS_TEMPLATE_OPTIONS[0];
+}
+
+export function getTeamReadinessTemplateDisplayLabel(value = "") {
+  const label = String(value || "").trim();
+  const normalized = label.toLowerCase();
+  if (!normalized) return "";
+  if (normalized === PCT_READINESS_TEMPLATE_SLUG || PCT_READINESS_TEMPLATE_NAMES.has(normalized)) {
+    return PCT_READINESS_TEMPLATE_LABEL;
+  }
+  if (normalized === CSR_READINESS_TEMPLATE_SLUG || normalized === CSR_READINESS_TEMPLATE_LABEL.toLowerCase() || normalized === LEGACY_CSR_READINESS_TEMPLATE_LABEL.toLowerCase() || normalized === "csr team readiness board") {
+    return CSR_READINESS_TEMPLATE_LABEL;
+  }
+  return label;
 }
 
 export function isTeamReadinessTemplateSlug(slug = "") {
