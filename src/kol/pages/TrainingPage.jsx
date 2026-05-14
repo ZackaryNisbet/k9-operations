@@ -38,6 +38,7 @@ import {
   buildUpdateTrainingRecordConfigArgs,
   buildTrainingTemplateScopeClause,
   getTeamReadinessTemplateOption,
+  getTeamReadinessTemplateDisplayLabel,
   formatLaborAttachmentFileSize,
   formatTrainingTimeRange,
   formatTrainingTimestamp,
@@ -136,6 +137,13 @@ const DEFAULT_PCT_READINESS_FILTERS = {
   category: "",
   showGapsOnly: false,
   showNeedsCoaching: false,
+};
+
+const DEFAULT_TRAINING_HISTORY_FILTERS = {
+  date: "",
+  employee: "",
+  categoryTask: "",
+  actor: "",
 };
 
 export const TRAINING_REALTIME_TABLES = [
@@ -247,7 +255,8 @@ function LaborCapacityModelControl({
   const isActive = Boolean(selectedModel?.id && activeModel?.id === selectedModel.id);
   const lastSaved = selectedModel?.updated_at ? formatTrainingTimestamp(selectedModel.updated_at) : "Not saved yet";
   const actor = selectedModel?.updated_by_name || selectedModel?.created_by_name || "Staff";
-  const statusLabel = selectedModel?.archived_at ? "Archived" : isActive ? "Active" : "Draft";
+  const statusTone = selectedModel?.archived_at ? "archived" : isActive ? "active" : "inactive";
+  const statusLabel = statusTone === "archived" ? "Archived" : statusTone === "active" ? "Active" : "Not in use";
   const busy = saving || Boolean(actionId) || creating;
 
   if (!available) {
@@ -273,7 +282,7 @@ function LaborCapacityModelControl({
           <span>Labor Model</span>
           <strong>{selectedModel?.name || "No saved model"}</strong>
           <small>
-            <em className={`labor-capacity-model-state is-${statusLabel.toLowerCase()}`}>{statusLabel}</em>
+            <em className={`labor-capacity-model-state is-${statusTone}`}>{statusLabel}</em>
             {isActive ? "Feeds Staffing Capacity" : "Does not affect Staffing Capacity until activated"}
           </small>
         </div>
@@ -318,7 +327,7 @@ function LaborCapacityModelControl({
                       <strong>{model.name}</strong>
                       <small>{model.updated_at ? formatTrainingTimestamp(model.updated_at) : "No saved timestamp"} by {model.updated_by_name || model.created_by_name || "Staff"}</small>
                     </span>
-                    <em className={`labor-capacity-model-state is-${modelIsActive ? "active" : "draft"}`}>{modelIsActive ? "Active" : "Draft"}</em>
+                    <em className={`labor-capacity-model-state is-${modelIsActive ? "active" : "inactive"}`}>{modelIsActive ? "Active" : "Not in use"}</em>
                   </button>
                 );
               })}
@@ -329,7 +338,7 @@ function LaborCapacityModelControl({
         {canEdit && (
           <div className="labor-capacity-model-command-row">
             <button type="button" onClick={onRename} disabled={!selectedModel || busy}><I.Pencil /> Rename</button>
-            <button type="button" onClick={onCreate} disabled={creating || busy}><I.Plus /> New Draft</button>
+            <button type="button" onClick={onCreate} disabled={creating || busy}><I.Plus /> New Model</button>
             <button type="button" onClick={onDuplicate} disabled={!selectedModel || busy}><I.Layers /> Duplicate</button>
             <button type="button" className="is-primary" onClick={onActivate} disabled={!selectedModel || isActive || busy}><I.Check /> Activate</button>
             <button type="button" className="is-danger" onClick={onArchive} disabled={!selectedModel || isActive || busy}><I.Trash /> Archive</button>
@@ -5728,6 +5737,7 @@ export function buildTrainingHistoryRows({
     const item = note.template_item_id ? itemLookup(note.template_item_id) : null;
     const section = note.template_section_id ? sectionLookup(note.template_section_id) : null;
     const employee = laborEmployeeMap[record.labor_employee_id] || {};
+    const categoryTaskLabel = item?.label || section?.title || getTeamReadinessTemplateDisplayLabel(record.template_name_snapshot) || "Training Record";
     return {
       ...note,
       id: `note_${note.id}`,
@@ -5735,12 +5745,14 @@ export function buildTrainingHistoryRows({
       historyKind: "note",
       record,
       item,
+      section,
+      categoryTaskLabel,
       employeeName: employee.full_name || record.employee_full_name || "Unknown employee",
       event_type: note.template_item_id ? "task_note_added" : "record_note_added",
       actionLabel: note.template_item_id ? "Observation added" : "Record note added",
       actorDisplayName: resolveVerifiedActorDisplayName(note),
       summary: [
-        item?.label || section?.title || record.template_name_snapshot || "Training Record",
+        categoryTaskLabel,
         note.note_text,
       ].filter(Boolean).join(": "),
     };
@@ -5755,8 +5767,10 @@ export function buildTrainingHistoryRows({
     .map((event) => {
       const record = resolveTrainingHistoryRecord(event, recordMap);
       const item = event.template_item_id ? itemLookup(event.template_item_id) : null;
+      const section = event.template_section_id ? sectionLookup(event.template_section_id) : null;
       const employee = laborEmployeeMap[record.labor_employee_id] || {};
       const statusChange = getTrainingHistoryStatusChange(event);
+      const categoryTaskLabel = item?.label || section?.title || getTeamReadinessTemplateDisplayLabel(record.template_name_snapshot) || String(event.event_type || "Training event").replace(/_/g, " ");
       return {
         ...event,
         id: `event_${event.id}`,
@@ -5764,16 +5778,101 @@ export function buildTrainingHistoryRows({
         historyKind: "event",
         record,
         item,
+        section,
+        categoryTaskLabel,
         employeeName: employee.full_name || record.employee_full_name || "Unknown employee",
         actionLabel: getTrainingHistoryActionLabel(event),
         actorDisplayName: resolveVerifiedActorDisplayName(event),
         statusChange,
-        summary: item?.label || record.template_name_snapshot || String(event.event_type || "Training event").replace(/_/g, " "),
+        summary: categoryTaskLabel,
       };
     });
 
   return [...eventRows, ...noteRows]
     .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+}
+
+function getLocalDateKey(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  const text = String(value || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+export function getTrainingHistoryRowDate(row = {}) {
+  return getLocalDateKey(row.created_at || row.occurred_at || row.updated_at);
+}
+
+function buildUniqueHistoryOptions(rows = [], accessor = () => "") {
+  const seen = new Set();
+  return toObjectRows(rows)
+    .map((row) => String(accessor(row) || "").trim())
+    .filter(Boolean)
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    .map((label) => ({ value: label, label }));
+}
+
+export function buildTrainingHistoryFilterOptions(rows = []) {
+  return {
+    employees: [
+      { value: "", label: "All employees" },
+      ...buildUniqueHistoryOptions(rows, (row) => row.employeeName),
+    ],
+    actors: [
+      { value: "", label: "All actors" },
+      ...buildUniqueHistoryOptions(rows, (row) => row.actorDisplayName),
+    ],
+    categoryTasks: [
+      { value: "", label: "All categories / tasks" },
+      ...buildUniqueHistoryOptions(rows, (row) => row.categoryTaskLabel || row.summary),
+    ],
+  };
+}
+
+export function applyTrainingHistoryFilters(rows = [], filters = {}) {
+  const targetDate = String(filters.date || "").trim();
+  const employee = String(filters.employee || "").trim().toLowerCase();
+  const actor = String(filters.actor || "").trim().toLowerCase();
+  const categoryTask = String(filters.categoryTask || "").trim().toLowerCase();
+  return toObjectRows(rows).filter((row) => {
+    if (targetDate && getTrainingHistoryRowDate(row) !== targetDate) return false;
+    if (employee && String(row.employeeName || "").trim().toLowerCase() !== employee) return false;
+    if (actor && String(row.actorDisplayName || "").trim().toLowerCase() !== actor) return false;
+    if (categoryTask) {
+      const haystack = [
+        row.categoryTaskLabel,
+        row.summary,
+        row.item?.label,
+        row.section?.title,
+        row.record?.template_name_snapshot,
+      ].map((value) => String(value || "").trim().toLowerCase());
+      if (!haystack.some((value) => value === categoryTask || value.includes(categoryTask))) return false;
+    }
+    return true;
+  });
+}
+
+export function buildTrainingHistoryDayMetrics(rows = [], dateValue = "") {
+  const normalizedRows = toObjectRows(rows);
+  const targetDate = String(dateValue || "").trim() || getTrainingHistoryRowDate(normalizedRows[0]) || todayStr();
+  const dayRows = normalizedRows.filter((row) => getTrainingHistoryRowDate(row) === targetDate);
+  return {
+    date: targetDate,
+    activityCount: dayRows.length,
+    employeeCount: new Set(dayRows.map((row) => String(row.employeeName || "").trim()).filter(Boolean)).size,
+  };
 }
 
 export function applyLaborRosterFilters(rows, filters) {
@@ -6160,6 +6259,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessLoaded, setPctReadinessLoaded] = useState(false);
   const [pctReadinessError, setPctReadinessError] = useState("");
   const [pctReadinessFilters, setPctReadinessFilters] = useState(DEFAULT_PCT_READINESS_FILTERS);
+  const [trainingHistoryFilters, setTrainingHistoryFilters] = useState(DEFAULT_TRAINING_HISTORY_FILTERS);
   const [showPctReadinessFilterPanel, setShowPctReadinessFilterPanel] = useState(false);
   const [pctReadinessFilterPickerReady, setPctReadinessFilterPickerReady] = useState(false);
   const [pctReadinessCollapsedSections, setPctReadinessCollapsedSections] = useState({});
@@ -6237,10 +6337,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pendingEmployeeRecordTabRef = useRef("");
   const hourAnalysisLoadedSnapshotRef = useRef("");
   const hourAnalysisSaveTimerRef = useRef(null);
+  const previousEditingLaborCapacityModelIdRef = useRef(editingLaborCapacityModelId);
   const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
   const trainingRealtimeRefreshTimerRef = useRef(null);
   const lastRouteTrainingRecordIdRef = useRef(routeTrainingRecordId);
+
+  const selectLaborCapacityModel = useCallback((modelId) => {
+    const nextModelId = String(modelId || "").trim();
+    if (!nextModelId || nextModelId === editingLaborCapacityModelId) return;
+    if (hourAnalysisSaveTimerRef.current && typeof window !== "undefined") {
+      window.clearTimeout(hourAnalysisSaveTimerRef.current);
+      hourAnalysisSaveTimerRef.current = null;
+    }
+    setSavingHourAnalysis(false);
+    setEditingLaborCapacityModelId(nextModelId);
+  }, [editingLaborCapacityModelId]);
 
   const openTrainingRecord = useCallback((recordId) => {
     const nextRecordId = String(recordId || "");
@@ -6395,6 +6507,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setLaborCapacityModelVersionsAvailable(true);
       setSelectedLaborCapacityVersionId("");
       setEditingLaborCapacityModelId("");
+      previousEditingLaborCapacityModelIdRef.current = "";
       setLaborCapacityModelNameDraft("");
       hourAnalysisLoadedSnapshotRef.current = JSON.stringify(defaults);
       setHourAnalysisLoaded(false);
@@ -6429,6 +6542,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           setLaborCapacityModels([]);
           setLaborCapacityModelsLoaded(true);
           setEditingLaborCapacityModelId("");
+          previousEditingLaborCapacityModelIdRef.current = "";
           setLaborCapacityModelNameDraft("");
           setHourAnalysisSettings(legacySettings);
           hourAnalysisLoadedSnapshotRef.current = JSON.stringify(legacySettings);
@@ -6465,6 +6579,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setLaborCapacityModels(models);
       setLaborCapacityModelsLoaded(true);
       setEditingLaborCapacityModelId(activeModel?.id || "");
+      previousEditingLaborCapacityModelIdRef.current = activeModel?.id || "";
       setLaborCapacityModelNameDraft(activeModel?.name || "");
       setHourAnalysisSettings(settings);
       hourAnalysisLoadedSnapshotRef.current = JSON.stringify(settings);
@@ -6500,6 +6615,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   useEffect(() => {
     if (!hourAnalysisLoaded || !laborLocationRef) return undefined;
+    const currentEditingModelId = laborCapacityModelsAvailable ? String(editingLaborCapacityModelId || "") : "";
+    if (previousEditingLaborCapacityModelIdRef.current !== currentEditingModelId) {
+      previousEditingLaborCapacityModelIdRef.current = currentEditingModelId;
+      setSavingHourAnalysis(false);
+      return undefined;
+    }
     const normalized = normalizeHourAnalysisSettings(hourAnalysisSettings);
     const serialized = JSON.stringify(normalized);
     if (serialized === hourAnalysisLoadedSnapshotRef.current) return undefined;
@@ -7831,6 +7952,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       getSectionById,
     })
   ), [allTrainingEvents, allTrainingNotes, getItemById, getSectionById, laborEmployeeMap, recordMap]);
+  const trainingHistoryFilterOptions = useMemo(() => (
+    buildTrainingHistoryFilterOptions(trainingHistoryRows)
+  ), [trainingHistoryRows]);
+  const filteredTrainingHistoryRows = useMemo(() => (
+    applyTrainingHistoryFilters(trainingHistoryRows, trainingHistoryFilters)
+  ), [trainingHistoryFilters, trainingHistoryRows]);
+  const trainingHistoryDayMetrics = useMemo(() => (
+    buildTrainingHistoryDayMetrics(trainingHistoryRows, trainingHistoryFilters.date)
+  ), [trainingHistoryFilters.date, trainingHistoryRows]);
+  const trainingHistoryFilterCount = [
+    trainingHistoryFilters.date,
+    trainingHistoryFilters.employee,
+    trainingHistoryFilters.categoryTask,
+    trainingHistoryFilters.actor,
+  ].filter(Boolean).length;
 
   // Template stats: section and item counts per template
   const templateStats = useMemo(() => {
@@ -7997,7 +8133,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         employeeId: record?.labor_employee_id || null,
         employeeName: employee?.full_name || record?.employee_full_name || "Unknown Employee",
         sourceModule: "training",
-        sourceLabel: item?.label || section?.title || record?.template_name_snapshot || "Training Record",
+        sourceLabel: item?.label || section?.title || getTeamReadinessTemplateDisplayLabel(record?.template_name_snapshot) || "Training Record",
         noteType: note.template_item_id ? "task_observation" : "record_note",
         createdAt: note.created_at,
         createdByName: resolveVerifiedActorDisplayName(note),
@@ -9595,6 +9731,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPctReadinessFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const updateTrainingHistoryFilter = useCallback((key, value) => {
+    setTrainingHistoryFilters((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const clearTrainingHistoryFilters = useCallback(() => {
+    setTrainingHistoryFilters(DEFAULT_TRAINING_HISTORY_FILTERS);
+  }, []);
+
   const clearPctReadinessFilters = useCallback(() => {
     setPctReadinessFilters(DEFAULT_PCT_READINESS_FILTERS);
     setActivePctReadinessSectionId("");
@@ -10887,9 +11031,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     loadLaborCapacityModelVersions(targetId);
     return true;
   }, [actorName, actorUserId, addGlobalToast, laborCapacityModelsAvailable, loadLaborCapacityModelVersions]);
-  const createLaborCapacityModel = useCallback(async (nameValue = "Draft Labor Model") => {
+  const createLaborCapacityModel = useCallback(async (nameValue = "Labor Model") => {
     if (!canEditRoster || !laborCapacityModelsAvailable || !laborLocationRef) return;
-    const normalizedName = normalizeLaborCapacityModelName(nameValue, "Draft Labor Model");
+    const normalizedName = normalizeLaborCapacityModelName(nameValue, "Labor Model");
     setCreatingLaborCapacityModel(true);
     try {
       const { data: row, error } = await supabase.rpc("create_labor_capacity_model_with_version", {
@@ -10898,7 +11042,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         p_model_settings: hourAnalysisSettings,
         p_is_active: false,
         p_change_type: "create",
-        p_change_summary: `Created draft model ${normalizedName}.`,
+        p_change_summary: `Created labor model ${normalizedName}.`,
         p_changed_by_name: actorName,
       });
       if (error) throw error;
@@ -10907,7 +11051,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setEditingLaborCapacityModelId(normalized.id);
       setLaborCapacityModelNameDraft(normalized.name);
       loadLaborCapacityModelVersions(normalized.id);
-      addGlobalToast?.(`Created draft model ${normalized.name}`, "success");
+      addGlobalToast?.(`Created labor model ${normalized.name}`, "success");
     } catch (error) {
       console.error("Failed to create labor capacity model", error);
       addGlobalToast?.(error.message || "Failed to create labor model", "error");
@@ -11037,7 +11181,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const normalizedType = ["create", "rename", "duplicate", "archive"].includes(type) ? type : "create";
     const baseName = editingLaborCapacityModel?.name || LABOR_CAPACITY_MODEL_DEFAULT_NAME;
     const initialName = normalizedType === "create"
-      ? "Draft Labor Model"
+      ? "Labor Model"
       : normalizedType === "duplicate"
         ? `Copy of ${baseName}`
         : baseName;
@@ -12241,7 +12385,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         case "position":
           return formatLaborPositionTitle(record.target_role || "");
         case "plan":
-          return record.template_name_snapshot || "";
+          return getTeamReadinessTemplateDisplayLabel(record.template_name_snapshot) || "";
         case "progress":
           return Number(record.progress_percent || 0);
         case "status":
@@ -12262,7 +12406,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         case "position":
           return formatLaborPositionTitle(record.target_role || "");
         case "plan":
-          return record.template_name_snapshot || "";
+          return getTeamReadinessTemplateDisplayLabel(record.template_name_snapshot) || "";
         case "progress":
           return Number(record.progress_percent || 0);
         case "status":
@@ -14201,7 +14345,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
                       >
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 700 }}>{formatLaborPositionTitle(record.target_role) || "—"}</td>
-                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{record.template_name_snapshot}</td>
+                        <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{getTeamReadinessTemplateDisplayLabel(record.template_name_snapshot) || record.template_name_snapshot}</td>
                         <td style={{ padding: "11px 12px" }}><StatusBadge status={record.overall_status} /></td>
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.textSec }}>{Math.round(safeTrainingProgress(record.progress_percent))}%</td>
                         <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut }}>{record.target_end_date ? formatLaborDate(record.target_end_date) : "—"}</td>
@@ -14514,7 +14658,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const requiredItemCount = selectedRecordReadinessProgress.total;
     const recordEmployeeName = selectedRecord.employee_full_name || selectedLaborEmployeeView?.full_name || "Employee";
     const recordTargetRole = formatLaborPositionTitle(selectedRecord.target_role || selectedLaborEmployeeView?.position_title) || "Employee";
-    const recordTemplateName = selectedRecord.template_name_snapshot || selectedVersion?.name || "Training Plan";
+    const recordTemplateName = getTeamReadinessTemplateDisplayLabel(selectedRecord.template_name_snapshot || selectedVersion?.name) || "Training Plan";
     const trainingRecordSectionNavItems = [
       {
         id: "training-record-overview",
@@ -14848,7 +14992,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       >
         <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.text }}>{rec.employee_full_name}</td>
         <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{formatLaborPositionTitle(rec.target_role) || "—"}</td>
-        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{rec.template_name_snapshot}</td>
+        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{getTeamReadinessTemplateDisplayLabel(rec.template_name_snapshot) || rec.template_name_snapshot}</td>
         <td style={{ padding: "10px 12px" }}>
           <div style={{ minWidth: 135 }}>
             <PctReadinessDualProgress
@@ -15740,6 +15884,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          color: ${C.textMut};
 	          font-size: 12px;
 	          font-weight: 700;
+	        }
+	        .staffing-capacity-settings-strip > span {
+	          display: inline-flex;
+	          align-items: center;
+	          gap: 6px;
+	          min-width: 0;
+	        }
+	        .staffing-capacity-settings-strip > span svg {
+	          width: 14px;
+	          height: 14px;
+	          color: ${C.info};
+	          flex: 0 0 auto;
 	        }
 	        .staffing-capacity-settings-toggle {
 	          display: inline-flex;
@@ -17086,6 +17242,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           min-width: 0;
           animation: hourAnalysisCapacityRowIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
           animation-delay: var(--capacity-row-delay, 0ms);
+          transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), filter 180ms ease;
         }
         .staffing-capacity-role-chart.is-short {
           --capacity-tone-rgb: 185, 28, 28;
@@ -17101,6 +17258,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           outline: 2px solid rgba(var(--capacity-tone-rgb), 0.32);
           outline-offset: 3px;
           border-radius: 8px;
+        }
+        .staffing-capacity-role-chart:hover,
+        .staffing-capacity-role-chart:focus-visible {
+          transform: translateY(-3px);
+          filter: drop-shadow(0 14px 24px rgba(var(--capacity-tone-rgb), 0.12));
         }
         .staffing-capacity-role-head {
           display: flex;
@@ -17158,6 +17320,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             linear-gradient(180deg, rgba(148, 163, 184, 0.16) 1px, transparent 1px) 0 0 / 100% 25%,
             linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
           overflow: visible;
+          transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+        }
+        .staffing-capacity-role-chart:hover .staffing-capacity-bar-stage,
+        .staffing-capacity-role-chart:focus-visible .staffing-capacity-bar-stage {
+          border-color: rgba(var(--capacity-tone-rgb), 0.32);
+          box-shadow: inset 0 0 0 1px rgba(var(--capacity-tone-rgb), 0.08), 0 14px 28px rgba(var(--capacity-tone-rgb), 0.08);
         }
         .staffing-capacity-target-band {
           position: absolute;
@@ -17209,7 +17377,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .staffing-capacity-bar-pair {
           position: absolute;
           z-index: 3;
-          inset: 0 12px 0;
+          inset: 0 12px 24px;
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 11px;
@@ -17228,6 +17396,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           width: min(38px, 100%);
           border-radius: 6px 6px 0 0;
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), 0 10px 18px rgba(15, 23, 42, 0.09);
+          transform-origin: center bottom;
+          transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), filter 180ms ease, box-shadow 180ms ease;
+        }
+        .staffing-capacity-role-chart:hover .staffing-capacity-bar,
+        .staffing-capacity-role-chart:focus-visible .staffing-capacity-bar {
+          transform: scaleX(1.12);
+          filter: saturate(1.08);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), 0 13px 22px rgba(15, 23, 42, 0.13);
         }
         .staffing-capacity-bar.is-expected {
           height: var(--expected-height);
@@ -17266,9 +17442,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .staffing-capacity-bar-caption {
           position: absolute;
           left: 50%;
-          bottom: -20px;
+          bottom: -18px;
           transform: translateX(-50%);
-          color: ${C.textMut};
+          border-radius: 999px;
+          background: rgba(255,255,255,0.92);
+          color: ${C.textSec};
+          padding: 2px 5px;
           font-size: 9px;
           font-weight: 950;
           line-height: 1;
@@ -18479,7 +18658,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           color: ${C.pri};
           background: #dcfce7;
         }
-        .labor-capacity-model-state.is-draft {
+        .labor-capacity-model-state.is-draft,
+        .labor-capacity-model-state.is-inactive {
           color: #92400e;
           background: #fef3c7;
         }
@@ -19404,7 +19584,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          stroke-linejoin: round;
 	        }
 	        .labor-model-shell.is-page .labor-model-summary-cards {
-	          grid-template-columns: repeat(4, minmax(0, 1fr));
+	          grid-template-columns: repeat(3, minmax(0, 1fr));
+	          align-items: stretch;
 	        }
         .labor-model-shell.is-page .labor-model-summary-grid {
           grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
@@ -20283,6 +20464,88 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           animation: laborModuleEnter 360ms cubic-bezier(0.22, 1, 0.36, 1);
           will-change: opacity;
         }
+        .training-history-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          flex-wrap: wrap;
+          padding: 16px 18px;
+          border-bottom: 1px solid ${C.borderLight};
+        }
+        .training-history-metrics {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .training-history-metric {
+          min-width: 138px;
+          border: 1px solid rgba(37, 99, 235, 0.12);
+          border-radius: 8px;
+          background: linear-gradient(135deg, rgba(239, 246, 255, 0.9), #ffffff 70%);
+          padding: 8px 10px;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+        }
+        .training-history-metric span,
+        .training-history-metric strong,
+        .training-history-metric em {
+          display: block;
+          min-width: 0;
+        }
+        .training-history-metric span,
+        .training-history-filter-label {
+          color: ${C.textMut};
+          font-size: 10.5px;
+          font-weight: 900;
+          line-height: 1;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        .training-history-metric strong {
+          margin-top: 5px;
+          color: ${C.info};
+          font-size: 22px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .training-history-metric em {
+          margin-top: 4px;
+          color: ${C.textSec};
+          font-size: 10.5px;
+          font-style: normal;
+          font-weight: 760;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .training-history-toolbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: end;
+          padding: 14px 18px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: #f8fafc;
+        }
+        .training-history-filter-grid {
+          display: grid;
+          grid-template-columns: minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(240px, 1.25fr) minmax(190px, 1fr);
+          gap: 10px;
+          align-items: end;
+          min-width: 0;
+        }
+        .training-history-filter-label {
+          margin-bottom: 4px;
+        }
+        .training-history-toolbar-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
 	        @media (prefers-reduced-motion: reduce) {
 	          .labor-module-panel,
 	          .labor-view-switcher,
@@ -20321,7 +20584,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             .hour-analysis-capacity-reference,
             .hour-analysis-capacity-expected-span,
             .hour-analysis-capacity-fill,
-            .hour-analysis-capacity-marker { transition: none; }
+            .hour-analysis-capacity-marker,
+            .staffing-capacity-role-chart,
+            .staffing-capacity-bar-stage,
+            .staffing-capacity-bar { transition: none; }
+            .staffing-capacity-role-chart:hover,
+            .staffing-capacity-role-chart:focus-visible {
+              transform: none;
+              filter: none;
+            }
 	        }
 	        @media (max-width: 880px) {
 	          .labor-page-shell { padding: 14px 8px 28px; }
@@ -20353,6 +20624,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             min-height: 0;
           }
           .labor-view-switcher-indicator { display: none; }
+          .training-history-toolbar {
+            grid-template-columns: 1fr;
+            align-items: stretch;
+          }
+          .training-history-filter-grid {
+            grid-template-columns: 1fr;
+          }
+          .training-history-toolbar-actions {
+            justify-content: flex-start;
+          }
           .hour-analysis-summary-grid { grid-template-columns: 1fr; }
           .hour-analysis-roster-summary { grid-template-columns: 1fr; }
 	          .hour-analysis-decision-grid { grid-template-columns: 1fr; }
@@ -21933,15 +22214,80 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           {trainingView === "history" && (
             <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
-              <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div className="training-history-header">
                 <div>
                   <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Training History</div>
                   <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Create, update, note, import, link, and reconciliation activity from training records.</div>
                 </div>
-                <Badge color={trainingHistoryRows.length > 0 ? "info" : "default"}>{trainingHistoryRows.length} activities</Badge>
+                <div className="training-history-metrics">
+                  <div className="training-history-metric">
+                    <span>Activities logged</span>
+                    <strong>{trainingHistoryDayMetrics.activityCount}</strong>
+                    <em>{formatLaborDate(trainingHistoryDayMetrics.date)}</em>
+                  </div>
+                  <div className="training-history-metric">
+                    <span>Employees with activity</span>
+                    <strong>{trainingHistoryDayMetrics.employeeCount}</strong>
+                    <em>{trainingHistoryFilters.date ? "selected day" : "latest day"}</em>
+                  </div>
+                  <Badge color={filteredTrainingHistoryRows.length > 0 ? "info" : "default"}>
+                    {filteredTrainingHistoryRows.length} shown
+                  </Badge>
+                </div>
+              </div>
+              <div className="training-history-toolbar">
+                <div className="training-history-filter-grid">
+                  <Inp
+                    label="Activity Date"
+                    type="date"
+                    value={trainingHistoryFilters.date}
+                    onChange={(value) => updateTrainingHistoryFilter("date", value)}
+                  />
+                  <div>
+                    <div className="training-history-filter-label">Employee</div>
+                    <CustomSelect
+                      value={trainingHistoryFilters.employee}
+                      onChange={(value) => updateTrainingHistoryFilter("employee", value)}
+                      options={trainingHistoryFilterOptions.employees}
+                      placeholder="All employees"
+                      searchable
+                    />
+                  </div>
+                  <div>
+                    <div className="training-history-filter-label">Category / Task</div>
+                    <CustomSelect
+                      value={trainingHistoryFilters.categoryTask}
+                      onChange={(value) => updateTrainingHistoryFilter("categoryTask", value)}
+                      options={trainingHistoryFilterOptions.categoryTasks}
+                      placeholder="All categories / tasks"
+                      searchable
+                      searchPlaceholder="Search tasks"
+                    />
+                  </div>
+                  <div>
+                    <div className="training-history-filter-label">Actor</div>
+                    <CustomSelect
+                      value={trainingHistoryFilters.actor}
+                      onChange={(value) => updateTrainingHistoryFilter("actor", value)}
+                      options={trainingHistoryFilterOptions.actors}
+                      placeholder="All actors"
+                      searchable
+                    />
+                  </div>
+                </div>
+                <div className="training-history-toolbar-actions">
+                  <Btn variant="ghost" size="sm" icon={<I.Calendar />} onClick={() => updateTrainingHistoryFilter("date", todayStr())}>
+                    Today
+                  </Btn>
+                  <Btn variant="ghost" size="sm" onClick={clearTrainingHistoryFilters} disabled={trainingHistoryFilterCount === 0}>
+                    Clear Filters{trainingHistoryFilterCount > 0 ? ` (${trainingHistoryFilterCount})` : ""}
+                  </Btn>
+                </div>
               </div>
               {trainingHistoryRows.length === 0 ? (
                 <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No training history has been logged yet.</div>
+              ) : filteredTrainingHistoryRows.length === 0 ? (
+                <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No training history matches the current filters.</div>
               ) : (
                 <div style={{ maxHeight: "70vh", overflow: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -21955,7 +22301,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </tr>
                     </thead>
                     <tbody>
-                      {trainingHistoryRows.map((event) => {
+                      {filteredTrainingHistoryRows.map((event) => {
                         const canOpenRecord = !!(event.record_id || event.record?.id);
                         return (
                         <tr
@@ -22484,7 +22830,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              onToggle={() => toggleCapacitySection("staffingCapacityVariance")}
 	            />
 	            <div className="staffing-capacity-settings-strip">
-	              <span>Tolerance defaults to {HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT}% with a {HOUR_ANALYSIS_MIN_TOLERANCE_HOURS}-hour decimal guard unless changed for a role.</span>
+	              <span><I.InfoCircle /> Default tolerance: {HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT}%; per-position overrides live in settings.</span>
 	              <button
 	                type="button"
 	                className={`staffing-capacity-settings-toggle${showStaffingCapacitySettings ? " is-active" : ""}`}
@@ -23108,7 +23454,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             saving={savingHourAnalysis}
             actionId={laborCapacityModelActionId}
             creating={creatingLaborCapacityModel}
-            onSelect={setEditingLaborCapacityModelId}
+            onSelect={selectLaborCapacityModel}
             onRename={() => openLaborCapacityModelDialog("rename")}
             onCreate={() => openLaborCapacityModelDialog("create")}
             onDuplicate={() => openLaborCapacityModelDialog("duplicate")}
@@ -23552,7 +23898,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <Modal
           title={
             laborCapacityModelDialog === "create"
-              ? "New Labor Model Draft"
+              ? "New Labor Model"
               : laborCapacityModelDialog === "rename"
                 ? "Rename Labor Model"
                 : laborCapacityModelDialog === "duplicate"
@@ -23569,7 +23915,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </div>
                 <div className="labor-capacity-model-dialog-actions">
                   <Btn variant="ghost" onClick={closeLaborCapacityModelDialog}>Cancel</Btn>
-                  <Btn variant="primary" onClick={submitLaborCapacityModelDialog}>Archive Draft</Btn>
+                  <Btn variant="primary" onClick={submitLaborCapacityModelDialog}>Archive Model</Btn>
                 </div>
               </>
             ) : (
@@ -23581,9 +23927,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   placeholder="Labor model name"
                 />
                 <div className="labor-capacity-model-dialog-copy">
-                  {laborCapacityModelDialog === "create" && "Creates a draft model from the current editor state. Staffing Capacity will not use it until activated."}
+                  {laborCapacityModelDialog === "create" && "Creates a model from the current editor state. Staffing Capacity will not use it until activated."}
                   {laborCapacityModelDialog === "rename" && "Renames the selected model and records the change in version history."}
-                  {laborCapacityModelDialog === "duplicate" && "Copies the current model into a new draft with its own version history."}
+                  {laborCapacityModelDialog === "duplicate" && "Copies the current model into a separate model with its own version history."}
                 </div>
                 <div className="labor-capacity-model-dialog-actions">
                   <Btn variant="ghost" onClick={closeLaborCapacityModelDialog}>Cancel</Btn>
@@ -23592,7 +23938,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     disabled={!laborCapacityModelDialogName.trim()}
                     onClick={submitLaborCapacityModelDialog}
                   >
-                    {laborCapacityModelDialog === "create" ? "Create Draft" : laborCapacityModelDialog === "rename" ? "Rename" : "Duplicate"}
+                    {laborCapacityModelDialog === "create" ? "Create Model" : laborCapacityModelDialog === "rename" ? "Rename" : "Duplicate"}
                   </Btn>
                 </div>
               </>

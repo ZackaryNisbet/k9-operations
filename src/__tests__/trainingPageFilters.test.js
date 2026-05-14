@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLaborRosterFilters,
+  applyTrainingHistoryFilters,
   applyLaborCapacityModelActivation,
   buildHourAnalysisCapacityRowVisualModel,
   buildHourAnalysisGroupDisplay,
@@ -11,6 +12,8 @@ import {
   buildPlannedCrossRoleCoverageRows,
   buildLaborModulePanelKey,
   buildTrainingHistoryRows,
+  buildTrainingHistoryDayMetrics,
+  buildTrainingHistoryFilterOptions,
   buildHourAnalysisModel,
   buildOutOfPositionLaborSummary,
   calculateLaborShiftHours,
@@ -343,13 +346,16 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("CSR/PCT:");
     expect(source).not.toContain("No range buffer");
     expect(source).toContain("Capacity Settings");
-    expect(source).toContain("Tolerance defaults to");
+    expect(source).toContain("Default tolerance:");
+    expect(source).toContain("per-position overrides live in settings");
     expect(source).toContain("LABOR_POSITION_ACRONYMS_SETTING_KEY");
     expect(source).toContain("position_acronym");
     expect(source).toContain("Acronym");
     expect(source).toContain("laborModelRoleColorOptions");
     expect(source).toContain("Expected");
     expect(source).toContain("Demand");
+    expect(source).toContain("staffing-capacity-bar-caption");
+    expect(source).toContain(".staffing-capacity-role-chart:hover");
     expect(source).toContain("buffer zone");
     expect(source).not.toContain("Expected / actual");
     expect(source).toContain("Lower range");
@@ -1141,6 +1147,20 @@ describe("applyLaborRosterFilters", () => {
     expect(buildHourAnalysisModel({ settings: activeDraftSettings, rosterRows: [] }).laborModelSummary.totalWeekly).toBe(8);
   });
 
+  it("keeps Labor Model switching immediate and labels inactive models without draft copy", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const controlSource = source.slice(
+      source.indexOf("function LaborCapacityModelControl"),
+      source.indexOf("const SORT_DIRECTION_LABELS"),
+    );
+
+    expect(controlSource).toContain("Not in use");
+    expect(controlSource).not.toContain(">Draft<");
+    expect(source).toContain("previousEditingLaborCapacityModelIdRef");
+    expect(source).toContain("selectLaborCapacityModel");
+    expect(source).toContain("window.clearTimeout(hourAnalysisSaveTimerRef.current)");
+  });
+
   it("aggregates out-of-position and unclassified schedule labor by shift and hours", () => {
     expect(calculateLaborShiftHours("10p", "2a")).toBe(4);
 
@@ -1369,6 +1389,7 @@ describe("applyLaborRosterFilters", () => {
       event_type: "task_note_added",
       employeeName: "Zach E. Cruz",
       actorDisplayName: "Zack Nisbet",
+      categoryTaskLabel: "Gate control",
       summary: "Gate control: Needs another repetition.",
     });
     expect(rows[1]).toMatchObject({
@@ -1376,6 +1397,53 @@ describe("applyLaborRosterFilters", () => {
       actorDisplayName: "Zack Nisbet",
       summary: "Gate control",
     });
+  });
+
+  it("filters Training History by date, employee, category/task, and actor with day metrics", () => {
+    const rows = [
+      {
+        id: "event-1",
+        created_at: "2026-05-13T15:00:00",
+        employeeName: "Amanda Drill",
+        actorDisplayName: "Zack Nisbet",
+        categoryTaskLabel: "Blanket policy",
+        summary: "Blanket policy",
+      },
+      {
+        id: "event-2",
+        created_at: "2026-05-13T16:00:00",
+        employeeName: "Sarah Gonzalez",
+        actorDisplayName: "Angelina DeAugustine",
+        categoryTaskLabel: "Gate control",
+        summary: "Gate control",
+      },
+      {
+        id: "event-3",
+        created_at: "2026-05-12T16:00:00",
+        employeeName: "Amanda Drill",
+        actorDisplayName: "Zack Nisbet",
+        categoryTaskLabel: "Gate control",
+        summary: "Gate control",
+      },
+    ];
+
+    expect(applyTrainingHistoryFilters(rows, {
+      date: "2026-05-13",
+      employee: "Amanda Drill",
+      categoryTask: "Blanket policy",
+      actor: "Zack Nisbet",
+    }).map((row) => row.id)).toEqual(["event-1"]);
+
+    expect(buildTrainingHistoryDayMetrics(rows, "2026-05-13")).toMatchObject({
+      date: "2026-05-13",
+      activityCount: 2,
+      employeeCount: 2,
+    });
+
+    const options = buildTrainingHistoryFilterOptions(rows);
+    expect(options.employees.map((option) => option.label)).toEqual(["All employees", "Amanda Drill", "Sarah Gonzalez"]);
+    expect(options.actors.map((option) => option.label)).toEqual(["All actors", "Angelina DeAugustine", "Zack Nisbet"]);
+    expect(options.categoryTasks.map((option) => option.label)).toEqual(["All categories / tasks", "Blanket policy", "Gate control"]);
   });
 
   it("builds Training History rows from location-joined event records and status transitions", () => {
