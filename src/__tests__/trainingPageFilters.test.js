@@ -83,6 +83,125 @@ describe("applyLaborRosterFilters", () => {
     });
   });
 
+  it("opens the readiness cell modal from individual team readiness record items", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const renderRecordItem = source.slice(
+      source.indexOf("const renderRecordItem"),
+      source.indexOf("const renderTemplatePreviewItem"),
+    );
+
+    expect(source).toContain("update_training_readiness_cell");
+    expect(source).toContain("Update Readiness Cell");
+    expect(renderRecordItem).toContain("selectedRecordIsTeamReadiness");
+    expect(renderRecordItem).toContain("openPctReadinessCellEditor(selectedRecord, item, section, { cell: readinessCell })");
+    expect(renderRecordItem).toContain('gridTemplateColumns: "minmax(0, 1fr) 220px 120px"');
+    expect(renderRecordItem).toContain("borderLeft");
+    expect(renderRecordItem).toContain("borderRight");
+    expect(renderRecordItem).not.toContain('aria-hidden="true"');
+    expect(renderRecordItem).not.toContain("width: 22");
+    expect(renderRecordItem).not.toContain("<CustomSelect");
+  });
+
+  it("keeps the team readiness board free of hotspot cards and uses Plan labeling", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).not.toContain("Training Gap Hotspot");
+    expect(source).not.toContain("Gap Hotspots by Category");
+    expect(source).not.toContain("Role / Template");
+    expect(source).toContain(">Plan</div>");
+  });
+
+  it("keeps trainee configuration using standard controls with a soft-delete action", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const configModalSource = source.slice(
+      source.indexOf('<Modal title="Edit Trainee Configuration"'),
+      source.indexOf("{pctReadinessCellEditorModal}"),
+    );
+
+    expect(configModalSource).toContain("<CustomSelect");
+    expect(configModalSource).not.toContain("<HourAnalysisAnimatedPicker");
+    expect(configModalSource).toContain("Delete Training Record");
+    expect(configModalSource).toContain("handleArchiveTrainingRecord");
+    expect(source).toContain('overall_status: "archived"');
+    expect(source).toContain("removes it from active training views while preserving notes and history");
+  });
+
+  it("positions date picker menus against the viewport instead of the modal flow", () => {
+    const uiSource = readFileSync(new URL("../shared/ui.jsx", import.meta.url), "utf8");
+    const calendarPickerSource = uiSource.slice(
+      uiSource.indexOf("function CalendarPicker"),
+      uiSource.indexOf("function Modal"),
+    );
+
+    expect(calendarPickerSource).toContain("updatePanelPosition");
+    expect(calendarPickerSource).toContain("panelRef.current?.contains");
+    expect(calendarPickerSource).toContain('position: "fixed"');
+    expect(calendarPickerSource).toContain("maxHeight");
+  });
+
+  it("stacks readiness demonstrated and verified counts with their progress bars", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const recordHeaderSource = source.slice(
+      source.indexOf("{/* Record Header */}"),
+      source.indexOf("{/* Sections */}"),
+    );
+
+    expect(source).toContain("function PctReadinessDualCountSummary");
+    expect(source).toContain("gridTemplateColumns: `${countWidth}px ${keyWidth}px ${progressWidth}px ${percentWidth}px`");
+    expect(source).not.toContain("demonstrated ·");
+    expect(source).not.toContain("verified ·");
+    expect(source).not.toContain(" D ·");
+    expect(source).toContain("pctReadinessEmployeeBoardProgress.demonstratedCount");
+    expect(source).toContain("trainingRecordSectionNavItems");
+    expect(recordHeaderSource).toContain("PctReadinessDualCountSummary");
+    expect(recordHeaderSource).not.toContain("<PctReadinessDualProgress");
+  });
+
+  it("shows readiness status actor display names without falling back to emails", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const renderRecordItem = source.slice(
+      source.indexOf("const renderRecordItem"),
+      source.indexOf("const renderTemplatePreviewItem"),
+    );
+
+    expect(source).toContain("function cleanReadinessActorName");
+    expect(source).toContain("isEmailLike(trimmed)");
+    expect(source).toContain("function getReadinessCellActorDisplayName");
+    expect(renderRecordItem).toContain("latest_note_actor_name");
+    expect(renderRecordItem).toContain("readinessActorName");
+    expect(source).toContain("cellActorName || \"Comment\"");
+    expect(source).toContain("rowActorName");
+  });
+
+  it("adds a sticky training record section navigator and wraps long note labels", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const navSource = source.slice(
+      source.indexOf('<aside className="training-record-section-nav"'),
+      source.indexOf("{showRecordConfig &&"),
+    );
+
+    expect(source).toContain("scrollToTrainingRecordAnchor");
+    expect(source).toContain("training-record-section-nav");
+    expect(source).toContain("training-record-notes");
+    expect(source).toContain('overflowWrap: "anywhere"');
+    expect(source).toContain('wordBreak: "break-word"');
+    expect(navSource).toContain('boxSizing: "border-box"');
+    expect(navSource).toContain("maxHeight");
+    expect(navSource).not.toContain("PctReadinessDualCountSummary");
+  });
+
+  it("closes readiness cell modals before refreshing detail or board data after saves", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const handleSaveSource = source.slice(
+      source.indexOf("const handleSavePctReadinessCell"),
+      source.indexOf("const handleCreatePctReadinessRecord"),
+    );
+
+    expect(handleSaveSource).not.toContain("refreshLaborData");
+    expect(handleSaveSource.indexOf("closePctReadinessCellEditor();")).toBeLessThan(handleSaveSource.indexOf("reloadRecordDetailData(savedRecordId)"));
+    expect(handleSaveSource.indexOf("closePctReadinessCellEditor();")).toBeLessThan(handleSaveSource.indexOf("loadPctReadinessBoard(true)"));
+  });
+
   it("renames labor navigation to Roster and Capacity Planning routes", () => {
     const kolAppSource = readFileSync(new URL("../kol/KolApp.jsx", import.meta.url), "utf8");
 
