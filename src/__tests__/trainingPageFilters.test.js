@@ -190,6 +190,23 @@ describe("applyLaborRosterFilters", () => {
     expect(navSource).not.toContain("PctReadinessDualCountSummary");
   });
 
+  it("keeps readiness category jumping labeled and outside the matrix cells", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const jumpControlSource = source.slice(
+      source.indexOf("function PctReadinessCategoryJumpControl"),
+      source.indexOf("function cleanReadinessActorName"),
+    );
+
+    expect(source).toContain("PctReadinessCategoryJumpControl");
+    expect(source).toContain('aria-label="Jump training categories"');
+    expect(source).toContain("Jump to previous category");
+    expect(source).toContain("Jump to next category");
+    expect(source).not.toContain('aria-label="Category navigator"');
+    expect(source).not.toContain("paddingRight: 42");
+    expect(jumpControlSource).toContain("CustomSelect");
+    expect(jumpControlSource).not.toContain('position: "absolute"');
+  });
+
   it("closes readiness cell modals before refreshing detail or board data after saves", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
     const handleSaveSource = source.slice(
