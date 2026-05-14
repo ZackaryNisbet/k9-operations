@@ -455,6 +455,7 @@ const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
 const LABOR_HOUR_ANALYSIS_SETTING_KEY = "labor_hour_analysis";
+const LABOR_POSITION_ACRONYMS_SETTING_KEY = "labor_position_acronyms";
 const LABOR_CAPACITY_MODEL_DEFAULT_NAME = "Current Adair Forsythe Operating Model";
 const LABOR_CAPACITY_MODEL_TABLE_MISSING_CODES = new Set(["42P01", "PGRST205", "PGRST116"]);
 const DEFAULT_ROSTER_FILTERS = { employment_status: { op: "is", val: "active" } };
@@ -486,6 +487,13 @@ const DEFAULT_LABOR_POSITION_TITLES = [
   "Customer Service Representative",
   "Pet Care Technician",
 ];
+const DEFAULT_LABOR_POSITION_ACRONYMS = {
+  "general manager": "GM",
+  "assistant manager": "AM",
+  supervisor: "SUP",
+  "customer service representative": "CSR",
+  "pet care technician": "PCT",
+};
 const LABOR_DEFAULT_SORT = { key: "hierarchy", direction: "asc" };
 const LABOR_ROSTER_SORT_COLUMNS = [
   { key: "hierarchy", label: "Position Order" },
@@ -637,10 +645,6 @@ const LABOR_MODEL_ROLE_PALETTE = {
   pct: { strong: "#0e7490", accent: "#06b6d4", soft: "#cffafe", text: "#155e75" },
   other: { strong: "#334155", accent: "#64748b", soft: "#e2e8f0", text: "#334155" },
 };
-const LABOR_MODEL_ROLE_COLOR_OPTIONS = [
-  ...LABOR_MODEL_ROLE_COVERAGE_OPTIONS.map((option) => ({ groupKey: option.groupKey, label: option.label })),
-  { groupKey: "other", label: "Other" },
-];
 const LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP = new Map(
   LABOR_MODEL_ROLE_COVERAGE_OPTIONS.flatMap((option) => (
     [option.label, option.groupKey, ...option.aliases].map((alias) => [
@@ -958,10 +962,69 @@ function formatLaborPositionTitle(value = "") {
   return raw;
 }
 
-function buildLaborPositionOption(title) {
+function deriveLaborPositionInitials(title = "") {
+  const words = formatLaborPositionTitle(title)
+    .split(/\s+/)
+    .map((word) => word.replace(/[^A-Za-z0-9]/g, ""))
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  return words.map((word) => word.charAt(0)).join("").toUpperCase().slice(0, 6);
+}
+
+export function normalizeLaborPositionAcronym(value = "", positionTitle = "") {
+  const normalizedTitle = normalizePositionTitle(positionTitle || value);
+  const fallback = DEFAULT_LABOR_POSITION_ACRONYMS[normalizedTitle] || deriveLaborPositionInitials(positionTitle || value);
+  const cleaned = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 8);
+  return cleaned || fallback || "";
+}
+
+function getDefaultLaborPositionAcronym(positionTitle = "") {
+  return normalizeLaborPositionAcronym(DEFAULT_LABOR_POSITION_ACRONYMS[normalizePositionTitle(positionTitle)] || "", positionTitle);
+}
+
+function normalizeLaborPositionAcronymSettings(value = {}) {
+  if (Array.isArray(value)) {
+    return value.reduce((acc, row) => {
+      if (!isObjectRow(row)) return acc;
+      const title = row.position_title || row.positionTitle || row.title || row.normalized_title || row.normalizedTitle || "";
+      const normalizedTitle = normalizePositionTitle(title);
+      if (!normalizedTitle) return acc;
+      acc[normalizedTitle] = normalizeLaborPositionAcronym(row.position_acronym || row.positionAcronym || row.acronym, title);
+      return acc;
+    }, {});
+  }
+  if (!isObjectRow(value)) return {};
+  return Object.entries(value).reduce((acc, [title, acronym]) => {
+    const normalizedTitle = normalizePositionTitle(title);
+    if (!normalizedTitle) return acc;
+    acc[normalizedTitle] = normalizeLaborPositionAcronym(acronym, title);
+    return acc;
+  }, {});
+}
+
+function buildLaborPositionAcronymSettings(rows = []) {
+  return toObjectRows(rows).reduce((acc, row) => {
+    const positionTitle = formatLaborPositionTitle(row.position_title);
+    const normalizedTitle = normalizePositionTitle(positionTitle);
+    if (!normalizedTitle) return acc;
+    acc[normalizedTitle] = normalizeLaborPositionAcronym(row.position_acronym || row.acronym, positionTitle);
+    return acc;
+  }, {});
+}
+
+function buildLaborPositionOption(title, acronym = "") {
   const label = formatLaborPositionTitle(title);
   if (!label) return null;
-  return { value: label, label, normalizedTitle: normalizePositionTitle(label) };
+  return {
+    value: label,
+    label,
+    normalizedTitle: normalizePositionTitle(label),
+    acronym: normalizeLaborPositionAcronym(acronym, label),
+  };
 }
 
 function isPersistedLaborPositionRowTrusted(row = {}) {
@@ -973,6 +1036,7 @@ function makeDefaultLaborPositionRows() {
     id: null,
     position_title: positionTitle,
     normalized_title: normalizePositionTitle(positionTitle),
+    position_acronym: getDefaultLaborPositionAcronym(positionTitle),
     sort_order: (index + 1) * 10,
   }));
 }
@@ -2583,6 +2647,41 @@ function getHourAnalysisGroupShortLabel(value) {
   return HOUR_ANALYSIS_GROUP_SHORT_LABELS[value] || getHourAnalysisGroupLabel(value);
 }
 
+export function buildHourAnalysisGroupDisplay(positionRows = []) {
+  const display = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [
+    group.key,
+    {
+      label: group.label,
+      shortLabel: getHourAnalysisGroupShortLabel(group.key),
+      sort: 5000,
+    },
+  ]));
+
+  toObjectRows(positionRows).forEach((row, index) => {
+    const positionTitle = formatLaborPositionTitle(row.position_title);
+    const groupKey = getHourAnalysisGroupKey({ position_title: positionTitle });
+    if (!groupKey || groupKey === "other" || !display[groupKey]) return;
+    const sort = Number.isFinite(row.sort_order) ? row.sort_order : index;
+    if (display[groupKey].configured && display[groupKey].sort <= sort) return;
+    display[groupKey] = {
+      label: positionTitle || display[groupKey].label,
+      shortLabel: normalizeLaborPositionAcronym(row.position_acronym || row.acronym, positionTitle) || getHourAnalysisGroupShortLabel(groupKey),
+      sort,
+      configured: true,
+    };
+  });
+
+  return display;
+}
+
+function getConfiguredHourAnalysisGroupLabel(value, groupDisplay = null) {
+  return groupDisplay?.[value]?.label || getHourAnalysisGroupLabel(value);
+}
+
+function getConfiguredHourAnalysisGroupShortLabel(value, groupDisplay = null) {
+  return groupDisplay?.[value]?.shortLabel || getHourAnalysisGroupShortLabel(value);
+}
+
 function slugifyLaborModelId(value = "") {
   return String(value || "")
     .trim()
@@ -3764,14 +3863,7 @@ export function normalizeStaffingCapacitySettings(value = {}) {
   const normalizedRoles = Object.fromEntries(HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.map((groupKey) => {
     const rawRole = isObjectRow(roleSource[groupKey]) ? roleSource[groupKey] : {};
     const defaults = getDefaultStaffingCapacityRoleSettings(groupKey);
-    const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(groupKey);
     const tolerancePercent = readStaffingCapacityPercent(rawRole, ["tolerancePercent", "tolerance_percent", "varianceTolerancePercent", "variance_tolerance_percent"], defaults.tolerancePercent);
-    if (!isFrontline) {
-      return [groupKey, {
-        ...defaults,
-        tolerancePercent,
-      }];
-    }
     const rawLower = readStaffingCapacityPercent(rawRole, ["lowerBufferPercent", "lower_buffer_percent", "healthyMinPercent", "healthy_min_percent"], defaults.lowerBufferPercent);
     const rawTarget = readStaffingCapacityPercent(rawRole, ["targetBufferPercent", "target_buffer_percent", "reservePercent", "reserve_percent"], defaults.targetBufferPercent);
     const rawUpper = readStaffingCapacityPercent(rawRole, ["upperBufferPercent", "upper_buffer_percent", "healthyMaxPercent", "healthy_max_percent"], defaults.upperBufferPercent);
@@ -4560,11 +4652,12 @@ function clampHourAnalysisPercent(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, parsed));
 }
 
-export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
-  const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key);
+export function buildHourAnalysisCapacityRowVisualModel(row = {}, groupDisplay = null) {
+  const defaultHasRange = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(row.key);
   const expected = normalizeHourAnalysisNumber(row.expected, 0);
   const floor = normalizeHourAnalysisNumber(row.requiredWeekly, 0);
-  const capacityStandard = row.capacityStandard || buildHourAnalysisCapacityStandard(floor, isFrontline ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0);
+  const capacityStandard = row.capacityStandard || buildHourAnalysisCapacityStandard(floor, defaultHasRange ? HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT : 0);
+  const isFrontline = normalizeHourAnalysisNumber(capacityStandard.targetBufferPercent, 0) > 0;
   const target = normalizeHourAnalysisNumber(row.targetWeekly || floor, floor);
   const targetLow = isFrontline ? normalizeHourAnalysisNumber(capacityStandard.healthyLowWeekly, target) : target;
   const targetHigh = isFrontline ? normalizeHourAnalysisNumber(capacityStandard.healthyHighWeekly, targetLow) : target;
@@ -4776,7 +4869,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
 
   return {
     key: row.key || "",
-    roleLabel: getHourAnalysisGroupShortLabel(row.key),
+    roleLabel: getConfiguredHourAnalysisGroupShortLabel(row.key, groupDisplay),
     isFrontline,
     expected,
     floor,
@@ -4812,6 +4905,92 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}) {
     targetRangeLabelPct: rangeLabelPct,
     bufferLeftPct: isFrontline ? targetLowPct : floorPct,
     bufferWidthPct: isFrontline ? Math.max(0, targetHighPct - targetLowPct) : 0,
+  };
+}
+
+function getNiceStaffingCapacityChartMax(maxValue = 0) {
+  const paddedMax = Math.max(10, normalizeHourAnalysisNumber(maxValue, 0) * 1.12);
+  const magnitude = 10 ** Math.floor(Math.log10(paddedMax));
+  const normalized = paddedMax / magnitude;
+  const niceNormalized = normalized <= 1
+    ? 1
+    : normalized <= 2
+      ? 2
+      : normalized <= 2.5
+        ? 2.5
+        : normalized <= 5
+          ? 5
+          : normalized <= 6
+            ? 6
+            : 10;
+  return normalizeHourAnalysisNumber(niceNormalized * magnitude, 0);
+}
+
+function getStaffingCapacityChartPct(value = 0, chartMax = 0) {
+  const max = normalizeHourAnalysisNumber(chartMax, 0);
+  if (max <= 0) return 0;
+  return clampHourAnalysisPercent((normalizeHourAnalysisNumber(value, 0) / max) * 100, 0, 100);
+}
+
+function formatStaffingCapacityBarHours(value = 0) {
+  return `${formatHourAnalysisHours(value)}h`;
+}
+
+export function buildStaffingCapacityBarChartModel(rows = [], groupDisplay = null) {
+  const visualRows = (Array.isArray(rows) ? rows : []).map((row) => buildHourAnalysisCapacityRowVisualModel(row, groupDisplay));
+  const rawMax = visualRows.reduce((max, visual) => Math.max(
+    max,
+    visual.expected,
+    visual.floor,
+    visual.targetLow,
+    visual.target,
+    visual.targetHigh,
+  ), 0);
+  const chartMax = getNiceStaffingCapacityChartMax(rawMax);
+  const ticks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => {
+    const value = normalizeHourAnalysisNumber(chartMax * ratio, 0);
+    return {
+      key: `tick-${ratio}`,
+      value,
+      label: formatStaffingCapacityBarHours(value),
+      pct: getStaffingCapacityChartPct(value, chartMax),
+    };
+  });
+  const chartRows = visualRows.map((visual) => {
+    const expectedPct = getStaffingCapacityChartPct(visual.expected, chartMax);
+    const demandPct = getStaffingCapacityChartPct(visual.floor, chartMax);
+    const targetLowPct = getStaffingCapacityChartPct(visual.targetLow, chartMax);
+    const targetHighPct = getStaffingCapacityChartPct(visual.targetHigh, chartMax);
+    return {
+      ...visual,
+      demand: visual.floor,
+      chartMax,
+      expectedPct,
+      demandPct,
+      expectedBarPct: visual.expected > 0 ? Math.max(expectedPct, 2) : 0,
+      demandBarPct: visual.floor > 0 ? Math.max(demandPct, 2) : 0,
+      targetLowPct,
+      targetHighPct,
+      targetBandBottomPct: targetLowPct,
+      targetBandHeightPct: visual.hasTargetRange ? Math.max(0, targetHighPct - targetLowPct) : 0,
+      expectedLabel: formatStaffingCapacityBarHours(visual.expected),
+      demandLabel: formatStaffingCapacityBarHours(visual.floor),
+      targetLowLabel: formatStaffingCapacityBarHours(visual.targetLow),
+      targetHighLabel: formatStaffingCapacityBarHours(visual.targetHigh),
+    };
+  });
+  const summary = chartRows.reduce((acc, row) => {
+    if (row.tone === "short") acc.short += 1;
+    else if (row.tone === "surplus") acc.over += 1;
+    else acc.inRange += 1;
+    if (row.withinTolerance) acc.withinTolerance += 1;
+    return acc;
+  }, { short: 0, inRange: 0, over: 0, withinTolerance: 0 });
+  return {
+    chartMax,
+    ticks,
+    rows: chartRows,
+    summary,
   };
 }
 
@@ -5032,10 +5211,10 @@ export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) 
         ? normalizeHourAnalysisNumber(laborModelSummary.roleWeekly[group.key] || 0, 0)
         : normalizeHourAnalysisNumber(legacyDailySkeleton * 7, 0);
       const requiredDaily = normalizeHourAnalysisNumber(requiredWeekly / 7, 0);
-      const isFrontline = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(group.key);
       const roleCapacitySettings = getStaffingCapacityRoleSettings(normalizedSettings.thresholds.staffing_capacity, group.key);
-      const reliefPercent = isFrontline ? roleCapacitySettings.targetBufferPercent : 0;
+      const reliefPercent = roleCapacitySettings.targetBufferPercent;
       const capacityStandard = buildHourAnalysisCapacityStandard(requiredWeekly, reliefPercent, roleCapacitySettings);
+      const isFrontline = reliefPercent > 0;
       const targetWeekly = capacityStandard.targetWeekly;
       const expectedHireHours = normalizeHourAnalysisNumber(
         normalizedSettings.expectations[group.key]?.full_time?.expected,
@@ -5995,6 +6174,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [hierarchyDraft, setHierarchyDraft] = useState([]);
   const [newHierarchyTitle, setNewHierarchyTitle] = useState("");
   const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
+  const [positionAcronyms, setPositionAcronyms] = useState({});
   const [rosterFilters, setRosterFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [rosterDraftFilters, setRosterDraftFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [savedRosterViews, setSavedRosterViews] = useState([]);
@@ -6394,6 +6574,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         setRosterSnapshot([]);
         setServerDashboardMetrics(null);
         setPositionHierarchy([]);
+        setPositionAcronyms({});
         setHierarchyPersistenceAvailable(true);
         setLoading(false);
         return {
@@ -6423,6 +6604,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (employeeRes.error) throw employeeRes.error;
 
       let hierarchyRows = [];
+      let acronymSettings = {};
       const hierarchyRes = await supabase
         .from("labor_position_hierarchy")
         .select("*")
@@ -6438,6 +6620,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       } else {
         hierarchyRows = hierarchyRes.data || [];
         setHierarchyPersistenceAvailable(true);
+      }
+
+      const acronymRes = await supabase
+        .from("lite_settings")
+        .select("setting_value")
+        .eq("location_id", resolvedLocationId)
+        .eq("setting_key", LABOR_POSITION_ACRONYMS_SETTING_KEY)
+        .maybeSingle();
+
+      if (acronymRes.error) {
+        console.warn("Labor position acronym settings load skipped:", acronymRes.error);
+      } else {
+        acronymSettings = normalizeLaborPositionAcronymSettings(acronymRes.data?.setting_value);
       }
 
       let rosterRows = [];
@@ -6472,6 +6667,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setRosterSnapshot(rosterRows);
       setServerDashboardMetrics(metricsFromServer);
       setPositionHierarchy(nextHierarchy);
+      setPositionAcronyms(acronymSettings);
       setLoading(false);
       return {
         resolvedLocationId,
@@ -10081,10 +10277,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             id: row.id || null,
             position_title: positionTitle,
             normalized_title: normalizedTitle,
+            position_acronym: normalizeLaborPositionAcronym(row.position_acronym || row.acronym, positionTitle),
             sort_order: (index + 1) * 10,
           };
         })
         .filter(Boolean);
+      const nextAcronymSettings = buildLaborPositionAcronymSettings(draftRows);
 
       const existingByTitle = {};
       positionHierarchy.forEach((row) => {
@@ -10139,6 +10337,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const failedMutation = mutationResults.find((result) => result.error);
       if (failedMutation?.error) throw failedMutation.error;
 
+      const acronymResult = await supabase
+        .from("lite_settings")
+        .upsert(
+          {
+            location_id: resolvedLaborLocationId,
+            setting_key: LABOR_POSITION_ACRONYMS_SETTING_KEY,
+            setting_value: nextAcronymSettings,
+          },
+          { onConflict: "location_id,setting_key" },
+        );
+      if (acronymResult.error) throw acronymResult.error;
+
       const { data: hierarchyRes, error } = await supabase
         .from("labor_position_hierarchy")
         .select("*")
@@ -10146,6 +10356,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .order("sort_order", { ascending: true });
       if (error) throw error;
       setPositionHierarchy(hierarchyRes || []);
+      setPositionAcronyms(nextAcronymSettings);
       setRosterSort(LABOR_DEFAULT_SORT);
       setShowHierarchyManager(false);
       addGlobalToast("Labor position settings updated", "success");
@@ -10323,6 +10534,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           id: row.id || null,
           position_title: positionTitle,
           normalized_title: normalizedTitle,
+          position_acronym: normalizeLaborPositionAcronym(row.position_acronym || positionAcronyms[normalizedTitle], positionTitle),
           sort_order: Number.isFinite(row.sort_order) ? row.sort_order : (index + 1) * 10,
         };
       })
@@ -10332,21 +10544,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         if (orderDelta !== 0) return orderDelta;
         return left.position_title.localeCompare(right.position_title, undefined, { sensitivity: "base" });
       });
-  }, [positionHierarchy]);
+  }, [positionAcronyms, positionHierarchy]);
   const positionHierarchyIndex = useMemo(() => {
     return Object.fromEntries(positionHierarchyRows.map((row, index) => [row.normalized_title, index]));
   }, [positionHierarchyRows]);
+  const hourAnalysisGroupDisplay = useMemo(() => (
+    buildHourAnalysisGroupDisplay(positionHierarchyRows)
+  ), [positionHierarchyRows]);
   const approvedLaborPositionOptions = useMemo(() => (
-    positionHierarchyRows.map((row) => buildLaborPositionOption(row.position_title)).filter(Boolean)
+    positionHierarchyRows.map((row) => buildLaborPositionOption(row.position_title, row.position_acronym)).filter(Boolean)
   ), [positionHierarchyRows]);
   const getLaborPositionOptionsWithCurrent = useCallback((currentTitle = "") => {
     const options = [...approvedLaborPositionOptions];
-    const currentOption = buildLaborPositionOption(currentTitle);
+    const currentOption = buildLaborPositionOption(currentTitle, positionAcronyms[normalizePositionTitle(currentTitle)]);
     if (currentOption && !options.some((option) => option.normalizedTitle === currentOption.normalizedTitle)) {
       options.unshift({ ...currentOption, label: `${currentOption.label} (current)` });
     }
     return options;
-  }, [approvedLaborPositionOptions]);
+  }, [approvedLaborPositionOptions, positionAcronyms]);
   const staffingCapacityHourAnalysisSettings = useMemo(() => selectStaffingCapacitySettings({
     models: laborCapacityModelsAvailable ? laborCapacityModels : [],
     editingModelId: editingLaborCapacityModelId,
@@ -10394,7 +10609,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter((row) => preferredOrder.has(row.key))
       .sort((left, right) => preferredOrder.get(left.key) - preferredOrder.get(right.key));
   }, [hourAnalysisModel.weeklyRows]);
+  const staffingCapacityBarChartModel = useMemo(() => (
+    buildStaffingCapacityBarChartModel(hourAnalysisCapacityRows, hourAnalysisGroupDisplay)
+  ), [hourAnalysisCapacityRows, hourAnalysisGroupDisplay]);
   const hourAnalysisPositionOptions = approvedLaborPositionOptions;
+  const laborModelRoleColorOptions = useMemo(() => ([
+    ...LABOR_MODEL_ROLE_COVERAGE_OPTIONS.map((option) => ({
+      groupKey: option.groupKey,
+      label: getConfiguredHourAnalysisGroupShortLabel(option.groupKey, hourAnalysisGroupDisplay),
+    })),
+    { groupKey: "other", label: "Other" },
+  ]), [hourAnalysisGroupDisplay]);
   const laborModelCoveragePositionOptions = useMemo(() => {
     const configuredGroups = new Set(approvedLaborPositionOptions.flatMap((option) => {
       const groupKey = getHourAnalysisGroupKey({ position_title: option.value || option.label });
@@ -10405,7 +10630,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter((option) => configuredGroups.size === 0 || configuredGroups.has(option.groupKey))
       .map((option) => ({
         value: option.label,
-        label: `${getHourAnalysisGroupLabel(option.groupKey)} (${option.label})`,
+        label: `${getConfiguredHourAnalysisGroupLabel(option.groupKey, hourAnalysisGroupDisplay)} (${getConfiguredHourAnalysisGroupShortLabel(option.groupKey, hourAnalysisGroupDisplay)})`,
       }));
     return [
       { value: LABOR_MODEL_FULL_COVERAGE_VALUE, label: "Full shift" },
@@ -10414,7 +10639,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       { value: LABOR_MODEL_MARKETING_COVERAGE_VALUE, label: "Marketing" },
       { value: "", label: "Clear" },
     ];
-  }, [approvedLaborPositionOptions]);
+  }, [approvedLaborPositionOptions, hourAnalysisGroupDisplay]);
   const hourAnalysisCommitmentOptions = useMemo(() => (
     LABOR_EMPLOYMENT_COMMITMENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))
   ), []);
@@ -10440,10 +10665,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const hourAnalysisTargetProgress = hourAnalysisModel.totals.targetWeekly > 0
     ? Math.max(0, Math.min(100, (hourAnalysisModel.totals.projectedExpected / hourAnalysisModel.totals.targetWeekly) * 100))
     : 0;
-  const hourAnalysisCapacityDelta = formatHourAnalysisCapacityRangeDelta(
-    hourAnalysisModel.totals.projectedExpected,
-    hourAnalysisModel.totals.capacityStandard,
-  );
   const staffingCapacityWeekEnd = addDaysToDateString(staffingCapacityWeekStart, 6);
   const staffingCapacityWeekLabel = `${fmtDate(staffingCapacityWeekStart)} - ${fmtDate(staffingCapacityWeekEnd)}`;
   const outOfPositionLaborSummary = useMemo(() => buildOutOfPositionLaborSummary({
@@ -10464,13 +10685,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const staffingCapacityCollapsed = capacityCollapsedSections.staffingCapacityVariance === true;
   const outOfPositionCollapsed = capacityCollapsedSections.outOfPositionLabor === true;
   const headcountExpectedCollapsed = capacityCollapsedSections.headcountExpectedHours === true;
-  const csrCapacitySettings = staffingCapacitySettings.roles.csr || getDefaultStaffingCapacityRoleSettings("csr");
-  const pctCapacitySettings = staffingCapacitySettings.roles.pct || getDefaultStaffingCapacityRoleSettings("pct");
-  const staffingCapacityRangeSummary = csrCapacitySettings.lowerBufferPercent === pctCapacitySettings.lowerBufferPercent
-    && csrCapacitySettings.upperBufferPercent === pctCapacitySettings.upperBufferPercent
-    ? `CSR/PCT: ${formatHourAnalysisHours(csrCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(csrCapacitySettings.upperBufferPercent)}% range`
-    : `CSR: ${formatHourAnalysisHours(csrCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(csrCapacitySettings.upperBufferPercent)}% / PCT: ${formatHourAnalysisHours(pctCapacitySettings.lowerBufferPercent)}%-${formatHourAnalysisHours(pctCapacitySettings.upperBufferPercent)}%`;
-  const staffingCapacitySummarySignal = `${hourAnalysisCapacityDelta.label}: ${hourAnalysisCapacityDelta.value}`;
   const outOfPositionSummarySignal = `${outOfPositionLaborSummary.totalShifts} shifts / ${formatHourAnalysisHours(outOfPositionLaborSummary.totalHours)} hrs`;
   const headcountExpectedSummarySignal = `${hourAnalysisModel.totals.projectedHeadcount} people / ${formatHourAnalysisHours(hourAnalysisModel.totals.projectedExpected)} hrs`;
   const selectedLaborCapacityVersion = useMemo(() => (
@@ -10799,13 +11013,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const before = normalizeHourAnalysisNumber(currentRange.expected, 0);
       const after = normalizeHourAnalysisNumber(value, 0);
       if (before === after) return normalized;
+      const roleLabel = getConfiguredHourAnalysisGroupLabel(normalizedGroup, hourAnalysisGroupDisplay);
       markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
           action: "default_expected_hours_changed",
           entity_id: `${normalizedGroup}:${normalizedCommitment}`,
-          entity_label: `${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)}`,
-          summary: `Changed default Expected Hours for ${getHourAnalysisGroupLabel(normalizedGroup)} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)} from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/wk.`,
+          entity_label: `${roleLabel} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)}`,
+          summary: `Changed default Expected Hours for ${roleLabel} ${getLaborEmploymentCommitmentLabel(normalizedCommitment)} from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/wk.`,
           before,
           after,
         }),
@@ -10818,7 +11033,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         },
       };
     });
-  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  }, [appendHourAnalysisAudit, hourAnalysisGroupDisplay, markHourAnalysisChanged]);
   const updateHourAnalysisSkeletonHours = useCallback((groupKey, value) => {
     const normalizedGroup = HOUR_ANALYSIS_GROUP_LABELS[groupKey] ? groupKey : "other";
     setHourAnalysisSettings((prev) => {
@@ -10826,13 +11041,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       const before = normalizeHourAnalysisNumber(normalized.thresholds.daily_skeleton[normalizedGroup], 0);
       const after = normalizeHourAnalysisNumber(value, 0);
       if (before === after) return normalized;
+      const roleLabel = getConfiguredHourAnalysisGroupLabel(normalizedGroup, hourAnalysisGroupDisplay);
       markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`]);
       return {
         ...appendHourAnalysisAudit(normalized, {
           action: "skeleton_hours_changed",
           entity_id: `skeleton:${normalizedGroup}`,
-          entity_label: getHourAnalysisGroupLabel(normalizedGroup),
-          summary: `Changed ${getHourAnalysisGroupLabel(normalizedGroup)} daily skeleton from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/day.`,
+          entity_label: roleLabel,
+          summary: `Changed ${roleLabel} daily skeleton from ${formatHourAnalysisHours(before)} to ${formatHourAnalysisHours(after)} hrs/day.`,
           before,
           after,
         }),
@@ -10845,12 +11061,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         },
       };
     });
-  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  }, [appendHourAnalysisAudit, hourAnalysisGroupDisplay, markHourAnalysisChanged]);
   const updateStaffingCapacityRoleSetting = useCallback((groupKey, settingKey, value) => {
     const normalizedGroup = HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.includes(groupKey) ? groupKey : "";
     const normalizedSettingKey = ["tolerancePercent", "lowerBufferPercent", "targetBufferPercent", "upperBufferPercent", "overRosteredBufferPercent"].includes(settingKey) ? settingKey : "";
     if (!normalizedGroup || !normalizedSettingKey) return;
-    if (!HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(normalizedGroup) && normalizedSettingKey !== "tolerancePercent") return;
     setHourAnalysisSettings((prev) => {
       const normalized = normalizeHourAnalysisSettings(prev);
       const currentSettings = normalizeStaffingCapacitySettings(normalized.thresholds.staffing_capacity);
@@ -10875,13 +11090,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           : normalizedSettingKey === "upperBufferPercent"
             ? "upper range buffer"
             : "target buffer";
+      const roleLabel = getConfiguredHourAnalysisGroupLabel(normalizedGroup, hourAnalysisGroupDisplay);
       markHourAnalysisChanged(["capacity", `group:${normalizedGroup}`, "staffing-capacity-settings"]);
       return {
         ...appendHourAnalysisAudit(normalized, {
           action: "staffing_capacity_setting_changed",
           entity_id: `staffing-capacity:${normalizedGroup}:${normalizedSettingKey}`,
-          entity_label: `${getHourAnalysisGroupLabel(normalizedGroup)} ${settingLabel}`,
-          summary: `Changed ${getHourAnalysisGroupLabel(normalizedGroup)} ${settingLabel} from ${formatHourAnalysisHours(before)}% to ${formatHourAnalysisHours(after)}%.`,
+          entity_label: `${roleLabel} ${settingLabel}`,
+          summary: `Changed ${roleLabel} ${settingLabel} from ${formatHourAnalysisHours(before)}% to ${formatHourAnalysisHours(after)}%.`,
           before,
           after,
         }),
@@ -10891,7 +11107,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         },
       };
     });
-  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  }, [appendHourAnalysisAudit, hourAnalysisGroupDisplay, markHourAnalysisChanged]);
   const mutateHourAnalysisLaborModel = useCallback((mutator) => {
     if (typeof mutator !== "function") return;
     setHourAnalysisSettings((prev) => {
@@ -10921,8 +11137,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const normalizedGroup = Object.prototype.hasOwnProperty.call(LABOR_MODEL_ROLE_PALETTE, groupKey)
       ? groupKey
       : "other";
-    const option = LABOR_MODEL_ROLE_COLOR_OPTIONS.find((item) => item.groupKey === normalizedGroup);
-    const roleLabel = option?.label || getHourAnalysisGroupLabel(normalizedGroup);
+    const roleLabel = getConfiguredHourAnalysisGroupShortLabel(normalizedGroup, hourAnalysisGroupDisplay);
     const nextPalette = buildLaborModelRolePalette(normalizedGroup, colorValue);
     setHourAnalysisSettings((prev) => {
       const normalized = normalizeHourAnalysisSettings(prev);
@@ -10944,7 +11159,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         },
       };
     });
-  }, [appendHourAnalysisAudit, markHourAnalysisChanged]);
+  }, [appendHourAnalysisAudit, hourAnalysisGroupDisplay, markHourAnalysisChanged]);
   const updateHourAnalysisLaborModelCell = useCallback((dayKey, rowId, columnIndex, value) => {
     const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
     const normalizedColumnIndex = Number(columnIndex);
@@ -12914,12 +13129,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           id: null,
           position_title: option.label,
           normalized_title: option.normalizedTitle,
+          position_acronym: option.acronym,
           sort_order: (prev.length + 1) * 10,
         },
       ];
     });
     setNewHierarchyTitle("");
   }, [newHierarchyTitle]);
+  const updateHierarchyDraftAcronym = useCallback((normalizedTitle, value) => {
+    setHierarchyDraft((prev) => prev.map((row) => (
+      row.normalized_title === normalizedTitle
+        ? {
+          ...row,
+          position_acronym: normalizeLaborPositionAcronym(value, row.position_title),
+        }
+        : row
+    )));
+  }, []);
   const removeHierarchyDraftTitle = useCallback((normalizedTitle) => {
     setHierarchyDraft((prev) => prev.filter((row) => row.normalized_title !== normalizedTitle));
   }, []);
@@ -16677,6 +16903,368 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           width: 18px;
           transform: translateX(-9px);
         }
+        .hour-analysis-capacity-visual.staffing-capacity-bar-visual {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 14px;
+          padding: 12px 14px 16px;
+          align-items: stretch;
+        }
+        .staffing-capacity-bars-topline {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .staffing-capacity-status-chips,
+        .staffing-capacity-bars-legend {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 7px;
+          min-width: 0;
+        }
+        .staffing-capacity-status-chip {
+          display: inline-flex;
+          align-items: center;
+          border: 1px solid rgba(15, 23, 42, 0.09);
+          border-radius: 6px;
+          background: #ffffff;
+          color: ${C.textSec};
+          padding: 5px 7px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          white-space: nowrap;
+        }
+        .staffing-capacity-status-chip.is-short {
+          border-color: rgba(185, 28, 28, 0.18);
+          background: #fef2f2;
+          color: #991b1b;
+        }
+        .staffing-capacity-status-chip.is-healthy {
+          border-color: rgba(20, 83, 45, 0.18);
+          background: #ecfdf5;
+          color: #047857;
+        }
+        .staffing-capacity-status-chip.is-surplus {
+          border-color: rgba(194, 65, 12, 0.18);
+          background: #fff7ed;
+          color: #9a3412;
+        }
+        .staffing-capacity-bars-legend {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+        .staffing-capacity-bars-legend span {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 0;
+          white-space: nowrap;
+        }
+        .staffing-capacity-bars-legend i {
+          width: 9px;
+          height: 9px;
+          border-radius: 2px;
+          flex: 0 0 auto;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
+        }
+        .staffing-capacity-bars-legend i.is-expected {
+          background: #047857;
+        }
+        .staffing-capacity-bars-legend i.is-demand {
+          background: #334155;
+        }
+        .staffing-capacity-bars-legend i.is-buffer {
+          border: 1px solid rgba(20, 83, 45, 0.22);
+          background: repeating-linear-gradient(135deg, rgba(20, 184, 166, 0.14) 0 4px, rgba(20, 184, 166, 0.28) 4px 8px);
+        }
+        .staffing-capacity-bars-chart {
+          display: grid;
+          grid-template-columns: 54px minmax(720px, 1fr);
+          gap: 13px;
+          overflow-x: auto;
+          overflow-y: visible;
+          padding: 2px 2px 4px;
+          scrollbar-width: thin;
+        }
+        .staffing-capacity-y-axis {
+          position: relative;
+          height: 210px;
+          margin-top: 42px;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 900;
+          line-height: 1;
+        }
+        .staffing-capacity-y-axis::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          border-right: 1px solid rgba(100, 116, 139, 0.24);
+        }
+        .staffing-capacity-y-axis-tick {
+          position: absolute;
+          right: 9px;
+          bottom: var(--tick-bottom);
+          transform: translateY(50%);
+          white-space: nowrap;
+        }
+        .staffing-capacity-plot {
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(5, minmax(126px, 1fr));
+          gap: 15px;
+          min-width: 720px;
+          overflow: visible;
+        }
+        .staffing-capacity-gridline {
+          display: none;
+        }
+        .staffing-capacity-role-chart {
+          --capacity-tone-rgb: 4, 120, 87;
+          --capacity-tone-ink: #047857;
+          --capacity-tone-soft: rgba(236, 253, 245, 0.88);
+          display: grid;
+          grid-template-rows: 34px 210px;
+          gap: 8px;
+          min-width: 0;
+          animation: hourAnalysisCapacityRowIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          animation-delay: var(--capacity-row-delay, 0ms);
+        }
+        .staffing-capacity-role-chart.is-short {
+          --capacity-tone-rgb: 185, 28, 28;
+          --capacity-tone-ink: #991b1b;
+          --capacity-tone-soft: rgba(254, 242, 242, 0.9);
+        }
+        .staffing-capacity-role-chart.is-surplus {
+          --capacity-tone-rgb: 194, 65, 12;
+          --capacity-tone-ink: #9a3412;
+          --capacity-tone-soft: rgba(255, 247, 237, 0.9);
+        }
+        .staffing-capacity-role-chart:focus {
+          outline: 2px solid rgba(var(--capacity-tone-rgb), 0.32);
+          outline-offset: 3px;
+          border-radius: 8px;
+        }
+        .staffing-capacity-role-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 7px;
+          min-width: 0;
+        }
+        .staffing-capacity-role-head strong {
+          color: ${C.text};
+          font-size: 15px;
+          font-weight: 950;
+          line-height: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .staffing-capacity-role-delta {
+          display: inline-flex;
+          flex: 0 0 auto;
+          border: 1px solid rgba(20, 83, 45, 0.16);
+          border-radius: 6px;
+          background: #ecfdf5;
+          color: #047857;
+          padding: 4px 6px;
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          white-space: nowrap;
+        }
+        .staffing-capacity-role-delta.is-short {
+          border-color: rgba(185, 28, 28, 0.18);
+          background: #fef2f2;
+          color: #991b1b;
+        }
+        .staffing-capacity-role-delta.is-surplus {
+          border-color: rgba(194, 65, 12, 0.18);
+          background: #fff7ed;
+          color: #9a3412;
+        }
+        .staffing-capacity-role-delta.is-even {
+          border-color: rgba(15, 23, 42, 0.1);
+          background: #f8fafc;
+          color: ${C.textSec};
+        }
+        .staffing-capacity-bar-stage {
+          position: relative;
+          min-width: 0;
+          height: 210px;
+          border: 1px solid rgba(148, 163, 184, 0.26);
+          border-bottom-color: rgba(51, 65, 85, 0.42);
+          border-radius: 7px 7px 4px 4px;
+          background:
+            linear-gradient(180deg, rgba(148, 163, 184, 0.16) 1px, transparent 1px) 0 0 / 100% 25%,
+            linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+          overflow: visible;
+        }
+        .staffing-capacity-target-band {
+          position: absolute;
+          z-index: 2;
+          left: 5px;
+          right: 5px;
+          bottom: var(--target-band-bottom);
+          height: var(--target-band-height);
+          min-height: 5px;
+          border-top: 1px solid rgba(20, 83, 45, 0.2);
+          border-bottom: 1px solid rgba(20, 83, 45, 0.2);
+          background: repeating-linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0 7px, rgba(20, 184, 166, 0.24) 7px 14px);
+        }
+        .staffing-capacity-target-label {
+          position: absolute;
+          z-index: 4;
+          top: 7px;
+          right: 7px;
+          display: inline-flex;
+          max-width: calc(100% - 14px);
+          border: 1px solid rgba(20, 83, 45, 0.14);
+          border-radius: 999px;
+          background: rgba(255,255,255,0.96);
+          color: #047857;
+          padding: 2px 4px;
+          font-size: 7.8px;
+          font-weight: 950;
+          line-height: 1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          box-shadow: 0 5px 12px rgba(15, 23, 42, 0.05);
+        }
+        .staffing-capacity-buffer-bound {
+          position: absolute;
+          z-index: 3;
+          left: 5px;
+          right: 5px;
+          border-top: 1px solid rgba(20, 83, 45, 0.42);
+          color: #047857;
+          pointer-events: none;
+        }
+        .staffing-capacity-buffer-bound.is-lower {
+          bottom: var(--target-low-bottom);
+        }
+        .staffing-capacity-buffer-bound.is-upper {
+          bottom: var(--target-high-bottom);
+        }
+        .staffing-capacity-bar-pair {
+          position: absolute;
+          z-index: 3;
+          inset: 0 12px 0;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 11px;
+          align-items: end;
+        }
+        .staffing-capacity-bar-cell {
+          position: relative;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+          height: 100%;
+          min-width: 0;
+        }
+        .staffing-capacity-bar {
+          display: block;
+          width: min(38px, 100%);
+          border-radius: 6px 6px 0 0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), 0 10px 18px rgba(15, 23, 42, 0.09);
+        }
+        .staffing-capacity-bar.is-expected {
+          height: var(--expected-height);
+          background: linear-gradient(180deg, rgba(var(--capacity-tone-rgb), 0.82), rgba(var(--capacity-tone-rgb), 0.98));
+        }
+        .staffing-capacity-bar.is-demand {
+          height: var(--demand-height);
+          background: linear-gradient(180deg, #64748b, #334155);
+        }
+        .staffing-capacity-bar-value {
+          position: absolute;
+          left: 50%;
+          transform: translateX(-50%);
+          max-width: 56px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 999px;
+          background: rgba(255,255,255,0.96);
+          color: ${C.text};
+          padding: 3px 5px;
+          font-size: 9px;
+          font-weight: 950;
+          line-height: 1;
+          text-align: center;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06);
+        }
+        .staffing-capacity-bar-cell:first-child .staffing-capacity-bar-value {
+          bottom: calc(var(--expected-height) + 7px);
+          color: var(--capacity-tone-ink);
+        }
+        .staffing-capacity-bar-cell:nth-child(2) .staffing-capacity-bar-value {
+          bottom: calc(var(--demand-height) + 7px);
+        }
+        .staffing-capacity-bar-caption {
+          position: absolute;
+          left: 50%;
+          bottom: -20px;
+          transform: translateX(-50%);
+          color: ${C.textMut};
+          font-size: 9px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }
+        .staffing-capacity-role-status {
+          min-width: 0;
+          border: 1px solid rgba(var(--capacity-tone-rgb), 0.18);
+          border-radius: 7px;
+          background: var(--capacity-tone-soft);
+          padding: 7px 8px;
+        }
+        .staffing-capacity-role-status span,
+        .staffing-capacity-role-status strong {
+          display: block;
+          min-width: 0;
+        }
+        .staffing-capacity-role-status span {
+          color: var(--capacity-tone-ink);
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+        .staffing-capacity-role-status strong {
+          margin-top: 4px;
+          color: ${C.text};
+          font-size: 10.5px;
+          font-weight: 850;
+          line-height: 1.24;
+        }
+        .staffing-capacity-bars-accessible-table {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          margin: -1px;
+          padding: 0;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          clip-path: inset(50%);
+          border: 0;
+          white-space: nowrap;
+        }
         .hour-analysis-hire-list {
           display: grid;
           gap: 8px;
@@ -17016,7 +17604,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }
         .labor-position-settings-row {
           display: grid;
-          grid-template-columns: auto auto minmax(0, 1fr) auto;
+          grid-template-columns: auto auto minmax(0, 1fr) minmax(96px, 0.26fr) auto;
           gap: 12px;
           align-items: center;
           padding: 12px 14px;
@@ -17043,6 +17631,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           color: ${C.textMut};
           font-size: 11px;
           font-weight: 950;
+        }
+        .labor-position-acronym-field {
+          display: grid;
+          gap: 5px;
+          min-width: 0;
+        }
+        .labor-position-acronym-field span {
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+        .labor-position-acronym-field input {
+          width: 100%;
+          min-width: 0;
+          border: 1px solid ${C.border};
+          border-radius: 8px;
+          background: #fff;
+          color: ${C.text};
+          padding: 8px 9px;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .labor-position-acronym-field input:focus {
+          outline: none;
+          border-color: ${C.pri};
+          box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.1);
         }
 	        .labor-model-role-color-settings {
 	          display: grid;
@@ -19704,6 +20322,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          .staffing-capacity-settings-static {
 	            grid-column: 1 / -1;
 	          }
+          .labor-position-settings-row {
+            grid-template-columns: auto auto minmax(0, 1fr) auto;
+          }
+          .labor-position-acronym-field {
+            grid-column: 3 / -1;
+          }
 	          .hour-analysis-capacity-dashboard {
             display: grid;
             grid-template-columns: 1fr;
@@ -19713,6 +20337,47 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             grid-template-columns: 1fr;
             padding-left: 10px;
             padding-right: 10px;
+          }
+          .hour-analysis-capacity-visual.staffing-capacity-bar-visual {
+            padding-left: 10px;
+            padding-right: 10px;
+          }
+          .staffing-capacity-bars-topline {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+          .staffing-capacity-bars-chart {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+            overflow-x: visible;
+          }
+          .staffing-capacity-y-axis {
+            display: none;
+          }
+          .staffing-capacity-plot {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 18px;
+            min-width: 0;
+          }
+          .staffing-capacity-role-chart {
+            grid-template-rows: 30px 190px;
+          }
+          .staffing-capacity-bar-stage {
+            height: 190px;
+          }
+          .staffing-capacity-bar-pair {
+            left: 9px;
+            right: 9px;
+            gap: 8px;
+          }
+          .staffing-capacity-bar {
+            width: min(32px, 100%);
+          }
+          .staffing-capacity-target-label {
+            font-size: 7.5px;
+            max-width: calc(100% - 14px);
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
           .hour-analysis-capacity-buffer-note { justify-self: start; }
           .hour-analysis-capacity-row {
@@ -21769,14 +22434,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              subtitle={`Using active model: ${activeLaborCapacityModel?.name || "Legacy labor_hour_analysis settings"}`}
 	              collapsed={staffingCapacityCollapsed}
 	              onToggle={() => toggleCapacitySection("staffingCapacityVariance")}
-	              summary={(
-	                <>
-	                  <span className={`hour-analysis-capacity-total is-${hourAnalysisCapacityDelta.tone}`}>
-	                    <strong>{staffingCapacitySummarySignal}</strong>
-	                  </span>
-	                  <span className="hour-analysis-capacity-buffer-note">{staffingCapacityRangeSummary}</span>
-	                </>
-	              )}
 	            />
 	            <div className="staffing-capacity-settings-strip">
 	              <span>Tolerance defaults to {HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT}% with a {HOUR_ANALYSIS_MIN_TOLERANCE_HOURS}-hour decimal guard unless changed for a role.</span>
@@ -21794,17 +22451,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              <div className="staffing-capacity-settings-panel">
 	                <div className="staffing-capacity-settings-heading">
 	                  <strong>Staffing Capacity Settings</strong>
-	                  <span>Adjust tolerated variance by role. CSR and PCT also control the target range above floor.</span>
+	                  <span>Adjust tolerated variance and target-range buffers for each configured position.</span>
 	                </div>
 	                <div className="staffing-capacity-settings-grid">
 	                  {HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.map((groupKey) => {
 	                    const roleSettings = staffingCapacitySettings.roles[groupKey] || getDefaultStaffingCapacityRoleSettings(groupKey);
-	                    const isFrontlineRole = HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS.has(groupKey);
 	                    return (
-	                      <div key={groupKey} className={`staffing-capacity-settings-row${isFrontlineRole ? " is-frontline" : ""}`}>
+	                      <div key={groupKey} className="staffing-capacity-settings-row is-frontline">
 	                        <div className="staffing-capacity-settings-role">
-	                          <strong>{getHourAnalysisGroupShortLabel(groupKey)}</strong>
-	                          <span>{getHourAnalysisGroupLabel(groupKey)}</span>
+	                          <strong>{getConfiguredHourAnalysisGroupShortLabel(groupKey, hourAnalysisGroupDisplay)}</strong>
+	                          <span>{getConfiguredHourAnalysisGroupLabel(groupKey, hourAnalysisGroupDisplay)}</span>
 	                        </div>
 	                        <label>
 	                          <span>Tolerance %</span>
@@ -21817,56 +22473,50 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "tolerancePercent", event.target.value)}
 	                          />
 	                        </label>
-	                        {isFrontlineRole ? (
-	                          <>
-	                            <label>
-	                              <span>Lower %</span>
-	                              <input
-	                                type="number"
-	                                min="0"
-	                                max="90"
-	                                step="0.5"
-	                                value={roleSettings.lowerBufferPercent}
-	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "lowerBufferPercent", event.target.value)}
-	                              />
-	                            </label>
-	                            <label>
-	                              <span>Target %</span>
-	                              <input
-	                                type="number"
-	                                min="0"
-	                                max="90"
-	                                step="0.5"
-	                                value={roleSettings.targetBufferPercent}
-	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "targetBufferPercent", event.target.value)}
-	                              />
-	                            </label>
-	                            <label>
-	                              <span>Upper %</span>
-	                              <input
-	                                type="number"
-	                                min="0"
-	                                max="90"
-	                                step="0.5"
-	                                value={roleSettings.upperBufferPercent}
-	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "upperBufferPercent", event.target.value)}
-	                              />
-	                            </label>
-	                            <label>
-	                              <span>Over %</span>
-	                              <input
-	                                type="number"
-	                                min="0"
-	                                max="90"
-	                                step="0.5"
-	                                value={roleSettings.overRosteredBufferPercent}
-	                                onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "overRosteredBufferPercent", event.target.value)}
-	                              />
-	                            </label>
-	                          </>
-	                        ) : (
-	                          <div className="staffing-capacity-settings-static">No range buffer</div>
-	                        )}
+	                        <label>
+	                          <span>Lower %</span>
+	                          <input
+	                            type="number"
+	                            min="0"
+	                            max="90"
+	                            step="0.5"
+	                            value={roleSettings.lowerBufferPercent}
+	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "lowerBufferPercent", event.target.value)}
+	                          />
+	                        </label>
+	                        <label>
+	                          <span>Target %</span>
+	                          <input
+	                            type="number"
+	                            min="0"
+	                            max="90"
+	                            step="0.5"
+	                            value={roleSettings.targetBufferPercent}
+	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "targetBufferPercent", event.target.value)}
+	                          />
+	                        </label>
+	                        <label>
+	                          <span>Upper %</span>
+	                          <input
+	                            type="number"
+	                            min="0"
+	                            max="90"
+	                            step="0.5"
+	                            value={roleSettings.upperBufferPercent}
+	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "upperBufferPercent", event.target.value)}
+	                          />
+	                        </label>
+	                        <label>
+	                          <span>Over %</span>
+	                          <input
+	                            type="number"
+	                            min="0"
+	                            max="90"
+	                            step="0.5"
+	                            value={roleSettings.overRosteredBufferPercent}
+	                            onChange={(event) => updateStaffingCapacityRoleSetting(groupKey, "overRosteredBufferPercent", event.target.value)}
+	                          />
+	                        </label>
 	                      </div>
 	                    );
 	                  })}
@@ -21874,133 +22524,103 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	              </div>
 	            )}
 	            {!staffingCapacityCollapsed && (
-	            <div className={`hour-analysis-capacity-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
-	              {hourAnalysisCapacityRows.map((row, rowIndex) => {
-	                const visual = buildHourAnalysisCapacityRowVisualModel(row);
-                const dimensionLineCount = Math.max(2, visual.dimensionLines.length);
-                const capacityScaleHeightPx = 76 + (dimensionLineCount * 14);
-                const capacityScaleMobileHeightPx = 104 + (dimensionLineCount * 20);
-                return (
-                  <div
-                    key={row.key}
-                    className={`hour-analysis-capacity-row is-${visual.tone}`}
-                    tabIndex={0}
-                    style={{
-                      "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms`,
-                      "--measurement-intensity": visual.measurementIntensity,
-                      "--capacity-scale-height": `${capacityScaleHeightPx}px`,
-                      "--capacity-scale-height-mobile": `${capacityScaleMobileHeightPx}px`,
-                    }}
-                  >
-	                    <div className="hour-analysis-capacity-role">
-	                      <strong>{visual.roleLabel}</strong>
-	                      <span className={`hour-analysis-capacity-delta is-${visual.delta.tone}`}>
-	                        {visual.delta.value}
-	                      </span>
-	                      <span className={`hour-analysis-capacity-status is-${visual.tone}`}>
-	                        {visual.statusLabel}
-	                      </span>
-	                    </div>
-	                    <div className="hour-analysis-capacity-row-metrics">
-	                      <div>
-	                        <span>Expected</span>
-	                        <strong>{formatHourAnalysisHours(visual.expected)} hrs</strong>
-	                      </div>
-	                      <div>
-	                        <span>{visual.floorMetricLabel}</span>
-	                        <strong>{formatHourAnalysisHours(visual.floor)} hrs</strong>
-	                      </div>
-	                      {visual.hasTargetRange ? (
-	                        <>
-	                          <div>
-	                            <span>Lower</span>
-	                            <strong>{formatHourAnalysisHours(visual.targetLow)} hrs</strong>
-	                          </div>
-	                          <div>
-	                            <span>Target</span>
-	                            <strong>{formatHourAnalysisHours(visual.target)} hrs</strong>
-	                          </div>
-	                          <div>
-	                            <span>Upper</span>
-	                            <strong>{formatHourAnalysisHours(visual.targetHigh)} hrs</strong>
-	                          </div>
-	                        </>
-	                      ) : visual.hasSeparateTargetMetric ? (
-	                        <div>
-	                          <span>Target</span>
-	                          <strong>{formatHourAnalysisHours(visual.target)} hrs</strong>
-	                        </div>
-	                      ) : null}
-	                      <div className={`is-status is-${visual.tone}`}>
-	                        <span>Status</span>
-	                        <strong>{visual.statusDetail}</strong>
-	                      </div>
-	                    </div>
+	            <div className={`hour-analysis-capacity-visual staffing-capacity-bar-visual${hourAnalysisChangedKeys.has("capacity") ? " is-recent-change" : ""}`}>
+	              <div
+	                className="staffing-capacity-bars-chart"
+	                role="img"
+	                aria-label={`Staffing Capacity bar chart comparing expected hours against demand hours by position on a shared 0 to ${formatHourAnalysisHours(staffingCapacityBarChartModel.chartMax)} hour scale.`}
+	              >
+	                <div className="staffing-capacity-y-axis" aria-hidden="true">
+	                  {staffingCapacityBarChartModel.ticks.map((tick) => (
+	                    <span
+	                      key={tick.key}
+	                      className="staffing-capacity-y-axis-tick"
+	                      style={{ "--tick-bottom": `${tick.pct}%` }}
+	                    >
+	                      {tick.label}
+	                    </span>
+	                  ))}
+	                </div>
+	                <div className="staffing-capacity-plot">
+	                  {staffingCapacityBarChartModel.ticks.map((tick) => (
+	                    <span
+	                      key={`${tick.key}-grid`}
+	                      className="staffing-capacity-gridline"
+	                      style={{ "--tick-bottom": `${tick.pct}%` }}
+	                      aria-hidden="true"
+	                    />
+	                  ))}
+	                  {staffingCapacityBarChartModel.rows.map((visual, rowIndex) => (
 	                    <div
-	                      className="hour-analysis-capacity-scale"
-	                      role="img"
-                      aria-label={`${visual.roleLabel} expected actual ${formatHourAnalysisHours(visual.expected)} hours, operational floor ${formatHourAnalysisHours(visual.floor)} hours, ${visual.hasTargetRange ? `lower range ${formatHourAnalysisHours(visual.targetLow)} hours, target ${formatHourAnalysisHours(visual.target)} hours, upper range ${formatHourAnalysisHours(visual.targetHigh)} hours` : "no target range"}, variance ${visual.delta.value}`}
-                    >
-                      <div className="hour-analysis-capacity-label-field">
-                        {visual.topLabels.map((label) => (
-                          <span
-                            key={label.key}
-                            className={`hour-analysis-capacity-top-label is-${label.tone}`}
-                            style={{
-                              "--label-left": `${label.pct}%`,
-                              "--label-lane": label.lane,
-                            }}
-                          >
-                            <small>{label.label}</small>
-                            <strong>{label.value}</strong>
-                          </span>
-                        ))}
-                      </div>
-                      {visual.topLabels.map((label) => (
-                        <span
-                          key={`${label.key}-reference`}
-                          className={`hour-analysis-capacity-reference is-${label.tone}`}
-                          style={{ "--reference-left": `${label.markerPct}%` }}
-                          aria-hidden="true"
-                        />
-                      ))}
-                      <div className="hour-analysis-capacity-rail" aria-hidden="true">
-                        <span className="hour-analysis-capacity-zero-tick" />
-                        {visual.hasTargetRange && (
-                          <span
-                            className="hour-analysis-capacity-range-span"
-                            style={{ left: `${visual.targetLowPct}%`, width: `${visual.bufferWidthPct}%` }}
-                          />
-                        )}
-                        <span className={`hour-analysis-capacity-expected-span is-${visual.tone}`} style={{ width: `${visual.expectedPct}%` }} />
-                        <span className="hour-analysis-capacity-marker is-expected" style={{ left: `${visual.expectedPct}%` }} />
-                        <span className="hour-analysis-capacity-marker is-floor" style={{ left: `${visual.floorPct}%` }} />
-                        {visual.hasTargetRange && (
-                          <span className="hour-analysis-capacity-marker is-target" style={{ left: `${visual.targetPct}%` }} />
-                        )}
-                        {visual.hasTargetRange && (
-                          <span className="hour-analysis-capacity-marker is-upper-range" style={{ left: `${visual.targetHighPct}%` }} />
-                        )}
-                      </div>
-                      <div className="hour-analysis-capacity-dimensions" aria-hidden="true">
-                        {visual.dimensionLines.map((line, lineIndex) => (
-                          <span
-                            key={line.key}
-                            className={`hour-analysis-capacity-dimension is-${line.tone} is-${line.key}${line.isZero ? " is-zero" : ""}`}
-                            style={{
-                              "--dimension-index": lineIndex,
-                              "--dimension-left": `${line.leftPct}%`,
-                              "--dimension-width": `${line.widthPct}%`,
-                            }}
-                          >
-                            <span>{line.label}</span>
-                          </span>
-                        ))}
-                      </div>
+	                      key={visual.key}
+	                      className={`staffing-capacity-role-chart is-${visual.tone}`}
+	                      tabIndex={0}
+	                      style={{
+	                        "--capacity-row-delay": `${Math.max(0, rowIndex) * 48}ms`,
+	                        "--expected-height": `${visual.expectedBarPct}%`,
+	                        "--demand-height": `${visual.demandBarPct}%`,
+	                        "--target-band-bottom": `${visual.targetBandBottomPct}%`,
+	                        "--target-band-height": `${visual.targetBandHeightPct}%`,
+	                        "--target-low-bottom": `${visual.targetLowPct}%`,
+	                        "--target-high-bottom": `${visual.targetHighPct}%`,
+	                      }}
+	                      aria-label={`${visual.roleLabel}: expected ${formatHourAnalysisHours(visual.expected)} hours, demand ${formatHourAnalysisHours(visual.demand)} hours${visual.hasTargetRange ? `, buffer zone ${formatHourAnalysisHours(visual.targetLow)} to ${formatHourAnalysisHours(visual.targetHigh)} hours` : ""}. ${visual.statusLabel}. ${visual.statusDetail}.`}
+	                    >
+	                      <div className="staffing-capacity-role-head">
+	                        <strong>{visual.roleLabel}</strong>
+	                        <span className={`staffing-capacity-role-delta is-${visual.delta.tone}`}>{visual.delta.value}</span>
+	                      </div>
+	                      <div className="staffing-capacity-bar-stage" aria-hidden="true">
+	                        {visual.hasTargetRange && (
+	                          <>
+	                            <span className="staffing-capacity-target-band" />
+	                            <span className="staffing-capacity-target-label">{visual.targetLowLabel}-{visual.targetHighLabel}</span>
+	                            <span className="staffing-capacity-buffer-bound is-lower" />
+	                            <span className="staffing-capacity-buffer-bound is-upper" />
+	                          </>
+	                        )}
+	                        <div className="staffing-capacity-bar-pair">
+	                          <div className="staffing-capacity-bar-cell">
+	                            <span className="staffing-capacity-bar-value">{visual.expectedLabel}</span>
+	                            <span className="staffing-capacity-bar is-expected" />
+	                            <span className="staffing-capacity-bar-caption">Expected</span>
+	                          </div>
+	                          <div className="staffing-capacity-bar-cell">
+	                            <span className="staffing-capacity-bar-value">{visual.demandLabel}</span>
+	                            <span className="staffing-capacity-bar is-demand" />
+	                            <span className="staffing-capacity-bar-caption">Demand</span>
+	                          </div>
+	                        </div>
+	                      </div>
 	                    </div>
-	                  </div>
-	                );
-	              })}
+	                  ))}
+	                </div>
+	              </div>
+	              <table className="staffing-capacity-bars-accessible-table">
+	                <caption>Staffing Capacity expected hours compared with demand hours</caption>
+	                <thead>
+	                  <tr>
+	                    <th>Position</th>
+	                    <th>Expected hours</th>
+	                    <th>Demand hours</th>
+	                    <th>Lower buffer</th>
+	                    <th>Upper buffer</th>
+	                    <th>Status</th>
+	                  </tr>
+	                </thead>
+	                <tbody>
+	                  {staffingCapacityBarChartModel.rows.map((visual) => (
+	                    <tr key={`${visual.key}-table`}>
+	                      <th scope="row">{visual.roleLabel}</th>
+	                      <td>{formatHourAnalysisHours(visual.expected)}</td>
+	                      <td>{formatHourAnalysisHours(visual.demand)}</td>
+	                      <td>{visual.hasTargetRange ? formatHourAnalysisHours(visual.targetLow) : "None"}</td>
+	                      <td>{visual.hasTargetRange ? formatHourAnalysisHours(visual.targetHigh) : "None"}</td>
+	                      <td>{visual.statusLabel}: {visual.statusDetail}</td>
+	                    </tr>
+	                  ))}
+	                </tbody>
+	              </table>
 	            </div>
 	            )}
 	          </div>
@@ -22495,11 +23115,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         <thead>
                           <tr>
                             <th>Day</th>
-                            <th>GM</th>
-                            <th>AM</th>
-                            <th>SUP</th>
-                            <th>CSR</th>
-                            <th>PCT</th>
+                            <th>{getConfiguredHourAnalysisGroupShortLabel("general_manager", hourAnalysisGroupDisplay)}</th>
+                            <th>{getConfiguredHourAnalysisGroupShortLabel("assistant_manager", hourAnalysisGroupDisplay)}</th>
+                            <th>{getConfiguredHourAnalysisGroupShortLabel("supervisor", hourAnalysisGroupDisplay)}</th>
+                            <th>{getConfiguredHourAnalysisGroupShortLabel("csr", hourAnalysisGroupDisplay)}</th>
+                            <th>{getConfiguredHourAnalysisGroupShortLabel("pct", hourAnalysisGroupDisplay)}</th>
 	                          <th>MKTG</th>
 	                          <th>Total</th>
 	                          <th>Peak</th>
@@ -22538,7 +23158,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <tbody>
                         {laborModelEditorModel.weeklyRows.map((row) => (
                           <tr key={row.key}>
-                            <td>{getHourAnalysisGroupShortLabel(row.key)}</td>
+                            <td>{getConfiguredHourAnalysisGroupShortLabel(row.key, hourAnalysisGroupDisplay)}</td>
                             <td>{formatHourAnalysisHours(row.requiredWeekly)}</td>
                             <td>{formatHourAnalysisHours(row.targetWeekly)}</td>
                             <td>{formatHourAnalysisHours(row.expected)}</td>
@@ -22771,7 +23391,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                                <button
 	                                  type="button"
 	                                  className="labor-model-row-insert"
-	                                  aria-label={`Insert row after ${getHourAnalysisGroupLabel(row.group_key)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
+	                                  aria-label={`Insert row after ${getConfiguredHourAnalysisGroupLabel(row.group_key, hourAnalysisGroupDisplay)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
 	                                  title="Insert row here"
 	                                  onClick={() => insertHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id)}
 	                                >
@@ -22821,7 +23441,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 <button
                                   type="button"
                                   className="labor-model-delete-button"
-                                  aria-label={`Delete ${getHourAnalysisGroupLabel(row.group_key)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
+                                  aria-label={`Delete ${getConfiguredHourAnalysisGroupLabel(row.group_key, hourAnalysisGroupDisplay)} ${LABOR_MODEL_SHIFT_TYPE_LABELS[row.shift_type] || "line"}`}
                                   onClick={() => removeHourAnalysisLaborModelRow(activeHourAnalysisLaborModelDayKey, row.id)}
                                 >
                                   <I.Trash />
@@ -23071,7 +23691,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 style={{ width: 140, textAlign: "left" }}
               />
               <div style={{ marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
-                Inherits {getHourAnalysisGroupLabel(whatIfPreviewGroupKey)} / {getLaborEmploymentCommitmentLabel(whatIfPreviewCommitment)} defaults unless changed.
+                Inherits {getConfiguredHourAnalysisGroupLabel(whatIfPreviewGroupKey, hourAnalysisGroupDisplay)} / {getLaborEmploymentCommitmentLabel(whatIfPreviewCommitment)} defaults unless changed.
               </div>
             </div>
             <HourAnalysisNoteInput
@@ -23127,7 +23747,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <Modal title="Labor Settings" onClose={() => setShowHierarchyManager(false)}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-              Approved titles are the only positions shown in movement and what-if pickers. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Capacity Planning use this order until a manager chooses another sort.
+              Approved titles and acronyms drive Labor Management position displays. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Capacity Planning use this order until a manager chooses another sort.
             </div>
             <div className="labor-roster-pdf-settings">
               <div className="labor-roster-pdf-settings-header">
@@ -23167,7 +23787,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </div>
               </div>
               <div className="labor-model-role-color-grid">
-                {LABOR_MODEL_ROLE_COLOR_OPTIONS.map((option) => {
+                {laborModelRoleColorOptions.map((option) => {
                   const palette = getLaborModelRolePalette(option.groupKey, hourAnalysisSettings.laborModelRoleColors);
                   const defaultPalette = LABOR_MODEL_ROLE_PALETTE[option.groupKey] || LABOR_MODEL_ROLE_PALETTE.other;
                   const isDefaultColor = palette.strong === defaultPalette.strong;
@@ -23253,6 +23873,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <div style={{ fontSize: 14, fontWeight: 850, color: C.text }}>{formatLaborPositionTitle(row.position_title)}</div>
                       <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>Approved title</div>
                     </div>
+                    <label className="labor-position-acronym-field">
+                      <span>Acronym</span>
+                      <input
+                        value={row.position_acronym || ""}
+                        onChange={(event) => updateHierarchyDraftAcronym(row.normalized_title, event.target.value)}
+                        onDragStart={(event) => event.stopPropagation()}
+                        maxLength={8}
+                        aria-label={`${row.position_title} acronym`}
+                      />
+                    </label>
                     <button
                       type="button"
                       className="labor-position-icon-button is-danger"
