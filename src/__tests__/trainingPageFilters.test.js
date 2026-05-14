@@ -86,6 +86,19 @@ describe("applyLaborRosterFilters", () => {
     });
   });
 
+  it("keeps individual training records addressable by URL", () => {
+    const trainingPageSource = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const routerSource = readFileSync(new URL("../kol/KolApp.jsx", import.meta.url), "utf8");
+
+    expect(routerSource).toContain('return `${laborBase}/training/${encodeURIComponent(prms.trainingRecordId)}`');
+    expect(routerSource).toContain("params.trainingRecordId = decodeURIComponent(parts[3])");
+    expect(trainingPageSource).toContain('const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : ""');
+    expect(trainingPageSource).toContain("const [selectedRecordId, setSelectedRecordId] = useState(routeTrainingRecordId || null)");
+    expect(trainingPageSource).toContain('navigateLaborRoute("training", { trainingRecordId: nextRecordId })');
+    expect(trainingPageSource).toContain("onClick={closeTrainingRecord}");
+    expect(trainingPageSource).toContain("onClick={() => openTrainingRecord(rec.id)}");
+  });
+
   it("opens the readiness cell modal from individual team readiness record items", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
     const renderRecordItem = source.slice(

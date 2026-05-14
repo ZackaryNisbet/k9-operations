@@ -168,6 +168,9 @@ function buildLiteUrl(locSlug, pg, prms, dataRef) {
       if (prms?.interviewView === "config") return `${laborBase}/interviews/config`;
       return `${laborBase}/interviews`;
     }
+    if (laborTab === "training" && prms?.trainingRecordId) {
+      return `${laborBase}/training/${encodeURIComponent(prms.trainingRecordId)}`;
+    }
     if (laborTab === "attendance" && prms?.attendanceView === "summary") return `${laborBase}/attendance/summary`;
     if (laborTab === "hour-analysis" && prms?.capacityPlanningView === "labor-model") return `${laborBase}/capacity-planning/labor-model`;
     return `${laborBase}/${tabSlug}`;
@@ -245,6 +248,9 @@ function parseLiteUrl(pathname, dataRef) {
       } else {
         params.interviewView = "records";
       }
+    }
+    if (laborTab === "training" && parts[3]) {
+      params.trainingRecordId = decodeURIComponent(parts[3]);
     }
     if (laborTab === "attendance" && parts[3] === "summary") {
       params.attendanceView = "summary";
