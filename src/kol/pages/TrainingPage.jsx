@@ -33,7 +33,6 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildUpdateLaborEmployeeRpcArgs,
-  buildPctReadinessCategoryHotspots,
   buildPctReadinessCellUpdateArgs,
   buildPctReadinessEmployeeOptions,
   buildUpdateTrainingRecordConfigArgs,
@@ -1943,6 +1942,91 @@ function PctReadinessDualProgress({ demonstratedPercent = 0, verifiedPercent = 0
       ))}
     </div>
   );
+}
+
+function PctReadinessDualCountSummary({
+  demonstratedCount = 0,
+  verifiedCount = 0,
+  total = 0,
+  demonstratedPercent = 0,
+  verifiedPercent = 0,
+  progressWidth = 130,
+  compact = false,
+}) {
+  const rows = [
+    {
+      key: "D",
+      title: "Demonstrated",
+      count: Number(demonstratedCount || 0),
+      percent: demonstratedPercent,
+      color: "#0ea5e9",
+    },
+    {
+      key: "V",
+      title: "Verified / Qualified",
+      count: Number(verifiedCount || 0),
+      percent: verifiedPercent,
+      color: C.suc,
+    },
+  ];
+  const countWidth = compact ? 44 : 50;
+  const keyWidth = compact ? 10 : 12;
+  const percentWidth = compact ? 26 : 30;
+  return (
+    <div style={{ display: "grid", gap: compact ? 3 : 4, width: countWidth + keyWidth + progressWidth + percentWidth + (compact ? 19 : 24) }}>
+      {rows.map((row) => (
+        <div
+          key={row.key}
+          title={row.title}
+          style={{
+            display: "grid",
+            gridTemplateColumns: `${countWidth}px ${keyWidth}px ${progressWidth}px ${percentWidth}px`,
+            alignItems: "center",
+            gap: compact ? 5 : 6,
+          }}
+        >
+          <span style={{ fontSize: compact ? 10.5 : 11, color: C.textMut, fontWeight: 900, lineHeight: 1, textAlign: "right", whiteSpace: "nowrap" }}>
+            {row.count}/{Number(total || 0)}
+          </span>
+          <span style={{ fontSize: compact ? 9.5 : 10, fontWeight: 950, color: C.textMut, lineHeight: 1, textAlign: "center" }}>
+            {row.key}
+          </span>
+          <CompactProgressBar percent={row.percent} color={row.color} />
+          <span style={{ fontSize: compact ? 9.5 : 10, fontWeight: 900, color: C.textMut, textAlign: "right", lineHeight: 1 }}>
+            {Math.round(safeTrainingProgress(row.percent))}%
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function cleanReadinessActorName(value = "") {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || isEmailLike(trimmed)) return "";
+  return trimmed;
+}
+
+function getReadinessCellActorDisplayName(cell = {}, status = "") {
+  const metadata = isObjectRow(cell?.metadata) ? cell.metadata : {};
+  const normalizedStatus = normalizePctReadinessStatus(status || cell.readiness_status || cell.status);
+  if (normalizedStatus === "not_started") return "";
+  const statusCandidates = normalizedStatus === "verified" || normalizedStatus === "waived"
+    ? {
+        verified_actor_name: cell.verified_by || metadata.verified_by_name,
+        completed_by_name: cell.completed_by_name,
+        updated_by_name: metadata.last_updated_by_name,
+        actor_name: cell.latest_note_actor_name,
+        evaluated_by_name: cell.evaluated_by_name,
+      }
+    : {
+        actor_name: cell.demonstrated_by || metadata.demonstrated_by_name,
+        updated_by_name: metadata.last_updated_by_name,
+        created_by_name: cell.latest_note_actor_name,
+        evaluated_by_name: cell.evaluated_by_name,
+        completed_by_name: cell.completed_by_name,
+      };
+  return cleanReadinessActorName(resolveVerifiedActorDisplayName(statusCandidates, ""));
 }
 
 function TrainingHistoryStatusChange({ statusChange }) {
@@ -5542,6 +5626,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [previewTemplateKind, setPreviewTemplateKind] = useState("training");
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedItemNotes, setExpandedItemNotes] = useState({});
+  const [savingItemStatusId, setSavingItemStatusId] = useState(null);
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const [previewTemplateVersionId, setPreviewTemplateVersionId] = useState(null);
   const [savingTemplateAction, setSavingTemplateAction] = useState("");
@@ -5686,6 +5771,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [configTargetEndDate, setConfigTargetEndDate] = useState("");
   const [configLaborEmployeeId, setConfigLaborEmployeeId] = useState("");
   const [savingConfig, setSavingConfig] = useState(false);
+  const [deletingRecord, setDeletingRecord] = useState(false);
 
   // Labor employee editor
   const [showLaborEmployeeEditor, setShowLaborEmployeeEditor] = useState(false);
@@ -6772,6 +6858,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [fallbackDashboardMetrics, serverDashboardMetrics]);
 
   const selectedRecord = useMemo(() => toObjectRows(records).find((record) => record.id === selectedRecordId) || null, [records, selectedRecordId]);
+  const selectedRecordIsTeamReadiness = useMemo(() => isTeamReadinessRecord(selectedRecord || {}), [selectedRecord]);
   const selectedRecordEmployeeId = useMemo(() => {
     if (!selectedRecord) return null;
     return selectedRecord.labor_employee_id || selectedRecord.employee_id || null;
@@ -7327,14 +7414,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     pctReadinessFilters.task,
     pctReadinessSections,
   ]);
-  const pctReadinessGapHotspots = useMemo(() => (
-    buildPctReadinessCategoryHotspots({
-      sections: pctReadinessSections,
-      records: pctReadinessRecords,
-      cells: pctReadinessCells,
-    })
-  ), [pctReadinessCells, pctReadinessRecords, pctReadinessSections]);
-  const pctReadinessTopHotspot = pctReadinessGapHotspots[0] || null;
   const pctReadinessFilterCount = [
     pctReadinessFilters.employee,
     pctReadinessFilters.task,
@@ -8108,6 +8187,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const result = toObjectRows(itemResults).find((row) => row.template_item_id === itemId);
     if (!result) return;
     const newStatus = result.status === "complete" ? "not_started" : "complete";
+    setSavingItemStatusId(itemId);
     const { data, error } = await supabase.rpc("set_training_item_status", {
       p_record_id: selectedRecordId,
       p_template_item_id: itemId,
@@ -8118,11 +8198,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
     if (error || !data?.result || !data?.record) {
       addGlobalToast("Failed to update item", "error");
+      setSavingItemStatusId(null);
       return;
     }
 
     setItemResults(prev => prev.map(r => r.id === data.result.id ? data.result : r));
     setRecords(prev => prev.map(r => r.id === data.record.id ? data.record : r));
+    setSavingItemStatusId(null);
   }, [actorName, actorUserId, addGlobalToast, itemResults, selectedRecordId]);
 
   const reloadRecordNotesAndEvents = useCallback(async () => {
@@ -8217,6 +8299,53 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     setSavingConfig(false);
   }, [actorName, actorUserId, addGlobalToast, configEmployeeName, configHireDate, configLaborEmployeeId, configStartDate, configTargetEndDate, configTargetRole, reloadRecordNotesAndEvents, selectedRecordId]);
+
+  const handleArchiveTrainingRecord = useCallback(async () => {
+    if (!selectedRecordId || deletingRecord) return;
+    const traineeName = selectedRecord?.employee_full_name || selectedRecord?.employee_name || "this trainee";
+    const confirmed = window.confirm(`Delete the training record for ${traineeName}? This archives the record and removes it from active training views while preserving notes and history.`);
+    if (!confirmed) return;
+
+    setDeletingRecord(true);
+    const { data, error } = await supabase
+      .from("training_records")
+      .update({
+        overall_status: "archived",
+        updated_by_user_id: actorUserId || null,
+      })
+      .eq("id", selectedRecordId)
+      .select("*")
+      .single();
+
+    if (error) {
+      addGlobalToast("Failed to delete training record", "error");
+      setDeletingRecord(false);
+      return;
+    }
+
+    const archivedRecord = data || {
+      ...(selectedRecord || {}),
+      id: selectedRecordId,
+      overall_status: "archived",
+      updated_by_user_id: actorUserId || null,
+    };
+    setRecords((prev) => prev.map((record) => (record.id === selectedRecordId ? archivedRecord : record)));
+    setShowRecordConfig(false);
+    setSelectedRecordId(null);
+    setExpandedSections({});
+    setItemResults([]);
+    setNotes([]);
+    setRecordEvents([]);
+    try {
+      await refreshLaborData({ includeTraining: true, includeSupport: true });
+      addGlobalToast("Training record deleted", "success");
+    } catch (refreshError) {
+      console.error("Training record refresh after delete failed:", refreshError);
+      addGlobalToast("Training record deleted, but refresh failed", "warning");
+    } finally {
+      setDeletingRecord(false);
+    }
+  }, [actorUserId, addGlobalToast, deletingRecord, refreshLaborData, selectedRecord, selectedRecordId]);
 
   const resetLaborEmployeeEditor = useCallback(() => {
     setEditingLaborEmployeeId(null);
@@ -9144,8 +9273,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
   }, [activePctReadinessSectionId]);
 
-  const openPctReadinessCellEditor = useCallback((record, item, section) => {
-    const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+  const openPctReadinessCellEditor = useCallback((record, item, section, options = {}) => {
+    const cell = options.cell || pctReadinessCells[`${record.id}:${item.id}`] || {};
     const readinessStatus = normalizePctReadinessStatus(cell.readiness_status || cell.status);
     setPctReadinessCellEditor({ record, item, section, cell });
     setPctReadinessEditorStatus(readinessStatus);
@@ -9185,10 +9314,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           throw error;
         }
       }
-      await loadPctReadinessBoard(true);
-      await refreshLaborData({ includeTraining: true, includeSupport: true });
+      const savedRecordId = pctReadinessCellEditor.record.id;
+      const shouldRefreshRecordDetail = savedRecordId === selectedRecordId;
+      const shouldRefreshReadinessBoard = trainingView === "board" || Boolean(selectedPctReadinessRecordId);
       closePctReadinessCellEditor();
       addGlobalToast?.("Readiness cell updated", "success");
+      if (shouldRefreshRecordDetail) {
+        await reloadRecordDetailData(savedRecordId);
+      }
+      if (shouldRefreshReadinessBoard) {
+        await loadPctReadinessBoard(true);
+      }
     } catch (error) {
       console.error("Team readiness cell save error:", error);
       addGlobalToast?.(error?.message || "Failed to update readiness cell", "error");
@@ -9203,8 +9339,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     pctReadinessCellEditor,
     pctReadinessEditorComment,
     pctReadinessEditorStatus,
-    refreshLaborData,
+    reloadRecordDetailData,
+    selectedPctReadinessRecordId,
     selectedReadinessTemplateSlug,
+    selectedRecordId,
+    trainingView,
   ]);
 
   const handleCreatePctReadinessRecord = useCallback(async () => {
@@ -9905,6 +10044,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // ── Section toggle ──
   const toggleSection = useCallback((sectionId) => {
     setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  }, []);
+
+  const scrollToTrainingRecordAnchor = useCallback((anchorId, sectionId = "") => {
+    if (sectionId) {
+      setExpandedSections((prev) => ({ ...prev, [sectionId]: true }));
+    }
+    window.setTimeout(() => {
+      document.getElementById(anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
   }, []);
 
   const toggleItemNotes = useCallback((itemId) => {
@@ -12061,27 +12209,170 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       });
   }, [getItemById, getSectionById, notes]);
 
-  const renderRecordItem = useCallback((item) => {
+  const renderRecordItem = useCallback((item, section) => {
     if (!isObjectRow(item) || !item.id) return null;
     const itemLabel = String(item.label || item.prompt || "").trim() || "Untitled task";
     const result = getItemResult(item.id);
-    const isDone = result && (result.status === "complete" || result.status === "passed");
+    const readinessStatus = getTrainingResultReadinessStatus(result || {});
+    const presentation = getPctReadinessStatusPresentation(readinessStatus);
+    const readinessStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+    const isDone = isReadinessVerifiedStatus(readinessStatus);
     const itemNotes = getItemNotes(item.id);
     const showNotes = !!expandedItemNotes[item.id];
+    const savingStatus = savingItemStatusId === item.id;
+    const latestItemNote = itemNotes[0] || null;
+    const readinessCell = {
+      ...(isObjectRow(result) ? result : {}),
+      readiness_status: readinessStatus,
+      status: readinessStatus,
+      latest_note: latestItemNote?.note_text || result?.metadata?.latest_note || "",
+      latest_note_actor_name: latestItemNote?.created_by_full_name || latestItemNote?.created_by_name || latestItemNote?.initials || "",
+      demonstrated_by: result?.metadata?.demonstrated_by_name || (readinessStatus === "demonstrated" ? (result?.metadata?.last_updated_by_name || result?.evaluated_by_name) : ""),
+      verified_by: result?.metadata?.verified_by_name || (isDone ? (result?.completed_by_name || result?.metadata?.last_updated_by_name || result?.evaluated_by_name || "") : ""),
+      metadata: isObjectRow(result?.metadata) ? result.metadata : {},
+    };
+    const readinessActorName = getReadinessCellActorDisplayName(readinessCell, readinessStatus);
+    const recordItemNotesPanel = showNotes ? (
+      <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {itemNotes.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No observations yet</div>
+          ) : (
+            itemNotes.map((note) => (
+              <div key={note.id} style={{ paddingBottom: 10, borderBottom: `1px solid ${C.borderLight}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                  {note.created_by_name || note.initials || "Staff"}
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
+                  {formatTrainingTimestamp(note.created_at)}
+                </div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 4, lineHeight: 1.45 }}>
+                  {note.note_text}
+                </div>
+              </div>
+            ))
+          )}
+          <Inp
+            label="New Observation"
+            type="textarea"
+            rows={3}
+            value={itemNoteDrafts[item.id] || ""}
+            onChange={(value) => setItemNoteDrafts((prev) => ({ ...prev, [item.id]: value }))}
+            placeholder="Add a time-stamped observation for this task"
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <Btn
+              variant="primary"
+              size="sm"
+              onClick={() => handleAddItemNote(item.id)}
+              disabled={savingItemNoteId === item.id}
+            >
+              {savingItemNoteId === item.id ? "Saving..." : "Add Observation"}
+            </Btn>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+    if (selectedRecordIsTeamReadiness) {
+      return (
+        <div key={item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) 220px 120px",
+              alignItems: "stretch",
+              minHeight: 72,
+            }}
+          >
+            <div style={{ minWidth: 0, padding: "12px 14px 12px 0", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, textDecoration: "none", lineHeight: 1.35, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                {itemLabel}
+              </div>
+              {(item.description || item.policy_reference || !item.required || result?.completed_at) && (
+                <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {item.description && (
+                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                      {item.description}
+                    </div>
+                  )}
+                  {item.policy_reference && (
+                    <a
+                      href={item.policy_reference}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 12, color: C.pri, fontWeight: 600, textDecoration: "none" }}
+                    >
+                      Open linked resource
+                    </a>
+                  )}
+                  {!item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+                  {result?.completed_at && (
+                    <span style={{ fontSize: 11, color: C.textMut }}>
+                      {result.completed_by_name || "Completed"} on {formatTrainingTimestamp(result.completed_at)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            <div
+              style={{
+                borderLeft: `1.5px solid ${C.border}`,
+                borderRight: `1.5px solid ${C.border}`,
+                background: "#fff",
+                padding: "10px 12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => openPctReadinessCellEditor(selectedRecord, item, section, { cell: readinessCell })}
+                style={{ width: "100%", maxWidth: 180, display: "inline-flex", flexDirection: "column", gap: 4, alignItems: "flex-start", padding: "8px 10px", borderRadius: 9, border: `1px solid ${readinessStyle.border}`, background: readinessStyle.bg, color: readinessStyle.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, lineHeight: 1.1, minWidth: 0, maxWidth: "100%" }}>
+                  <span style={{ flexShrink: 0 }}>{readinessStyle.icon}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{presentation.label}</span>
+                </span>
+                {readinessActorName && (
+                  <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {readinessActorName}
+                  </span>
+                )}
+              </button>
+            </div>
+            <div style={{ padding: "10px 0 10px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Btn variant="ghost" size="sm" onClick={() => toggleItemNotes(item.id)} style={{ width: "100%", justifyContent: "center" }}>
+                {showNotes ? "Hide Notes" : `Notes${itemNotes.length ? ` (${itemNotes.length})` : ""}`}
+              </Btn>
+            </div>
+          </div>
+          {recordItemNotesPanel && (
+            <div style={{ padding: "0 0 12px" }}>
+              {recordItemNotesPanel}
+            </div>
+          )}
+        </div>
+      );
+    }
 
     return (
       <div key={item.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-          <input
-            type="checkbox"
-            checked={!!isDone}
-            onChange={() => handleToggleItem(item.id)}
-            style={{ width: 18, height: 18, accentColor: C.pri, cursor: "pointer", flexShrink: 0, marginTop: 2 }}
-          />
+          {!selectedRecordIsTeamReadiness && (
+            <input
+              type="checkbox"
+              checked={!!isDone}
+              onChange={() => handleToggleItem(item.id)}
+              disabled={savingStatus}
+              style={{ width: 18, height: 18, accentColor: C.pri, cursor: savingStatus ? "default" : "pointer", flexShrink: 0, marginTop: 2 }}
+            />
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: isDone ? C.textMut : C.text, textDecoration: isDone ? "line-through" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, textDecoration: "none" }}>
                   {itemLabel}
                 </div>
                 {(item.description || item.policy_reference) && (
@@ -12111,58 +12402,49 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {!item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+                {selectedRecordIsTeamReadiness && (
+                  <button
+                    type="button"
+                    onClick={() => openPctReadinessCellEditor(selectedRecord, item, section, { cell: readinessCell })}
+                    style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: readinessActorName ? 124 : undefined, borderRadius: 8, border: `1px solid ${readinessStyle.border}`, background: readinessStyle.bg, color: readinessStyle.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, lineHeight: 1.1 }}>
+                      <span>{readinessStyle.icon}</span>
+                      <span>{presentation.label}</span>
+                    </span>
+                    {readinessActorName && (
+                      <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {readinessActorName}
+                      </span>
+                    )}
+                  </button>
+                )}
                 <Btn variant="ghost" size="sm" onClick={() => toggleItemNotes(item.id)}>
                   {showNotes ? "Hide Notes" : `Notes${itemNotes.length ? ` (${itemNotes.length})` : ""}`}
                 </Btn>
               </div>
             </div>
 
-            {showNotes && (
-              <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {itemNotes.length === 0 ? (
-                    <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No observations yet</div>
-                  ) : (
-                    itemNotes.map((note) => (
-                      <div key={note.id} style={{ paddingBottom: 10, borderBottom: `1px solid ${C.borderLight}` }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
-                          {note.created_by_name || note.initials || "Staff"}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
-                          {formatTrainingTimestamp(note.created_at)}
-                        </div>
-                        <div style={{ fontSize: 12, color: C.textSec, marginTop: 4, lineHeight: 1.45 }}>
-                          {note.note_text}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  <Inp
-                    label="New Observation"
-                    type="textarea"
-                    rows={3}
-                    value={itemNoteDrafts[item.id] || ""}
-                    onChange={(value) => setItemNoteDrafts((prev) => ({ ...prev, [item.id]: value }))}
-                    placeholder="Add a time-stamped observation for this task"
-                  />
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <Btn
-                      variant="primary"
-                      size="sm"
-                      onClick={() => handleAddItemNote(item.id)}
-                      disabled={savingItemNoteId === item.id}
-                    >
-                      {savingItemNoteId === item.id ? "Saving..." : "Add Observation"}
-                    </Btn>
-                  </div>
-                </div>
-              </div>
-            )}
+            {recordItemNotesPanel}
           </div>
         </div>
       </div>
     );
-  }, [expandedItemNotes, formatTrainingTimestamp, getItemNotes, getItemResult, handleAddItemNote, handleToggleItem, itemNoteDrafts, savingItemNoteId, toggleItemNotes]);
+  }, [
+    expandedItemNotes,
+    formatTrainingTimestamp,
+    getItemNotes,
+    getItemResult,
+    handleAddItemNote,
+    handleToggleItem,
+    itemNoteDrafts,
+    openPctReadinessCellEditor,
+    savingItemNoteId,
+    savingItemStatusId,
+    selectedRecord,
+    selectedRecordIsTeamReadiness,
+    toggleItemNotes,
+  ]);
 
   const renderTemplatePreviewItem = useCallback((item, editable = false) => {
     if (!isObjectRow(item) || !item.id) return null;
@@ -12530,6 +12812,55 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setHierarchyDraft(makeDefaultLaborPositionRows());
     setNewHierarchyTitle("");
   }, []);
+
+  const pctReadinessCellEditorModal = canUseLaborTab("training") && pctReadinessCellEditor ? (
+    <Modal title="Update Readiness Cell" onClose={closePctReadinessCellEditor}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surfaceHover }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{pctReadinessCellEditor.record?.employee_full_name || "Employee"}</div>
+          <div style={{ fontSize: 12, color: C.textSec, marginTop: 5, lineHeight: 1.45 }}>{pctReadinessCellEditor.item?.label}</div>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>{pctReadinessCellEditor.section?.title}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Status</div>
+          <CustomSelect
+            value={pctReadinessEditorStatus}
+            onChange={(value) => setPctReadinessEditorStatus(normalizePctReadinessStatus(value))}
+            options={PCT_READINESS_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+          />
+        </div>
+        <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
+          <div style={{ fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 5 }}>Actor Attribution</div>
+          <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45 }}>
+            This update will be stamped as <strong style={{ color: C.text }}>{actorName}</strong> from the logged-in account. Imported workbook names remain visible as historical data only.
+          </div>
+          {(pctReadinessCellEditor.cell?.demonstrated_by || pctReadinessCellEditor.cell?.verified_by) && (
+            <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+              Legacy import: {pctReadinessCellEditor.cell?.verified_by || pctReadinessCellEditor.cell?.demonstrated_by}
+            </div>
+          )}
+        </div>
+        <Inp
+          label="Comment"
+          type="textarea"
+          rows={3}
+          value={pctReadinessEditorComment}
+          onChange={setPctReadinessEditorComment}
+          placeholder="Optional coaching note or context"
+        />
+        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+          {pctReadinessCellEditor.cell?.updated_at ? `Last updated ${formatTrainingTimestamp(pctReadinessCellEditor.cell.updated_at)}` : "No prior update timestamp"}
+          {pctReadinessCellEditor.cell?.latest_note ? ` - Latest comment: ${pctReadinessCellEditor.cell.latest_note}` : ""}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+          <Btn variant="ghost" onClick={closePctReadinessCellEditor}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleSavePctReadinessCell} disabled={savingPctReadinessCell}>
+            {savingPctReadinessCell ? "Saving..." : "Save Cell"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EMPLOYEE DETAIL VIEW
@@ -13256,15 +13587,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
                   <div>
                     <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>{selectedEmployeeReadinessTemplateOption.roleLabel} Team Readiness Board</div>
-                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
-                      {selectedEmployeePctReadinessProgress.demonstratedCount}/{selectedEmployeePctReadinessProgress.total} demonstrated · {selectedEmployeePctReadinessProgress.verifiedCount}/{selectedEmployeePctReadinessProgress.total} verified
-                    </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <div style={{ minWidth: 190 }}>
-                      <PctReadinessDualProgress
+                    <div style={{ minWidth: 260 }}>
+                      <PctReadinessDualCountSummary
+                        demonstratedCount={selectedEmployeePctReadinessProgress.demonstratedCount}
+                        verifiedCount={selectedEmployeePctReadinessProgress.verifiedCount}
+                        total={selectedEmployeePctReadinessProgress.total}
                         demonstratedPercent={selectedEmployeePctReadinessProgress.demonstratedPercent}
                         verifiedPercent={selectedEmployeePctReadinessProgress.verifiedPercent}
+                        progressWidth={140}
                       />
                     </div>
                     <Btn
@@ -13303,22 +13635,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginBottom: 14 }}>
                   {selectedEmployeePctReadinessProfile.categoryRows.map((category) => (
                     <div key={category.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff" }}>
                       <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 6 }}>{category.title}</div>
-                      <PctReadinessDualProgress
+                      <PctReadinessDualCountSummary
+                        demonstratedCount={category.demonstratedCount}
+                        verifiedCount={category.verifiedCount}
+                        total={category.total}
                         demonstratedPercent={category.demonstratedPercent}
                         verifiedPercent={category.percent}
+                        progressWidth={75}
+                        compact
                       />
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-                        <span>{category.demonstratedPercent}% / {category.percent}%</span>
-                        {category.needsCoachingCount > 0
-                          ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span>
-                          : category.demonstratedCount > category.verifiedCount
-                            ? <span>{category.demonstratedCount}/{category.total} demonstrated · {category.verifiedCount}/{category.total} verified</span>
-                            : <span>{category.verifiedCount}/{category.total} verified</span>}
-                      </div>
+                      {category.needsCoachingCount > 0 && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: C.warn, fontWeight: 800 }}>{category.needsCoachingCount} coaching</div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -13790,15 +14122,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const recordEmployeeName = selectedRecord.employee_full_name || selectedLaborEmployeeView?.full_name || "Employee";
     const recordTargetRole = formatLaborPositionTitle(selectedRecord.target_role || selectedLaborEmployeeView?.position_title) || "Employee";
     const recordTemplateName = selectedRecord.template_name_snapshot || selectedVersion?.name || "Training Plan";
+    const trainingRecordSectionNavItems = [
+      {
+        id: "training-record-overview",
+        label: "Overview",
+        countLabel: `${Math.round(safeTrainingProgress(recordProgress))}%`,
+      },
+      ...recordSections.map((section) => {
+        const comp = sectionCompletionMap[section.id] || {};
+        const total = Number(comp.total || 0);
+        const verified = Number(comp.verified || comp.done || 0);
+        const verifiedPercent = Number.isFinite(Number(comp.verifiedPercent))
+          ? Number(comp.verifiedPercent)
+          : total > 0 ? Math.round((verified / total) * 100) : 0;
+        return {
+          id: `training-record-section-${section.id}`,
+          sectionId: section.id,
+          label: section.title,
+          countLabel: `${Math.round(safeTrainingProgress(verifiedPercent))}%`,
+        };
+      }),
+      { id: "training-record-notes", label: "Notes", countLabel: `${aggregatedNoteFeed.length}` },
+    ];
 
     return (
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
-        {/* Back button */}
-        <button onClick={() => { setSelectedRecordId(null); setExpandedSections({}); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
-          <I.Back /> Back to Labor
-        </button>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(190px, 210px)", gap: 16, alignItems: "start" }}>
+          <main style={{ minWidth: 0 }}>
+            {/* Back button */}
+            <button onClick={() => { setSelectedRecordId(null); setExpandedSections({}); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
+              <I.Back /> Back to Labor
+            </button>
 
         {/* Record Header */}
+        <div id="training-record-overview" style={{ scrollMarginTop: 18 }}>
         <Card style={{ padding: 24, marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
             <div>
@@ -13820,27 +14177,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
             <div style={{ textAlign: "right" }}>
               <StatusBadge status={selectedRecord.overall_status} />
-              <div style={{ width: 190, marginTop: 10 }}>
-                <PctReadinessDualProgress
+              <div style={{ width: 260, marginTop: 10 }}>
+                <PctReadinessDualCountSummary
+                  demonstratedCount={requiredDemonstratedCount}
+                  verifiedCount={requiredCompletedCount}
+                  total={requiredItemCount}
                   demonstratedPercent={selectedRecordReadinessProgress.demonstratedPercent}
                   verifiedPercent={recordProgress}
+                  progressWidth={140}
                 />
-              </div>
-              <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 6 }}>
-                {requiredDemonstratedCount} / {requiredItemCount} demonstrated · {requiredCompletedCount} / {requiredItemCount} verified
               </div>
               <div style={{ marginTop: 10 }}>
                 <Btn variant="secondary" size="sm" onClick={openRecordConfigModal}>Edit Configuration</Btn>
               </div>
             </div>
           </div>
-          <div style={{ marginTop: 16 }}>
-            <PctReadinessDualProgress
-              demonstratedPercent={selectedRecordReadinessProgress.demonstratedPercent}
-              verifiedPercent={recordProgress}
-            />
-          </div>
         </Card>
+        </div>
 
         {/* Sections */}
         <SectionHeader title="Training Plan" count={recordSections.length} />
@@ -13868,7 +14221,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             : comp.total > 0 ? Math.round((Number(comp.demonstrated || 0) / comp.total) * 100) : 0;
 
           return (
-            <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
+            <div key={sec.id} id={`training-record-section-${sec.id}`} style={{ scrollMarginTop: 18 }}>
+            <Card style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
               <button onClick={() => toggleSection(sec.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.15s" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
                   <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}><I.ChevronRight /></span>
@@ -13883,15 +14237,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800, whiteSpace: "nowrap" }}>
-                    {comp.demonstrated}/{comp.total} D · {comp.verified || comp.done}/{comp.total} V
-                  </span>
-                  <div style={{ width: 130 }}>
-                    <PctReadinessDualProgress
-                      demonstratedPercent={secDemonstratedPercent}
-                      verifiedPercent={secVerifiedPercent}
-                    />
-                  </div>
+                  <PctReadinessDualCountSummary
+                    demonstratedCount={comp.demonstrated}
+                    verifiedCount={comp.verified || comp.done}
+                    total={comp.total}
+                    demonstratedPercent={secDemonstratedPercent}
+                    verifiedPercent={secVerifiedPercent}
+                    progressWidth={118}
+                    compact
+                  />
                 </div>
               </button>
 
@@ -13913,22 +14267,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             {child.instructions}
                           </div>
                         )}
-                        {childItems.map((item) => renderRecordItem(item))}
+                        {childItems.map((item) => renderRecordItem(item, child))}
                       </div>
                     );
                   })}
                   {/* Direct items (no child modules) */}
-                  {childSecs.length === 0 && directItems.map((item) => renderRecordItem(item))}
+                  {childSecs.length === 0 && directItems.map((item) => renderRecordItem(item, sec))}
                 </div>
               )}
             </Card>
+            </div>
           );
         })}
 
         {/* Aggregate Notes */}
-        <div style={{ marginTop: 28 }}>
+        <div id="training-record-notes" style={{ marginTop: 28, scrollMarginTop: 18 }}>
           <SectionHeader title="All Notes & Observations" count={aggregatedNoteFeed.length} />
-          <Card style={{ padding: 16 }}>
+          <Card style={{ padding: 16, overflow: "hidden" }}>
             <div style={{ marginBottom: 16 }}>
               <Inp
                 label="General Trainee Note"
@@ -13947,15 +14302,54 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             {aggregatedNoteFeed.length === 0 && <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No notes yet</div>}
             {aggregatedNoteFeed.map((note) => (
               <div key={note.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                  <span style={{ fontWeight: 700, color: C.text }}>{note.created_by_name || note.initials || "Staff"}</span>
-                  <Badge color="default">{note.sourceType}: {note.sourceLabel}</Badge>
-                  <span style={{ fontSize: 11, color: C.textMut }}>{formatTrainingTimestamp(note.created_at)}</span>
+                <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", alignItems: "start", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{note.created_by_name || note.initials || "Staff"}</span>
+                  <span style={{ minWidth: 0, display: "inline-flex", width: "fit-content", maxWidth: "100%", padding: "3px 8px", borderRadius: 8, background: C.surfaceHover, color: C.textSec, fontSize: 11, fontWeight: 800, lineHeight: 1.35, overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}>
+                    {note.sourceType}: {note.sourceLabel}
+                  </span>
+                  <span style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>{formatTrainingTimestamp(note.created_at)}</span>
                 </div>
-                <div style={{ color: C.textSec, lineHeight: 1.5 }}>{note.note_text}</div>
+                <div style={{ color: C.textSec, lineHeight: 1.5, overflowWrap: "anywhere", wordBreak: "break-word" }}>{note.note_text}</div>
               </div>
             ))}
           </Card>
+        </div>
+          </main>
+
+          <aside className="training-record-section-nav" style={{ position: "sticky", top: 18, minWidth: 0 }}>
+            <Card style={{ padding: 10, overflow: "hidden", maxHeight: "calc(100vh - 48px)", overflowY: "auto" }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+                Sections
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {trainingRecordSectionNavItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => scrollToTrainingRecordAnchor(item.id, item.sectionId)}
+                    style={{
+                      width: "100%",
+                      minWidth: 0,
+                      boxSizing: "border-box",
+                      border: `1px solid ${C.borderLight}`,
+                      background: C.surface,
+                      borderRadius: 8,
+                      padding: "8px 9px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      fontFamily: "inherit",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ minWidth: 0, fontSize: 12, fontWeight: 850, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+                      <span style={{ flexShrink: 0, minWidth: 28, borderRadius: 999, padding: "2px 6px", background: C.surfaceHover, fontSize: 10, color: C.textMut, fontWeight: 900, whiteSpace: "nowrap", textAlign: "center" }}>{item.countLabel}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </aside>
         </div>
 
         {showRecordConfig && (
@@ -13975,27 +14369,38 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 placeholder="Link to roster employee"
               />
               <Inp label="Employee Full Name" value={configEmployeeName} onChange={setConfigEmployeeName} required />
-              <HourAnalysisAnimatedPicker
-                label="Position Title"
-                value={formatLaborPositionTitle(configTargetRole)}
-                onChange={setConfigTargetRole}
-                options={getLaborPositionOptionsWithCurrent(configTargetRole)}
-                placeholder="Choose approved title"
-              />
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>
+                  Position Title
+                </div>
+                <CustomSelect
+                  value={formatLaborPositionTitle(configTargetRole)}
+                  onChange={setConfigTargetRole}
+                  options={getLaborPositionOptionsWithCurrent(configTargetRole)}
+                  placeholder="Choose approved title"
+                />
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Inp label="Hire Date" type="date" value={configHireDate} onChange={setConfigHireDate} />
                 <Inp label="Training Start Date" type="date" value={configStartDate} onChange={setConfigStartDate} />
               </div>
               <Inp label="Target End Date" type="date" value={configTargetEndDate} onChange={setConfigTargetEndDate} />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-                <Btn variant="ghost" onClick={() => setShowRecordConfig(false)}>Cancel</Btn>
-                <Btn variant="primary" onClick={handleSaveRecordConfig} disabled={savingConfig}>
-                  {savingConfig ? "Saving..." : "Save Changes"}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                <Btn variant="danger" onClick={handleArchiveTrainingRecord} disabled={savingConfig || deletingRecord}>
+                  {deletingRecord ? "Deleting..." : "Delete Training Record"}
                 </Btn>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginLeft: "auto" }}>
+                  <Btn variant="ghost" onClick={() => setShowRecordConfig(false)} disabled={deletingRecord}>Cancel</Btn>
+                  <Btn variant="primary" onClick={handleSaveRecordConfig} disabled={savingConfig || deletingRecord}>
+                    {savingConfig ? "Saving..." : "Save Changes"}
+                  </Btn>
+                </div>
               </div>
             </div>
           </Modal>
         )}
+
+        {pctReadinessCellEditorModal}
       </div>
     );
   }
@@ -20167,14 +20572,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        <div style={{ minWidth: 210 }}>
-                          <PctReadinessDualProgress
+                        <div style={{ minWidth: 260 }}>
+                          <PctReadinessDualCountSummary
+                            demonstratedCount={pctReadinessEmployeeBoardProgress.demonstratedCount}
+                            verifiedCount={pctReadinessEmployeeBoardProgress.verifiedCount}
+                            total={pctReadinessEmployeeBoardProgress.total}
                             demonstratedPercent={pctReadinessEmployeeBoardProgress.demonstratedPercent}
                             verifiedPercent={pctReadinessEmployeeBoardProgress.verifiedPercent}
+                            progressWidth={140}
                           />
-                          <div style={{ marginTop: 6, fontSize: 11, fontWeight: 900, color: C.textMut, textAlign: "right" }}>
-                            {pctReadinessEmployeeBoardProgress.demonstratedCount}/{pctReadinessEmployeeBoardProgress.total} demonstrated · {pctReadinessEmployeeBoardProgress.verifiedCount}/{pctReadinessEmployeeBoardProgress.total} verified
-                          </div>
                         </div>
                         <Btn
                           variant="secondary"
@@ -20246,7 +20652,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         <Btn variant="ghost" size="sm" onClick={clearPctReadinessFilters}>Clear</Btn>
                       </div>
                     </Card>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginBottom: 16 }}>
                       {filteredPctReadinessEmployeeBoardCategoryRows.map((category) => (
                         <button
                           key={category.id}
@@ -20255,18 +20661,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
                         >
                           <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 7 }}>{category.title}</div>
-                          <PctReadinessDualProgress
+                          <PctReadinessDualCountSummary
+                            demonstratedCount={category.demonstratedCount}
+                            verifiedCount={category.verifiedCount}
+                            total={category.total}
                             demonstratedPercent={category.demonstratedPercent}
                             verifiedPercent={category.percent}
+                            progressWidth={75}
+                            compact
                           />
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 7, fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-                            <span>{category.demonstratedPercent}% / {category.percent}%</span>
-                            {category.needsCoachingCount > 0
-                              ? <span style={{ color: C.warn }}>{category.needsCoachingCount} coaching</span>
-                              : category.demonstratedCount > category.verifiedCount
-                                ? <span>{category.demonstratedCount}/{category.total} demonstrated · {category.verifiedCount}/{category.total} verified</span>
-                                : <span>{category.verifiedCount}/{category.total} verified</span>}
-                          </div>
+                          {category.needsCoachingCount > 0 && (
+                            <div style={{ marginTop: 7, fontSize: 11, color: C.warn, fontWeight: 850 }}>
+                              {category.needsCoachingCount} coaching
+                            </div>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -20341,6 +20749,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 {!collapsed && section.taskRows.map((row) => {
                                   const presentation = getPctReadinessStatusPresentation(row.status);
                                   const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                                  const rowActorName = getReadinessCellActorDisplayName(row.cell, presentation.value);
                                   return (
                                     <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
@@ -20349,9 +20758,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                         <button
                                           type="button"
                                           onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
-                                          style={{ display: "inline-flex", gap: 6, alignItems: "center", padding: "6px 9px", borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                          style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorName ? 124 : undefined, borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
                                         >
-                                          {style.icon} {presentation.label}
+                                          <span style={{ display: "inline-flex", gap: 6, alignItems: "center", lineHeight: 1.1 }}>
+                                            <span>{style.icon}</span>
+                                            <span>{presentation.label}</span>
+                                          </span>
+                                          {rowActorName && (
+                                            <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                              {rowActorName}
+                                            </span>
+                                          )}
                                         </button>
                                       </td>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
@@ -20374,25 +20791,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 {readinessRoleSummaries.map((summary) => (
                   <ReadinessRoleMetricCard key={summary.slug} summary={summary} />
                 ))}
-                <button
-                  type="button"
-                  onClick={() => pctReadinessTopHotspot && jumpToPctReadinessSection(pctReadinessTopHotspot.sectionId, { filter: true })}
-                  disabled={!pctReadinessTopHotspot}
-                  style={{ border: "none", padding: 0, background: "transparent", fontFamily: "inherit", textAlign: "left", cursor: pctReadinessTopHotspot ? "pointer" : "default" }}
-                >
-                  <MetricCard
-                    label="Training Gap Hotspot"
-                    value={pctReadinessTopHotspot ? `${pctReadinessTopHotspot.gapPercent}%` : "—"}
-                    helper={pctReadinessTopHotspot ? `${pctReadinessTopHotspot.category} · ${pctReadinessTopHotspot.affectedTraineeCount} trainee${pctReadinessTopHotspot.affectedTraineeCount === 1 ? "" : "s"}` : "No active gaps"}
-                    color={C.text}
-                  />
-                </button>
               </div>
 
               <Card style={{ padding: 14, marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ minWidth: 240 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Role / Template</div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Plan</div>
                     <CustomSelect
                       value={selectedReadinessTemplateSlug}
                       onChange={changeReadinessTemplate}
@@ -20644,6 +21048,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                     const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
                                     const presentation = getPctReadinessStatusPresentation(cell.readiness_status || cell.status);
                                     const statusStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                                    const cellActorName = getReadinessCellActorDisplayName(cell, presentation.value);
                                     return (
                                       <td key={`${record.id}:${item.id}`} style={{ padding: 7, minWidth: 156, borderBottom: `1px solid ${C.borderLight}`, background: "#fff", verticalAlign: "top" }}>
                                         <button
@@ -20672,9 +21077,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             <span style={{ minWidth: 20 }}>{statusStyle.icon}</span>
                                             <span>{presentation.label}</span>
                                           </span>
-                                          {(cell.latest_note || cell.demonstrated_by || cell.verified_by) && (
+                                          {(cellActorName || cell.latest_note) && (
                                             <span style={{ fontSize: 10.5, color: statusStyle.text, opacity: 0.78, lineHeight: 1.25 }}>
-                                              {cell.latest_note ? "Comment" : cell.verified_by || cell.demonstrated_by}
+                                              {cellActorName || "Comment"}
                                             </span>
                                           )}
                                         </button>
@@ -20692,27 +21097,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </Card>
               )}
 
-              {pctReadinessGapHotspots.length > 0 && (
-                <Card style={{ padding: 16, marginTop: 16 }}>
-                  <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>Gap Hotspots by Category</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                    {pctReadinessGapHotspots.slice(0, 6).map((gap) => (
-                      <button
-                        key={gap.sectionId}
-                        type="button"
-                        onClick={() => jumpToPctReadinessSection(gap.sectionId, { filter: true })}
-                        style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "#fff", textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}
-                      >
-                        <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 4 }}>{gap.category || "Category"}</div>
-                        <div style={{ fontSize: 22, color: C.warn, fontWeight: 950, lineHeight: 1 }}>{gap.gapPercent}%</div>
-                        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, marginTop: 8 }}>
-                          {gap.gapCells}/{gap.totalCells} task cells need work · {gap.affectedTraineeCount} trainee{gap.affectedTraineeCount === 1 ? "" : "s"}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </Card>
-              )}
               </>
               )}
             </>
@@ -22875,54 +23259,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </Modal>
       )}
 
-      {canUseLaborTab("training") && pctReadinessCellEditor && (
-        <Modal title="Update Readiness Cell" onClose={closePctReadinessCellEditor}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surfaceHover }}>
-              <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{pctReadinessCellEditor.record?.employee_full_name || "Employee"}</div>
-              <div style={{ fontSize: 12, color: C.textSec, marginTop: 5, lineHeight: 1.45 }}>{pctReadinessCellEditor.item?.label}</div>
-              <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>{pctReadinessCellEditor.section?.title}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Status</div>
-              <CustomSelect
-                value={pctReadinessEditorStatus}
-                onChange={(value) => setPctReadinessEditorStatus(normalizePctReadinessStatus(value))}
-                options={PCT_READINESS_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-              />
-            </div>
-            <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 5 }}>Actor Attribution</div>
-              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45 }}>
-                This update will be stamped as <strong style={{ color: C.text }}>{actorName}</strong> from the logged-in account. Imported workbook names remain visible as historical data only.
-              </div>
-              {(pctReadinessCellEditor.cell?.demonstrated_by || pctReadinessCellEditor.cell?.verified_by) && (
-                <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
-                  Legacy import: {pctReadinessCellEditor.cell?.verified_by || pctReadinessCellEditor.cell?.demonstrated_by}
-                </div>
-              )}
-            </div>
-            <Inp
-              label="Comment"
-              type="textarea"
-              rows={3}
-              value={pctReadinessEditorComment}
-              onChange={setPctReadinessEditorComment}
-              placeholder="Optional coaching note or context"
-            />
-            <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>
-              {pctReadinessCellEditor.cell?.updated_at ? `Last updated ${formatTrainingTimestamp(pctReadinessCellEditor.cell.updated_at)}` : "No prior update timestamp"}
-              {pctReadinessCellEditor.cell?.latest_note ? ` - Latest comment: ${pctReadinessCellEditor.cell.latest_note}` : ""}
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-              <Btn variant="ghost" onClick={closePctReadinessCellEditor}>Cancel</Btn>
-              <Btn variant="primary" onClick={handleSavePctReadinessCell} disabled={savingPctReadinessCell}>
-                {savingPctReadinessCell ? "Saving..." : "Save Cell"}
-              </Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
+      {pctReadinessCellEditorModal}
 
       {canUseLaborTab("training") && showNewRecord && (
         <Modal title="New Training Record" onClose={() => { setShowNewRecord(false); resetNewRecordForm(); }}>

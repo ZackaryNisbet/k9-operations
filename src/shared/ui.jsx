@@ -344,13 +344,59 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
   const [view, setView] = useState("days");
   const [typedVal, setTypedVal] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [panelStyle, setPanelStyle] = useState(null);
   const ref = useRef(null);
+  const panelRef = useRef(null);
   const inputRef = useRef(null);
   const parsed = value ? new Date(value + "T12:00:00") : new Date();
   const [vMonth, setVMonth] = useState(parsed.getMonth());
   const [vYear, setVYear] = useState(parsed.getFullYear());
   const [yrPage, setYrPage] = useState(Math.floor(parsed.getFullYear() / 12) * 12);
-  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  const updatePanelPosition = useCallback(() => {
+    if (!open || !ref.current || typeof window === "undefined") return;
+    const rect = ref.current.getBoundingClientRect();
+    const width = 280;
+    const viewportPadding = 12;
+    const estimatedHeight = view === "days" ? 340 : 250;
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const openUpward = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const availableHeight = Math.max(
+      220,
+      Math.min(estimatedHeight, openUpward ? spaceAbove - 6 : spaceBelow - 6),
+    );
+    setPanelStyle({
+      position: "fixed",
+      left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding)),
+      top: openUpward ? Math.max(viewportPadding, rect.top - availableHeight - 6) : rect.bottom + 6,
+      width,
+      maxHeight: availableHeight,
+      zIndex: 2000,
+    });
+  }, [open, view]);
+  useEffect(() => {
+    if (!open) {
+      setPanelStyle(null);
+      return undefined;
+    }
+    const h = (e) => {
+      if (ref.current?.contains(e.target) || panelRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const handleReposition = () => updatePanelPosition();
+    document.addEventListener("mousedown", h);
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    return () => {
+      document.removeEventListener("mousedown", h);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [open, updatePanelPosition]);
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePanelPosition();
+  }, [open, updatePanelPosition]);
   useEffect(() => { if (open) { setView("days"); if (value) { const d = new Date(value + "T12:00:00"); setVMonth(d.getMonth()); setVYear(d.getFullYear()); setYrPage(Math.floor(d.getFullYear() / 12) * 12); } } }, [open]);
   const days = useMemo(() => { const first = new Date(vYear, vMonth, 1); const sd = first.getDay(); const dim = new Date(vYear, vMonth + 1, 0).getDate(); const c = []; for (let i = 0; i < sd; i++) c.push(null); for (let d = 1; d <= dim; d++) c.push(d); return c; }, [vMonth, vYear]);
   const ml = new Date(vYear, vMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -432,7 +478,19 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
       </div>
       {extraContent}
       {open && (
-        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
+        <div
+          ref={panelRef}
+          style={{
+            ...(panelStyle || { position: "fixed", left: 12, top: 12, width: 280, maxHeight: 340, zIndex: 2000 }),
+            background: C.surface,
+            border: `1.5px solid ${C.border}`,
+            borderRadius: 14,
+            boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+            padding: 16,
+            overflowY: "auto",
+            boxSizing: "border-box",
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <button onClick={prev} style={navBtn}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
             <span onClick={headerClick} style={{ fontSize: 14, fontWeight: 700, color: C.text, cursor: view !== "years" ? "pointer" : "default", padding: "2px 8px", borderRadius: 6, transition: "background 0.15s" }} onMouseEnter={e => { if (view !== "years") e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>{headerLabel}</span>
