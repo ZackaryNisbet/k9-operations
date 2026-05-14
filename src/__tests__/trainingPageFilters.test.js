@@ -4,6 +4,8 @@ import {
   applyLaborRosterFilters,
   applyLaborCapacityModelActivation,
   buildHourAnalysisCapacityRowVisualModel,
+  buildHourAnalysisGroupDisplay,
+  buildStaffingCapacityBarChartModel,
   buildDefaultLaborCapacityModelPayload,
   buildLaborModelCrossRoleCoverageSummary,
   buildPlannedCrossRoleCoverageRows,
@@ -28,6 +30,7 @@ import {
   normalizeCapacityPlanningView,
   normalizeLaborCapacityModelRow,
   normalizeLaborCapacityModelVersions,
+  normalizeLaborPositionAcronym,
   normalizeLaborModelBreakerSettings,
   normalizeLaborModelCoverageCell,
   normalizeLaborModelRolePalette,
@@ -303,7 +306,11 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("outOfPositionCollapsed");
     expect(source).toContain("headcountExpectedCollapsed");
     expect(source.lastIndexOf("!headcountExpectedCollapsed && (", source.indexOf("Expected Hours By Person"))).toBeGreaterThan(0);
-    expect(source).toContain("hour-analysis-capacity-row-metrics");
+    expect(source).toContain("staffingCapacityBarChartModel");
+    expect(source).toContain("staffing-capacity-bar-visual");
+    expect(source).toContain("staffing-capacity-bars-chart");
+    expect(source).toContain("staffing-capacity-target-band");
+    expect(source).toContain("staffing-capacity-bars-accessible-table");
     expect(source).toContain("visual.statusLabel");
     expect(source).toContain("visual.statusDetail");
     expect(source).not.toContain("Gross Position Gap");
@@ -318,15 +325,21 @@ describe("applyLaborRosterFilters", () => {
     expect(source).not.toContain("hour-analysis-capacity-detail-popover");
     expect(source).not.toContain("hour-analysis-capacity-hover-zone is-expected");
     expect(source).not.toContain("updateHourAnalysisCapacityHover");
-    expect(source).toContain("staffingCapacityRangeSummary");
+    expect(source).not.toContain("staffingCapacityRangeSummary");
+    expect(source).not.toContain("staffingCapacitySummarySignal");
+    expect(source).not.toContain("CSR/PCT:");
+    expect(source).not.toContain("No range buffer");
     expect(source).toContain("Capacity Settings");
     expect(source).toContain("Tolerance defaults to");
-    expect(source).toContain("hour-analysis-capacity-top-label");
-    expect(source).toContain("hour-analysis-capacity-reference");
-    expect(source).toContain("hour-analysis-capacity-dimension");
+    expect(source).toContain("LABOR_POSITION_ACRONYMS_SETTING_KEY");
+    expect(source).toContain("position_acronym");
+    expect(source).toContain("Acronym");
+    expect(source).toContain("laborModelRoleColorOptions");
+    expect(source).toContain("Expected");
+    expect(source).toContain("Demand");
+    expect(source).toContain("buffer zone");
     expect(source).not.toContain("Expected / actual");
     expect(source).toContain("Lower range");
-    expect(source).toContain("no target range");
     expect(source).not.toContain("hourAnalysisCapacityLayoutColumns");
     expect(source).not.toContain('"leadership" : "frontline"');
     expect(source).not.toContain("out-of-position-week-controls");
@@ -473,6 +486,20 @@ describe("applyLaborRosterFilters", () => {
       requiredWeekly: 10,
       targetWeekly: 10,
     });
+    const configuredSupervisorRange = buildHourAnalysisCapacityRowVisualModel({
+      key: "supervisor",
+      expected: 12,
+      requiredWeekly: 10,
+      targetWeekly: 12,
+      capacityStandard: {
+        healthyLowWeekly: 11.5,
+        targetWeekly: 12,
+        healthyHighWeekly: 12.5,
+        targetBufferPercent: 20,
+      },
+    }, buildHourAnalysisGroupDisplay([
+      { position_title: "Supervisor", position_acronym: "Lead" },
+    ]));
     const highVolumePct = buildHourAnalysisCapacityRowVisualModel({
       key: "pct",
       expected: 420,
@@ -573,6 +600,61 @@ describe("applyLaborRosterFilters", () => {
     });
     expect(adminSurplus.topLabels.map((label) => label.label)).toEqual(["Floor"]);
     expect(adminSurplus.dimensionLines.map((line) => line.key)).toEqual(["expected", "floor"]);
+    expect(configuredSupervisorRange).toMatchObject({
+      roleLabel: "LEAD",
+      isFrontline: true,
+      hasTargetRange: true,
+      statusLabel: "In range",
+    });
+    expect(configuredSupervisorRange.bufferWidthPct).toBeGreaterThan(0);
+  });
+
+  it("builds the Staffing Capacity grouped bar chart model with demand separate from buffer", () => {
+    const groupDisplay = buildHourAnalysisGroupDisplay([
+      { position_title: "Customer Service Representative", position_acronym: "FD" },
+      { position_title: "General Manager", position_acronym: "GEN" },
+    ]);
+    const chart = buildStaffingCapacityBarChartModel([
+      {
+        key: "csr",
+        expected: 24,
+        requiredWeekly: 20,
+        targetWeekly: 24,
+        capacityStandard: {
+          healthyLowWeekly: 23,
+          targetWeekly: 24,
+          healthyHighWeekly: 25,
+          targetBufferPercent: 20,
+        },
+      },
+      {
+        key: "general_manager",
+        expected: 12,
+        requiredWeekly: 10,
+        targetWeekly: 10,
+      },
+    ], groupDisplay);
+
+    expect(chart.chartMax).toBe(50);
+    expect(chart.ticks.map((tick) => tick.label)).toEqual(["50h", "37.5h", "25h", "12.5h", "0h"]);
+    expect(chart.summary).toMatchObject({ short: 0, inRange: 1, over: 1 });
+    expect(chart.rows[0]).toMatchObject({
+      roleLabel: "FD",
+      demand: 20,
+      expectedLabel: "24h",
+      demandLabel: "20h",
+      targetLowLabel: "23h",
+      targetHighLabel: "25h",
+      hasTargetRange: true,
+    });
+    expect(chart.rows[0].targetBandHeightPct).toBeGreaterThan(0);
+    expect(chart.rows[0].demandPct).toBeLessThan(chart.rows[0].targetLowPct);
+    expect(chart.rows[1]).toMatchObject({
+      roleLabel: "GEN",
+      demand: 10,
+      hasTargetRange: false,
+      targetBandHeightPct: 0,
+    });
   });
 
   it("classifies Staffing Capacity tolerance without urgent short or over styling", () => {
@@ -728,9 +810,10 @@ describe("applyLaborRosterFilters", () => {
 
     expect(normalized.roles.general_manager).toMatchObject({
       tolerancePercent: 3.5,
-      lowerBufferPercent: 0,
-      targetBufferPercent: 0,
-      upperBufferPercent: 0,
+      lowerBufferPercent: 12,
+      targetBufferPercent: 12,
+      upperBufferPercent: 24,
+      overRosteredBufferPercent: 24,
     });
     expect(normalized.roles.csr).toMatchObject({
       tolerancePercent: 4,
@@ -744,6 +827,15 @@ describe("applyLaborRosterFilters", () => {
       lowerBufferPercent: 15,
       targetBufferPercent: 20,
       upperBufferPercent: 25,
+    });
+    expect(normalizeLaborPositionAcronym("sup.", "Supervisor")).toBe("SUP");
+    expect(normalizeLaborPositionAcronym("", "Director of Resorts")).toBe("DOR");
+    expect(buildHourAnalysisGroupDisplay([
+      { position_title: "Supervisor", position_acronym: "lead" },
+      { position_title: "Customer Service Representative", position_acronym: "fd" },
+    ])).toMatchObject({
+      supervisor: { label: "Supervisor", shortLabel: "LEAD" },
+      csr: { label: "Customer Service Representative", shortLabel: "FD" },
     });
   });
 
