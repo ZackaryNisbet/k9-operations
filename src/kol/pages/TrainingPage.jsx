@@ -5646,6 +5646,54 @@ function isEmailLike(value = "") {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 }
 
+function normalizeActorLookupEmail(value = "") {
+  const email = String(value || "").trim().toLowerCase();
+  return isEmailLike(email) ? email : "";
+}
+
+function resolveActorProfileDisplayName(profileRow = {}) {
+  return String(profileRow.full_name || profileRow.name || profileRow.email || "").trim();
+}
+
+export function collectTrainingActorLookupEmails(...rowGroups) {
+  return Array.from(new Set(rowGroups
+    .flatMap((rows) => toObjectRows(rows))
+    .flatMap((row) => [
+      row.actor_email,
+      row.created_by_email,
+      row.updated_by_email,
+      row.deleted_by_email,
+      row.uploaded_by_email,
+      row.reviewer_email,
+      row.actor_name,
+      row.actorName,
+      row.created_by_name,
+      row.createdByName,
+      row.updated_by_name,
+      row.updatedByName,
+      row.deleted_by_name,
+      row.uploaded_by_name,
+      row.email,
+    ])
+    .map(normalizeActorLookupEmail)
+    .filter(Boolean)));
+}
+
+export function enrichTrainingActorProfileName(row = {}, {
+  userKey = "",
+  nameKey = "",
+  actorNameById = new Map(),
+  actorNameByEmail = new Map(),
+} = {}) {
+  const actorId = normalizeOptionalUuid(row?.[userKey]);
+  const verifiedName = actorId ? actorNameById.get(actorId) : "";
+  if (verifiedName) return { ...row, [nameKey]: verifiedName };
+
+  const actorEmail = collectTrainingActorLookupEmails([row])[0] || "";
+  const verifiedEmailName = actorEmail ? actorNameByEmail.get(actorEmail) : "";
+  return verifiedEmailName ? { ...row, [nameKey]: verifiedEmailName } : row;
+}
+
 export function resolveVerifiedActorDisplayName(row = {}, fallback = "Staff") {
   const candidates = [
     row.actor_full_name,
@@ -6419,7 +6467,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const laborLocationRef = resolvedLaborLocationId || locationRef || "";
   const laborContactLocationName = String(locationName || data?.locationName || profile?.location_name || "K9 Operations").trim();
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
-  const actorName = profile?.name || profile?.full_name || profile?.email || "System";
+  const actorName = profile?.full_name || profile?.name || profile?.email || "System";
   const activeLaborCapacityModel = useMemo(() => getActiveLaborCapacityModel(laborCapacityModels), [laborCapacityModels]);
   const editingLaborCapacityModel = useMemo(() => {
     const normalizedModels = normalizeLaborCapacityModels(laborCapacityModels);
@@ -7061,7 +7109,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         trainingNoteRes.data,
         trainingEventRes.data,
       );
+      const actorEmails = collectTrainingActorLookupEmails(
+        noteRes.data,
+        historyEventRes.data,
+        trainingNoteRes.data,
+        trainingEventRes.data,
+      );
       let actorNameById = new Map();
+      let actorNameByEmail = new Map();
       if (actorIds.length > 0) {
         const { data: actorProfiles, error: actorProfileError } = await supabase
           .from("lite_profiles")
@@ -7072,14 +7127,31 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         } else {
           actorNameById = new Map(toObjectRows(actorProfiles).map((row) => [
             normalizeOptionalUuid(row.user_id),
-            String(row.full_name || row.name || row.email || "").trim(),
+            resolveActorProfileDisplayName(row),
           ]).filter(([id, name]) => id && name));
         }
       }
+      if (actorEmails.length > 0) {
+        const { data: actorEmailProfiles, error: actorEmailProfileError } = await supabase
+          .from("lite_profiles")
+          .select("user_id,name,full_name,email")
+          .in("email", actorEmails);
+        if (actorEmailProfileError) {
+          console.warn("Unable to enrich training actors from lite_profiles by email", actorEmailProfileError);
+        } else {
+          actorNameByEmail = new Map(toObjectRows(actorEmailProfiles).map((row) => [
+            normalizeActorLookupEmail(row.email),
+            resolveActorProfileDisplayName(row),
+          ]).filter(([email, name]) => email && name));
+        }
+      }
       const enrichActorName = (row, userKey, nameKey) => {
-        const actorId = normalizeOptionalUuid(row?.[userKey]);
-        const verifiedName = actorId ? actorNameById.get(actorId) : "";
-        return verifiedName ? { ...row, [nameKey]: verifiedName } : row;
+        return enrichTrainingActorProfileName(row, {
+          userKey,
+          nameKey,
+          actorNameById,
+          actorNameByEmail,
+        });
       };
       const employeeNoteRows = toObjectRows(noteRes.data).map((row) => enrichActorName(row, "created_by_user_id", "created_by_full_name"));
       const employeeHistoryRows = toObjectRows(historyEventRes.data).map((row) => enrichActorName(row, "actor_user_id", "actor_full_name"));

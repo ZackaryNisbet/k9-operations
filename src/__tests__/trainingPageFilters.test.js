@@ -14,6 +14,7 @@ import {
   buildTrainingHistoryRows,
   buildTrainingHistoryDayMetrics,
   buildTrainingHistoryFilterOptions,
+  collectTrainingActorLookupEmails,
   buildHourAnalysisModel,
   buildOutOfPositionLaborSummary,
   calculateLaborShiftHours,
@@ -40,6 +41,7 @@ import {
   normalizeHourAnalysisSettings,
   normalizeStaffingCapacitySettings,
   noteMatchesSearch,
+  enrichTrainingActorProfileName,
   resolveVerifiedActorDisplayName,
   removeLaborModelColumnFromDay,
   safeTrainingProgress,
@@ -1484,6 +1486,36 @@ describe("applyLaborRosterFilters", () => {
   it("falls back to email only when no verified actor name is available", () => {
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com" })).toBe("manager@example.com");
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com", actor_full_name: "Maria Manager" })).toBe("Maria Manager");
+  });
+
+  it("enriches actor display names from lite profile full names when history rows only stored email", () => {
+    const rows = [
+      { id: "event-1", actor_name: "zach.cruz@k9resorts.com" },
+      { id: "note-1", created_by_name: "zach.cruz@k9resorts.com" },
+    ];
+    const actorNameByEmail = new Map([["zach.cruz@k9resorts.com", "Zach Cruz"]]);
+
+    expect(collectTrainingActorLookupEmails(rows)).toEqual(["zach.cruz@k9resorts.com"]);
+    expect(enrichTrainingActorProfileName(rows[0], {
+      userKey: "actor_user_id",
+      nameKey: "actor_full_name",
+      actorNameByEmail,
+    })).toMatchObject({
+      actor_name: "zach.cruz@k9resorts.com",
+      actor_full_name: "Zach Cruz",
+    });
+    expect(enrichTrainingActorProfileName(rows[1], {
+      userKey: "created_by_user_id",
+      nameKey: "created_by_full_name",
+      actorNameByEmail,
+    })).toMatchObject({
+      created_by_name: "zach.cruz@k9resorts.com",
+      created_by_full_name: "Zach Cruz",
+    });
+    expect(resolveVerifiedActorDisplayName({
+      actor_name: "zach.cruz@k9resorts.com",
+      actor_full_name: "Zach Cruz",
+    })).toBe("Zach Cruz");
   });
 
   it("keeps interview detail state out of the labor panel remount key", () => {
