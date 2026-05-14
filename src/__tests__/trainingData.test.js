@@ -335,7 +335,7 @@ describe("trainingData helpers", () => {
       {
         id: "r1",
         labor_employee_id: "existing",
-        template_name_snapshot: "Angelina's PCT Training Guide v1",
+        template_name_snapshot: "Angelina's PCT Training Plan v1",
         overall_status: "in_progress",
       },
     ];
@@ -347,7 +347,7 @@ describe("trainingData helpers", () => {
       {
         id: "r2",
         labor_employee_id: uuidExisting,
-        template_name_snapshot: "Angelina's PCT Training Guide v1",
+        template_name_snapshot: "Angelina's PCT Training Plan v1",
         overall_status: "in_progress",
       },
     ];
@@ -372,9 +372,10 @@ describe("trainingData helpers", () => {
     ]);
     expect(getTeamReadinessTemplateOption(CSR_READINESS_TEMPLATE_SLUG)).toMatchObject({
       roleLabel: "CSR",
-      label: "Angelina's CSR Training Guide v1",
+      label: "Angelina's CSR Training Plan v1",
     });
     expect(isTeamReadinessRecord({ template_slug: CSR_READINESS_TEMPLATE_SLUG })).toBe(true);
+    expect(isTeamReadinessRecord({ template_name_snapshot: "Angelina's PCT Training Plan v1" })).toBe(true);
     expect(isTeamReadinessRecord({ template_name_snapshot: "Angelina's PCT Training Guide v1" })).toBe(true);
     expect(isTeamReadinessRecord({ template_name_snapshot: "PCT Team Readiness Board" })).toBe(true);
     expect(isTeamReadinessRecord({ template_name_snapshot: "Training Plan - CSR" })).toBe(false);
