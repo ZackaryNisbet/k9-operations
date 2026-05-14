@@ -2001,6 +2001,122 @@ function PctReadinessDualCountSummary({
   );
 }
 
+function PctReadinessCategoryJumpControl({
+  sections = [],
+  activeSectionId = "",
+  categoryFilterId = "",
+  onJump,
+}) {
+  const visibleSections = toObjectRows(sections).filter((section) => section?.id);
+  if (visibleSections.length === 0) return null;
+
+  const currentId = categoryFilterId || activeSectionId || visibleSections[0]?.id || "";
+  const currentIndex = Math.max(0, visibleSections.findIndex((section) => section.id === currentId));
+  const currentSection = visibleSections[currentIndex] || visibleSections[0];
+  const currentTaskCount = toObjectRows(currentSection?.items).length;
+  const currentTaskLabel = `${currentTaskCount} task${currentTaskCount === 1 ? "" : "s"}`;
+  const selectOptions = visibleSections.map((section) => {
+    const taskCount = toObjectRows(section.items).length;
+    return {
+      value: section.id,
+      label: `${section.title || "Category"} (${taskCount})`,
+    };
+  });
+  const jumpByOffset = (offset) => {
+    if (visibleSections.length < 2) return;
+    const nextIndex = Math.max(0, Math.min(visibleSections.length - 1, currentIndex + offset));
+    const nextSection = visibleSections[nextIndex];
+    if (nextSection?.id) onJump?.(nextSection.id);
+  };
+
+  return (
+    <div
+      aria-label="Jump training categories"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 12px",
+        borderBottom: `1px solid ${C.borderLight}`,
+        background: "#fff",
+      }}
+    >
+      <div style={{ minWidth: 180, flex: "1 1 220px" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 3 }}>
+          Category Jump
+        </div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {currentSection?.title || "Category"}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 850, color: C.textMut, whiteSpace: "nowrap" }}>
+            {currentTaskLabel}
+          </span>
+        </div>
+      </div>
+      <CustomSelect
+        value={currentSection?.id || ""}
+        onChange={(sectionId) => {
+          if (sectionId) onJump?.(sectionId);
+        }}
+        options={selectOptions}
+        placeholder="Jump to category"
+        searchable
+        searchPlaceholder="Find category"
+        small
+        style={{ flex: "1 1 260px", maxWidth: 380 }}
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginLeft: "auto" }}>
+        <button
+          type="button"
+          onClick={() => jumpByOffset(-1)}
+          disabled={currentIndex <= 0}
+          aria-label="Jump to previous category"
+          title="Previous category"
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: currentIndex <= 0 ? C.bg : C.surface,
+            color: currentIndex <= 0 ? C.textMut : C.text,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: currentIndex <= 0 ? "not-allowed" : "pointer",
+            opacity: currentIndex <= 0 ? 0.55 : 1,
+          }}
+        >
+          <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><I.ChevronRight /></span>
+        </button>
+        <button
+          type="button"
+          onClick={() => jumpByOffset(1)}
+          disabled={currentIndex >= visibleSections.length - 1}
+          aria-label="Jump to next category"
+          title="Next category"
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: currentIndex >= visibleSections.length - 1 ? C.bg : C.surface,
+            color: currentIndex >= visibleSections.length - 1 ? C.textMut : C.text,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: currentIndex >= visibleSections.length - 1 ? "not-allowed" : "pointer",
+            opacity: currentIndex >= visibleSections.length - 1 ? 0.55 : 1,
+          }}
+        >
+          <I.ChevronRight />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function cleanReadinessActorName(value = "") {
   const trimmed = String(value || "").trim();
   if (!trimmed || isEmailLike(trimmed)) return "";
@@ -5862,7 +5978,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessFilterPickerReady, setPctReadinessFilterPickerReady] = useState(false);
   const [pctReadinessCollapsedSections, setPctReadinessCollapsedSections] = useState({});
   const [activePctReadinessSectionId, setActivePctReadinessSectionId] = useState("");
-  const [hoveredPctReadinessSectionId, setHoveredPctReadinessSectionId] = useState("");
   const [selectedPctReadinessRecordId, setSelectedPctReadinessRecordId] = useState("");
   const [pctReadinessCellEditor, setPctReadinessCellEditor] = useState(null);
   const [pctReadinessEditorStatus, setPctReadinessEditorStatus] = useState("not_started");
@@ -20876,68 +20991,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 <EmptyState icon="ClipboardCheck" title={`No ${selectedReadinessTemplateOption.roleLabel} readiness records yet`} subtitle="Add a trainee to start the board." />
               ) : (
                 <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8, position: "relative" }}>
-                  <div
-                    aria-label="Category navigator"
-                    style={{
-                      position: "absolute",
-                      top: 72,
-                      right: 8,
-                      bottom: 12,
-                      zIndex: 8,
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "center",
-                      gap: 5,
-                      pointerEvents: "none",
-                    }}
-                  >
-                    {filteredPctReadinessSections.map((section) => {
-                      const selected = activePctReadinessSectionId === section.id || pctReadinessFilters.category === section.id;
-                      const hovered = hoveredPctReadinessSectionId === section.id;
-                      return (
-                        <button
-                          key={section.id}
-                          type="button"
-                          onMouseEnter={() => setHoveredPctReadinessSectionId(section.id)}
-                          onMouseLeave={() => setHoveredPctReadinessSectionId("")}
-                          onClick={() => jumpToPctReadinessSection(section.id)}
-                          title={section.title}
-                          aria-label={`Jump to ${section.title}`}
-                          style={{
-                            width: selected || hovered ? 72 : 34,
-                            height: 6,
-                            borderRadius: 999,
-                            border: "none",
-                            background: selected ? C.pri : hovered ? C.acc : "#CBD5E1",
-                            cursor: "pointer",
-                            pointerEvents: "auto",
-                            transition: "width 160ms ease, background 160ms ease",
-                            position: "relative",
-                          }}
-                        >
-                          {hovered && (
-                            <span style={{
-                              position: "absolute",
-                              right: 82,
-                              top: "50%",
-                              transform: "translateY(-50%)",
-                              padding: "5px 8px",
-                              borderRadius: 8,
-                              background: C.text,
-                              color: "#fff",
-                              fontSize: 10.5,
-                              fontWeight: 800,
-                              whiteSpace: "nowrap",
-                              boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
-                            }}>
-                              {section.title}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div ref={pctReadinessScrollRef} onScroll={handlePctReadinessMatrixScroll} style={{ overflow: "auto", maxHeight: "68vh", paddingRight: 42 }}>
+                  <PctReadinessCategoryJumpControl
+                    sections={filteredPctReadinessSections}
+                    activeSectionId={activePctReadinessSectionId}
+                    categoryFilterId={pctReadinessFilters.category}
+                    onJump={jumpToPctReadinessSection}
+                  />
+                  <div ref={pctReadinessScrollRef} onScroll={handlePctReadinessMatrixScroll} style={{ overflow: "auto", maxHeight: "68vh" }}>
                     <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
                       <thead>
                         <tr>
