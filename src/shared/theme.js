@@ -96,6 +96,9 @@ const LEAN_PERMISSION_AREAS = [
   "Grassroots Access",
   "Grassroots Log Activity",
   "Grassroots Edit Targets",
+  "Resort Upkeep Access",
+  "Resort Upkeep Complete",
+  "Resort Upkeep Manage",
 ];
 
 const LEAN_PERMISSION_CATEGORIES = [
@@ -145,6 +148,11 @@ const LEAN_PERMISSION_CATEGORIES = [
     { key: "Grassroots Access", label: "Grassroots Access", desc: "Open grassroots targets and activity history" },
     { key: "Grassroots Log Activity", label: "Log Development", desc: "Log grassroots development updates and drops" },
     { key: "Grassroots Edit Targets", label: "Edit Targets", desc: "Create, edit, move, and delete grassroots targets" },
+  ]},
+  { key: "resort-upkeep", label: "Resort Upkeep", permissions: [
+    { key: "Resort Upkeep Access", label: "Resort Upkeep Access", desc: "Open building maintenance, local vendors, licenses, and troubleshooting" },
+    { key: "Resort Upkeep Complete", label: "Complete Checklists", desc: "Complete and submit building maintenance checklists with notes and photos" },
+    { key: "Resort Upkeep Manage", label: "Manage Resort Upkeep", desc: "Edit vendors, licenses, checklist templates, submitted revisions, and settings" },
   ]},
   { key: "settings", label: "Settings & Admin", permissions: [
     { key: "User Management", label: "User Management", desc: "Manage team members and invites" },
@@ -196,6 +204,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": false,
     "Grassroots Log Activity": false,
     "Grassroots Edit Targets": false,
+    "Resort Upkeep Access": false,
+    "Resort Upkeep Complete": false,
+    "Resort Upkeep Manage": false,
   },
   csr: {
     "My Work": true,
@@ -238,6 +249,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": false,
     "Grassroots Log Activity": false,
     "Grassroots Edit Targets": false,
+    "Resort Upkeep Access": false,
+    "Resort Upkeep Complete": false,
+    "Resort Upkeep Manage": false,
   },
   supervisor: {
     "My Work": true,
@@ -280,6 +294,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": true,
     "Grassroots Log Activity": true,
     "Grassroots Edit Targets": true,
+    "Resort Upkeep Access": true,
+    "Resort Upkeep Complete": true,
+    "Resort Upkeep Manage": false,
   },
   manager: {
     "My Work": true,
@@ -322,6 +339,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": true,
     "Grassroots Log Activity": true,
     "Grassroots Edit Targets": true,
+    "Resort Upkeep Access": true,
+    "Resort Upkeep Complete": true,
+    "Resort Upkeep Manage": true,
   },
   location_admin: {
     "My Work": true,
@@ -364,6 +384,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": true,
     "Grassroots Log Activity": true,
     "Grassroots Edit Targets": true,
+    "Resort Upkeep Access": true,
+    "Resort Upkeep Complete": true,
+    "Resort Upkeep Manage": true,
   },
   multi_location_admin: {
     "My Work": true,
@@ -406,6 +429,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": true,
     "Grassroots Log Activity": true,
     "Grassroots Edit Targets": true,
+    "Resort Upkeep Access": true,
+    "Resort Upkeep Complete": true,
+    "Resort Upkeep Manage": true,
   },
   enterprise_admin: {
     "My Work": true,
@@ -448,6 +474,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Grassroots Access": true,
     "Grassroots Log Activity": true,
     "Grassroots Edit Targets": true,
+    "Resort Upkeep Access": true,
+    "Resort Upkeep Complete": true,
+    "Resort Upkeep Manage": true,
   },
 };
 
