@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyLeanPermissionOverrides,
   buildLeanPermissionMatrix,
+  getUserLocationIds,
   hasAnyLeanPermission,
   hasEveryLeanPermission,
   hasLeanPermission,
@@ -14,6 +15,7 @@ describe("lean permission aliases", () => {
   it("maps newer admin-style roles onto the lean permission matrix", () => {
     expect(resolveLeanRoleKey("admin")).toBe("location_admin");
     expect(resolveLeanRoleKey("regional")).toBe("multi_location_admin");
+    expect(resolveLeanRoleKey("multi_loc_admin")).toBe("multi_location_admin");
     expect(resolveLeanRoleKey("developer")).toBe("enterprise_admin");
     expect(resolveLeanRoleKey("staff")).toBe("csr");
   });
@@ -79,5 +81,37 @@ describe("lean permission aliases", () => {
     }
 
     expect(hasLeanPermission({ role: "csr" }, "Inventory Management")).toBe(false);
+  });
+
+  it("treats Resort Upkeep Complete and Manage as sufficient Resort Upkeep Access", () => {
+    try {
+      applyLeanPermissionOverrides([
+        { role_id: "manager", permission_key: "Resort Upkeep Access", granted: false },
+        { role_id: "manager", permission_key: "Resort Upkeep Complete", granted: false },
+        { role_id: "manager", permission_key: "Resort Upkeep Manage", granted: true },
+        { role_id: "supervisor", permission_key: "Resort Upkeep Access", granted: false },
+        { role_id: "supervisor", permission_key: "Resort Upkeep Complete", granted: true },
+        { role_id: "supervisor", permission_key: "Resort Upkeep Manage", granted: false },
+      ]);
+
+      expect(hasLeanPermission({ role: "manager" }, "Resort Upkeep Access")).toBe(true);
+      expect(hasLeanPermission({ role: "manager" }, "Resort Upkeep Complete")).toBe(true);
+      expect(hasEveryLeanPermission({ role: "manager" }, ["Resort Upkeep Access", "Resort Upkeep Complete", "Resort Upkeep Manage"])).toBe(true);
+      expect(hasLeanPermission({ role: "multi_loc_admin" }, "Resort Upkeep Manage")).toBe(true);
+      expect(hasLeanPermission({ role: "supervisor" }, "Resort Upkeep Access")).toBe(true);
+      expect(hasLeanPermission({ role: "supervisor" }, "Resort Upkeep Complete")).toBe(true);
+      expect(hasLeanPermission({ role: "supervisor" }, "Resort Upkeep Manage")).toBe(false);
+    } finally {
+      applyLeanPermissionOverrides([]);
+    }
+  });
+
+  it("applies lean role aliases when scoping accessible locations", () => {
+    expect(getUserLocationIds({ role: "developer", location_id: "home" }, [])).toBeNull();
+    expect(getUserLocationIds({ role: "regional", location_id: "home" }, [
+      { role_code: "multi_loc_admin", location_id: "loc-a" },
+      { role: "multi_location_admin", location_id: "loc-b" },
+      { role_code: "manager", location_id: "loc-c" },
+    ])).toEqual(["loc-a", "loc-b"]);
   });
 });
