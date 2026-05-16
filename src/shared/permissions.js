@@ -4,12 +4,13 @@ import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX } from "./theme";
 
 const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
 // New role code map for location_roles table (7-role system)
-const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", multi_location_admin:"multi_location_admin", developer:"developer" };
+const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", multi_location_admin:"multi_location_admin", multi_loc_admin:"multi_location_admin", developer:"developer" };
 const LEAN_ROLE_ALIAS_MAP = {
   owner: "enterprise_admin",
   enterprise_admin: "enterprise_admin",
   developer: "enterprise_admin",
   multi_location_admin: "multi_location_admin",
+  multi_loc_admin: "multi_location_admin",
   regional: "multi_location_admin",
   admin: "location_admin",
   location_admin: "location_admin",
@@ -139,7 +140,7 @@ function _resolveRole(profile, data) {
 function hasPermission(profile, data, permKey) {
   if (!profile || !data) return true; // graceful fallback during loading
   // Owner, enterprise_admin, and multi_location_admin always have full access (scoping is at data layer)
-  if (profile.role === 'owner' || profile.role === 'enterprise_admin' || profile.role === 'multi_location_admin') return true;
+  if (profile.role === 'owner' || profile.role === 'enterprise_admin' || profile.role === 'multi_location_admin' || profile.role === 'multi_loc_admin') return true;
   const locationRoles = data.locationRoles || [];
   const legacyRoles = data.roles || [];
   if (locationRoles.length === 0 && legacyRoles.length === 0) return true; // no roles system yet
@@ -154,6 +155,8 @@ function hasLeanPermission(profile, area) {
   const roleKey = resolveLeanRoleKey(profile.role || "pct");
   if (LEAN_FULL_ACCESS_ROLES.has(roleKey)) return true;
   const perms = LEAN_PERMISSION_MATRIX[roleKey] || {};
+  if (area === "Resort Upkeep Access" && (getPermissionValue(perms, "Resort Upkeep Complete") || getPermissionValue(perms, "Resort Upkeep Manage"))) return true;
+  if (area === "Resort Upkeep Complete" && getPermissionValue(perms, "Resort Upkeep Manage")) return true;
   return getPermissionValue(perms, area);
 }
 
@@ -176,12 +179,14 @@ function hasAnyLeanPermission(profile, areas = []) {
 // - others: returns array with just their profile location_id
 function getUserLocationIds(profile, locationRoles) {
   if (!profile) return [];
-  const role = profile.role || "pct";
+  const role = resolveLeanRoleKey(profile.role || "pct");
   // Full-access roles see everything
-  if (role === "enterprise_admin" || role === "developer" || role === "owner") return null;
+  if (role === "enterprise_admin") return null;
   // multi_location_admin sees their assigned locations from location_roles table
   if (role === "multi_location_admin" && locationRoles && locationRoles.length > 0) {
-    const ids = locationRoles.filter(r => (r.role_code || r.role) === "multi_location_admin").map(r => r.location_id);
+    const ids = locationRoles
+      .filter((r) => resolveLeanRoleKey(r.role_code || r.role) === "multi_location_admin")
+      .map((r) => r.location_id);
     return ids.length > 0 ? ids : [profile.location_id];
   }
   // Default: single location from profile
