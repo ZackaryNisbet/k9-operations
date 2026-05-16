@@ -70,6 +70,8 @@ const HISTORY_EVENT_LABELS = {
   target_deleted: "Deleted",
   development_logged: "Development",
   drop_logged: "Drop",
+  development_updated: "Edited Development",
+  drop_updated: "Edited Drop",
 };
 
 const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
@@ -139,12 +141,16 @@ function usesBusinessCategoryColumn(categoryConfig) {
   return categoryConfig.id === "drops" || categoryConfig.id === "petProfessionalPartnerships";
 }
 
+function usesNextDateColumn(categoryConfig) {
+  return categoryConfig.id !== "events" && categoryConfig.id !== "drops";
+}
+
 function getTrackerGridColumns(categoryConfig) {
   if (categoryConfig.id === "petProfessionalPartnerships") {
     return "42px minmax(210px, 1.7fr) minmax(125px, 0.75fr) minmax(130px, 0.8fr) minmax(120px, 0.7fr) 118px minmax(340px, 1.4fr)";
   }
   if (categoryConfig.id === "drops") {
-    return "42px minmax(270px, 2fr) minmax(150px, 0.9fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
+    return "42px minmax(320px, 2.2fr) minmax(150px, 0.85fr) 118px minmax(370px, 1.5fr)";
   }
   if (categoryConfig.id === "events") {
     return "42px minmax(260px, 2fr) minmax(130px, 0.7fr) minmax(180px, 0.8fr) minmax(220px, 0.85fr)";
@@ -465,6 +471,53 @@ function historyEventLabel(eventType) {
 
 function historyActorName(entry) {
   return entry?.actor_name || "Unknown user";
+}
+
+const ACTIVITY_HISTORY_FIELDS = [
+  { key: "activity_date", label: "Activity Date", type: "date" },
+  { key: "next_contact_date", label: "Follow-Up Date", type: "date" },
+  { key: "metadata.person_spoken_with", label: "Spoke With" },
+  { key: "metadata.materials_left", label: "Materials Left" },
+  { key: "metadata.outcome", label: "Outcome" },
+  { key: "metadata.follow_up_priority", label: "Follow-Up Needed", type: "boolean" },
+  { key: "metadata.partnership_potential", label: "Partnership Potential", type: "boolean" },
+  { key: "notes", label: "Notes" },
+];
+
+function getNestedHistoryValue(source, key) {
+  return key.split(".").reduce((value, part) => {
+    if (!value || typeof value !== "object") return undefined;
+    return value[part];
+  }, source);
+}
+
+function normalizeHistoryCompareValue(value, type) {
+  if (type === "boolean") return Boolean(value);
+  if (value == null) return "";
+  return String(value);
+}
+
+function formatHistoryChangeValue(value, type) {
+  if (type === "boolean") return value ? "Yes" : "No";
+  if (type === "date") return value ? fmtDate(value) : "None";
+  const text = String(value || "").trim();
+  return text || "None";
+}
+
+function getActivityHistoryChanges(entry) {
+  if (!["drop_updated", "development_updated"].includes(entry?.event_type)) return [];
+  const before = entry.before_snapshot || {};
+  const after = entry.after_snapshot || {};
+  return ACTIVITY_HISTORY_FIELDS.flatMap((field) => {
+    const beforeValue = getNestedHistoryValue(before, field.key);
+    const afterValue = getNestedHistoryValue(after, field.key);
+    if (normalizeHistoryCompareValue(beforeValue, field.type) === normalizeHistoryCompareValue(afterValue, field.type)) return [];
+    return [{
+      label: field.label,
+      before: formatHistoryChangeValue(beforeValue, field.type),
+      after: formatHistoryChangeValue(afterValue, field.type),
+    }];
+  });
 }
 
 function buildTargetPayload(draft, locationId, actor) {
@@ -1778,24 +1831,39 @@ function HistoryList({ items, emptyText = "No history yet." }) {
 
   return (
     <div style={{ display: "grid", gap: 8 }}>
-      {rows.map((entry) => (
-        <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "112px minmax(0, 1fr) 190px", gap: 10, alignItems: "start", fontSize: 12 }}>
-          <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-            {historyEventLabel(entry.event_type)}
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>
-              {entry.summary || historyEventLabel(entry.event_type)}
+      {rows.map((entry) => {
+        const changes = getActivityHistoryChanges(entry);
+        return (
+          <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "132px minmax(0, 1fr) 190px", gap: 10, alignItems: "start", fontSize: 12 }}>
+            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
+              {historyEventLabel(entry.event_type)}
             </div>
-            <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
-              {entry.target_name || "Untitled row"} · {historyActorName(entry)}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>
+                {entry.summary || historyEventLabel(entry.event_type)}
+              </div>
+              <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
+                {entry.target_name || "Untitled row"} · {historyActorName(entry)}
+              </div>
+              {changes.length > 0 && (
+                <div className="grassroots-history-change-list">
+                  {changes.map((change) => (
+                    <div key={change.label} className="grassroots-history-change-row">
+                      <strong>{change.label}</strong>
+                      <span>{change.before}</span>
+                      <em>to</em>
+                      <span>{change.after}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+              {fmtDateTime(entry.event_at || entry.created_at)}
             </div>
           </div>
-          <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-            {fmtDateTime(entry.event_at || entry.created_at)}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1929,6 +1997,7 @@ function EventDateSortHeader({ direction, onToggle }) {
 
 function TrackerHeader({ categoryConfig, eventDateSortDirection, onToggleEventDateSort }) {
   const gridColumns = getTrackerGridColumns(categoryConfig);
+  const showNextDateColumn = usesNextDateColumn(categoryConfig);
   return (
     <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "0 14px 0", minHeight: 22, boxSizing: "border-box" }}>
       <div />
@@ -1936,7 +2005,7 @@ function TrackerHeader({ categoryConfig, eventDateSortDirection, onToggleEventDa
       {usesBusinessCategoryColumn(categoryConfig) && <div style={HEADER_CELL_STYLE}>Category</div>}
       {categoryConfig.usesStatus !== false && <div style={HEADER_CELL_STYLE}>Status</div>}
       {categoryConfig.id === "events" && <EventDateSortHeader direction={eventDateSortDirection} onToggle={onToggleEventDateSort} />}
-      {categoryConfig.id !== "events" && <div style={HEADER_CELL_STYLE}>{categoryConfig.id === "drops" ? "Next Drop" : "Next Contact"}</div>}
+      {showNextDateColumn && <div style={HEADER_CELL_STYLE}>Next Contact</div>}
       {categoryConfig.id !== "events" && <div style={{ ...HEADER_CELL_STYLE, textAlign: "center" }}>{categoryConfig.countLabel}</div>}
       <div style={{ ...HEADER_CELL_STYLE, textAlign: "left" }}>Actions</div>
     </div>
@@ -1956,6 +2025,7 @@ function TrackerRow({ target, index, categoryConfig, activities, attachmentsByAc
   const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
   const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
   const gridColumns = getTrackerGridColumns(categoryConfig);
+  const showNextDateColumn = usesNextDateColumn(categoryConfig);
   const title = target.name || categoryConfig.emptyName;
   const meta = [
     target.address,
@@ -1977,7 +2047,7 @@ function TrackerRow({ target, index, categoryConfig, activities, attachmentsByAc
         {usesBusinessCategoryColumn(categoryConfig) && <BusinessCategoryBadge value={getGrassrootsBusinessCategory(target)} />}
         {categoryConfig.usesStatus !== false && <StatusBadge status={target.status} />}
         {categoryConfig.id === "events" && <EventDateCell target={target} />}
-        {categoryConfig.id !== "events" && (
+        {showNextDateColumn && (
           <div style={{ fontSize: 12, fontWeight: 800, color: nextDate ? (nextDate < todayStr() ? C.dan : C.text) : C.textMut }}>
             {fmtDate(nextDate)}
           </div>
@@ -2020,8 +2090,18 @@ function DropSubviewTabs({ value, onChange, activityCount, businessCount }) {
     { value: "activity", label: "Activity", count: activityCount },
     { value: "businesses", label: "Businesses", count: businessCount },
   ];
+  const activeIndex = Math.max(0, options.findIndex((option) => option.value === value));
   return (
-    <div className="grassroots-drop-subview-tabs" role="tablist" aria-label="Drop views">
+    <div
+      className="grassroots-drop-subview-tabs"
+      role="tablist"
+      aria-label="Drop views"
+      style={{
+        "--grassroots-drop-view-count": options.length,
+        "--grassroots-drop-view-active-index": activeIndex,
+      }}
+    >
+      <div className="grassroots-drop-subview-indicator" aria-hidden="true" />
       {options.map((option) => {
         const active = value === option.value;
         return (
@@ -2073,7 +2153,9 @@ function DropCategoryFilter({ counts, value, onChange }) {
 function DropActivityView({
   rows,
   canLog,
+  canEdit,
   onLog,
+  onEdit,
   onPreviewAttachment,
   previewingAttachmentId,
   freshActivityId,
@@ -2147,7 +2229,10 @@ function DropActivityView({
                   <AttachmentButtons attachments={row.attachments} onPreview={onPreviewAttachment} previewingAttachmentId={previewingAttachmentId} />
                   <div className="grassroots-drop-activity-detail-footer">
                     <span>Logged by {row.loggedBy}</span>
-                    {row.target && <Btn variant="secondary" size="sm" onClick={() => onLog(row.target)} disabled={!canLog}>Log Again</Btn>}
+                    <div className="grassroots-drop-activity-detail-actions">
+                      <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => onEdit(row)} disabled={!canEdit}>Edit</Btn>
+                      {row.target && <Btn variant="secondary" size="sm" onClick={() => onLog(row.target)} disabled={!canLog}>Log Again</Btn>}
+                    </div>
                   </div>
                 </div>
               )}
@@ -2195,12 +2280,16 @@ function LogActivityModal({
   onSave,
 }) {
   const isDropLog = (logModal?.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) === "drops";
+  const isEditingLog = Boolean(logModal?.activity?.id);
   const selectedSummary = selectedTarget
     ? [getGrassrootsBusinessCategory(selectedTarget), selectedTarget.address].filter(Boolean).join(" · ")
     : businessDraft
       ? [getGrassrootsBusinessCategory(businessDraft), businessDraft.address].filter(Boolean).join(" · ")
       : "";
-  const title = isDropLog ? "Log Drop Activity" : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development";
+  const title = isDropLog
+    ? isEditingLog ? "Edit Drop Activity" : "Log Drop Activity"
+    : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development";
+  const saveLabel = isEditingLog ? "Save Changes" : "Save Activity";
 
   const body = (
       <div className="grassroots-log-modal">
@@ -2321,7 +2410,7 @@ function LogActivityModal({
           )}
         </section>
 
-        {isDropLog && (
+        {isDropLog && !isEditingLog && (
           <section className="grassroots-log-section">
             <div className="grassroots-log-section-title">Photos and Attachments</div>
             {attachmentsSchemaMissing && (
@@ -2366,7 +2455,7 @@ function LogActivityModal({
         {!isDropLog && (
           <div className="grassroots-log-actions">
             <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
-            <Btn variant="primary" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
+            <Btn variant="primary" onClick={onSave} disabled={saving}>{saving ? "Saving..." : saveLabel}</Btn>
           </div>
         )}
       </div>
@@ -2379,11 +2468,11 @@ function LogActivityModal({
           <div className="grassroots-log-composer-header">
             <div>
               <div className="grassroots-log-composer-kicker">{title}</div>
-              <div className="grassroots-log-composer-subtitle">Save collapses this into the activity row.</div>
+              <div className="grassroots-log-composer-subtitle">{isEditingLog ? "Original values stay available in History." : "Save collapses this into the activity row."}</div>
             </div>
             <div className="grassroots-log-composer-actions">
               <Btn variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Btn>
-              <Btn variant="primary" size="sm" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
+              <Btn variant="primary" size="sm" onClick={onSave} disabled={saving}>{saving ? "Saving..." : saveLabel}</Btn>
             </div>
           </div>
           <div className="grassroots-log-composer-body">
@@ -2653,7 +2742,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       window.clearTimeout(timerId);
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [logModal?.category, logModal?.target?.category, logModal?.target?.id]);
+  }, [logModal?.activity?.id, logModal?.category, logModal?.target?.category, logModal?.target?.id]);
 
   useEffect(() => {
     if (showFilterPanel && !prevFilterOpen.current) {
@@ -2761,6 +2850,39 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setLogOutcome("");
     setLogFollowUpPriority(false);
     setLogPartnershipPotential(false);
+    setLogFiles([]);
+    setLogFileErrors([]);
+    if (logFileInputRef.current) logFileInputRef.current.value = "";
+  };
+
+  const openEditDropActivity = (row) => {
+    if (!canLogActivity) {
+      toast("You do not have permission to edit grassroots activity", "error");
+      return;
+    }
+    if (!row?.activity?.id || !row?.target?.id) {
+      toast("This activity cannot be edited from this view", "error");
+      return;
+    }
+    setMovePopover(null);
+    setDropSubview("activity");
+    setExpandedDropActivities((current) => {
+      const next = new Set(current);
+      next.add(row.id);
+      return next;
+    });
+    setLogModal({ target: row.target, category: "drops", activity: row.activity });
+    setLogNotes(row.notes || "");
+    setLogDate(row.nextDropDate || "");
+    setLogActivityDate(row.activityDate || todayStr());
+    setLogContactName(row.personSpokenWith || "");
+    setLogBusinessQuery(row.businessName || row.target.name || "");
+    setLogSelectedTarget(row.target);
+    setLogBusinessDraft(null);
+    setLogMaterialsLeft(row.materialsLeft || "");
+    setLogOutcome(row.outcome || "");
+    setLogFollowUpPriority(Boolean(row.followUpPriority || row.nextDropDate));
+    setLogPartnershipPotential(Boolean(row.partnershipPotential));
     setLogFiles([]);
     setLogFileErrors([]);
     if (logFileInputRef.current) logFileInputRef.current.value = "";
@@ -3035,12 +3157,57 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       toast("Attachment storage is not installed in this Supabase environment yet", "error");
       return;
     }
-    const target = isDropLog ? await ensureLogTarget().catch((error) => {
+    const editingActivity = logModal?.activity || null;
+    const target = isDropLog && editingActivity?.id ? logModal.target : isDropLog ? await ensureLogTarget().catch((error) => {
       toast(error.message || "Business is required", "error");
       return null;
     }) : logModal?.target;
     if (!target) return;
     const activityDate = logActivityDate || todayStr();
+    const activityMetadata = activityType === "drop" ? {
+      person_spoken_with: logContactName.trim(),
+      materials_left: logMaterialsLeft.trim(),
+      outcome: logOutcome.trim(),
+      follow_up_priority: logFollowUpPriority,
+      partnership_potential: logPartnershipPotential,
+    } : {};
+    if (editingActivity?.id) {
+      setSaveState("saving");
+      setSavingLog(true);
+      const { data, error } = await supabase.rpc("update_grassroots_activity_with_history", {
+        p_activity: {
+          id: editingActivity.id,
+          location_id: locationId,
+          activity_date: activityDate,
+          notes: logNotes.trim(),
+          next_contact_date: activityType === "drop" ? followUpDate : (logDate || null),
+          metadata: activityMetadata,
+          updated_by_user_id: actor.userId,
+          updated_by_name: actor.name,
+        },
+      });
+      setSavingLog(false);
+      const updatedActivity = data?.activity || null;
+      const historyEntry = data?.history || null;
+      if (error || !updatedActivity) {
+        setSaveState("error");
+        console.error("Failed to edit grassroots activity", error);
+        toast(error?.message || "Failed to edit activity", "error");
+        return;
+      }
+      setActivities((prev) => prev.map((row) => (row.id === updatedActivity.id ? updatedActivity : row)));
+      if (historyEntry?.id) {
+        setHistory((prev) => [historyEntry, ...prev.filter((entry) => entry.id !== historyEntry.id)]);
+      }
+      await loadGrassroots();
+      markFreshActivity(updatedActivity.id);
+      resetLogForm();
+      if (activityType === "drop") setDropSubview("activity");
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 1200);
+      toast(activityType === "drop" ? "Activity updated" : "Development updated");
+      return;
+    }
     const activityId = createGrassrootsClientUuid();
     setSaveState("saving");
     setSavingLog(true);
@@ -3062,11 +3229,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             notes: logNotes.trim(),
             next_contact_date: followUpDate,
             metadata: {
-              person_spoken_with: logContactName.trim(),
-              materials_left: logMaterialsLeft.trim(),
-              outcome: logOutcome.trim(),
-              follow_up_priority: logFollowUpPriority,
-              partnership_potential: logPartnershipPotential,
+              ...activityMetadata,
               attachment_count: attachmentRows.length,
             },
             created_by_user_id: actor.userId,
@@ -3091,13 +3254,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           activity_date: activityDate,
           notes: logNotes.trim(),
           next_contact_date: activityType === "drop" ? followUpDate : (logDate || null),
-          metadata: activityType === "drop" ? {
-            person_spoken_with: logContactName.trim(),
-            materials_left: logMaterialsLeft.trim(),
-            outcome: logOutcome.trim(),
-            follow_up_priority: logFollowUpPriority,
-            partnership_potential: logPartnershipPotential,
-          } : {},
+          metadata: activityMetadata,
           created_by_user_id: actor.userId,
           created_by_name: actor.name,
         })
@@ -3288,6 +3445,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           0% { transform:scale(0.62) rotate(-14deg); }
           58% { transform:scale(1.2) rotate(4deg); }
           100% { transform:scale(1.02) rotate(0deg); }
+        }
+        @keyframes grassrootsDropTabSweep {
+          0% { transform:translateX(-140%); opacity:0; }
+          18% { opacity:0.82; }
+          52% { opacity:0.55; }
+          100% { transform:translateX(245%); opacity:0; }
+        }
+        @keyframes grassrootsDropControlSettle {
+          from { opacity:0; transform:translateY(8px) scale(0.99); filter:blur(2px); }
+          to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); }
         }
         .grassroots-event-inline-editor {
           position: relative;
@@ -3749,53 +3916,110 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           border-color: rgba(20,83,45,0.24);
         }
         .grassroots-drop-toolbar {
-          display: flex;
+          display: grid;
+          grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
           align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          margin: 2px 0 10px;
-          flex-wrap: wrap;
+          gap: 16px;
+          margin: 2px 0 14px;
         }
         .grassroots-drop-subview-tabs {
-          display: inline-flex;
+          --grassroots-drop-view-count: 2;
+          --grassroots-drop-view-active-index: 0;
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(var(--grassroots-drop-view-count), minmax(0, 1fr));
           align-items: center;
-          padding: 4px;
-          border: 1.5px solid ${C.border};
-          border-radius: 14px;
-          background: #fff;
-          box-shadow: 0 1px 3px rgba(15,23,42,0.05);
+          min-height: 50px;
+          padding: 5px;
+          border: 1px solid rgba(226,232,240,0.95);
+          border-radius: 16px;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92)),
+            #fff;
+          box-shadow: 0 16px 44px rgba(15,23,42,0.055);
+          overflow: hidden;
+          isolation: isolate;
+          animation: grassrootsDropControlSettle 260ms cubic-bezier(0.22,1,0.36,1);
+        }
+        .grassroots-drop-subview-indicator {
+          position: absolute;
+          top: 5px;
+          bottom: 5px;
+          left: 5px;
+          z-index: 0;
+          width: calc((100% - 10px) / var(--grassroots-drop-view-count));
+          border-radius: 12px;
+          background: linear-gradient(135deg, #14532d 0%, #166534 56%, #3f6212 100%);
+          box-shadow: 0 14px 34px rgba(20,83,45,0.22), inset 0 1px 0 rgba(255,255,255,0.18);
+          transform: translateX(calc(var(--grassroots-drop-view-active-index) * 100%));
+          transition: transform 420ms cubic-bezier(0.22,1,0.36,1), box-shadow 220ms ease;
+          overflow: hidden;
+        }
+        .grassroots-drop-subview-indicator::after {
+          content: "";
+          position: absolute;
+          inset: -30% auto -30% 0;
+          width: 46%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+          animation: grassrootsDropTabSweep 2.8s cubic-bezier(0.22,1,0.36,1) infinite;
         }
         .grassroots-drop-subview-tab {
+          position: relative;
+          z-index: 1;
           border: 0;
-          border-radius: 10px;
+          border-radius: 12px;
           background: transparent;
           color: ${C.textSec};
           cursor: pointer;
-          font: inherit;
+          font-family: inherit;
           font-size: 13px;
-          font-weight: 900;
-          padding: 8px 13px;
+          font-weight: 850;
+          letter-spacing: 0;
+          height: 40px;
+          padding: 0 16px;
           display: inline-flex;
           align-items: center;
+          justify-content: center;
           gap: 7px;
+          white-space: nowrap;
+          transition: color 220ms ease, transform 220ms cubic-bezier(0.22,1,0.36,1), background 220ms ease;
         }
         .grassroots-drop-subview-tab em {
           font-style: normal;
           font-size: 11px;
-          color: inherit;
-          opacity: 0.7;
+          min-width: 22px;
+          height: 22px;
+          padding: 0 7px;
+          border-radius: 999px;
+          display: inline-grid;
+          place-items: center;
+          background: rgba(20,83,45,0.08);
+          color: ${C.pri};
+          font-weight: 950;
+          line-height: 1;
+          transition: background 220ms ease, color 220ms ease, transform 220ms cubic-bezier(0.22,1,0.36,1);
+        }
+        .grassroots-drop-subview-tab:hover {
+          color: ${C.pri};
+          background: rgba(20,83,45,0.055);
         }
         .grassroots-drop-subview-tab.is-active {
-          background: ${C.pri};
           color: #fff;
-          box-shadow: 0 2px 8px rgba(20,83,45,0.18);
+          transform: translateY(-1px);
+        }
+        .grassroots-drop-subview-tab.is-active em {
+          background: rgba(255,255,255,0.18);
+          color: #fff;
+          transform: scale(1.02);
         }
         .grassroots-drop-toolbar-copy {
           display: flex;
           align-items: baseline;
+          justify-content: flex-end;
           gap: 8px;
           color: ${C.textMut};
           font-size: 12px;
+          min-width: 0;
         }
         .grassroots-drop-toolbar-copy strong {
           color: ${C.text};
@@ -3989,6 +4213,49 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           justify-content: space-between;
           gap: 10px;
           white-space: normal;
+        }
+        .grassroots-drop-activity-detail-actions {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .grassroots-history-change-list {
+          display: grid;
+          gap: 5px;
+          margin-top: 8px;
+          padding: 8px;
+          border-radius: 10px;
+          background: ${C.bg};
+          border: 1px solid ${C.borderLight};
+        }
+        .grassroots-history-change-row {
+          display: grid;
+          grid-template-columns: 118px minmax(0, 1fr) 18px minmax(0, 1fr);
+          gap: 7px;
+          align-items: start;
+          color: ${C.textMut};
+          line-height: 1.35;
+        }
+        .grassroots-history-change-row strong {
+          color: ${C.textSec};
+          font-size: 11px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .grassroots-history-change-row span {
+          color: ${C.text};
+          font-weight: 800;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+        .grassroots-history-change-row em {
+          color: ${C.textMut};
+          font-style: normal;
+          font-weight: 900;
+          text-align: center;
         }
         .grassroots-log-composer-header {
           padding: 16px 18px;
@@ -4250,10 +4517,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           .grassroots-drop-activity-signals { justify-items: start; }
           .grassroots-drop-activity-meta { justify-content: flex-start; }
           .grassroots-drop-activity-detail-grid { grid-template-columns: 1fr; }
+          .grassroots-drop-activity-detail-footer { align-items: flex-start; flex-direction: column; }
+          .grassroots-drop-activity-detail-actions { width: 100%; justify-content: flex-start; }
+          .grassroots-history-change-row { grid-template-columns: 1fr; gap: 3px; }
+          .grassroots-history-change-row em { text-align: left; }
           .grassroots-log-composer-header { align-items: flex-start; flex-direction: column; }
           .grassroots-log-composer-actions { width: 100%; justify-content: flex-end; }
           .grassroots-log-grid { grid-template-columns: 1fr; }
-          .grassroots-drop-toolbar-copy { width: 100%; }
+          .grassroots-drop-toolbar { grid-template-columns: 1fr; gap: 10px; }
+          .grassroots-drop-subview-tabs { width: 100%; }
+          .grassroots-drop-toolbar-copy { width: 100%; justify-content: flex-start; }
         }
       `}</style>
       <div style={{
@@ -4567,7 +4840,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <DropActivityView
               rows={filteredDropActivityRows}
               canLog={canLogActivity}
+              canEdit={canLogActivity}
               onLog={openLogModal}
+              onEdit={openEditDropActivity}
               onPreviewAttachment={previewGrassrootsAttachment}
               previewingAttachmentId={previewingAttachmentId}
               freshActivityId={freshActivityId}
