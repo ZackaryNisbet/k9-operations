@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyGrassrootsFilters,
+  buildGrassrootsActivityAttachmentPath,
+  buildGrassrootsDropActivityRows,
+  buildGrassrootsDropMetrics,
   buildGrassrootsEventDateRpcRows,
   buildGrassrootsEventMetrics,
   buildGrassrootsEventSaveRpcArgs,
@@ -9,21 +12,30 @@ import {
   compareGrassrootsEventSchedule,
   getGrassrootsAddressText,
   getGrassrootsActivityCount,
+  getGrassrootsAttachmentPreviewKind,
   getGrassrootsDefaultFilters,
   getGrassrootsNextDate,
   getGrassrootsNextEventDate,
   getGrassrootsPrimaryEventDate,
   getGrassrootsSplitAddress,
+  groupGrassrootsActivityAttachments,
   groupGrassrootsHistory,
+  inferGrassrootsActivityAttachmentMimeType,
   normalizeGrassrootsEventLinks,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsStatus,
   normalizeLegacyGrassrootsTracker,
   resolveGrassrootsTargetIsActive,
+  sanitizeGrassrootsAttachmentFilename,
+  searchGrassrootsDropBusinessTargets,
+  validateGrassrootsActivityAttachmentFiles,
 } from "../kol/grassrootsData.js";
 import {
   buildGrassrootsLegacyAddressFromSplitAddress,
+  copyGrassrootsTextToClipboard,
+  extractGooglePlaceBusinessName,
   getGrassrootsVisibleAddressLine,
+  inferGrassrootsBusinessCategoryFromPlace,
   parseFreeformGrassrootsAddress,
   parseGooglePlaceAddress,
 } from "../kol/pages/GrassrootsPage.jsx";
@@ -178,6 +190,218 @@ describe("grassrootsData", () => {
     });
   });
 
+  it("builds drop visit and unique business metrics from drop activity", () => {
+    const targets = [
+      { id: "drop-a", category: "drops", name: "Vet One" },
+      { id: "drop-b", category: "drops", name: "Groomer Two" },
+      { id: "event-a", category: "events", name: "Event" },
+    ];
+    const activities = [
+      { target_id: "drop-a", activity_type: "drop", activity_date: "2026-05-16" },
+      { target_id: "drop-a", activity_type: "drop", activity_date: "2026-05-02" },
+      { target_id: "drop-b", activity_type: "drop", activity_date: "2026-04-17" },
+      { target_id: "drop-b", activity_type: "drop", activity_date: "2026-02-10" },
+      { target_id: "drop-b", activity_type: "drop", created_at: "2026-03-01T14:00:00Z" },
+      { target_id: "drop-a", activity_type: "development", activity_date: "2026-05-16" },
+      { target_id: "event-a", activity_type: "drop", activity_date: "2026-05-16" },
+      { target_id: "drop-a", activity_type: "drop", activity_date: "2025-12-30" },
+    ];
+
+    expect(buildGrassrootsDropMetrics(targets, activities, "2026-05-16")).toMatchObject({
+      year: "2026",
+      last30Start: "2026-04-17",
+      last30End: "2026-05-16",
+      dropVisitsLast30: 3,
+      businessesVisitedLast30: 2,
+      dropVisitsYtd: 5,
+      businessesVisitedYtd: 2,
+    });
+  });
+
+  it("builds chronological drop activity rows while preserving repeated visits to the same business", () => {
+    const targets = [
+      { id: "drop-a", category: "drops", name: "Vet One", address: "10 Main", business_category: "Veterinarian" },
+      { id: "drop-b", category: "drops", name: "Groomer Two", address: "20 Main", business_category: "Groomer" },
+    ];
+    const activities = [
+      {
+        id: "old",
+        target_id: "drop-a",
+        activity_type: "drop",
+        activity_date: "2026-05-01",
+        notes: "First visit",
+        metadata: { person_spoken_with: "Sam" },
+      },
+      {
+        id: "new",
+        target_id: "drop-a",
+        activity_type: "drop",
+        activity_date: "2026-05-03",
+        notes: "Second visit",
+        metadata: { person_spoken_with: "Lee", materials_left: "Rack cards", partnership_potential: true },
+      },
+      {
+        id: "other",
+        target_id: "drop-b",
+        activity_type: "drop",
+        activity_date: "2026-05-02",
+        notes: "Groomer drop",
+      },
+    ];
+    const rows = buildGrassrootsDropActivityRows(targets, activities, {
+      new: [{ id: "attachment-1", activity_id: "new", file_name: "business-card.jpg" }],
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["new", "other", "old"]);
+    expect(rows.filter((row) => row.targetId === "drop-a")).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      businessName: "Vet One",
+      businessCategory: "Veterinarian",
+      personSpokenWith: "Lee",
+      materialsLeft: "Rack cards",
+      partnershipPotential: true,
+      attachments: [{ id: "attachment-1", activity_id: "new", file_name: "business-card.jpg" }],
+    });
+  });
+
+  it("ranks internal drop business suggestions before Google fallback is needed", () => {
+    const targets = [
+      { id: "vet-a", category: "drops", name: "Banfield Pet Hospital", address_line_1: "101 New Jersey 73", address_city: "Evesham", business_category: "Veterinarian" },
+      { id: "vet-b", category: "drops", name: "Adair Forsythe Animal Hospital", address_line_1: "22 Kings Hwy", business_category: "Veterinarian" },
+      { id: "groomer", category: "drops", name: "Happy Grooming", address_line_1: "5 Main", business_category: "Groomer" },
+      { id: "event", category: "events", name: "Banfield Adoption Day" },
+    ];
+    const results = searchGrassrootsDropBusinessTargets({
+      targets,
+      activitiesByTarget: {
+        "vet-a": [
+          { target_id: "vet-a", activity_type: "drop", activity_date: "2026-05-01" },
+          { target_id: "vet-a", activity_type: "drop", activity_date: "2026-05-15" },
+        ],
+      },
+      query: "banfield",
+    });
+
+    expect(results.map((row) => row.target.id)).toEqual(["vet-a"]);
+    expect(results[0]).toMatchObject({
+      activityCount: 2,
+      lastActivityDate: "2026-05-15",
+    });
+  });
+
+  it("validates and paths grassroots drop attachments in private storage", () => {
+    const locationId = "11111111-1111-4111-8111-111111111111";
+    const targetId = "22222222-2222-4222-8222-222222222222";
+    const activityId = "33333333-3333-4333-8333-333333333333";
+    const attachmentId = "44444444-4444-4444-8444-444444444444";
+
+    expect(sanitizeGrassrootsAttachmentFilename("../Business card + front.HEIC")).toBe("Business-card-front.HEIC");
+    expect(inferGrassrootsActivityAttachmentMimeType({ name: "card.HEIC", type: "" })).toBe("image/heic");
+    expect(buildGrassrootsActivityAttachmentPath({
+      locationId,
+      targetId,
+      activityId,
+      attachmentId,
+      fileName: "../Business card + front.HEIC",
+    })).toBe(`${locationId}/targets/${targetId}/activities/${activityId}/${attachmentId}-Business-card-front.HEIC`);
+
+    const { acceptedFiles, errors } = validateGrassrootsActivityAttachmentFiles([
+      { name: "card.heic", type: "", size: 1024 },
+      { name: "flyer.pdf", type: "application/pdf", size: 4096 },
+      { name: "notes.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 2048 },
+      { name: "huge.jpg", type: "image/jpeg", size: 21 * 1024 * 1024 },
+    ]);
+
+    expect(acceptedFiles.map((file) => file.name)).toEqual(["card.heic", "flyer.pdf"]);
+    expect(errors).toEqual([
+      "notes.docx must be a PDF, PNG, JPG, WEBP, HEIC, or HEIF file.",
+      "huge.jpg is larger than 20 MB.",
+    ]);
+    expect(getGrassrootsAttachmentPreviewKind({ file_name: "flyer.pdf" })).toBe("pdf");
+    expect(getGrassrootsAttachmentPreviewKind({ mime_type: "image/heic", file_name: "card.heic" })).toBe("image");
+  });
+
+  it("groups active grassroots activity attachments by activity", () => {
+    const grouped = groupGrassrootsActivityAttachments([
+      { id: "older", activity_id: "activity-1", uploaded_at: "2026-05-01T10:00:00Z" },
+      { id: "newer", activity_id: "activity-1", uploaded_at: "2026-05-02T10:00:00Z" },
+      { id: "deleted", activity_id: "activity-1", uploaded_at: "2026-05-03T10:00:00Z", deleted_at: "2026-05-03T11:00:00Z" },
+      { id: "loose", uploaded_at: "2026-05-01T12:00:00Z" },
+    ]);
+
+    expect(grouped["activity-1"].map((attachment) => attachment.id)).toEqual(["newer", "older"]);
+    expect(grouped.__unlinked__.map((attachment) => attachment.id)).toEqual(["loose"]);
+  });
+
+  it("copies the full address from the visible source input before showing copied", async () => {
+    const sourceInput = {
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+    };
+    const runtimeDocument = {
+      execCommand: vi.fn(() => true),
+    };
+    const addressText = "101 New Jersey 73, Evesham, NJ 08053, US";
+    const result = await copyGrassrootsTextToClipboard(addressText, sourceInput, {
+      document: runtimeDocument,
+      navigator: { clipboard: { writeText: vi.fn(), readText: vi.fn(async () => "") } },
+    });
+
+    expect(result.copied).toBe(true);
+    expect(result.selectionCopied).toBe(true);
+    expect(sourceInput.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(sourceInput.select).toHaveBeenCalled();
+    expect(sourceInput.setSelectionRange).toHaveBeenCalledWith(0, addressText.length);
+    expect(runtimeDocument.execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("does not report copied when only async clipboard verification succeeds", async () => {
+    const sourceInput = {
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+    };
+    const runtimeDocument = {
+      execCommand: vi.fn(() => false),
+    };
+    const writeText = vi.fn(async () => undefined);
+    const readText = vi.fn(async () => "101 New Jersey 73, Evesham, NJ 08053, US");
+
+    const result = await copyGrassrootsTextToClipboard("101 New Jersey 73, Evesham, NJ 08053, US", sourceInput, {
+      document: runtimeDocument,
+      navigator: { clipboard: { writeText, readText } },
+    });
+
+    expect(result.selectionCopied).toBe(false);
+    expect(result.apiCopied).toBe(true);
+    expect(result.verified).toBe(true);
+    expect(result.copied).toBe(false);
+  });
+
+  it("keeps the full address selected when automatic copy is blocked", async () => {
+    const sourceInput = {
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+    };
+    const runtimeDocument = {
+      execCommand: vi.fn(() => false),
+    };
+    const addressText = "101 New Jersey 73, Evesham, NJ 08053, US";
+
+    const result = await copyGrassrootsTextToClipboard(addressText, sourceInput, {
+      document: runtimeDocument,
+      navigator: { clipboard: { writeText: vi.fn(async () => undefined), readText: vi.fn(async () => "") } },
+    });
+
+    expect(result.copied).toBe(false);
+    expect(result.sourceSelected).toBe(true);
+    expect(sourceInput.focus).toHaveBeenCalledTimes(2);
+    expect(sourceInput.select).toHaveBeenCalledTimes(2);
+    expect(sourceInput.setSelectionRange).toHaveBeenLastCalledWith(0, addressText.length);
+  });
+
   it("packages event-date rows for a single atomic save RPC payload", () => {
     const targetPayload = { id: "event-1", location_id: "loc-1", category: "events", name: "Market Day" };
     const eventSource = {
@@ -273,6 +497,27 @@ describe("grassrootsData", () => {
       google_place_id: "place-500",
     });
     expect(getGrassrootsVisibleAddressLine(parsed)).toBe("500 Route 70");
+  });
+
+  it("cleans selected business suggestions and infers drop business categories", () => {
+    expect(extractGooglePlaceBusinessName(
+      { name: "Banfield Pet Hospital" },
+      "Banfield Pet Hospital, New Jersey 73, Marlton, NJ, USA",
+    )).toBe("Banfield Pet Hospital");
+    expect(extractGooglePlaceBusinessName(
+      {},
+      "Banfield Pet Hospital, New Jersey 73, Marlton, NJ, USA",
+    )).toBe("Banfield Pet Hospital");
+    expect(extractGooglePlaceBusinessName(
+      { name: "Animal Hospital, Inc." },
+      "Animal Hospital, Inc., Main Street, Adair Forsythe, NJ, USA",
+    )).toBe("Animal Hospital, Inc.");
+    expect(inferGrassrootsBusinessCategoryFromPlace(
+      { name: "Banfield Pet Hospital", types: ["veterinary_care", "point_of_interest"] },
+      "Banfield Pet Hospital",
+    )).toBe("Veterinarian");
+    expect(inferGrassrootsBusinessCategoryFromPlace({ name: "PetSmart", types: ["pet_store"] }, "PetSmart")).toBe("Pet Retailer");
+    expect(inferGrassrootsBusinessCategoryFromPlace({ name: "Camp Bow Wow Adair Forsythe", types: ["point_of_interest"] })).toBe("Boarding/Daycare");
   });
 
   it("falls back to parsing a formatted address when Places does not return components", () => {
