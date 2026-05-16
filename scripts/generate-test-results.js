@@ -106,6 +106,8 @@ async function run() {
 
   // Clean up raw file
   try { unlinkSync(outputPath + '.raw'); } catch {}
+
+  process.exit(totalFailed > 0 ? 1 : 0);
 }
 
 run().catch(err => {
