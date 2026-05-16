@@ -3,6 +3,7 @@ import {
   applyGrassrootsFilters,
   buildGrassrootsActivityAttachmentPath,
   buildGrassrootsDropActivityRows,
+  buildGrassrootsDropCategoryCounts,
   buildGrassrootsDropMetrics,
   buildGrassrootsEventDateRpcRows,
   buildGrassrootsEventMetrics,
@@ -21,6 +22,7 @@ import {
   groupGrassrootsActivityAttachments,
   groupGrassrootsHistory,
   inferGrassrootsActivityAttachmentMimeType,
+  filterGrassrootsDropActivityRowsByCategory,
   normalizeGrassrootsEventLinks,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsStatus,
@@ -287,6 +289,26 @@ describe("grassrootsData", () => {
       activityCount: 2,
       lastActivityDate: "2026-05-15",
     });
+  });
+
+  it("counts and filters drop activity by target business category", () => {
+    const rows = [
+      { id: "vet-1", businessCategory: "Veterinarian" },
+      { id: "vet-2", businessCategory: "Veterinarian" },
+      { id: "trainer-1", businessCategory: "Trainer" },
+      { id: "unknown", businessCategory: "" },
+      { id: "custom", businessCategory: "Animal Sanctuary" },
+    ];
+
+    const counts = buildGrassrootsDropCategoryCounts(rows);
+
+    expect(counts.find((row) => row.category === "All")).toMatchObject({ count: 5 });
+    expect(counts.find((row) => row.category === "Veterinarian")).toMatchObject({ count: 2 });
+    expect(counts.find((row) => row.category === "Trainer")).toMatchObject({ count: 1 });
+    expect(counts.find((row) => row.category === "Other")).toMatchObject({ count: 2 });
+    expect(filterGrassrootsDropActivityRowsByCategory(rows, "Veterinarian").map((row) => row.id)).toEqual(["vet-1", "vet-2"]);
+    expect(filterGrassrootsDropActivityRowsByCategory(rows, "Other").map((row) => row.id)).toEqual(["unknown", "custom"]);
+    expect(filterGrassrootsDropActivityRowsByCategory(rows, "All").map((row) => row.id)).toEqual(["vet-1", "vet-2", "trainer-1", "unknown", "custom"]);
   });
 
   it("validates and paths grassroots drop attachments in private storage", () => {

@@ -10,6 +10,7 @@ import {
   GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET,
   GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES,
   buildGrassrootsActivityAttachmentPath,
+  buildGrassrootsDropCategoryCounts,
   buildGrassrootsDropActivityRows,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
   GRASSROOTS_EVENT_SAVE_RPC,
@@ -38,6 +39,7 @@ import {
   groupGrassrootsActivityAttachments,
   groupGrassrootsActivities,
   inferGrassrootsActivityAttachmentMimeType,
+  filterGrassrootsDropActivityRowsByCategory,
   makeBlankGrassrootsTarget,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsEventType,
@@ -194,6 +196,14 @@ function fmtDateTime(value) {
     month: "short",
     day: "numeric",
     year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function fmtTime(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
   });
@@ -2032,12 +2042,53 @@ function DropSubviewTabs({ value, onChange, activityCount, businessCount }) {
   );
 }
 
-function DropActivityView({ rows, canLog, onLog, onPreviewAttachment, previewingAttachmentId, freshActivityId }) {
+function formatDropCategoryFilterLabel(category) {
+  if (category === "Rescue") return "Rescuer";
+  return category;
+}
+
+function DropCategoryFilter({ counts, value, onChange }) {
+  if (!counts?.length) return null;
+  return (
+    <div className="grassroots-drop-category-filter" aria-label="Filter drop activity by business category">
+      {counts.map((item) => {
+        const active = value === item.category || (!value && item.category === "All");
+        const label = formatDropCategoryFilterLabel(item.category);
+        return (
+          <button
+            key={item.category}
+            type="button"
+            className={active ? "is-active" : ""}
+            onClick={() => onChange(item.category)}
+          >
+            <span>{label}</span>
+            <em>{item.count}</em>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DropActivityView({
+  rows,
+  canLog,
+  onLog,
+  onPreviewAttachment,
+  previewingAttachmentId,
+  freshActivityId,
+  expandedIds,
+  onToggleExpanded,
+  totalRows,
+  categoryFilter,
+}) {
   if (rows.length === 0) {
+    const filteredEmpty = totalRows > 0 && categoryFilter && categoryFilter !== "All";
+    const categoryLabel = formatDropCategoryFilterLabel(categoryFilter);
     return (
       <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
-        <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No drop activity logged yet</div>
-        <div style={{ fontSize: 13, marginBottom: 16 }}>Log the visit first; the business rollup updates from that activity.</div>
+        <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>{filteredEmpty ? `No ${categoryLabel.toLowerCase()} visits in this view` : "No drop activity logged yet"}</div>
+        <div style={{ fontSize: 13, marginBottom: 16 }}>{filteredEmpty ? "Choose another category or log a new visit." : "Log the visit first; the business rollup updates from that activity."}</div>
         <Btn variant="primary" icon={<I.Plus />} onClick={() => onLog()} disabled={!canLog}>Log Activity</Btn>
       </Card>
     );
@@ -2048,41 +2099,61 @@ function DropActivityView({ rows, canLog, onLog, onPreviewAttachment, previewing
       <div className="grassroots-drop-activity-header">
         <div>Date</div>
         <div>Business</div>
-        <div>Visit Details</div>
-        <div>Next</div>
+        <div>Summary</div>
+        <div>Signals</div>
       </div>
       <div className="grassroots-drop-activity-list">
-        {rows.map((row) => (
-          <div
-            key={row.id}
-            className={`grassroots-drop-activity-row${freshActivityId === row.id ? " is-fresh" : ""}`}
-          >
-            <div className="grassroots-drop-activity-date">
-              <strong>{fmtDate(row.activityDate)}</strong>
-              <span>{fmtDateTime(row.createdAt)}</span>
-            </div>
-            <div className="grassroots-drop-activity-business">
-              <strong>{row.businessName}</strong>
-              <span>{[row.businessCategory, row.businessAddress].filter(Boolean).join(" · ") || "Drop business"}</span>
-            </div>
-            <div className="grassroots-drop-activity-notes">
-              <div className="grassroots-drop-activity-meta">
-                {row.personSpokenWith && <span>Spoke with {row.personSpokenWith}</span>}
-                {row.materialsLeft && <span>Left {row.materialsLeft}</span>}
-                {row.outcome && <span>{row.outcome}</span>}
-                {row.followUpPriority && <span className="is-hot">Follow-up</span>}
-                {row.partnershipPotential && <span className="is-potential">Partnership potential</span>}
+        {rows.map((row) => {
+          const expanded = expandedIds?.has(row.id);
+          const noteSummary = String(row.notes || "").trim();
+          const summary = row.outcome || row.personSpokenWith || noteSummary || "Visit logged";
+          const loggedTime = fmtTime(row.createdAt);
+          return (
+            <div
+              key={row.id}
+              className={`grassroots-drop-activity-row${freshActivityId === row.id ? " is-fresh" : ""}${expanded ? " is-expanded" : ""}`}
+            >
+              <div className="grassroots-drop-activity-date">
+                <strong>{fmtDate(row.activityDate)}</strong>
+                {loggedTime && <span>Logged {loggedTime}</span>}
               </div>
-              <p>{row.notes || "No notes entered."}</p>
-              <AttachmentButtons attachments={row.attachments} onPreview={onPreviewAttachment} previewingAttachmentId={previewingAttachmentId} />
-              <div className="grassroots-drop-activity-actor">Logged by {row.loggedBy}</div>
+              <div className="grassroots-drop-activity-business">
+                <strong>{row.businessName}</strong>
+                <span>{[row.businessCategory, row.businessAddress].filter(Boolean).join(" · ") || "Drop business"}</span>
+              </div>
+              <div className="grassroots-drop-activity-summary">
+                <strong>{summary}</strong>
+                {noteSummary && <span>{noteSummary.length > 120 ? `${noteSummary.slice(0, 120)}...` : noteSummary}</span>}
+              </div>
+              <div className="grassroots-drop-activity-signals">
+                <div className="grassroots-drop-activity-meta">
+                  {row.followUpPriority && <span className="is-hot">Follow-up{row.nextDropDate ? ` ${fmtDate(row.nextDropDate)}` : ""}</span>}
+                  {row.partnershipPotential && <span className="is-potential">Partnership</span>}
+                  {row.attachments.length > 0 && <span>{row.attachments.length} file{row.attachments.length === 1 ? "" : "s"}</span>}
+                </div>
+                <button type="button" onClick={() => onToggleExpanded(row.id)} className="grassroots-drop-expand-button" aria-expanded={expanded}>
+                  {expanded ? "Hide" : "Details"} <I.ChevronRight />
+                </button>
+              </div>
+              {expanded && (
+                <div className="grassroots-drop-activity-detail">
+                  <div className="grassroots-drop-activity-detail-grid">
+                    {row.personSpokenWith && <div><Label>Spoke With</Label><strong>{row.personSpokenWith}</strong></div>}
+                    {row.materialsLeft && <div><Label>Materials Left</Label><strong>{row.materialsLeft}</strong></div>}
+                    {row.outcome && <div><Label>Outcome</Label><strong>{row.outcome}</strong></div>}
+                    {row.followUpPriority && row.nextDropDate && <div><Label>Follow-Up Date</Label><strong>{fmtDate(row.nextDropDate)}</strong></div>}
+                  </div>
+                  <p>{row.notes || "No notes entered."}</p>
+                  <AttachmentButtons attachments={row.attachments} onPreview={onPreviewAttachment} previewingAttachmentId={previewingAttachmentId} />
+                  <div className="grassroots-drop-activity-detail-footer">
+                    <span>Logged by {row.loggedBy}</span>
+                    {row.target && <Btn variant="secondary" size="sm" onClick={() => onLog(row.target)} disabled={!canLog}>Log Again</Btn>}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grassroots-drop-activity-next">
-              <strong>{fmtDate(row.nextDropDate)}</strong>
-              {row.target && <Btn variant="secondary" size="sm" onClick={() => onLog(row.target)} disabled={!canLog}>Log Again</Btn>}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -2129,9 +2200,9 @@ function LogActivityModal({
     : businessDraft
       ? [getGrassrootsBusinessCategory(businessDraft), businessDraft.address].filter(Boolean).join(" · ")
       : "";
+  const title = isDropLog ? "Log Drop Activity" : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development";
 
-  return (
-    <Modal title={isDropLog ? "Log Drop Activity" : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development"} onClose={saving ? () => {} : onClose} wide>
+  const body = (
       <div className="grassroots-log-modal">
         {isDropLog && (
           <section className="grassroots-log-section">
@@ -2213,11 +2284,22 @@ function LogActivityModal({
                 <I.Sparkle /> Partnership potential
               </button>
             </div>
+            {followUpPriority && (
+              <div className="grassroots-log-followup-date">
+                <Label>Follow-Up Date Optional</Label>
+                <MiniDatePicker
+                  value={nextDate}
+                  onChange={onNextDateChange}
+                  recommendedDate={addDays(todayStr(), 7)}
+                  recommendedHint="Set this only when there is a specific follow-up window."
+                />
+              </div>
+            )}
           </section>
         )}
 
         <section className="grassroots-log-section">
-          <div className="grassroots-log-section-title">{isDropLog ? "Notes and Next Step" : "Update"}</div>
+          <div className="grassroots-log-section-title">{isDropLog ? "Visit Notes" : "Update"}</div>
           <textarea
             value={notes}
             onChange={(event) => onNotesChange(event.target.value)}
@@ -2226,15 +2308,17 @@ function LogActivityModal({
             style={{ ...INPUT_STYLE, minHeight: 108, resize: "vertical" }}
             autoFocus={!isDropLog}
           />
-          <div style={{ marginTop: 12 }}>
-            <Label>{isDropLog ? "Next Drop Date" : "Follow-Up Date Optional"}</Label>
-            <MiniDatePicker
-              value={nextDate}
-              onChange={onNextDateChange}
-              recommendedDate={addDays(todayStr(), isDropLog ? 28 : 2)}
-              recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : "Optional: set only if this needs follow-up."}
-            />
-          </div>
+          {!isDropLog && (
+            <div style={{ marginTop: 12 }}>
+              <Label>Follow-Up Date Optional</Label>
+              <MiniDatePicker
+                value={nextDate}
+                onChange={onNextDateChange}
+                recommendedDate={addDays(todayStr(), 2)}
+                recommendedHint="Optional: set only if this needs follow-up."
+              />
+            </div>
+          )}
         </section>
 
         {isDropLog && (
@@ -2279,11 +2363,40 @@ function LogActivityModal({
           </section>
         )}
 
-        <div className="grassroots-log-actions">
-          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
-          <Btn variant="primary" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
-        </div>
+        {!isDropLog && (
+          <div className="grassroots-log-actions">
+            <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
+            <Btn variant="primary" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
+          </div>
+        )}
       </div>
+  );
+
+  if (isDropLog) {
+    return (
+      <div className="grassroots-log-composer">
+        <Card style={{ padding: 0, overflow: "visible", position: "relative", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1)" }}>
+          <div className="grassroots-log-composer-header">
+            <div>
+              <div className="grassroots-log-composer-kicker">{title}</div>
+              <div className="grassroots-log-composer-subtitle">Save collapses this into the activity row.</div>
+            </div>
+            <div className="grassroots-log-composer-actions">
+              <Btn variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Btn>
+              <Btn variant="primary" size="sm" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
+            </div>
+          </div>
+          <div className="grassroots-log-composer-body">
+            {body}
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <Modal title={title} onClose={saving ? () => {} : onClose} wide>
+      {body}
     </Modal>
   );
 }
@@ -2315,6 +2428,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [saveState, setSaveState] = useState("idle");
   const [activeCategory, setActiveCategory] = useState("events");
   const [dropSubview, setDropSubview] = useState("activity");
+  const [dropActivityCategory, setDropActivityCategory] = useState("All");
   const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
   const [targets, setTargets] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -2325,6 +2439,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [editDraft, setEditDraft] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
+  const [expandedDropActivities, setExpandedDropActivities] = useState(new Set());
   const [logModal, setLogModal] = useState(null);
   const [movePopover, setMovePopover] = useState(null);
   const [logNotes, setLogNotes] = useState("");
@@ -2356,6 +2471,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const freshTargetTimer = useRef(null);
   const freshActivityTimer = useRef(null);
   const newDraftScrollRef = useRef(null);
+  const logComposerScrollRef = useRef(null);
   const logFileInputRef = useRef(null);
 
   const activeConfig = getGrassrootsCategoryConfig(activeCategory);
@@ -2381,6 +2497,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const dropActivityRows = useMemo(
     () => buildGrassrootsDropActivityRows(targets, activities, attachmentsByActivity),
     [activities, attachmentsByActivity, targets],
+  );
+  const dropCategoryCounts = useMemo(() => buildGrassrootsDropCategoryCounts(dropActivityRows), [dropActivityRows]);
+  const filteredDropActivityRows = useMemo(
+    () => filterGrassrootsDropActivityRowsByCategory(dropActivityRows, dropActivityCategory),
+    [dropActivityCategory, dropActivityRows],
   );
   const logBusinessOptions = useMemo(() => searchGrassrootsDropBusinessTargets({
     targets: dropTargets,
@@ -2520,6 +2641,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   }, [newDraft?.id]);
 
   useEffect(() => {
+    const category = logModal ? (logModal.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) : "";
+    if (category !== "drops") return undefined;
+    let frameId = 0;
+    const timerId = window.setTimeout(() => {
+      frameId = window.requestAnimationFrame(() => {
+        scrollGrassrootsEditorIntoView(logComposerScrollRef.current);
+      });
+    }, 60);
+    return () => {
+      window.clearTimeout(timerId);
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
+  }, [logModal?.category, logModal?.target?.category, logModal?.target?.id]);
+
+  useEffect(() => {
     if (showFilterPanel && !prevFilterOpen.current) {
       setDraftFilters({ ...filters });
       setShowFilterPicker(false);
@@ -2578,6 +2714,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     freshActivityTimer.current = window.setTimeout(() => setFreshActivityId(null), 1800);
   };
 
+  const toggleDropActivityExpanded = (activityId) => {
+    setExpandedDropActivities((current) => {
+      const next = new Set(current);
+      if (next.has(activityId)) next.delete(activityId);
+      else next.add(activityId);
+      return next;
+    });
+  };
+
   const resetLogForm = () => {
     setLogModal(null);
     setLogNotes("");
@@ -2606,7 +2751,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setMovePopover(null);
     setLogModal({ target, category });
     setLogNotes("");
-    setLogDate(category === "drops" ? addDays(todayStr(), 28) : "");
+    setLogDate("");
     setLogActivityDate(todayStr());
     setLogContactName("");
     setLogBusinessQuery(target?.name || "");
@@ -2881,13 +3026,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
     const category = isDropLog ? "drops" : getGrassrootsCategoryConfig(logModal?.target?.category).id;
     const activityType = getGrassrootsActivityType(category);
-    const requiresNextDate = activityType === "drop";
-    if (!logNotes.trim() || (requiresNextDate && !logDate)) {
-      toast(requiresNextDate ? "Notes and next date are required" : "Comment is required", "error");
-      return;
-    }
-    if (activityType === "drop" && !logContactName.trim()) {
-      toast("Who did you speak with is required", "error");
+    const followUpDate = activityType === "drop" && logFollowUpPriority && logDate ? logDate : null;
+    if (!logNotes.trim()) {
+      toast(activityType === "drop" ? "Visit notes are required" : "Comment is required", "error");
       return;
     }
     if (activityType === "drop" && attachmentsSchemaMissing && logFiles.length > 0) {
@@ -2919,7 +3060,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             activity_type: activityType,
             activity_date: activityDate,
             notes: logNotes.trim(),
-            next_contact_date: logDate || null,
+            next_contact_date: followUpDate,
             metadata: {
               person_spoken_with: logContactName.trim(),
               materials_left: logMaterialsLeft.trim(),
@@ -2949,7 +3090,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           activity_type: activityType,
           activity_date: activityDate,
           notes: logNotes.trim(),
-          next_contact_date: logDate || null,
+          next_contact_date: activityType === "drop" ? followUpDate : (logDate || null),
           metadata: activityType === "drop" ? {
             person_spoken_with: logContactName.trim(),
             materials_left: logMaterialsLeft.trim(),
@@ -3067,6 +3208,55 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       { label: `Corresponding ${eventMetrics.year}`, value: eventMetrics.correspondingThisYear, color: "#7C3AED" },
       { label: `Booked ${fmtMonthYear(eventMetrics.month)}`, value: eventMetrics.bookedThisMonth, color: C.accDk },
     ];
+  const activeLogCategoryId = logModal ? (logModal.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) : "";
+  const isDropLogActive = activeLogCategoryId === "drops";
+  const logActivityEditor = canLogActivity && logModal ? (
+    <LogActivityModal
+      logModal={logModal}
+      businessQuery={logBusinessQuery}
+      selectedTarget={logSelectedTarget}
+      businessDraft={logBusinessDraft}
+      internalOptions={logBusinessOptions}
+      notes={logNotes}
+      activityDate={logActivityDate}
+      nextDate={logDate}
+      contactName={logContactName}
+      materialsLeft={logMaterialsLeft}
+      outcome={logOutcome}
+      followUpPriority={logFollowUpPriority}
+      partnershipPotential={logPartnershipPotential}
+      files={logFiles}
+      fileErrors={logFileErrors}
+      saving={savingLog}
+      fileInputRef={logFileInputRef}
+      attachmentsSchemaMissing={attachmentsSchemaMissing}
+      onBusinessQueryChange={(value) => {
+        setLogBusinessQuery(value);
+        setLogSelectedTarget(null);
+        setLogBusinessDraft(null);
+      }}
+      onInternalBusinessSelect={(target) => {
+        setLogSelectedTarget(target);
+        setLogBusinessDraft(null);
+      }}
+      onGoogleBusinessSelect={handleSelectGoogleLogBusiness}
+      onActivityDateChange={setLogActivityDate}
+      onNextDateChange={setLogDate}
+      onContactNameChange={setLogContactName}
+      onMaterialsLeftChange={setLogMaterialsLeft}
+      onOutcomeChange={setLogOutcome}
+      onNotesChange={setLogNotes}
+      onFollowUpPriorityChange={(value) => {
+        setLogFollowUpPriority(value);
+        if (!value) setLogDate("");
+      }}
+      onPartnershipPotentialChange={setLogPartnershipPotential}
+      onFileChange={handleLogFileChange}
+      onRemoveFile={removeLogFile}
+      onClose={resetLogForm}
+      onSave={saveLog}
+    />
+  ) : null;
 
   return (
     <div style={{ maxWidth: 1240, margin: "0 auto", paddingBottom: 32 }}>
@@ -3611,10 +3801,47 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           color: ${C.text};
           font-weight: 950;
         }
+        .grassroots-drop-category-filter {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          flex-wrap: wrap;
+          margin: -2px 0 2px;
+        }
+        .grassroots-drop-category-filter button {
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          border-radius: 999px;
+          padding: 6px 10px;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          cursor: pointer;
+          color: ${C.textSec};
+          font: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+        }
+        .grassroots-drop-category-filter button:hover {
+          transform: translateY(-1px);
+          border-color: ${C.pri}55;
+        }
+        .grassroots-drop-category-filter button.is-active {
+          background: ${C.pri};
+          border-color: ${C.pri};
+          color: #fff;
+          box-shadow: 0 7px 18px rgba(20,83,45,0.16);
+        }
+        .grassroots-drop-category-filter em {
+          font-style: normal;
+          font-size: 11px;
+          opacity: 0.76;
+        }
         .grassroots-drop-activity-header,
         .grassroots-drop-activity-row {
           display: grid;
-          grid-template-columns: 138px minmax(210px, 0.9fr) minmax(260px, 1.4fr) 136px;
+          grid-template-columns: 118px minmax(220px, 0.95fr) minmax(260px, 1.45fr) 166px;
           gap: 14px;
           align-items: start;
         }
@@ -3632,7 +3859,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           display: grid;
         }
         .grassroots-drop-activity-row {
-          padding: 16px;
+          padding: 13px 16px;
           border-bottom: 1px solid ${C.borderLight};
           transition: background 0.16s ease, box-shadow 0.16s ease;
         }
@@ -3647,32 +3874,62 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         }
         .grassroots-drop-activity-date,
         .grassroots-drop-activity-business,
-        .grassroots-drop-activity-next {
+        .grassroots-drop-activity-summary,
+        .grassroots-drop-activity-signals {
           min-width: 0;
           display: grid;
           gap: 4px;
         }
         .grassroots-drop-activity-date strong,
         .grassroots-drop-activity-business strong,
-        .grassroots-drop-activity-next strong {
+        .grassroots-drop-activity-summary strong {
           color: ${C.text};
           font-size: 13px;
           font-weight: 950;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .grassroots-drop-activity-date span,
         .grassroots-drop-activity-business span,
-        .grassroots-drop-activity-actor {
+        .grassroots-drop-activity-summary span,
+        .grassroots-drop-activity-detail-footer {
           color: ${C.textMut};
           font-size: 12px;
           font-weight: 700;
           line-height: 1.35;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
-        .grassroots-drop-activity-notes {
+        .grassroots-drop-activity-signals {
           min-width: 0;
-          display: grid;
-          gap: 7px;
+          justify-items: end;
+          align-content: start;
         }
-        .grassroots-drop-activity-notes p {
+        .grassroots-drop-activity-detail {
+          grid-column: 1 / -1;
+          margin-top: 10px;
+          padding: 14px 16px;
+          border-radius: 12px;
+          background: ${C.bg};
+          border: 1px solid ${C.borderLight};
+          display: grid;
+          gap: 12px;
+        }
+        .grassroots-drop-activity-detail-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .grassroots-drop-activity-detail-grid strong {
+          display: block;
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 900;
+          line-height: 1.35;
+        }
+        .grassroots-drop-activity-detail p {
           margin: 0;
           color: ${C.text};
           font-size: 13px;
@@ -3685,6 +3942,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
+          justify-content: flex-end;
         }
         .grassroots-drop-activity-meta span {
           display: inline-flex;
@@ -3706,6 +3964,60 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           background: ${C.priLt};
           color: ${C.pri};
           border-color: rgba(20,83,45,0.2);
+        }
+        .grassroots-drop-expand-button {
+          margin-top: 4px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          border-radius: 10px;
+          padding: 6px 9px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          cursor: pointer;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .grassroots-drop-activity-row.is-expanded .grassroots-drop-expand-button svg {
+          transform: rotate(90deg);
+        }
+        .grassroots-drop-activity-detail-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          white-space: normal;
+        }
+        .grassroots-log-composer-header {
+          padding: 16px 18px;
+          border-bottom: 1px solid ${C.borderLight};
+          background: linear-gradient(135deg, ${C.priLt} 0%, #fff 70%);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+        }
+        .grassroots-log-composer-kicker {
+          font-size: 12px;
+          font-weight: 900;
+          color: ${C.pri};
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+        .grassroots-log-composer-subtitle {
+          margin-top: 4px;
+          font-size: 13px;
+          color: ${C.textMut};
+        }
+        .grassroots-log-composer-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+        .grassroots-log-composer-body {
+          padding: 14px;
         }
         .grassroots-activity-attachments,
         .grassroots-log-pending-files {
@@ -3822,6 +4134,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           background: ${C.pri};
           color: #fff;
         }
+        .grassroots-log-followup-date {
+          margin-top: 12px;
+          max-width: 280px;
+          animation: grassrootsSlideIn 0.2s ease-out;
+        }
         .grassroots-log-warning,
         .grassroots-log-errors {
           margin-bottom: 10px;
@@ -3930,7 +4247,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           .grassroots-places-category { grid-column: 2; justify-self: start; margin-top: 2px; }
           .grassroots-drop-activity-header { display: none; }
           .grassroots-drop-activity-row { grid-template-columns: 1fr; gap: 10px; }
-          .grassroots-drop-activity-next { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+          .grassroots-drop-activity-signals { justify-items: start; }
+          .grassroots-drop-activity-meta { justify-content: flex-start; }
+          .grassroots-drop-activity-detail-grid { grid-template-columns: 1fr; }
+          .grassroots-log-composer-header { align-items: flex-start; flex-direction: column; }
+          .grassroots-log-composer-actions { width: 100%; justify-content: flex-end; }
           .grassroots-log-grid { grid-template-columns: 1fr; }
           .grassroots-drop-toolbar-copy { width: 100%; }
         }
@@ -4228,14 +4549,32 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             </div>
           )}
 
+          {activeConfig.id === "drops" && isDropLogActive && (
+            <div ref={logComposerScrollRef} className="grassroots-new-draft-anchor">
+              {logActivityEditor}
+            </div>
+          )}
+
+          {activeConfig.id === "drops" && dropSubview === "activity" && (
+            <DropCategoryFilter
+              counts={dropCategoryCounts}
+              value={dropActivityCategory}
+              onChange={setDropActivityCategory}
+            />
+          )}
+
           {activeConfig.id === "drops" && dropSubview === "activity" ? (
             <DropActivityView
-              rows={dropActivityRows}
+              rows={filteredDropActivityRows}
               canLog={canLogActivity}
               onLog={openLogModal}
               onPreviewAttachment={previewGrassrootsAttachment}
               previewingAttachmentId={previewingAttachmentId}
               freshActivityId={freshActivityId}
+              expandedIds={expandedDropActivities}
+              onToggleExpanded={toggleDropActivityExpanded}
+              totalRows={dropActivityRows.length}
+              categoryFilter={dropActivityCategory}
             />
           ) : visibleTargets.length === 0 && !newDraft ? (
             <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
@@ -4391,50 +4730,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         </div>
       )}
 
-      {canLogActivity && logModal && (
-        <LogActivityModal
-          logModal={logModal}
-          businessQuery={logBusinessQuery}
-          selectedTarget={logSelectedTarget}
-          businessDraft={logBusinessDraft}
-          internalOptions={logBusinessOptions}
-          notes={logNotes}
-          activityDate={logActivityDate}
-          nextDate={logDate}
-          contactName={logContactName}
-          materialsLeft={logMaterialsLeft}
-          outcome={logOutcome}
-          followUpPriority={logFollowUpPriority}
-          partnershipPotential={logPartnershipPotential}
-          files={logFiles}
-          fileErrors={logFileErrors}
-          saving={savingLog}
-          fileInputRef={logFileInputRef}
-          attachmentsSchemaMissing={attachmentsSchemaMissing}
-          onBusinessQueryChange={(value) => {
-            setLogBusinessQuery(value);
-            setLogSelectedTarget(null);
-            setLogBusinessDraft(null);
-          }}
-          onInternalBusinessSelect={(target) => {
-            setLogSelectedTarget(target);
-            setLogBusinessDraft(null);
-          }}
-          onGoogleBusinessSelect={handleSelectGoogleLogBusiness}
-          onActivityDateChange={setLogActivityDate}
-          onNextDateChange={setLogDate}
-          onContactNameChange={setLogContactName}
-          onMaterialsLeftChange={setLogMaterialsLeft}
-          onOutcomeChange={setLogOutcome}
-          onNotesChange={setLogNotes}
-          onFollowUpPriorityChange={setLogFollowUpPriority}
-          onPartnershipPotentialChange={setLogPartnershipPotential}
-          onFileChange={handleLogFileChange}
-          onRemoveFile={removeLogFile}
-          onClose={resetLogForm}
-          onSave={saveLog}
-        />
-      )}
+      {!isDropLogActive && logActivityEditor}
 
       {attachmentPreview && (
         <Modal title={attachmentPreview.attachment?.file_name || "Attachment Preview"} onClose={() => setAttachmentPreview(null)} fullWidth>

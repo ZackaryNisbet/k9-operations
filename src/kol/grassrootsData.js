@@ -101,6 +101,23 @@ export const GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES = [
 ];
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_ACCEPT = GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES.join(",");
 
+export function normalizeGrassrootsDropBusinessCategory(value) {
+  const normalized = normalizeGrassrootsSearchText(value);
+  if (!normalized) return "";
+  const match = GRASSROOTS_DROP_CATEGORY_OPTIONS.find((option) => normalizeGrassrootsSearchText(option) === normalized);
+  if (match) return match;
+  if (normalized === "rescuer" || normalized === "rescuers" || normalized === "rescue") return "Rescue";
+  if (normalized === "pet retail" || normalized === "pet retailer" || normalized === "retailer") return "Pet Retailer";
+  if (normalized === "boarding daycare" || normalized === "boarding and daycare" || normalized === "daycare") return "Boarding/Daycare";
+  return String(value || "").trim();
+}
+
+export function getGrassrootsDropCategoryBucket(value) {
+  const category = normalizeGrassrootsDropBusinessCategory(value);
+  if (!category) return "Other";
+  return GRASSROOTS_DROP_CATEGORY_OPTIONS.includes(category) ? category : "Other";
+}
+
 export const GRASSROOTS_DEFAULT_FILTERS = {
   is_active: { op: "is", val: "active" },
 };
@@ -407,6 +424,25 @@ export function buildGrassrootsDropMetrics(targets = [], activities = [], today 
     dropVisitsYtd: yearToDate.length,
     businessesVisitedYtd: uniqueBusinessCount(yearToDate),
   };
+}
+
+export function buildGrassrootsDropCategoryCounts(rows = []) {
+  const countsByCategory = new Map(GRASSROOTS_DROP_CATEGORY_OPTIONS.map((category) => [category, 0]));
+  (rows || []).forEach((row) => {
+    const category = getGrassrootsDropCategoryBucket(row?.businessCategory);
+    countsByCategory.set(category, (countsByCategory.get(category) || 0) + 1);
+  });
+  return [
+    { category: "All", count: rows.length },
+    ...GRASSROOTS_DROP_CATEGORY_OPTIONS.map((category) => ({ category, count: countsByCategory.get(category) || 0 })),
+  ];
+}
+
+export function filterGrassrootsDropActivityRowsByCategory(rows = [], category = "All") {
+  const normalizedCategory = normalizeGrassrootsDropBusinessCategory(category);
+  if (!normalizedCategory || normalizedCategory === "All") return rows;
+  const categoryBucket = GRASSROOTS_DROP_CATEGORY_OPTIONS.includes(normalizedCategory) ? normalizedCategory : "Other";
+  return (rows || []).filter((row) => getGrassrootsDropCategoryBucket(row?.businessCategory) === categoryBucket);
 }
 
 export function makeBlankGrassrootsTarget(category = "events") {
