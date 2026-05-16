@@ -2,21 +2,29 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, MiniDatePicker } from "../../shared/ui";
+import { Btn, CalendarPicker, Card, MiniDatePicker, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
+  GRASSROOTS_ACTIVITY_ATTACHMENT_ACCEPT,
+  GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET,
+  GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES,
+  buildGrassrootsActivityAttachmentPath,
+  buildGrassrootsDropActivityRows,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
   GRASSROOTS_EVENT_SAVE_RPC,
   GRASSROOTS_EVENT_TYPE_OPTIONS,
   GRASSROOTS_FILTER_OP_LABELS,
   GRASSROOTS_STATUS_OPTIONS,
   applyGrassrootsFilters,
+  buildGrassrootsDropMetrics,
   buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsEventMetrics,
   calculateGrassrootsCpl,
   compareGrassrootsEventSchedule,
+  formatGrassrootsAttachmentFileSize,
   getGrassrootsActivityCount,
+  getGrassrootsAttachmentPreviewKind,
   getGrassrootsActivityType,
   getGrassrootsBusinessCategory,
   getGrassrootsCategoryConfig,
@@ -27,12 +35,16 @@ import {
   getGrassrootsPrimaryEventDate,
   getGrassrootsStatusLabel,
   compareGrassrootsHistoryDesc,
+  groupGrassrootsActivityAttachments,
   groupGrassrootsActivities,
+  inferGrassrootsActivityAttachmentMimeType,
   makeBlankGrassrootsTarget,
   normalizeGrassrootsEventDates,
   normalizeGrassrootsEventType,
   normalizeGrassrootsStatus,
   resolveGrassrootsTargetIsActive,
+  searchGrassrootsDropBusinessTargets,
+  validateGrassrootsActivityAttachmentFiles,
 } from "../grassrootsData";
 import { normalizeOptionalUuid } from "../trainingData";
 
@@ -187,6 +199,54 @@ function fmtDateTime(value) {
   });
 }
 
+function createGrassrootsClientUuid() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function scrollGrassrootsEditorIntoView(element) {
+  if (!element || typeof window === "undefined") return;
+  const findScrollParent = (node) => {
+    let current = node?.parentElement || null;
+    while (current && current !== document.body) {
+      const style = window.getComputedStyle(current);
+      if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight + 8) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  };
+  const isCompact = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 760px)").matches;
+  const headerOffset = isCompact ? 76 : 92;
+  const scrollParent = findScrollParent(element);
+  const viewportHeight = scrollParent?.clientHeight || window.innerHeight || document.documentElement.clientHeight || 0;
+  const rect = element.getBoundingClientRect();
+  const availableHeight = Math.max(320, viewportHeight - headerOffset - 24);
+  const topOffset = rect.height <= availableHeight
+    ? Math.max(headerOffset, Math.floor((viewportHeight - rect.height) / 2))
+    : headerOffset;
+  if (scrollParent) {
+    const parentRect = scrollParent.getBoundingClientRect();
+    const top = Math.max(0, scrollParent.scrollTop + rect.top - parentRect.top - topOffset);
+    scrollParent.scrollTo({ top, behavior: "smooth" });
+    return;
+  }
+  const top = Math.max(0, window.scrollY + rect.top - topOffset);
+  window.scrollTo({ top, behavior: "smooth" });
+}
+
 function parseNumberField(value) {
   if (value === "" || value == null) return null;
   const num = Number(value);
@@ -210,6 +270,117 @@ export function parseGooglePlaceAddress(place) {
     address_country: read("country", "short_name") || fallback.address_country,
     google_place_id: place?.place_id || "",
   };
+}
+
+function looksLikeGoogleAddressTail(value) {
+  return /(?:\b[A-Z]{2}\b|\d{5}|usa|united states|new jersey|pennsylvania|delaware|route|rte|road|rd|street|st|avenue|ave|boulevard|blvd|drive|dr|lane|ln|highway|hwy|pike|turnpike)/i.test(String(value || ""));
+}
+
+function cleanGooglePlaceBusinessLabel(value, options = {}) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  if (!normalized) return "";
+  const segments = normalized.split(",").map((part) => part.trim()).filter(Boolean);
+  if (segments.length > 1 && (!options.preserveBusinessCommas || looksLikeGoogleAddressTail(segments.slice(1).join(", ")))) {
+    return segments[0];
+  }
+  return normalized;
+}
+
+export function extractGooglePlaceBusinessName(place, fallbackValue = "") {
+  return cleanGooglePlaceBusinessLabel(place?.name, { preserveBusinessCommas: true }) || cleanGooglePlaceBusinessLabel(fallbackValue);
+}
+
+function googlePlaceTextIncludes(text, terms) {
+  return terms.some((term) => text.includes(term));
+}
+
+export function inferGrassrootsBusinessCategoryFromPlace(place = {}, businessName = "") {
+  const types = Array.isArray(place?.types) ? place.types.map((type) => String(type || "").toLowerCase()) : [];
+  const name = String(businessName || place?.name || "").toLowerCase();
+  const text = [name, ...types, place?.formatted_address].filter(Boolean).join(" ").toLowerCase();
+
+  if (types.includes("veterinary_care") || googlePlaceTextIncludes(text, [
+    "animal hospital",
+    "banfield",
+    "pet hospital",
+    "vca ",
+    "vet ",
+    "veterinarian",
+    "veterinary",
+  ])) {
+    return "Veterinarian";
+  }
+  if (googlePlaceTextIncludes(text, ["groom", "groomer", "grooming", "pet spa"])) return "Groomer";
+  if (types.includes("pet_store") || googlePlaceTextIncludes(text, [
+    "pet store",
+    "pet supplies",
+    "pet supermarket",
+    "petco",
+    "petsmart",
+    "pet valu",
+  ])) {
+    return "Pet Retailer";
+  }
+  if (googlePlaceTextIncludes(text, [
+    "animal rescue",
+    "animal shelter",
+    "humane society",
+    "rescue",
+    "shelter",
+    "spca",
+  ])) {
+    return "Rescue";
+  }
+  if (googlePlaceTextIncludes(text, ["dog training", "obedience", "trainer", "training"])) return "Trainer";
+  if (googlePlaceTextIncludes(text, [
+    "boarding",
+    "camp bow wow",
+    "daycare",
+    "dog camp",
+    "dog hotel",
+    "kennel",
+    "pet lodge",
+    "pet resort",
+  ])) {
+    return "Boarding/Daycare";
+  }
+  return "";
+}
+
+function getGooglePredictionSecondaryText(prediction) {
+  const structured = prediction?.structured_formatting || {};
+  const mainText = String(structured.main_text || "").trim();
+  const secondaryText = String(structured.secondary_text || "").trim();
+  if (secondaryText) return secondaryText;
+  const description = String(prediction?.description || "").trim();
+  if (!description || !mainText) return description;
+  return description.replace(new RegExp(`^${mainText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*,\\s*`, "i"), "");
+}
+
+function renderGooglePredictionText(text, matchedSubstrings = []) {
+  const source = String(text || "");
+  if (!source) return null;
+  const ranges = matchedSubstrings
+    .map((range) => ({
+      start: Number(range?.offset || 0),
+      end: Number(range?.offset || 0) + Number(range?.length || 0),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start);
+  if (ranges.length === 0) return source;
+  const parts = [];
+  let cursor = 0;
+  ranges.forEach((range, index) => {
+    const start = Math.max(cursor, Math.min(source.length, range.start));
+    const end = Math.max(start, Math.min(source.length, range.end));
+    if (start > cursor) parts.push(source.slice(cursor, start));
+    if (end > start) {
+      parts.push(<mark key={`match-${index}`}>{source.slice(start, end)}</mark>);
+    }
+    cursor = end;
+  });
+  if (cursor < source.length) parts.push(source.slice(cursor));
+  return parts;
 }
 
 export function parseFreeformGrassrootsAddress(value) {
@@ -484,6 +655,75 @@ function EventTypePicker({ value, onChange }) {
   );
 }
 
+export async function copyGrassrootsTextToClipboard(value, sourceInput = null, runtime = {}) {
+  const text = String(value || "");
+  if (!text) return { copied: false, verified: false };
+  const runtimeDocument = runtime.document ?? (typeof document !== "undefined" ? document : null);
+  const runtimeNavigator = runtime.navigator ?? (typeof navigator !== "undefined" ? navigator : null);
+  const selectSourceInput = () => {
+    if (!sourceInput) return false;
+    try {
+      sourceInput.focus({ preventScroll: true });
+      sourceInput.select();
+      sourceInput.setSelectionRange(0, text.length);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const sourceSelected = selectSourceInput();
+
+  let selectionCopied = false;
+  if (sourceSelected && runtimeDocument) {
+    try {
+      selectionCopied = runtimeDocument.execCommand?.("copy") === true;
+    } catch {
+      selectionCopied = false;
+    }
+  } else if (runtimeDocument) {
+    const textarea = runtimeDocument.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.width = "1px";
+    textarea.style.height = "1px";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    runtimeDocument.body.appendChild(textarea);
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    try {
+      selectionCopied = runtimeDocument.execCommand?.("copy") === true;
+    } catch {
+      selectionCopied = false;
+    }
+    runtimeDocument.body.removeChild(textarea);
+  }
+
+  let apiCopied = false;
+  let verified = false;
+  if (runtimeNavigator?.clipboard?.writeText) {
+    try {
+      await runtimeNavigator.clipboard.writeText(text);
+      apiCopied = true;
+    } catch {
+      apiCopied = false;
+    }
+  }
+  if (runtimeNavigator?.clipboard?.readText) {
+    try {
+      verified = (await runtimeNavigator.clipboard.readText()) === text;
+    } catch {
+      verified = false;
+    }
+  }
+  if (!selectionCopied) selectSourceInput();
+  return { copied: selectionCopied, verified, apiCopied, selectionCopied, sourceSelected };
+}
+
 function Label({ children }) {
   return (
     <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>
@@ -654,61 +894,294 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
   );
 }
 
-function GooglePlacesBusinessInput({ label, value, onChange, onPlaceSelect, placeholder = "Start typing a business" }) {
+function GooglePlacesBusinessInput({
+  label,
+  value,
+  onChange,
+  onPlaceSelect,
+  placeholder = "Start typing a business",
+  internalOptions = [],
+  onInternalSelect,
+  internalLabel = "Existing businesses",
+  googleLabel = "Google Places",
+}) {
   const inputRef = useRef(null);
-  const autocompleteRef = useRef(null);
+  const wrapperRef = useRef(null);
+  const autocompleteServiceRef = useRef(null);
+  const detailsServiceRef = useRef(null);
+  const sessionTokenRef = useRef(null);
+  const requestIdRef = useRef(0);
+  const selectedValueRef = useRef("");
+  const [placesReady, setPlacesReady] = useState(false);
+  const [predictions, setPredictions] = useState([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  const resetSessionToken = useCallback(() => {
+    if (window.google?.maps?.places?.AutocompleteSessionToken) {
+      sessionTokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     loadGooglePlacesScript().then((ready) => {
       if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
-      autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
-        fields: ["address_components", "formatted_address", "formatted_phone_number", "name", "place_id", "types", "website"],
-        types: ["establishment"],
-        componentRestrictions: { country: "us" },
-      });
-      autocompleteRef.current.addListener("place_changed", () => {
-        const place = autocompleteRef.current?.getPlace?.();
-        const name = place?.name || inputRef.current?.value || "";
-        const parsedAddress = parseGooglePlaceAddress(place);
-        const visibleAddressLine = getGrassrootsVisibleAddressLine(parsedAddress);
-        onChange(name);
-        onPlaceSelect?.({
-          ...parsedAddress,
-          address: visibleAddressLine || parsedAddress.address || place?.formatted_address || "",
-          name,
-          contact_phone: place?.formatted_phone_number || "",
-          website: place?.website || "",
-        });
-      });
+      autocompleteServiceRef.current = new window.google.maps.places.AutocompleteService();
+      detailsServiceRef.current = new window.google.maps.places.PlacesService(document.createElement("div"));
+      resetSessionToken();
+      setPlacesReady(true);
     });
     return () => {
       cancelled = true;
-      if (autocompleteRef.current && window.google?.maps?.event) {
-        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
-      }
     };
-  }, [onChange, onPlaceSelect]);
+  }, [resetSessionToken]);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!wrapperRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    const query = String(value || "").trim();
+    if (!placesReady || query.length < 2 || query === selectedValueRef.current) {
+      setPredictions([]);
+      setIsSearching(false);
+      setActiveIndex(internalOptions.length > 0 ? 0 : -1);
+      return undefined;
+    }
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setIsSearching(true);
+    const timerId = window.setTimeout(() => {
+      autocompleteServiceRef.current?.getPlacePredictions({
+        input: query,
+        types: ["establishment"],
+        componentRestrictions: { country: "us" },
+        sessionToken: sessionTokenRef.current,
+      }, (results = [], status) => {
+        if (requestIdRef.current !== requestId) return;
+        const okStatus = window.google?.maps?.places?.PlacesServiceStatus?.OK;
+        const nextPredictions = status === okStatus ? results.slice(0, 6) : [];
+        setPredictions(nextPredictions);
+        setActiveIndex(internalOptions.length > 0 || nextPredictions.length > 0 ? 0 : -1);
+        setIsOpen(internalOptions.length > 0 || nextPredictions.length > 0 || query.length >= 2);
+        setIsSearching(false);
+      });
+    }, 140);
+    return () => window.clearTimeout(timerId);
+  }, [internalOptions.length, placesReady, value]);
+
+  useEffect(() => {
+    const query = String(value || "").trim();
+    if (query.length >= 2 && internalOptions.length > 0) {
+      setIsOpen(true);
+      setActiveIndex((current) => (current < 0 ? 0 : current));
+    }
+  }, [internalOptions.length, value]);
+
+  const applyPlace = useCallback((place, fallbackName = "") => {
+    const name = extractGooglePlaceBusinessName(place, fallbackName);
+    const parsedAddress = parseGooglePlaceAddress(place);
+    const category = inferGrassrootsBusinessCategoryFromPlace(place, name);
+    selectedValueRef.current = name;
+    onChange(name);
+    if (inputRef.current) inputRef.current.value = name;
+    onPlaceSelect?.({
+      ...parsedAddress,
+      address: parsedAddress.address || place?.formatted_address || "",
+      name,
+      business_category: category,
+      drop_category: category,
+      contact_phone: place?.formatted_phone_number || "",
+      website: place?.website || "",
+    });
+    setPredictions([]);
+    setIsOpen(false);
+    setActiveIndex(-1);
+    setIsSearching(false);
+    resetSessionToken();
+  }, [onChange, onPlaceSelect, resetSessionToken]);
+
+  const selectPrediction = useCallback((prediction) => {
+    if (!prediction?.place_id || !detailsServiceRef.current) return;
+    const fallbackName = prediction.structured_formatting?.main_text || prediction.description || "";
+    setIsSearching(true);
+    detailsServiceRef.current.getDetails({
+      placeId: prediction.place_id,
+      fields: ["address_components", "formatted_address", "formatted_phone_number", "name", "place_id", "types", "website"],
+      sessionToken: sessionTokenRef.current,
+    }, (place, status) => {
+      const okStatus = window.google?.maps?.places?.PlacesServiceStatus?.OK;
+      if (status === okStatus && place) {
+        applyPlace(place, fallbackName);
+        return;
+      }
+      applyPlace({
+        formatted_address: "",
+        name: fallbackName,
+        place_id: prediction.place_id,
+        types: prediction.types || [],
+      }, fallbackName);
+    });
+  }, [applyPlace]);
+
+  const selectInternalOption = useCallback((option) => {
+    if (!option?.target) return;
+    const name = option.target.name || "";
+    selectedValueRef.current = name;
+    onChange(name);
+    if (inputRef.current) inputRef.current.value = name;
+    onInternalSelect?.(option.target, option);
+    setPredictions([]);
+    setIsOpen(false);
+    setActiveIndex(-1);
+    setIsSearching(false);
+  }, [onChange, onInternalSelect]);
+
+  const handleKeyDown = (event) => {
+    const totalOptions = internalOptions.length + predictions.length;
+    if (!isOpen || totalOptions === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => (current + 1) % totalOptions);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => (current <= 0 ? totalOptions - 1 : current - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const index = Math.max(0, activeIndex);
+      if (index < internalOptions.length) {
+        selectInternalOption(internalOptions[index]);
+      } else {
+        selectPrediction(predictions[index - internalOptions.length]);
+      }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+    }
+  };
+
+  const showPanel = isOpen && (internalOptions.length > 0 || predictions.length > 0 || isSearching);
 
   return (
-    <label style={{ display: "block" }}>
+    <div className="grassroots-places-field" ref={wrapperRef}>
       <Label>{label}</Label>
-      <input
-        ref={inputRef}
-        value={value || ""}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        autoComplete="off"
-        data-1p-ignore="true"
-        data-lpignore="true"
-        data-form-type="other"
-        style={INPUT_STYLE}
-      />
-    </label>
+      <div className="grassroots-places-anchor">
+        <input
+          ref={inputRef}
+          value={value || ""}
+          onChange={(event) => {
+            selectedValueRef.current = "";
+            onChange(event.target.value);
+          }}
+          onFocus={() => {
+            if (internalOptions.length > 0 || predictions.length > 0) setIsOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          autoComplete="off"
+          aria-autocomplete="list"
+          aria-expanded={showPanel}
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-form-type="other"
+          style={INPUT_STYLE}
+        />
+        {showPanel && (
+          <div className="grassroots-places-panel" role="listbox">
+            {internalOptions.length > 0 && (
+              <>
+                <div className="grassroots-places-section-label">{internalLabel}</div>
+                {internalOptions.map((option, index) => {
+                  const active = index === activeIndex;
+                  return (
+                    <button
+                      key={option.target?.id || option.label}
+                      type="button"
+                      className={`grassroots-places-option is-internal${active ? " is-active" : ""}`}
+                      role="option"
+                      aria-selected={active}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectInternalOption(option)}
+                    >
+                      <span className="grassroots-places-pin is-internal" aria-hidden="true">
+                        <I.CheckCircle />
+                      </span>
+                      <span className="grassroots-places-copy">
+                        <span className="grassroots-places-main">{option.target?.name || "Existing business"}</span>
+                        <span className="grassroots-places-secondary">{option.subtitle}</span>
+                      </span>
+                      <span className="grassroots-places-category">{option.badge}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+            {(predictions.length > 0 || isSearching) && (
+              <div className="grassroots-places-section-label">{googleLabel}</div>
+            )}
+            {predictions.map((prediction, index) => {
+              const mainText = prediction.structured_formatting?.main_text || cleanGooglePlaceBusinessLabel(prediction.description);
+              const secondaryText = getGooglePredictionSecondaryText(prediction);
+              const inferredCategory = inferGrassrootsBusinessCategoryFromPlace({ name: mainText, types: prediction.types || [] }, mainText);
+              const combinedIndex = internalOptions.length + index;
+              const active = combinedIndex === activeIndex;
+              return (
+                <button
+                  key={prediction.place_id || prediction.description}
+                  type="button"
+                  className={`grassroots-places-option${active ? " is-active" : ""}`}
+                  role="option"
+                  aria-selected={active}
+                  onMouseEnter={() => setActiveIndex(combinedIndex)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectPrediction(prediction)}
+                >
+                  <span className="grassroots-places-pin" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx="12" cy="10" r="2" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span className="grassroots-places-copy">
+                    <span className="grassroots-places-main">
+                      {renderGooglePredictionText(mainText, prediction.structured_formatting?.main_text_matched_substrings)}
+                    </span>
+                    {secondaryText && <span className="grassroots-places-secondary">{secondaryText}</span>}
+                  </span>
+                  {inferredCategory && <span className="grassroots-places-category">{inferredCategory}</span>}
+                </button>
+              );
+            })}
+            {predictions.length === 0 && isSearching && (
+              <div className="grassroots-places-loading">Searching...</div>
+            )}
+            <div className="grassroots-places-footer">
+              <span>powered by</span>
+              <span className="grassroots-google-wordmark"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
 function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Address" }) {
+  const [copyState, setCopyState] = useState("idle");
+  const copyResetTimer = useRef(null);
+  const fullAddressInputRef = useRef(null);
+  const showCopiedState = useCallback((duration = 1600) => {
+    if (copyResetTimer.current) window.clearTimeout(copyResetTimer.current);
+    setCopyState("copied");
+    copyResetTimer.current = window.setTimeout(() => setCopyState("idle"), duration);
+  }, []);
   const handlePlaceSelect = useCallback((parts) => {
     const visibleAddressLine = getGrassrootsVisibleAddressLine(parts);
     onPlaceSelect?.({
@@ -717,6 +1190,38 @@ function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Add
     });
   }, [onPlaceSelect]);
   const fullAddress = buildGrassrootsLegacyAddressFromSplitAddress(draft) || String(draft.address || "").trim();
+  const handleCopyAddress = async () => {
+    if (!fullAddress) return;
+    if (copyResetTimer.current) window.clearTimeout(copyResetTimer.current);
+    try {
+      const result = await copyGrassrootsTextToClipboard(fullAddress, fullAddressInputRef.current);
+      if (!result.copied) {
+        fullAddressInputRef.current?.focus({ preventScroll: true });
+        fullAddressInputRef.current?.select();
+      }
+      if (result.copied) {
+        showCopiedState();
+      } else {
+        setCopyState("manual");
+      }
+    } catch {
+      fullAddressInputRef.current?.focus({ preventScroll: true });
+      fullAddressInputRef.current?.select();
+      setCopyState("manual");
+    }
+  };
+  const handleFullAddressCopy = (event) => {
+    const input = event.currentTarget;
+    const selectedText = String(input.value || "").slice(input.selectionStart || 0, input.selectionEnd || 0);
+    if (selectedText && selectedText === fullAddress) showCopiedState();
+  };
+  const handleFullAddressBlur = () => {
+    if (copyState === "manual") setCopyState("idle");
+  };
+
+  useEffect(() => () => {
+    if (copyResetTimer.current) window.clearTimeout(copyResetTimer.current);
+  }, []);
 
   return (
     <>
@@ -737,20 +1242,31 @@ function SplitAddressFields({ draft, onChange, onPlaceSelect, placeholder = "Add
       <FieldEditor field={{ key: "address_country", label: "Country", placeholder: "Country" }} value={draft.address_country} onChange={(value) => onChange("address_country", value)} />
       <div className="grassroots-address-copy-field">
         <Label>Full Address</Label>
-        <div className="grassroots-address-copy-shell">
+        <div className={`grassroots-address-copy-shell is-${copyState}`}>
           <input
+            ref={fullAddressInputRef}
             value={fullAddress}
             readOnly
             placeholder="Full address builds from the fields above"
-            style={{ ...INPUT_STYLE, background: C.bg, paddingRight: 82 }}
+            style={{ ...INPUT_STYLE, background: C.bg, paddingRight: copyState === "manual" ? 132 : 104 }}
+            onCopy={handleFullAddressCopy}
+            onBlur={handleFullAddressBlur}
           />
           <button
             type="button"
-            onClick={() => fullAddress && navigator.clipboard?.writeText(fullAddress)}
+            onClick={handleCopyAddress}
             disabled={!fullAddress}
-            className="grassroots-address-copy-button"
+            className={`grassroots-address-copy-button is-${copyState}`}
+            aria-label={copyState === "copied" ? "Address copied" : copyState === "manual" ? "Automatic copy unavailable. Press Command C to copy the selected address." : "Copy full address"}
+            aria-live="polite"
           >
-            <I.Clipboard /> Copy
+            <span className="grassroots-copy-icon-stack" aria-hidden="true">
+              <span className="grassroots-copy-clipboard"><I.Clipboard /></span>
+              <span className="grassroots-copy-check"><I.Check /></span>
+            </span>
+            <span className="grassroots-copy-label">
+              {copyState === "copied" ? "Copied" : copyState === "manual" ? "Press Cmd+C" : "Copy"}
+            </span>
           </button>
         </div>
       </div>
@@ -919,7 +1435,7 @@ function EventLinksEditor({ draft, onChange }) {
   );
 }
 
-function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog = false, onChange, onSave, onCancel, onDelete, onLog }) {
+function TargetEditor({ draft, categoryConfig, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId }) {
   const categoryId = categoryConfig.id;
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
@@ -933,9 +1449,15 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog =
   const applyBusinessPlace = (parts) => {
     Object.entries(parts || {}).forEach(([key, value]) => {
       if (["name", "contact_phone", "website"].includes(key)) return;
+      if (["business_category", "drop_category"].includes(key)) return;
       onChange(key, value || "");
     });
     if (parts?.name) onChange("name", parts.name);
+    const inferredCategory = String(parts?.business_category || parts?.drop_category || "").trim();
+    if (inferredCategory && usesBusinessCategoryColumn(categoryConfig)) {
+      onChange("business_category", inferredCategory);
+      onChange("drop_category", inferredCategory);
+    }
     if (parts?.contact_phone && !String(draft.contact_phone || "").trim()) onChange("contact_phone", parts.contact_phone);
     if (parts?.website) {
       const existingDetails = draft.details && typeof draft.details === "object" ? draft.details : {};
@@ -955,7 +1477,6 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog =
 
   return (
     <Card style={{ padding: 0, overflow: "visible", position: "relative", border: `1.5px solid ${C.pri}30`, boxShadow: "0 16px 40px rgba(20,83,45,0.10)", animation: "grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1)" }}>
-      <div className="grassroots-composer-sweep" aria-hidden="true" />
       <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt} 0%, #fff 70%)` }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
           <div>
@@ -1050,7 +1571,13 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], canLog =
                     <I.MessageSquare /> {categoryConfig.logLabel}
                   </button>
                 </div>
-                <ActivityList activities={activities} categoryConfig={categoryConfig} />
+                <ActivityList
+                  activities={activities}
+                  categoryConfig={categoryConfig}
+                  attachmentsByActivity={attachmentsByActivity}
+                  onPreviewAttachment={onPreviewAttachment}
+                  previewingAttachmentId={previewingAttachmentId}
+                />
               </div>
             )}
           </FormSection>
@@ -1078,7 +1605,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, activities = [], canLog = false, onChange, onSave, onCancel, onDelete, onLog }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -1099,7 +1626,6 @@ function EventTargetInlineEditor({ draft, saving, activities = [], canLog = fals
 
   return (
     <div className="grassroots-event-inline-editor">
-        <div className="grassroots-composer-sweep" aria-hidden="true" />
         <div className="grassroots-event-inline-header">
           <div>
             <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>
@@ -1169,7 +1695,13 @@ function EventTargetInlineEditor({ draft, saving, activities = [], canLog = fals
                     <I.MessageSquare /> Log comment
                   </button>
                 </div>
-                <ActivityList activities={activities} categoryConfig={getGrassrootsCategoryConfig("events")} />
+                <ActivityList
+                  activities={activities}
+                  categoryConfig={getGrassrootsCategoryConfig("events")}
+                  attachmentsByActivity={attachmentsByActivity}
+                  onPreviewAttachment={onPreviewAttachment}
+                  previewingAttachmentId={previewingAttachmentId}
+                />
               </div>
             )}
           </FormSection>
@@ -1279,7 +1811,31 @@ function activityActorName(activity) {
   return activity?.created_by_name || "Unknown user";
 }
 
-function ActivityList({ activities, categoryConfig }) {
+function AttachmentButtons({ attachments = [], onPreview, previewingAttachmentId }) {
+  if (!attachments.length) return null;
+  return (
+    <div className="grassroots-activity-attachments">
+      {attachments.map((attachment) => (
+        <button
+          key={attachment.id || attachment.storage_path}
+          type="button"
+          className="grassroots-activity-attachment-button"
+          onClick={() => onPreview?.(attachment)}
+          disabled={previewingAttachmentId === attachment.id}
+          title={attachment.file_name || "Attachment"}
+        >
+          {getGrassrootsAttachmentPreviewKind(attachment) === "image" ? <I.Image /> : <I.FileText />}
+          <span>{attachment.file_name || "Attachment"}</span>
+          {formatGrassrootsAttachmentFileSize(attachment.file_size_bytes) && (
+            <em>{formatGrassrootsAttachmentFileSize(attachment.file_size_bytes)}</em>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ActivityList({ activities, categoryConfig, attachmentsByActivity = {}, onPreviewAttachment, previewingAttachmentId }) {
   const activityType = getGrassrootsActivityType(categoryConfig.id);
   const rows = [...(activities || [])]
     .filter((activity) => {
@@ -1299,6 +1855,8 @@ function ActivityList({ activities, categoryConfig }) {
     <div style={{ display: "grid", gap: 10 }}>
       {rows.map((activity) => {
         const personSpokenWith = activity.metadata?.person_spoken_with || activity.metadata?.person_interacted_with || "";
+        const materialsLeft = activity.metadata?.materials_left || "";
+        const attachments = attachmentsByActivity[activity.id] || [];
         return (
           <div
             key={activity.id}
@@ -1320,8 +1878,10 @@ function ActivityList({ activities, categoryConfig }) {
               <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8, color: C.textMut, lineHeight: 1.35 }}>
                 <span>{fmtDate(activity.activity_date)} · {activityActorName(activity)}</span>
                 {personSpokenWith && <span>Spoke with {personSpokenWith}</span>}
+                {materialsLeft && <span>Left {materialsLeft}</span>}
                 {activity.next_contact_date && <span>Next: {fmtDate(activity.next_contact_date)}</span>}
               </div>
+              <AttachmentButtons attachments={attachments} onPreview={onPreviewAttachment} previewingAttachmentId={previewingAttachmentId} />
             </div>
             <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
               {fmtDateTime(activity.created_at)}
@@ -1382,7 +1942,7 @@ const HEADER_CELL_STYLE = {
   whiteSpace: "nowrap",
 };
 
-function TrackerRow({ target, index, categoryConfig, activities, isExpanded, isFresh = false, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit }) {
+function TrackerRow({ target, index, categoryConfig, activities, attachmentsByActivity = {}, isExpanded, isFresh = false, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit, onPreviewAttachment, previewingAttachmentId }) {
   const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
   const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
   const gridColumns = getTrackerGridColumns(categoryConfig);
@@ -1396,7 +1956,6 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, isF
 
   return (
     <Card style={{ padding: 0, overflow: "hidden", borderRadius: 12, position: "relative", animation: isFresh ? "grassrootsFreshRow 1.8s ease-out both" : undefined }}>
-      {isFresh && <div className="grassroots-row-fresh-sweep" aria-hidden="true" />}
       <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "10px 14px", minHeight: 58, boxSizing: "border-box" }}>
         <div style={{ width: 30, height: 30, borderRadius: 10, display: "grid", placeItems: "center", background: target.is_active === false ? C.bg : C.pri, color: target.is_active === false ? C.textMut : "#fff", fontSize: 12, fontWeight: 900 }}>
           {index + 1}
@@ -1426,17 +1985,306 @@ function TrackerRow({ target, index, categoryConfig, activities, isExpanded, isF
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "flex-start", gap: 6, flexWrap: "wrap" }}>
-          {categoryConfig.id !== "events" && <Btn variant="secondary" size="sm" onClick={onLog} disabled={!canLog}>{categoryConfig.logLabel}</Btn>}
+          {categoryConfig.id !== "events" && <Btn variant="secondary" size="sm" onClick={onLog} disabled={!canLog}>{categoryConfig.id === "drops" ? "Log Activity" : categoryConfig.logLabel}</Btn>}
           <Btn variant="ghost" size="sm" icon={<I.ChevronRight />} onClick={onMove} disabled={!canEdit}>Move</Btn>
           <Btn variant="ghost" size="sm" icon={<I.Edit />} onClick={onEdit} disabled={!canEdit}>Edit</Btn>
         </div>
       </div>
       {isExpanded && (
         <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "12px 18px", background: C.bg }}>
-          <ActivityList activities={activities} categoryConfig={categoryConfig} />
+          <ActivityList
+            activities={activities}
+            categoryConfig={categoryConfig}
+            attachmentsByActivity={attachmentsByActivity}
+            onPreviewAttachment={onPreviewAttachment}
+            previewingAttachmentId={previewingAttachmentId}
+          />
         </div>
       )}
     </Card>
+  );
+}
+
+function DropSubviewTabs({ value, onChange, activityCount, businessCount }) {
+  const options = [
+    { value: "activity", label: "Activity", count: activityCount },
+    { value: "businesses", label: "Businesses", count: businessCount },
+  ];
+  return (
+    <div className="grassroots-drop-subview-tabs" role="tablist" aria-label="Drop views">
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            className={active ? "grassroots-drop-subview-tab is-active" : "grassroots-drop-subview-tab"}
+            onClick={() => onChange(option.value)}
+          >
+            <span>{option.label}</span>
+            <em>{option.count}</em>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DropActivityView({ rows, canLog, onLog, onPreviewAttachment, previewingAttachmentId, freshActivityId }) {
+  if (rows.length === 0) {
+    return (
+      <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No drop activity logged yet</div>
+        <div style={{ fontSize: 13, marginBottom: 16 }}>Log the visit first; the business rollup updates from that activity.</div>
+        <Btn variant="primary" icon={<I.Plus />} onClick={() => onLog()} disabled={!canLog}>Log Activity</Btn>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 14 }}>
+      <div className="grassroots-drop-activity-header">
+        <div>Date</div>
+        <div>Business</div>
+        <div>Visit Details</div>
+        <div>Next</div>
+      </div>
+      <div className="grassroots-drop-activity-list">
+        {rows.map((row) => (
+          <div
+            key={row.id}
+            className={`grassroots-drop-activity-row${freshActivityId === row.id ? " is-fresh" : ""}`}
+          >
+            <div className="grassroots-drop-activity-date">
+              <strong>{fmtDate(row.activityDate)}</strong>
+              <span>{fmtDateTime(row.createdAt)}</span>
+            </div>
+            <div className="grassroots-drop-activity-business">
+              <strong>{row.businessName}</strong>
+              <span>{[row.businessCategory, row.businessAddress].filter(Boolean).join(" · ") || "Drop business"}</span>
+            </div>
+            <div className="grassroots-drop-activity-notes">
+              <div className="grassroots-drop-activity-meta">
+                {row.personSpokenWith && <span>Spoke with {row.personSpokenWith}</span>}
+                {row.materialsLeft && <span>Left {row.materialsLeft}</span>}
+                {row.outcome && <span>{row.outcome}</span>}
+                {row.followUpPriority && <span className="is-hot">Follow-up</span>}
+                {row.partnershipPotential && <span className="is-potential">Partnership potential</span>}
+              </div>
+              <p>{row.notes || "No notes entered."}</p>
+              <AttachmentButtons attachments={row.attachments} onPreview={onPreviewAttachment} previewingAttachmentId={previewingAttachmentId} />
+              <div className="grassroots-drop-activity-actor">Logged by {row.loggedBy}</div>
+            </div>
+            <div className="grassroots-drop-activity-next">
+              <strong>{fmtDate(row.nextDropDate)}</strong>
+              {row.target && <Btn variant="secondary" size="sm" onClick={() => onLog(row.target)} disabled={!canLog}>Log Again</Btn>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function LogActivityModal({
+  logModal,
+  businessQuery,
+  selectedTarget,
+  businessDraft,
+  internalOptions,
+  notes,
+  activityDate,
+  nextDate,
+  contactName,
+  materialsLeft,
+  outcome,
+  followUpPriority,
+  partnershipPotential,
+  files,
+  fileErrors,
+  saving,
+  fileInputRef,
+  attachmentsSchemaMissing,
+  onBusinessQueryChange,
+  onInternalBusinessSelect,
+  onGoogleBusinessSelect,
+  onActivityDateChange,
+  onNextDateChange,
+  onContactNameChange,
+  onMaterialsLeftChange,
+  onOutcomeChange,
+  onNotesChange,
+  onFollowUpPriorityChange,
+  onPartnershipPotentialChange,
+  onFileChange,
+  onRemoveFile,
+  onClose,
+  onSave,
+}) {
+  const isDropLog = (logModal?.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) === "drops";
+  const selectedSummary = selectedTarget
+    ? [getGrassrootsBusinessCategory(selectedTarget), selectedTarget.address].filter(Boolean).join(" · ")
+    : businessDraft
+      ? [getGrassrootsBusinessCategory(businessDraft), businessDraft.address].filter(Boolean).join(" · ")
+      : "";
+
+  return (
+    <Modal title={isDropLog ? "Log Drop Activity" : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development"} onClose={saving ? () => {} : onClose} wide>
+      <div className="grassroots-log-modal">
+        {isDropLog && (
+          <section className="grassroots-log-section">
+            <div className="grassroots-log-section-title">Business</div>
+            {logModal?.target ? (
+              <div className="grassroots-log-selected-business">
+                <strong>{logModal.target.name || "Drop business"}</strong>
+                <span>{selectedSummary || "Existing K9 business"}</span>
+              </div>
+            ) : (
+              <GooglePlacesBusinessInput
+                label="Business"
+                value={businessQuery}
+                onChange={onBusinessQueryChange}
+                onPlaceSelect={onGoogleBusinessSelect}
+                internalOptions={internalOptions}
+                onInternalSelect={onInternalBusinessSelect}
+                internalLabel="K9 businesses"
+                googleLabel={internalOptions.length > 0 ? "Create new from Google Places" : "Google Places"}
+                placeholder="Search K9 businesses first, then Google"
+              />
+            )}
+            {!logModal?.target && selectedSummary && (
+              <div className="grassroots-log-selected-business is-compact">
+                <I.CheckCircle />
+                <span>{selectedSummary}</span>
+              </div>
+            )}
+          </section>
+        )}
+
+        {isDropLog && (
+          <section className="grassroots-log-section">
+            <div className="grassroots-log-section-title">Visit</div>
+            <div className="grassroots-log-grid">
+              <div>
+                <Label>Activity Date</Label>
+                <MiniDatePicker
+                  value={activityDate}
+                  onChange={onActivityDateChange}
+                  recommendedDate={todayStr()}
+                  recommendedHint="Use today unless you are backfilling field notes."
+                />
+              </div>
+              <label>
+                <Label>Who did you speak with?</Label>
+                <input
+                  value={contactName}
+                  onChange={(event) => onContactNameChange(event.target.value)}
+                  placeholder="Person's name"
+                  style={INPUT_STYLE}
+                  autoFocus={Boolean(logModal?.target)}
+                />
+              </label>
+              <label>
+                <Label>Materials Left</Label>
+                <input
+                  value={materialsLeft}
+                  onChange={(event) => onMaterialsLeftChange(event.target.value)}
+                  placeholder="Rack cards, flyers, business cards"
+                  style={INPUT_STYLE}
+                />
+              </label>
+              <label>
+                <Label>Outcome</Label>
+                <input
+                  value={outcome}
+                  onChange={(event) => onOutcomeChange(event.target.value)}
+                  placeholder="Warm intro, left with front desk"
+                  style={INPUT_STYLE}
+                />
+              </label>
+            </div>
+            <div className="grassroots-log-flag-row">
+              <button type="button" className={followUpPriority ? "is-active" : ""} onClick={() => onFollowUpPriorityChange(!followUpPriority)}>
+                <I.Clock /> Follow-up needed
+              </button>
+              <button type="button" className={partnershipPotential ? "is-active" : ""} onClick={() => onPartnershipPotentialChange(!partnershipPotential)}>
+                <I.Sparkle /> Partnership potential
+              </button>
+            </div>
+          </section>
+        )}
+
+        <section className="grassroots-log-section">
+          <div className="grassroots-log-section-title">{isDropLog ? "Notes and Next Step" : "Update"}</div>
+          <textarea
+            value={notes}
+            onChange={(event) => onNotesChange(event.target.value)}
+            placeholder={isDropLog ? "What happened during this visit?" : "Comment or development..."}
+            rows={4}
+            style={{ ...INPUT_STYLE, minHeight: 108, resize: "vertical" }}
+            autoFocus={!isDropLog}
+          />
+          <div style={{ marginTop: 12 }}>
+            <Label>{isDropLog ? "Next Drop Date" : "Follow-Up Date Optional"}</Label>
+            <MiniDatePicker
+              value={nextDate}
+              onChange={onNextDateChange}
+              recommendedDate={addDays(todayStr(), isDropLog ? 28 : 2)}
+              recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : "Optional: set only if this needs follow-up."}
+            />
+          </div>
+        </section>
+
+        {isDropLog && (
+          <section className="grassroots-log-section">
+            <div className="grassroots-log-section-title">Photos and Attachments</div>
+            {attachmentsSchemaMissing && (
+              <div className="grassroots-log-warning">Attachment storage migration has not been applied in this Supabase environment yet.</div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={GRASSROOTS_ACTIVITY_ATTACHMENT_ACCEPT}
+              onChange={onFileChange}
+              style={{ display: "none" }}
+            />
+            <div className="grassroots-log-attachments-toolbar">
+              <Btn
+                variant="secondary"
+                size="sm"
+                icon={<I.Camera />}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={files.length >= GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES || attachmentsSchemaMissing}
+              >
+                Add Photo/File
+              </Btn>
+              <span>{files.length === 0 ? "Attach business cards, photos, or PDFs." : `${files.length} pending attachment${files.length === 1 ? "" : "s"}`}</span>
+            </div>
+            {files.length > 0 && (
+              <div className="grassroots-log-pending-files">
+                {files.map((file, index) => (
+                  <span key={`${file.name}-${index}`}>
+                    {inferGrassrootsActivityAttachmentMimeType(file).startsWith("image/") ? <I.Image /> : <I.FileText />}
+                    <strong>{file.name}</strong>
+                    <em>{formatGrassrootsAttachmentFileSize(file.size)}</em>
+                    <button type="button" onClick={() => onRemoveFile(index)} aria-label={`Remove ${file.name}`}><I.X /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {fileErrors.length > 0 && <div className="grassroots-log-errors">{fileErrors.join(" ")}</div>}
+          </section>
+        )}
+
+        <div className="grassroots-log-actions">
+          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn variant="primary" onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save Activity"}</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1466,19 +2314,36 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [activeCategory, setActiveCategory] = useState("events");
+  const [dropSubview, setDropSubview] = useState("activity");
   const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
   const [targets, setTargets] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [activityAttachments, setActivityAttachments] = useState([]);
+  const [attachmentsSchemaMissing, setAttachmentsSchemaMissing] = useState(false);
   const [history, setHistory] = useState([]);
   const [newDraft, setNewDraft] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
-  const [logPopover, setLogPopover] = useState(null);
+  const [logModal, setLogModal] = useState(null);
   const [movePopover, setMovePopover] = useState(null);
   const [logNotes, setLogNotes] = useState("");
   const [logDate, setLogDate] = useState("");
+  const [logActivityDate, setLogActivityDate] = useState(todayStr());
   const [logContactName, setLogContactName] = useState("");
+  const [logBusinessQuery, setLogBusinessQuery] = useState("");
+  const [logSelectedTarget, setLogSelectedTarget] = useState(null);
+  const [logBusinessDraft, setLogBusinessDraft] = useState(null);
+  const [logMaterialsLeft, setLogMaterialsLeft] = useState("");
+  const [logOutcome, setLogOutcome] = useState("");
+  const [logFollowUpPriority, setLogFollowUpPriority] = useState(false);
+  const [logPartnershipPotential, setLogPartnershipPotential] = useState(false);
+  const [logFiles, setLogFiles] = useState([]);
+  const [logFileErrors, setLogFileErrors] = useState([]);
+  const [savingLog, setSavingLog] = useState(false);
+  const [freshActivityId, setFreshActivityId] = useState(null);
+  const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [previewingAttachmentId, setPreviewingAttachmentId] = useState(null);
   const [freshTargetId, setFreshTargetId] = useState(null);
   const [filters, setFilters] = useState(() => getGrassrootsDefaultFilters("events"));
   const [draftFilters, setDraftFilters] = useState(() => getGrassrootsDefaultFilters("events"));
@@ -1489,9 +2354,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [filterPickerReady, setFilterPickerReady] = useState(false);
   const prevFilterOpen = useRef(false);
   const freshTargetTimer = useRef(null);
+  const freshActivityTimer = useRef(null);
+  const newDraftScrollRef = useRef(null);
+  const logFileInputRef = useRef(null);
 
   const activeConfig = getGrassrootsCategoryConfig(activeCategory);
   const activitiesByTarget = useMemo(() => groupGrassrootsActivities(activities), [activities]);
+  const attachmentsByActivity = useMemo(() => groupGrassrootsActivityAttachments(activityAttachments), [activityAttachments]);
   const categoryTargets = useMemo(() => targets.filter((target) => target.category === activeConfig.dbValue), [activeConfig.dbValue, targets]);
   const categoryHistory = useMemo(
     () => history.filter((entry) => entry.category === activeConfig.dbValue).sort(compareGrassrootsHistoryDesc),
@@ -1507,6 +2376,26 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     return [...visibleTargets].sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
   }, [activeConfig.id, eventDateSortDirection, visibleTargets]);
   const eventMetrics = useMemo(() => buildGrassrootsEventMetrics(targets, todayStr()), [targets]);
+  const dropMetrics = useMemo(() => buildGrassrootsDropMetrics(targets, activities, todayStr()), [activities, targets]);
+  const dropTargets = useMemo(() => targets.filter((target) => getGrassrootsCategoryConfig(target.category).id === "drops"), [targets]);
+  const dropActivityRows = useMemo(
+    () => buildGrassrootsDropActivityRows(targets, activities, attachmentsByActivity),
+    [activities, attachmentsByActivity, targets],
+  );
+  const logBusinessOptions = useMemo(() => searchGrassrootsDropBusinessTargets({
+    targets: dropTargets,
+    activitiesByTarget,
+    query: logBusinessQuery,
+    limit: 5,
+  }).map((row) => ({
+    ...row,
+    subtitle: [
+      row.activityCount === 1 ? "1 visit" : `${row.activityCount} visits`,
+      row.lastActivityDate ? `Last ${fmtDate(row.lastActivityDate)}` : "No visits yet",
+      row.target.address_city || row.target.address || "",
+    ].filter(Boolean).join(" · "),
+    badge: getGrassrootsBusinessCategory(row.target) || "Business",
+  })), [activitiesByTarget, dropTargets, logBusinessQuery]);
   const usedFilterKeys = Object.keys(draftFilters || {});
   const filterFields = useMemo(() => {
     const keyed = new Map();
@@ -1530,7 +2419,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
     setLoading(true);
     setSchemaMissing(false);
-    const [targetResult, activityResult, historyResult, eventDateResult] = await Promise.all([
+    setAttachmentsSchemaMissing(false);
+    const [targetResult, activityResult, historyResult, eventDateResult, attachmentResult] = await Promise.all([
       supabase
         .from("grassroots_targets")
         .select("*")
@@ -1551,11 +2441,19 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .select("*")
         .eq("location_id", locationId)
         .order("event_date", { ascending: true }),
+      supabase
+        .from("grassroots_activity_attachments")
+        .select("*")
+        .eq("location_id", locationId)
+        .is("deleted_at", null)
+        .order("uploaded_at", { ascending: false }),
     ]);
 
     const eventDateTableMissing = eventDateResult.error?.code === "42P01" || eventDateResult.error?.code === "PGRST205";
-    if (targetResult.error || activityResult.error || historyResult.error || (eventDateResult.error && !eventDateTableMissing)) {
-      const error = targetResult.error || activityResult.error || historyResult.error || eventDateResult.error;
+    const attachmentTableMissing = attachmentResult.error?.code === "42P01" || attachmentResult.error?.code === "PGRST205";
+    if (attachmentTableMissing) setAttachmentsSchemaMissing(true);
+    if (targetResult.error || activityResult.error || historyResult.error || (eventDateResult.error && !eventDateTableMissing) || (attachmentResult.error && !attachmentTableMissing)) {
+      const error = targetResult.error || activityResult.error || historyResult.error || eventDateResult.error || attachmentResult.error;
       if (error?.code === "42P01" || /grassroots_/.test(error?.message || "")) {
         setSchemaMissing(true);
       } else {
@@ -1564,6 +2462,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       }
       setTargets([]);
       setActivities([]);
+      setActivityAttachments([]);
       setHistory([]);
       setLoading(false);
       return;
@@ -1585,7 +2484,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         event_dates: eventDatesByTarget[target.id] || normalizeGrassrootsEventDates(target),
       };
     }));
-    setActivities(activityResult.data || []);
+    setActivities((activityResult.data || []).map((row) => ({
+      ...row,
+      metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {},
+    })));
+    setActivityAttachments((attachmentTableMissing ? [] : (attachmentResult.data || [])).map((row) => ({
+      ...row,
+      metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {},
+    })));
     setHistory(historyResult.data || []);
     setLoading(false);
   }, [locationId, toast]);
@@ -1596,7 +2502,22 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
 
   useEffect(() => () => {
     if (freshTargetTimer.current) window.clearTimeout(freshTargetTimer.current);
+    if (freshActivityTimer.current) window.clearTimeout(freshActivityTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (!newDraft?.id) return undefined;
+    let frameId = 0;
+    const timerId = window.setTimeout(() => {
+      frameId = window.requestAnimationFrame(() => {
+        scrollGrassrootsEditorIntoView(newDraftScrollRef.current);
+      });
+    }, 60);
+    return () => {
+      window.clearTimeout(timerId);
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
+  }, [newDraft?.id]);
 
   useEffect(() => {
     if (showFilterPanel && !prevFilterOpen.current) {
@@ -1617,6 +2538,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setShowFilterPanel(false);
     setShowHistoryPanel(false);
     setMovePopover(null);
+    setLogModal(null);
+    if (activeCategory === "drops") setDropSubview("activity");
   }, [activeCategory]);
 
   const updateDraft = (key, value) => {
@@ -1646,6 +2569,161 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (freshTargetTimer.current) window.clearTimeout(freshTargetTimer.current);
     setFreshTargetId(targetId);
     freshTargetTimer.current = window.setTimeout(() => setFreshTargetId(null), 1800);
+  };
+
+  const markFreshActivity = (activityId) => {
+    if (!activityId) return;
+    if (freshActivityTimer.current) window.clearTimeout(freshActivityTimer.current);
+    setFreshActivityId(activityId);
+    freshActivityTimer.current = window.setTimeout(() => setFreshActivityId(null), 1800);
+  };
+
+  const resetLogForm = () => {
+    setLogModal(null);
+    setLogNotes("");
+    setLogDate("");
+    setLogActivityDate(todayStr());
+    setLogContactName("");
+    setLogBusinessQuery("");
+    setLogSelectedTarget(null);
+    setLogBusinessDraft(null);
+    setLogMaterialsLeft("");
+    setLogOutcome("");
+    setLogFollowUpPriority(false);
+    setLogPartnershipPotential(false);
+    setLogFiles([]);
+    setLogFileErrors([]);
+    setSavingLog(false);
+    if (logFileInputRef.current) logFileInputRef.current.value = "";
+  };
+
+  const openLogModal = (target = null) => {
+    if (!canLogActivity) {
+      toast("You do not have permission to log grassroots activity", "error");
+      return;
+    }
+    const category = target ? getGrassrootsCategoryConfig(target.category).id : "drops";
+    setMovePopover(null);
+    setLogModal({ target, category });
+    setLogNotes("");
+    setLogDate(category === "drops" ? addDays(todayStr(), 28) : "");
+    setLogActivityDate(todayStr());
+    setLogContactName("");
+    setLogBusinessQuery(target?.name || "");
+    setLogSelectedTarget(category === "drops" ? target : null);
+    setLogBusinessDraft(null);
+    setLogMaterialsLeft("");
+    setLogOutcome("");
+    setLogFollowUpPriority(false);
+    setLogPartnershipPotential(false);
+    setLogFiles([]);
+    setLogFileErrors([]);
+    if (logFileInputRef.current) logFileInputRef.current.value = "";
+  };
+
+  const handleLogFileChange = (event) => {
+    const incomingFiles = Array.from(event.target.files || []);
+    const { acceptedFiles, errors } = validateGrassrootsActivityAttachmentFiles([...logFiles, ...incomingFiles]);
+    setLogFiles(acceptedFiles.slice(0, GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES));
+    setLogFileErrors(errors);
+    if (errors.length > 0) toast(errors[0], "error");
+    if (logFileInputRef.current) logFileInputRef.current.value = "";
+  };
+
+  const removeLogFile = (fileIndex) => {
+    setLogFiles((prev) => prev.filter((_, index) => index !== fileIndex));
+    setLogFileErrors([]);
+    if (logFileInputRef.current) logFileInputRef.current.value = "";
+  };
+
+  const handleSelectGoogleLogBusiness = (parts = {}) => {
+    const draft = {
+      ...makeBlankGrassrootsTarget("drops"),
+      name: parts.name || logBusinessQuery,
+      category: "drops",
+      address: parts.address || "",
+      address_line_1: parts.address_line_1 || "",
+      address_line_2: parts.address_line_2 || "",
+      address_city: parts.address_city || "",
+      address_state: parts.address_state || "",
+      address_postal_code: parts.address_postal_code || "",
+      address_country: parts.address_country || "",
+      google_place_id: parts.google_place_id || "",
+      contact_phone: parts.contact_phone || "",
+      business_category: parts.business_category || parts.drop_category || "",
+      drop_category: parts.business_category || parts.drop_category || "",
+      details: parts.website ? { links: [{ id: `business_link_${Date.now()}`, label: "Website", url: parts.website }] } : {},
+    };
+    setLogBusinessDraft(draft);
+    setLogSelectedTarget(null);
+  };
+
+  const ensureLogTarget = async () => {
+    if (logSelectedTarget?.id) return logSelectedTarget;
+    const name = String(logBusinessDraft?.name || logBusinessQuery || "").trim();
+    if (!name) throw new Error("Business is required");
+    if (!canEditTargets) throw new Error("You do not have permission to create drop businesses");
+
+    const draft = {
+      ...makeBlankGrassrootsTarget("drops"),
+      ...(logBusinessDraft || {}),
+      name,
+      category: "drops",
+      is_active: true,
+    };
+    const payload = buildTargetPayload(draft, locationId, actor);
+    const { data, error } = await supabase
+      .from("grassroots_targets")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) throw error;
+    setTargets((prev) => [data, ...prev]);
+    markFreshTarget(data.id);
+    return data;
+  };
+
+  const uploadGrassrootsActivityAttachments = async ({ target, activityId }) => {
+    const uploadedRows = [];
+    for (const file of logFiles) {
+      const attachmentId = createGrassrootsClientUuid();
+      const mimeType = inferGrassrootsActivityAttachmentMimeType(file);
+      const storagePath = buildGrassrootsActivityAttachmentPath({
+        locationId,
+        targetId: target.id,
+        activityId,
+        attachmentId,
+        fileName: file.name,
+      });
+      const { error: uploadError } = await supabase
+        .storage
+        .from(GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET)
+        .upload(storagePath, file, {
+          cacheControl: "3600",
+          contentType: mimeType,
+          upsert: false,
+        });
+      if (uploadError) throw uploadError;
+      uploadedRows.push({
+        id: attachmentId,
+        location_id: locationId,
+        target_id: target.id,
+        activity_id: activityId,
+        attachment_type: mimeType.startsWith("image/") ? "drop_photo" : "drop_attachment",
+        file_name: file.name || "attachment",
+        storage_bucket: GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET,
+        storage_path: storagePath,
+        mime_type: mimeType,
+        file_size_bytes: Number(file.size || 0),
+        metadata: {
+          original_file_name: file.name || "attachment",
+          source_module: "grassroots_drops",
+        },
+        uploaded_by_user_id: actor.userId,
+        uploaded_by_name: actor.name,
+      });
+    }
+    return uploadedRows;
   };
 
   const saveDraft = async () => {
@@ -1734,25 +2812,12 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setTargets((prev) => prev.filter((row) => row.id !== target.id));
     setActivities((prev) => prev.filter((activity) => activity.target_id !== target.id));
     closeEditor();
-    setLogPopover(null);
+    resetLogForm();
     setMovePopover(null);
     await loadGrassroots();
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
     toast("Grassroots row deleted");
-  };
-
-  const openLogPopover = (target, event) => {
-    if (!canLogActivity) {
-      toast("You do not have permission to log grassroots activity", "error");
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    setMovePopover(null);
-    setLogPopover({ target, x: rect.left, y: rect.bottom + 6 });
-    setLogNotes("");
-    setLogDate("");
-    setLogContactName("");
   };
 
   const openMovePopover = (target, event) => {
@@ -1761,7 +2826,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    setLogPopover(null);
+    setLogModal(null);
     setMovePopover({ target, x: rect.left, y: rect.bottom + 6 });
   };
 
@@ -1809,9 +2874,12 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       toast("You do not have permission to log grassroots activity", "error");
       return;
     }
-    if (!logPopover?.target) return;
-    const target = logPopover.target;
-    const category = getGrassrootsCategoryConfig(target.category).id;
+    const isDropLog = (logModal?.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) === "drops";
+    if (isDropLog && !logSelectedTarget?.id && !String(logBusinessDraft?.name || logBusinessQuery || "").trim()) {
+      toast("Business is required", "error");
+      return;
+    }
+    const category = isDropLog ? "drops" : getGrassrootsCategoryConfig(logModal?.target?.category).id;
     const activityType = getGrassrootsActivityType(category);
     const requiresNextDate = activityType === "drop";
     if (!logNotes.trim() || (requiresNextDate && !logDate)) {
@@ -1822,38 +2890,129 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       toast("Who did you speak with is required", "error");
       return;
     }
-    const activityDate = todayStr();
+    if (activityType === "drop" && attachmentsSchemaMissing && logFiles.length > 0) {
+      toast("Attachment storage is not installed in this Supabase environment yet", "error");
+      return;
+    }
+    const target = isDropLog ? await ensureLogTarget().catch((error) => {
+      toast(error.message || "Business is required", "error");
+      return null;
+    }) : logModal?.target;
+    if (!target) return;
+    const activityDate = logActivityDate || todayStr();
+    const activityId = createGrassrootsClientUuid();
     setSaveState("saving");
-    const { data: insertedActivity, error } = await supabase
-      .from("grassroots_activity")
-      .insert({
-        location_id: locationId,
-        target_id: target.id,
-        activity_type: activityType,
-        activity_date: activityDate,
-        notes: logNotes.trim(),
-        next_contact_date: logDate || null,
-        metadata: activityType === "drop" ? { person_spoken_with: logContactName.trim() } : {},
-        created_by_user_id: actor.userId,
-        created_by_name: actor.name,
-      })
-      .select("*")
-      .single();
-    if (error) {
+    setSavingLog(true);
+
+    let insertedActivity = null;
+    let insertedAttachments = [];
+    let error = null;
+
+    if (activityType === "drop" && !attachmentsSchemaMissing) {
+      try {
+        const attachmentRows = await uploadGrassrootsActivityAttachments({ target, activityId });
+        const { data, error: rpcError } = await supabase.rpc("log_grassroots_drop_activity_with_attachments", {
+          p_activity: {
+            id: activityId,
+            location_id: locationId,
+            target_id: target.id,
+            activity_type: activityType,
+            activity_date: activityDate,
+            notes: logNotes.trim(),
+            next_contact_date: logDate || null,
+            metadata: {
+              person_spoken_with: logContactName.trim(),
+              materials_left: logMaterialsLeft.trim(),
+              outcome: logOutcome.trim(),
+              follow_up_priority: logFollowUpPriority,
+              partnership_potential: logPartnershipPotential,
+              attachment_count: attachmentRows.length,
+            },
+            created_by_user_id: actor.userId,
+            created_by_name: actor.name,
+          },
+          p_attachments: attachmentRows,
+        });
+        if (rpcError) throw rpcError;
+        insertedActivity = data?.activity || null;
+        insertedAttachments = data?.attachments || [];
+      } catch (rpcError) {
+        error = rpcError;
+      }
+    } else {
+      const result = await supabase
+        .from("grassroots_activity")
+        .insert({
+          id: activityId,
+          location_id: locationId,
+          target_id: target.id,
+          activity_type: activityType,
+          activity_date: activityDate,
+          notes: logNotes.trim(),
+          next_contact_date: logDate || null,
+          metadata: activityType === "drop" ? {
+            person_spoken_with: logContactName.trim(),
+            materials_left: logMaterialsLeft.trim(),
+            outcome: logOutcome.trim(),
+            follow_up_priority: logFollowUpPriority,
+            partnership_potential: logPartnershipPotential,
+          } : {},
+          created_by_user_id: actor.userId,
+          created_by_name: actor.name,
+        })
+        .select("*")
+        .single();
+      insertedActivity = result.data;
+      error = result.error;
+    }
+
+    setSavingLog(false);
+    if (error || !insertedActivity) {
       setSaveState("error");
-      toast(error.message || "Failed to log update", "error");
+      console.error("Failed to log grassroots activity", error);
+      toast(error?.message || "Failed to log update", "error");
       return;
     }
 
     setActivities((prev) => [insertedActivity, ...prev]);
+    if (insertedAttachments.length > 0) {
+      setActivityAttachments((prev) => [...insertedAttachments, ...prev]);
+    }
     await loadGrassroots();
-    setLogPopover(null);
-    setLogNotes("");
-    setLogDate("");
-    setLogContactName("");
+    markFreshActivity(insertedActivity.id);
+    resetLogForm();
+    if (activityType === "drop") setDropSubview("activity");
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
-    toast(activityType === "drop" ? "Drop logged" : category === "events" ? "Comment logged" : "Development logged");
+    toast(activityType === "drop" ? "Activity logged" : category === "events" ? "Comment logged" : "Development logged");
+  };
+
+  const previewGrassrootsAttachment = async (attachment) => {
+    if (!attachment?.storage_path) return;
+    const previewKind = getGrassrootsAttachmentPreviewKind(attachment);
+    if (previewKind === "unsupported") {
+      toast("This attachment type cannot be previewed in the app", "error");
+      return;
+    }
+    setPreviewingAttachmentId(attachment.id || attachment.storage_path);
+    try {
+      const { data, error } = await supabase
+        .storage
+        .from(attachment.storage_bucket || GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET)
+        .createSignedUrl(attachment.storage_path, 300);
+      if (error) throw error;
+      if (!data?.signedUrl) throw new Error("Signed URL was not returned");
+      setAttachmentPreview({
+        attachment,
+        kind: previewKind,
+        url: data.signedUrl,
+      });
+    } catch (error) {
+      console.error("Grassroots attachment preview error:", error);
+      toast("Failed to open attachment preview", "error");
+    } finally {
+      setPreviewingAttachmentId(null);
+    }
   };
 
   const removeFilter = (key) => {
@@ -1894,6 +3053,20 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const filterCount = Object.keys(filters || {}).length;
   const saveLabel = saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : "";
   const saveTone = saveState === "saving" ? C.info : saveState === "saved" ? C.suc : saveState === "error" ? C.dan : C.textMut;
+  const metricCards = activeConfig.id === "drops"
+    ? [
+      { label: "Drop Visits Last 30", value: dropMetrics.dropVisitsLast30, color: C.pri },
+      { label: "Businesses Visited Last 30", value: dropMetrics.businessesVisitedLast30, color: C.suc },
+      { label: `Drop Visits ${dropMetrics.year} YTD`, value: dropMetrics.dropVisitsYtd, color: C.info },
+      { label: `Businesses Visited ${dropMetrics.year} YTD`, value: dropMetrics.businessesVisitedYtd, color: "#7C3AED" },
+    ]
+    : [
+      { label: `Booked Upcoming ${eventMetrics.year}`, value: eventMetrics.bookedUpcomingThisYear, color: C.pri },
+      { label: `Booked Completed ${eventMetrics.year}`, value: eventMetrics.bookedCompletedThisYear, color: C.suc },
+      { label: `Identified ${eventMetrics.year}`, value: eventMetrics.identifiedThisYear, color: C.info },
+      { label: `Corresponding ${eventMetrics.year}`, value: eventMetrics.correspondingThisYear, color: "#7C3AED" },
+      { label: `Booked ${fmtMonthYear(eventMetrics.month)}`, value: eventMetrics.bookedThisMonth, color: C.accDk },
+    ];
 
   return (
     <div style={{ maxWidth: 1240, margin: "0 auto", paddingBottom: 32 }}>
@@ -1906,14 +3079,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           65% { opacity:1; transform:translateY(2px) scale(1.002); filter:blur(0); }
           100% { opacity:1; transform:translateY(0) scale(1); filter:blur(0); }
         }
-        @keyframes grassrootsComposerSweep {
-          0% { transform:translate3d(-220%,0,0) skewX(-18deg); opacity:0; }
-          10% { opacity:0; }
-          24% { opacity:0.72; }
-          46% { opacity:0.95; }
-          72% { opacity:0.38; }
-          100% { transform:translate3d(820%,0,0) skewX(-18deg); opacity:0; }
-        }
         @keyframes grassrootsCategoryCycle {
           0% { opacity:0; transform:translate3d(0,10px,0) scale(0.992); filter:blur(3px); }
           62% { opacity:1; transform:translate3d(0,-1px,0) scale(1.001); filter:blur(0); }
@@ -1924,47 +3089,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           24% { box-shadow:0 0 0 2px rgba(20,83,45,0.32), 0 18px 42px rgba(20,83,45,0.16); }
           100% { box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02); }
         }
-        .grassroots-composer-sweep {
-          pointer-events: none;
-          position: absolute;
-          inset: 0;
-          z-index: 4;
-          overflow: hidden;
-          border-radius: inherit;
+        @keyframes grassrootsCopySuccess {
+          0% { transform:translateY(-50%) scale(0.94); box-shadow:0 0 0 rgba(22,163,74,0); }
+          42% { transform:translateY(-50%) scale(1.06); box-shadow:0 0 0 8px rgba(34,197,94,0.16); }
+          100% { transform:translateY(-50%) scale(1); box-shadow:0 8px 18px rgba(22,163,74,0.25); }
         }
-        .grassroots-composer-sweep::after {
-          content: "";
-          position: absolute;
-          top: -34%;
-          bottom: -34%;
-          left: 0;
-          width: 150px;
-          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(20,83,45,0.05), rgba(190,242,100,0.38), rgba(255,255,255,0.92), rgba(20,83,45,0.12), rgba(255,255,255,0));
-          transform: translate3d(-220%, 0, 0) skewX(-18deg);
-          opacity: 0;
-          animation: grassrootsComposerSweep 2200ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
-          will-change: transform, opacity;
-          filter: blur(1px);
-        }
-        .grassroots-row-fresh-sweep {
-          pointer-events: none;
-          position: absolute;
-          inset: 0;
-          z-index: 3;
-          overflow: hidden;
-          border-radius: 12px;
-        }
-        .grassroots-row-fresh-sweep::after {
-          content: "";
-          position: absolute;
-          top: -30%;
-          bottom: -30%;
-          left: 0;
-          width: 90px;
-          background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.72), rgba(20,83,45,0.16), rgba(255,255,255,0));
-          transform:translate3d(-200%,0,0) skewX(-18deg);
-          opacity:0;
-          animation: grassrootsComposerSweep 1.35s ease-out 0.06s 1;
+        @keyframes grassrootsCheckPop {
+          0% { transform:scale(0.62) rotate(-14deg); }
+          58% { transform:scale(1.2) rotate(4deg); }
+          100% { transform:scale(1.02) rotate(0deg); }
         }
         .grassroots-event-inline-editor {
           position: relative;
@@ -2039,9 +3172,17 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           animation: grassrootsCategoryCycle 0.34s cubic-bezier(0.16,1,0.3,1) both;
           transform-origin: top center;
         }
+        .grassroots-new-draft-anchor {
+          scroll-margin-top: 96px;
+        }
         .grassroots-event-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
         .grassroots-target-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
-        .grassroots-target-form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+        .grassroots-target-form-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(340px, 0.85fr);
+          gap: 14px;
+          align-items: stretch;
+        }
         .grassroots-event-type-picker {
           display: inline-grid;
           grid-template-columns: repeat(2, minmax(76px, 1fr));
@@ -2138,12 +3279,26 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-address-copy-shell {
           position: relative;
         }
+        .grassroots-address-copy-shell input {
+          transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+        }
+        .grassroots-address-copy-shell.is-copied input {
+          border-color: rgba(22,163,74,0.58) !important;
+          background: linear-gradient(90deg, rgba(240,253,244,0.88), #fff) !important;
+          box-shadow: 0 0 0 3px rgba(34,197,94,0.13);
+        }
+        .grassroots-address-copy-shell.is-manual input {
+          border-color: rgba(180,83,9,0.42) !important;
+          background: linear-gradient(90deg, rgba(255,251,235,0.86), #fff) !important;
+          box-shadow: 0 0 0 3px rgba(245,158,11,0.12);
+        }
         .grassroots-address-copy-button {
           position: absolute;
           right: 8px;
           top: 50%;
           transform: translateY(-50%);
-          height: 28px;
+          min-width: 82px;
+          height: 30px;
           border-radius: 8px;
           border: 1px solid ${C.borderLight};
           background: #fff;
@@ -2156,6 +3311,66 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           font-size: 11px;
           font-weight: 900;
           cursor: pointer;
+          overflow: hidden;
+          transition: min-width 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+        }
+        .grassroots-address-copy-button:hover:not(:disabled) {
+          border-color: rgba(20,83,45,0.24);
+          box-shadow: 0 4px 10px rgba(15,23,42,0.08);
+        }
+        .grassroots-address-copy-button:active:not(:disabled) {
+          transform: translateY(-50%) scale(0.97);
+        }
+        .grassroots-address-copy-button.is-copied {
+          min-width: 92px;
+          border-color: rgba(22,163,74,0.30);
+          background: ${C.suc};
+          color: #fff;
+          box-shadow: 0 8px 18px rgba(22,163,74,0.25);
+          animation: grassrootsCopySuccess 420ms cubic-bezier(0.16,1,0.3,1);
+        }
+        .grassroots-address-copy-button.is-manual {
+          min-width: 116px;
+          border-color: rgba(180,83,9,0.24);
+          background: #FFFBEB;
+          color: #92400E;
+        }
+        .grassroots-copy-icon-stack {
+          position: relative;
+          width: 16px;
+          height: 16px;
+          display: inline-grid;
+          place-items: center;
+          flex: 0 0 auto;
+        }
+        .grassroots-copy-clipboard,
+        .grassroots-copy-check {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.16,1,0.3,1);
+        }
+        .grassroots-copy-check {
+          opacity: 0;
+          transform: translateY(9px) scale(0.64);
+        }
+        .grassroots-address-copy-button.is-copied .grassroots-copy-clipboard {
+          opacity: 0;
+          transform: translateY(-9px) scale(0.72);
+        }
+        .grassroots-address-copy-button.is-copied .grassroots-copy-check {
+          opacity: 1;
+          transform: translateY(0) scale(1.08);
+        }
+        .grassroots-address-copy-button.is-copied .grassroots-copy-check svg {
+          animation: grassrootsCheckPop 360ms cubic-bezier(0.16,1,0.3,1) both;
+        }
+        .grassroots-copy-label {
+          display: inline-block;
+          min-width: 31px;
+          text-align: left;
+          transition: transform 0.18s ease;
         }
         .grassroots-address-copy-button:disabled {
           color: ${C.textMut};
@@ -2178,13 +3393,522 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           padding-top: 14px;
           border-top: 1px solid ${C.borderLight};
         }
+        .grassroots-places-field {
+          position: relative;
+          display: block;
+          min-width: 0;
+        }
+        .grassroots-places-anchor {
+          position: relative;
+          min-width: 0;
+        }
+        .grassroots-places-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          left: 0;
+          z-index: 10070;
+          width: min(680px, calc(100vw - 56px));
+          max-width: calc(100vw - 56px);
+          padding: 6px;
+          border: 1px solid rgba(203, 213, 225, 0.95);
+          border-radius: 16px;
+          background: #fff;
+          box-shadow: 0 18px 34px rgba(15,23,42,0.12), 0 3px 8px rgba(15,23,42,0.07);
+          overflow: hidden;
+        }
+        .grassroots-places-panel::before {
+          content: "";
+          position: absolute;
+          top: 0;
+          left: 14px;
+          right: 14px;
+          height: 2px;
+          border-radius: 0 0 999px 999px;
+          background: linear-gradient(90deg, rgba(20,83,45,0), rgba(20,83,45,0.52), rgba(20,83,45,0));
+        }
+        .grassroots-places-option {
+          position: relative;
+          width: 100%;
+          display: grid;
+          grid-template-columns: 34px minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 12px;
+          min-height: 74px;
+          padding: 12px 12px 12px 9px;
+          border: 0;
+          border-radius: 12px;
+          background: transparent;
+          color: ${C.text};
+          cursor: pointer;
+          font: inherit;
+          text-align: left;
+          transition: background 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+        }
+        .grassroots-places-option + .grassroots-places-option {
+          border-top: 1px solid rgba(226,232,240,0.88);
+          border-radius: 0;
+        }
+        .grassroots-places-option:hover,
+        .grassroots-places-option.is-active {
+          background: linear-gradient(90deg, rgba(20,83,45,0.075), rgba(240,253,244,0.68));
+          box-shadow: inset 3px 0 0 ${C.pri};
+        }
+        .grassroots-places-option:active {
+          transform: translateY(1px);
+        }
+        .grassroots-places-pin {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          display: grid;
+          place-items: center;
+          color: ${C.textMut};
+          background: ${C.bg};
+          border: 1px solid rgba(203,213,225,0.9);
+          align-self: center;
+        }
+        .grassroots-places-option:hover .grassroots-places-pin,
+        .grassroots-places-option.is-active .grassroots-places-pin {
+          color: ${C.pri};
+          background: #fff;
+          border-color: rgba(20,83,45,0.24);
+        }
+        .grassroots-places-copy {
+          min-width: 0;
+          display: grid;
+          gap: 4px;
+        }
+        .grassroots-places-main {
+          display: block;
+          color: ${C.text};
+          font-size: 14px;
+          font-weight: 900;
+          line-height: 1.22;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .grassroots-places-main mark {
+          padding: 0;
+          color: ${C.pri};
+          background: transparent;
+        }
+        .grassroots-places-secondary {
+          display: block;
+          color: ${C.textMut};
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.3;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .grassroots-places-category {
+          justify-self: end;
+          align-self: center;
+          white-space: nowrap;
+          border-radius: 999px;
+          border: 1px solid rgba(20,83,45,0.18);
+          background: rgba(20,83,45,0.07);
+          color: ${C.pri};
+          padding: 5px 8px;
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .grassroots-places-loading {
+          padding: 14px 12px;
+          color: ${C.textMut};
+          font-size: 13px;
+          font-weight: 800;
+        }
+        .grassroots-places-footer {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 5px;
+          padding: 8px 8px 4px;
+          border-top: 1px solid rgba(226,232,240,0.88);
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .grassroots-google-wordmark {
+          font-weight: 800;
+          letter-spacing: 0;
+        }
+        .grassroots-google-wordmark span:nth-child(1) { color: #4285F4; }
+        .grassroots-google-wordmark span:nth-child(2) { color: #DB4437; }
+        .grassroots-google-wordmark span:nth-child(3) { color: #F4B400; }
+        .grassroots-google-wordmark span:nth-child(4) { color: #4285F4; }
+        .grassroots-google-wordmark span:nth-child(5) { color: #0F9D58; }
+        .grassroots-google-wordmark span:nth-child(6) { color: #DB4437; }
+        .grassroots-places-section-label {
+          padding: 8px 10px 4px;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .grassroots-places-option.is-internal {
+          background: rgba(240,253,244,0.42);
+        }
+        .grassroots-places-pin.is-internal {
+          color: ${C.pri};
+          background: #fff;
+          border-color: rgba(20,83,45,0.24);
+        }
+        .grassroots-drop-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin: 2px 0 10px;
+          flex-wrap: wrap;
+        }
+        .grassroots-drop-subview-tabs {
+          display: inline-flex;
+          align-items: center;
+          padding: 4px;
+          border: 1.5px solid ${C.border};
+          border-radius: 14px;
+          background: #fff;
+          box-shadow: 0 1px 3px rgba(15,23,42,0.05);
+        }
+        .grassroots-drop-subview-tab {
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: ${C.textSec};
+          cursor: pointer;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 900;
+          padding: 8px 13px;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+        }
+        .grassroots-drop-subview-tab em {
+          font-style: normal;
+          font-size: 11px;
+          color: inherit;
+          opacity: 0.7;
+        }
+        .grassroots-drop-subview-tab.is-active {
+          background: ${C.pri};
+          color: #fff;
+          box-shadow: 0 2px 8px rgba(20,83,45,0.18);
+        }
+        .grassroots-drop-toolbar-copy {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          color: ${C.textMut};
+          font-size: 12px;
+        }
+        .grassroots-drop-toolbar-copy strong {
+          color: ${C.text};
+          font-weight: 950;
+        }
+        .grassroots-drop-activity-header,
+        .grassroots-drop-activity-row {
+          display: grid;
+          grid-template-columns: 138px minmax(210px, 0.9fr) minmax(260px, 1.4fr) 136px;
+          gap: 14px;
+          align-items: start;
+        }
+        .grassroots-drop-activity-header {
+          padding: 11px 16px;
+          background: ${C.bg};
+          border-bottom: 1px solid ${C.borderLight};
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .grassroots-drop-activity-list {
+          display: grid;
+        }
+        .grassroots-drop-activity-row {
+          padding: 16px;
+          border-bottom: 1px solid ${C.borderLight};
+          transition: background 0.16s ease, box-shadow 0.16s ease;
+        }
+        .grassroots-drop-activity-row:last-child {
+          border-bottom: 0;
+        }
+        .grassroots-drop-activity-row:hover {
+          background: rgba(248,250,252,0.84);
+        }
+        .grassroots-drop-activity-row.is-fresh {
+          animation: grassrootsFreshRow 1.8s ease-out both;
+        }
+        .grassroots-drop-activity-date,
+        .grassroots-drop-activity-business,
+        .grassroots-drop-activity-next {
+          min-width: 0;
+          display: grid;
+          gap: 4px;
+        }
+        .grassroots-drop-activity-date strong,
+        .grassroots-drop-activity-business strong,
+        .grassroots-drop-activity-next strong {
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .grassroots-drop-activity-date span,
+        .grassroots-drop-activity-business span,
+        .grassroots-drop-activity-actor {
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.35;
+        }
+        .grassroots-drop-activity-notes {
+          min-width: 0;
+          display: grid;
+          gap: 7px;
+        }
+        .grassroots-drop-activity-notes p {
+          margin: 0;
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 800;
+          line-height: 1.45;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+        .grassroots-drop-activity-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .grassroots-drop-activity-meta span {
+          display: inline-flex;
+          align-items: center;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: ${C.bg};
+          border: 1px solid ${C.borderLight};
+          color: ${C.textSec};
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .grassroots-drop-activity-meta span.is-hot {
+          background: ${C.warnLt};
+          color: ${C.warn};
+          border-color: rgba(245,158,11,0.25);
+        }
+        .grassroots-drop-activity-meta span.is-potential {
+          background: ${C.priLt};
+          color: ${C.pri};
+          border-color: rgba(20,83,45,0.2);
+        }
+        .grassroots-activity-attachments,
+        .grassroots-log-pending-files {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+        .grassroots-activity-attachment-button,
+        .grassroots-log-pending-files span {
+          min-width: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          max-width: 260px;
+          padding: 7px 9px;
+          border-radius: 10px;
+          border: 1.5px solid ${C.borderLight};
+          background: #fff;
+          color: ${C.textSec};
+          font: inherit;
+          font-size: 12px;
+          font-weight: 850;
+        }
+        .grassroots-activity-attachment-button {
+          cursor: pointer;
+        }
+        .grassroots-activity-attachment-button:hover {
+          border-color: rgba(20,83,45,0.28);
+          color: ${C.pri};
+        }
+        .grassroots-activity-attachment-button span,
+        .grassroots-log-pending-files strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .grassroots-activity-attachment-button em,
+        .grassroots-log-pending-files em {
+          color: ${C.textMut};
+          font-size: 11px;
+          font-style: normal;
+          font-weight: 800;
+        }
+        .grassroots-log-modal {
+          display: grid;
+          gap: 14px;
+        }
+        .grassroots-log-section {
+          border: 1px solid ${C.borderLight};
+          border-radius: 14px;
+          background: ${C.bg};
+          padding: 14px;
+        }
+        .grassroots-log-section-title {
+          margin-bottom: 10px;
+          color: ${C.pri};
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .grassroots-log-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .grassroots-log-selected-business {
+          display: grid;
+          gap: 3px;
+          padding: 12px;
+          border-radius: 12px;
+          border: 1.5px solid rgba(20,83,45,0.18);
+          background: #fff;
+        }
+        .grassroots-log-selected-business strong {
+          color: ${C.text};
+          font-size: 14px;
+          font-weight: 950;
+        }
+        .grassroots-log-selected-business span {
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 750;
+        }
+        .grassroots-log-selected-business.is-compact {
+          margin-top: 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: ${C.pri};
+        }
+        .grassroots-log-flag-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 12px;
+        }
+        .grassroots-log-flag-row button {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 1.5px solid ${C.border};
+          background: #fff;
+          color: ${C.textSec};
+          cursor: pointer;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .grassroots-log-flag-row button.is-active {
+          border-color: rgba(20,83,45,0.3);
+          background: ${C.pri};
+          color: #fff;
+        }
+        .grassroots-log-warning,
+        .grassroots-log-errors {
+          margin-bottom: 10px;
+          color: ${C.dan};
+          font-size: 12px;
+          font-weight: 850;
+        }
+        .grassroots-log-attachments-toolbar {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 800;
+        }
+        .grassroots-log-pending-files {
+          margin-top: 10px;
+        }
+        .grassroots-log-pending-files button {
+          border: 0;
+          background: transparent;
+          color: ${C.textMut};
+          cursor: pointer;
+          display: inline-flex;
+          padding: 0;
+        }
+        .grassroots-log-actions {
+          position: sticky;
+          bottom: -26px;
+          z-index: 2;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 10px;
+          margin: 0 -26px -26px;
+          padding: 14px 26px 18px;
+          border-top: 1px solid rgba(226,232,240,0.92);
+          background: linear-gradient(180deg, rgba(255,255,255,0.88), #fff 38%);
+          backdrop-filter: blur(10px);
+        }
         .pac-container {
           z-index: 10050 !important;
-          border-radius: 12px;
-          border: 1px solid ${C.borderLight};
-          box-shadow: 0 16px 34px rgba(15,23,42,0.18);
+          margin-top: 8px;
+          padding: 6px;
+          border-radius: 14px;
+          border: 1px solid ${C.border};
+          background: #fff;
+          box-shadow: 0 10px 22px rgba(15,23,42,0.10), 0 1px 2px rgba(15,23,42,0.06);
           font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-          overflow: hidden;
+          overflow: visible;
+          width: min(760px, calc(100vw - 32px)) !important;
+          max-width: min(760px, calc(100vw - 32px));
+        }
+        .pac-container .pac-item {
+          border-top: 0;
+          border-radius: 10px;
+          padding: 10px 12px 10px 8px;
+          color: ${C.textMut};
+          cursor: pointer;
+          font-size: 12px;
+          line-height: 1.4;
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+        }
+        .pac-container .pac-item:hover,
+        .pac-container .pac-item-selected {
+          background: ${C.priLt};
+          color: ${C.text};
+        }
+        .pac-container .pac-item-query {
+          display: block;
+          margin-bottom: 2px;
+          color: ${C.text};
+          font-size: 13px;
+          font-weight: 900;
+          white-space: normal;
+        }
+        .pac-container .pac-matched {
+          color: ${C.pri};
+          font-weight: 900;
+        }
+        .pac-container .pac-icon {
+          margin-top: 1px;
+          margin-right: 10px;
+          opacity: 0.48;
         }
         .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
         .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
@@ -2194,12 +3918,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-event-date-row > button { margin-bottom: 1px; }
         @media (max-width: 880px) {
           .grassroots-event-form-grid { grid-template-columns: 1fr; }
+          .grassroots-target-form-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 680px) {
           .grassroots-event-field-grid { grid-template-columns: 1fr; }
           .grassroots-event-date-row { grid-template-columns: 1fr; padding: 12px; border: 1px solid ${C.borderLight}; border-radius: 12px; background: ${C.bg}; }
           .grassroots-event-date-row > button { margin-bottom: 0; width: 100% !important; }
           .grassroots-event-link-row { grid-template-columns: 1fr 34px; }
+          .grassroots-places-panel { width: min(100%, calc(100vw - 32px)); }
+          .grassroots-places-option { grid-template-columns: 30px minmax(0, 1fr); }
+          .grassroots-places-category { grid-column: 2; justify-self: start; margin-top: 2px; }
+          .grassroots-drop-activity-header { display: none; }
+          .grassroots-drop-activity-row { grid-template-columns: 1fr; gap: 10px; }
+          .grassroots-drop-activity-next { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+          .grassroots-log-grid { grid-template-columns: 1fr; }
+          .grassroots-drop-toolbar-copy { width: 100%; }
         }
       `}</style>
       <div style={{
@@ -2244,18 +3977,27 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           >
             Filter{filterCount > 0 ? ` (${filterCount})` : ""}
           </Btn>
-          <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
-            Add {activeConfig.singular}
-          </Btn>
+          {activeConfig.id === "drops" ? (
+            <>
+              <Btn variant="secondary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ whiteSpace: "nowrap" }}>
+                Add Business
+              </Btn>
+              <Btn variant="primary" size="lg" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ minWidth: 142, justifyContent: "center" }}>
+                Log Activity
+              </Btn>
+            </>
+          ) : (
+            <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
+              Add {activeConfig.singular}
+            </Btn>
+          )}
         </div>
       </div>
 
       <div className="grassroots-event-metrics">
-        <MetricCard label={`Booked Upcoming ${eventMetrics.year}`} value={eventMetrics.bookedUpcomingThisYear} color={C.pri} />
-        <MetricCard label={`Booked Completed ${eventMetrics.year}`} value={eventMetrics.bookedCompletedThisYear} color={C.suc} />
-        <MetricCard label={`Identified ${eventMetrics.year}`} value={eventMetrics.identifiedThisYear} color={C.info} />
-        <MetricCard label={`Corresponding ${eventMetrics.year}`} value={eventMetrics.correspondingThisYear} color="#7C3AED" />
-        <MetricCard label={`Booked ${fmtMonthYear(eventMetrics.month)}`} value={eventMetrics.bookedThisMonth} color={C.accDk} />
+        {metricCards.map((metric) => (
+          <MetricCard key={metric.label} label={metric.label} value={metric.value} color={metric.color} />
+        ))}
       </div>
 
       <div className="grassroots-category-tabs">
@@ -2274,6 +4016,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           );
         })}
       </div>
+
+      {activeConfig.id === "drops" && (
+        <div className="grassroots-drop-toolbar">
+          <DropSubviewTabs
+            value={dropSubview}
+            onChange={setDropSubview}
+            activityCount={dropActivityRows.length}
+            businessCount={dropTargets.length}
+          />
+          <div className="grassroots-drop-toolbar-copy">
+            <strong>{dropSubview === "activity" ? "Raw activity" : "Business rollup"}</strong>
+            <span>{dropSubview === "activity" ? "One row per logged visit." : "One row per unique business."}</span>
+          </div>
+        </div>
+      )}
 
       {showHistoryPanel && <HistoryPanel items={categoryHistory} categoryConfig={activeConfig} />}
 
@@ -2455,18 +4212,32 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       ) : (
         <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
           {canEditTargets && newDraft && activeConfig.id !== "events" && (
-            <TargetEditor
-              draft={newDraft}
-              categoryConfig={activeConfig}
-              saving={savingDraft}
-              canLog={canLogActivity}
-              onChange={updateDraft}
-              onSave={saveDraft}
-              onCancel={closeEditor}
-            />
+            <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor">
+              <TargetEditor
+                draft={newDraft}
+                categoryConfig={activeConfig}
+                saving={savingDraft}
+                attachmentsByActivity={attachmentsByActivity}
+                canLog={canLogActivity}
+                onChange={updateDraft}
+                onSave={saveDraft}
+                onCancel={closeEditor}
+                onPreviewAttachment={previewGrassrootsAttachment}
+                previewingAttachmentId={previewingAttachmentId}
+              />
+            </div>
           )}
 
-          {visibleTargets.length === 0 && !newDraft ? (
+          {activeConfig.id === "drops" && dropSubview === "activity" ? (
+            <DropActivityView
+              rows={dropActivityRows}
+              canLog={canLogActivity}
+              onLog={openLogModal}
+              onPreviewAttachment={previewGrassrootsAttachment}
+              previewingAttachmentId={previewingAttachmentId}
+              freshActivityId={freshActivityId}
+            />
+          ) : visibleTargets.length === 0 && !newDraft ? (
             <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
               <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
               <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
@@ -2480,14 +4251,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 onToggleEventDateSort={() => setEventDateSortDirection((current) => (current === "asc" ? "desc" : "asc"))}
               />
               {canEditTargets && newDraft && activeConfig.id === "events" && (
-                <EventTargetInlineEditor
-                  key="new-event-draft"
-                  draft={newDraft}
-                  saving={savingDraft}
-                  onChange={updateDraft}
-                  onSave={saveDraft}
-                  onCancel={closeEditor}
-                />
+                <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor">
+                  <EventTargetInlineEditor
+                    key="new-event-draft"
+                    draft={newDraft}
+                    saving={savingDraft}
+                    onChange={updateDraft}
+                    onSave={saveDraft}
+                    onCancel={closeEditor}
+                  />
+                </div>
               )}
               {sortedVisibleTargets.map((target, index) => {
                 const rowActivities = activitiesByTarget[target.id] || [];
@@ -2498,12 +4271,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                       draft={editDraft}
                       saving={savingDraft}
                       activities={rowActivities}
+                      attachmentsByActivity={attachmentsByActivity}
                       canLog={canLogActivity}
                       onChange={updateDraft}
                       onSave={saveDraft}
                       onCancel={closeEditor}
                       onDelete={() => deleteTarget(editDraft)}
-                      onLog={(event) => openLogPopover(target, event)}
+                      onLog={() => openLogModal(target)}
+                      onPreviewAttachment={previewGrassrootsAttachment}
+                      previewingAttachmentId={previewingAttachmentId}
                     />
                   );
                 }
@@ -2515,12 +4291,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                       categoryConfig={activeConfig}
                       saving={savingDraft}
                       activities={rowActivities}
+                      attachmentsByActivity={attachmentsByActivity}
                       canLog={canLogActivity}
                       onChange={updateDraft}
                       onSave={saveDraft}
                       onCancel={closeEditor}
                       onDelete={() => deleteTarget(editDraft)}
-                      onLog={(event) => openLogPopover(target, event)}
+                      onLog={() => openLogModal(target)}
+                      onPreviewAttachment={previewGrassrootsAttachment}
+                      previewingAttachmentId={previewingAttachmentId}
                     />
                   );
                 }
@@ -2531,6 +4310,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     index={index}
                     categoryConfig={activeConfig}
                     activities={rowActivities}
+                    attachmentsByActivity={attachmentsByActivity}
                     isExpanded={expandedUpdates.has(target.id)}
                     isFresh={freshTargetId === target.id}
                     canLog={canLogActivity}
@@ -2541,8 +4321,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                       else next.add(target.id);
                       return next;
                     })}
-                    onLog={(event) => openLogPopover(target, event)}
+                    onLog={() => openLogModal(target)}
                     onMove={(event) => openMovePopover(target, event)}
+                    onPreviewAttachment={previewGrassrootsAttachment}
+                    previewingAttachmentId={previewingAttachmentId}
                     onEdit={() => {
                       setNewDraft(null);
                       setEditDraft(buildEditorDraft(target));
@@ -2609,70 +4391,69 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         </div>
       )}
 
-      {canLogActivity && logPopover && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => { setLogPopover(null); setLogNotes(""); setLogDate(""); setLogContactName(""); }}>
-          <div
-            onClick={(event) => event.stopPropagation()}
-            style={{
-              position: "fixed",
-              left: Math.min(logPopover.x || 300, window.innerWidth - 360),
-              top: logPopover.y || 200,
-              zIndex: 9999,
-              background: C.surface,
-              border: `1.5px solid ${C.border}`,
-              borderRadius: 14,
-              padding: "16px 20px",
-              width: 330,
-              boxShadow: "0 12px 40px rgba(15,23,42,0.18)",
-            }}
-          >
-            {(() => {
-              const logCategoryId = getGrassrootsCategoryConfig(logPopover.target.category).id;
-              const isDropLog = logCategoryId === "drops";
-              const isEventLog = logCategoryId === "events";
-              return (
-                <>
-            <div style={{ fontSize: 14, fontWeight: 900, color: C.text, marginBottom: 10 }}>
-              {isDropLog ? "Log Drop" : isEventLog ? "Log Event Comment" : "Log Development"}
-            </div>
-            {isDropLog && (
-              <label style={{ display: "block", marginBottom: 10 }}>
-                <Label>Who did you speak with?</Label>
-                <input
-                  value={logContactName}
-                  onChange={(event) => setLogContactName(event.target.value)}
-                  placeholder="Person's name"
-                  style={{ ...INPUT_STYLE, background: C.bg }}
-                  autoFocus
-                />
-              </label>
-            )}
-            <textarea
-              value={logNotes}
-              onChange={(event) => setLogNotes(event.target.value)}
-              placeholder={isDropLog ? "Notes about this drop..." : isEventLog ? "Comment or development..." : "Notes about this development..."}
-              rows={3}
-              style={{ ...INPUT_STYLE, minHeight: 88, resize: "vertical", background: C.bg, marginBottom: 10 }}
-              autoFocus={!isDropLog}
-            />
-            <div style={{ marginBottom: 10 }}>
-              <Label>{isDropLog ? "Next Drop Date" : "Follow-Up Date Optional"}</Label>
-              <MiniDatePicker
-                value={logDate}
-                onChange={setLogDate}
-                recommendedDate={addDays(todayStr(), isDropLog ? 28 : 2)}
-                recommendedHint={isDropLog ? "Recommended: +4 weeks unless they gave a specific return date." : "Optional: set only if this needs follow-up."}
+      {canLogActivity && logModal && (
+        <LogActivityModal
+          logModal={logModal}
+          businessQuery={logBusinessQuery}
+          selectedTarget={logSelectedTarget}
+          businessDraft={logBusinessDraft}
+          internalOptions={logBusinessOptions}
+          notes={logNotes}
+          activityDate={logActivityDate}
+          nextDate={logDate}
+          contactName={logContactName}
+          materialsLeft={logMaterialsLeft}
+          outcome={logOutcome}
+          followUpPriority={logFollowUpPriority}
+          partnershipPotential={logPartnershipPotential}
+          files={logFiles}
+          fileErrors={logFileErrors}
+          saving={savingLog}
+          fileInputRef={logFileInputRef}
+          attachmentsSchemaMissing={attachmentsSchemaMissing}
+          onBusinessQueryChange={(value) => {
+            setLogBusinessQuery(value);
+            setLogSelectedTarget(null);
+            setLogBusinessDraft(null);
+          }}
+          onInternalBusinessSelect={(target) => {
+            setLogSelectedTarget(target);
+            setLogBusinessDraft(null);
+          }}
+          onGoogleBusinessSelect={handleSelectGoogleLogBusiness}
+          onActivityDateChange={setLogActivityDate}
+          onNextDateChange={setLogDate}
+          onContactNameChange={setLogContactName}
+          onMaterialsLeftChange={setLogMaterialsLeft}
+          onOutcomeChange={setLogOutcome}
+          onNotesChange={setLogNotes}
+          onFollowUpPriorityChange={setLogFollowUpPriority}
+          onPartnershipPotentialChange={setLogPartnershipPotential}
+          onFileChange={handleLogFileChange}
+          onRemoveFile={removeLogFile}
+          onClose={resetLogForm}
+          onSave={saveLog}
+        />
+      )}
+
+      {attachmentPreview && (
+        <Modal title={attachmentPreview.attachment?.file_name || "Attachment Preview"} onClose={() => setAttachmentPreview(null)} fullWidth>
+          <div style={{ height: "calc(100vh - 180px)", minHeight: 420, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
+            {attachmentPreview.kind === "image" ? (
+              <img
+                src={attachmentPreview.url}
+                alt={attachmentPreview.attachment?.file_name || "Grassroots attachment"}
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
               />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <Btn size="sm" variant="ghost" onClick={() => { setLogPopover(null); setLogNotes(""); setLogDate(""); setLogContactName(""); }}>Cancel</Btn>
-              <Btn size="sm" onClick={saveLog}>Done</Btn>
-            </div>
-                </>
-              );
-            })()}
+            ) : (
+              <iframe
+                title={attachmentPreview.attachment?.file_name || "Grassroots attachment"}
+                src={`${attachmentPreview.url}#toolbar=0&navpanes=0&scrollbar=1`}
+                style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
+              />
+            )}
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

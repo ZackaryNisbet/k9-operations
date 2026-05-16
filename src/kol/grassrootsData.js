@@ -88,6 +88,19 @@ export const GRASSROOTS_BUSINESS_CATEGORY_OPTIONS = [
 
 export const GRASSROOTS_DROP_CATEGORY_OPTIONS = GRASSROOTS_BUSINESS_CATEGORY_OPTIONS;
 
+export const GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET = "grassroots-activity-attachments";
+export const GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES = 5;
+export const GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+export const GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
+export const GRASSROOTS_ACTIVITY_ATTACHMENT_ACCEPT = GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES.join(",");
+
 export const GRASSROOTS_DEFAULT_FILTERS = {
   is_active: { op: "is", val: "active" },
 };
@@ -136,6 +149,13 @@ function stringValue(value) {
 
 function normalizeText(value) {
   return stringValue(value).replace(/\s+/g, " ");
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeUuid(value) {
+  const trimmed = stringValue(value);
+  return UUID_RE.test(trimmed) ? trimmed : "";
 }
 
 function normalizeKey(value) {
@@ -337,6 +357,55 @@ export function buildGrassrootsEventMetrics(targets = [], today = new Date().toI
       && hasGrassrootsEventMetricDateInRange(target, yearStart, yearEnd)
     )).length,
     bookedThisMonth: bookedEvents.filter((target) => hasGrassrootsEventDateInRange(target, monthStart, monthEnd)).length,
+  };
+}
+
+function getGrassrootsActivityMetricDate(activity = {}) {
+  return normalizeGrassrootsMetricDate(activity.activity_date || activity.created_at || activity.updated_at);
+}
+
+function isGrassrootsDropActivity(activity = {}, targetById = new Map()) {
+  const activityType = String(activity.activity_type || "").trim();
+  if (activityType && activityType !== "drop") return false;
+
+  const targetId = String(activity.target_id || "").trim();
+  const target = targetById.get(targetId);
+  if (target) return getGrassrootsCategoryConfig(target.category).id === "drops";
+
+  const category = activity.category || activity.target_category;
+  if (category) return getGrassrootsCategoryConfig(category).id === "drops";
+
+  return activityType === "drop";
+}
+
+export function buildGrassrootsDropMetrics(targets = [], activities = [], today = new Date().toISOString().slice(0, 10)) {
+  const year = today.slice(0, 4);
+  const last30Start = addDays(today, -29);
+  const yearStart = `${year}-01-01`;
+  const targetById = new Map((targets || [])
+    .filter((target) => target?.id)
+    .map((target) => [String(target.id), target]));
+
+  const dropActivities = (activities || [])
+    .filter((activity) => isGrassrootsDropActivity(activity, targetById))
+    .map((activity) => ({
+      targetId: String(activity.target_id || "").trim(),
+      date: getGrassrootsActivityMetricDate(activity),
+    }))
+    .filter((activity) => activity.date);
+
+  const last30 = dropActivities.filter((activity) => activity.date >= last30Start && activity.date <= today);
+  const yearToDate = dropActivities.filter((activity) => activity.date >= yearStart && activity.date <= today);
+  const uniqueBusinessCount = (rows) => new Set(rows.map((activity) => activity.targetId).filter(Boolean)).size;
+
+  return {
+    year,
+    last30Start,
+    last30End: today,
+    dropVisitsLast30: last30.length,
+    businessesVisitedLast30: uniqueBusinessCount(last30),
+    dropVisitsYtd: yearToDate.length,
+    businessesVisitedYtd: uniqueBusinessCount(yearToDate),
   };
 }
 
@@ -584,6 +653,225 @@ export function getGrassrootsActivityCount(target, activitiesByTarget = {}) {
     }
     return activityType === type;
   }).length;
+}
+
+export function inferGrassrootsActivityAttachmentMimeType(file = {}) {
+  const explicitType = stringValue(file?.type).toLowerCase();
+  if (GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES.includes(explicitType)) return explicitType;
+
+  const name = stringValue(file?.name).toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  return explicitType || "application/octet-stream";
+}
+
+export function sanitizeGrassrootsAttachmentFilename(value = "") {
+  const rawName = String(value || "attachment")
+    .split(/[\\/]/)
+    .pop()
+    .trim();
+  const withoutControlChars = rawName.replace(/[\x00-\x1F\x7F]/g, "");
+  const safe = withoutControlChars
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^\.+/, "")
+    .replace(/[._-]+$/, "")
+    .slice(0, 120);
+  return safe || "attachment";
+}
+
+export function buildGrassrootsActivityAttachmentPath({
+  locationId,
+  targetId,
+  activityId,
+  attachmentId,
+  fileName,
+} = {}) {
+  const cleanLocationId = normalizeUuid(locationId);
+  const cleanTargetId = normalizeUuid(targetId);
+  const cleanActivityId = normalizeUuid(activityId);
+  const cleanAttachmentId = normalizeUuid(attachmentId);
+  if (!cleanLocationId) throw new Error("Valid location id is required");
+  if (!cleanTargetId) throw new Error("Valid drop business id is required");
+  if (!cleanActivityId) throw new Error("Valid activity id is required");
+  if (!cleanAttachmentId) throw new Error("Valid attachment id is required");
+
+  return [
+    cleanLocationId,
+    "targets",
+    cleanTargetId,
+    "activities",
+    cleanActivityId,
+    `${cleanAttachmentId}-${sanitizeGrassrootsAttachmentFilename(fileName)}`,
+  ].join("/");
+}
+
+export function validateGrassrootsActivityAttachmentFiles(files = []) {
+  const fileList = Array.from(files || []);
+  const errors = [];
+  const acceptedFiles = [];
+
+  if (fileList.length > GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES) {
+    errors.push(`Attach up to ${GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES} files per activity.`);
+  }
+
+  fileList.slice(0, GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES).forEach((file) => {
+    const mimeType = inferGrassrootsActivityAttachmentMimeType(file);
+    const fileName = stringValue(file?.name) || "attachment";
+    const fileSize = Number(file?.size || 0);
+
+    if (!GRASSROOTS_ACTIVITY_ATTACHMENT_MIME_TYPES.includes(mimeType)) {
+      errors.push(`${fileName} must be a PDF, PNG, JPG, WEBP, HEIC, or HEIF file.`);
+      return;
+    }
+
+    if (fileSize > GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILE_SIZE_BYTES) {
+      errors.push(`${fileName} is larger than 20 MB.`);
+      return;
+    }
+
+    acceptedFiles.push(file);
+  });
+
+  return { acceptedFiles, errors };
+}
+
+export function formatGrassrootsAttachmentFileSize(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+export function getGrassrootsAttachmentPreviewKind(attachment = {}) {
+  const mimeType = stringValue(attachment?.mime_type || attachment?.metadata?.mime_type).toLowerCase();
+  const name = stringValue(attachment?.file_name).toLowerCase();
+  if (mimeType === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (mimeType.startsWith("image/") || /\.(png|jpe?g|webp|heic|heif)$/.test(name)) return "image";
+  return "unsupported";
+}
+
+export function isGrassrootsActivityAttachmentDeleted(attachment = {}) {
+  return Boolean(attachment?.deleted_at);
+}
+
+export function groupGrassrootsActivityAttachments(attachments = []) {
+  return attachments.reduce((acc, attachment) => {
+    if (!attachment || typeof attachment !== "object") return acc;
+    if (isGrassrootsActivityAttachmentDeleted(attachment)) return acc;
+    const key = attachment.activity_id || "__unlinked__";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(attachment);
+    acc[key].sort((a, b) => new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0));
+    return acc;
+  }, {});
+}
+
+function normalizeGrassrootsSearchText(value = "") {
+  return stringValue(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getGrassrootsDropTargetSearchScore(target = {}, query = "") {
+  const normalizedQuery = normalizeGrassrootsSearchText(query);
+  if (!normalizedQuery) return 0;
+
+  const name = normalizeGrassrootsSearchText(target.name);
+  const address = normalizeGrassrootsSearchText([
+    target.address_line_1,
+    target.address_city,
+    target.address_state,
+    target.address_postal_code,
+    target.address,
+  ].filter(Boolean).join(" "));
+  const category = normalizeGrassrootsSearchText(getGrassrootsBusinessCategory(target));
+  const haystack = [name, address, category].filter(Boolean).join(" ");
+
+  if (name === normalizedQuery) return 120;
+  if (name.startsWith(normalizedQuery)) return 100;
+  if (name.includes(normalizedQuery)) return 82;
+  if (address.includes(normalizedQuery)) return 52;
+  if (haystack.includes(normalizedQuery)) return 36;
+
+  const queryParts = normalizedQuery.split(" ").filter((part) => part.length >= 2);
+  if (queryParts.length > 0 && queryParts.every((part) => haystack.includes(part))) return 24;
+  return 0;
+}
+
+export function searchGrassrootsDropBusinessTargets({
+  targets = [],
+  activitiesByTarget = {},
+  query = "",
+  limit = 6,
+  includeInactive = true,
+} = {}) {
+  return (targets || [])
+    .filter((target) => getGrassrootsCategoryConfig(target?.category).id === "drops")
+    .filter((target) => includeInactive || target.is_active !== false)
+    .map((target) => {
+      const activityCount = getGrassrootsActivityCount(target, activitiesByTarget);
+      const activities = activitiesByTarget[target.id] || [];
+      const lastActivity = [...activities]
+        .filter((activity) => (activity.activity_type || "drop") === "drop")
+        .sort((a, b) => String(b.activity_date || b.created_at || "").localeCompare(String(a.activity_date || a.created_at || "")))[0];
+      return {
+        target,
+        activityCount,
+        lastActivityDate: lastActivity?.activity_date || lastActivity?.created_at || "",
+        nextDropDate: getGrassrootsNextDate(target, activitiesByTarget),
+        score: getGrassrootsDropTargetSearchScore(target, query),
+      };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.activityCount !== a.activityCount) return b.activityCount - a.activityCount;
+      return String(a.target.name || "").localeCompare(String(b.target.name || ""));
+    })
+    .slice(0, limit);
+}
+
+export function buildGrassrootsDropActivityRows(targets = [], activities = [], attachmentsByActivity = {}) {
+  const targetById = new Map((targets || [])
+    .filter((target) => target?.id)
+    .map((target) => [String(target.id), target]));
+
+  return (activities || [])
+    .filter((activity) => isGrassrootsDropActivity(activity, targetById))
+    .map((activity) => {
+      const target = targetById.get(String(activity.target_id || ""));
+      const metadata = activity.metadata && typeof activity.metadata === "object" ? activity.metadata : {};
+      return {
+        id: activity.id,
+        activity,
+        target,
+        targetId: activity.target_id,
+        businessName: target?.name || "Unknown business",
+        businessAddress: target?.address || "",
+        businessCategory: getGrassrootsBusinessCategory(target || {}),
+        activityDate: activity.activity_date || "",
+        createdAt: activity.created_at || "",
+        loggedBy: activity.created_by_name || "Unknown user",
+        notes: activity.notes || "",
+        nextDropDate: activity.next_contact_date || "",
+        personSpokenWith: metadata.person_spoken_with || metadata.person_interacted_with || "",
+        materialsLeft: metadata.materials_left || "",
+        outcome: metadata.outcome || "",
+        followUpPriority: Boolean(metadata.follow_up_priority),
+        partnershipPotential: Boolean(metadata.partnership_potential),
+        attachments: attachmentsByActivity[activity.id] || [],
+      };
+    })
+    .sort((a, b) => String(b.activityDate || b.createdAt || "").localeCompare(String(a.activityDate || a.createdAt || "")));
 }
 
 export function getGrassrootsNextDate(target, activitiesByTarget = {}) {
