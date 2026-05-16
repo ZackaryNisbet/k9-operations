@@ -58,6 +58,7 @@ import SchedulingPage from "./pages/SchedulingPage";
 import ClientManagementPage from "./pages/ClientManagementPage";
 import ResourcesPage from "./pages/ResourcesPage";
 import GrassrootsPage from "./pages/GrassrootsPage";
+import ResortUpkeepPage from "./pages/ResortUpkeepPage";
 import EnrichmentsPage from "./pages/EnrichmentsPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
@@ -122,6 +123,7 @@ const LITE_PAGE_SLUGS = {
   "enrichments": "enrichments",
   "resources": "resources",
   "grassroots": "grassroots",
+  "resort-upkeep": "resort-upkeep",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -292,6 +294,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
   { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -306,6 +309,7 @@ const LEAN_NAV_ITEMS = [
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
   { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -325,6 +329,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
   { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -383,6 +388,7 @@ const PAGE_PERMISSION_MAP = {
   "enrichments": null,
   "resources": null,
   "grassroots": "Grassroots Access",
+  "resort-upkeep": "Resort Upkeep Access",
   "inventory": "Inventory Management",
   "inventory-report": "Inventory Management",
   "occupancy-report": "Occupancy Reports",
@@ -881,7 +887,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -902,6 +908,7 @@ function LeanAppInner() {
       case "enrichments": return "Enrichments";
       case "resources": return "Resources";
       case "grassroots": return "Grassroots Tracking";
+      case "resort-upkeep": return "Resort Upkeep";
       case "funnel": return "Lead Funnel";
       case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
@@ -1187,6 +1194,8 @@ function LeanAppInner() {
         return <ResourcesPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "grassroots":
         return <GrassrootsPage profile={profile} addGlobalToast={addGlobalToast} />;
+      case "resort-upkeep":
+        return <ResortUpkeepPage profile={profile} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "scheduling":
         return <SchedulingPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory":

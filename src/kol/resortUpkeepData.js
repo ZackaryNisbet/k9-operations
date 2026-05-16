@@ -1,0 +1,361 @@
+import { supabase } from "../supabaseClient";
+
+export const RESORT_UPKEEP_ATTACHMENT_BUCKET = "resort-upkeep-attachments";
+export const BUILDING_MAINTENANCE_SLUGS = [
+  "building-maintenance-monthly",
+  "building-maintenance-quarterly",
+  "building-maintenance-semi-annual",
+  "building-maintenance-annual",
+];
+
+export function fmtUpkeepDate(value) {
+  if (!value) return "—";
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function fmtUpkeepStatus(value) {
+  const text = String(value || "open").replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+export function normalizeDashboard(value) {
+  return {
+    maintenance: Array.isArray(value?.maintenance) ? value.maintenance : [],
+    maintenanceSummary: value?.maintenance_summary || value?.maintenanceSummary || {
+      active: 0,
+      overdue: 0,
+      ready_to_submit: 0,
+      submitted: 0,
+      open: 0,
+    },
+    vendors: value?.vendors || { active: 0, archived: 0 },
+    licenses: value?.licenses || { active: 0, non_compliant: 0, expiring_soon: 0 },
+    troubleshooting: Array.isArray(value?.troubleshooting) ? value.troubleshooting : [],
+  };
+}
+
+export async function loadResortUpkeepDashboard(locationId) {
+  if (!locationId) return normalizeDashboard(null);
+  const { data, error } = await supabase.rpc("resort_upkeep_get_dashboard", { p_location_id: locationId });
+  if (error) throw error;
+  return normalizeDashboard(data);
+}
+
+export async function loadMaintenancePeriodSnapshot(periodId) {
+  const { data, error } = await supabase.rpc("resort_upkeep_get_period_snapshot", { p_period_id: periodId });
+  if (error) throw error;
+  return {
+    period: data?.period || {},
+    progress: data?.progress || {},
+    computedStatus: data?.computedStatus || data?.computed_status,
+    canEdit: data?.canEdit ?? data?.can_edit ?? false,
+    canReopen: data?.canReopen ?? data?.can_reopen ?? false,
+    items: Array.isArray(data?.items) ? data.items : [],
+  };
+}
+
+export async function loadMaintenancePeriods(locationId, { templateSlug = null, limit = 48 } = {}) {
+  if (!locationId) return [];
+  const { data, error } = await supabase.rpc("resort_upkeep_list_periods", {
+    p_location_id: locationId,
+    p_template_slug: templateSlug,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+export async function loadMaintenanceTemplates(locationId) {
+  if (!locationId) return [];
+  const { data, error } = await supabase.rpc("resort_upkeep_list_maintenance_templates", { p_location_id: locationId });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+export async function publishMaintenanceTemplateVersion({
+  templateId,
+  locationId,
+  items,
+  changelog = "",
+  actorName = null,
+  templateName = null,
+  startMonth = null,
+  description = null,
+}) {
+  const { data, error } = await supabase.rpc("resort_upkeep_publish_template_version", {
+    p_template_id: templateId,
+    p_location_id: locationId,
+    p_items: items,
+    p_changelog: changelog,
+    p_actor_name: actorName,
+    p_template_name: templateName,
+    p_start_month: startMonth,
+    p_description: description,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function saveMaintenanceItemState({ periodId, itemKey, checked, notes = "", actorName = null }) {
+  const { data, error } = await supabase.rpc("resort_upkeep_save_item_state", {
+    p_period_id: periodId,
+    p_item_key: itemKey,
+    p_checked: checked,
+    p_notes: notes,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function submitMaintenancePeriod(periodId, actorName = null, note = "") {
+  const { data, error } = await supabase.rpc("resort_upkeep_submit_period", {
+    p_period_id: periodId,
+    p_actor_name: actorName,
+    p_note: note,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function reopenMaintenancePeriod(periodId, reason, actorName = null) {
+  const { data, error } = await supabase.rpc("resort_upkeep_reopen_period", {
+    p_period_id: periodId,
+    p_reason: reason,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function loadVendors(locationId, includeArchived = false) {
+  let query = supabase
+    .from("resort_upkeep_vendors")
+    .select("*")
+    .eq("location_id", locationId)
+    .order("business_name", { ascending: true });
+  if (!includeArchived) query = query.eq("is_archived", false);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function saveVendor(vendor, actorName = null) {
+  const { id, ...rest } = vendor || {};
+  const payload = {
+    ...rest,
+    ...(id ? { id } : {}),
+    contact_info: Array.isArray(vendor?.contact_info) ? vendor.contact_info : [],
+  };
+  const { data, error } = await supabase.rpc("resort_upkeep_save_vendor", {
+    p_vendor: payload,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function archiveVendor(vendorId, reason, actorName = null) {
+  const { data, error } = await supabase.rpc("resort_upkeep_archive_vendor", {
+    p_vendor_id: vendorId,
+    p_reason: reason,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function loadVendorLogs(locationId, vendorId) {
+  const { data, error } = await supabase
+    .from("resort_upkeep_vendor_logs")
+    .select("*")
+    .eq("location_id", locationId)
+    .eq("vendor_id", vendorId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function addVendorLog(log, actorName = null) {
+  const { data, error } = await supabase.rpc("resort_upkeep_add_vendor_log", {
+    p_log: log,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function loadLicenses(locationId, includeInactive = false) {
+  let query = supabase
+    .from("resort_upkeep_licenses")
+    .select("*")
+    .eq("location_id", locationId)
+    .order("status", { ascending: false })
+    .order("expiration_date", { ascending: true, nullsFirst: false });
+  if (!includeInactive) query = query.eq("is_active", true);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function saveLicense(license, actorName = null) {
+  const { id, ...rest } = license || {};
+  const payload = {
+    ...rest,
+    ...(id ? { id } : {}),
+    contact_info: Array.isArray(license?.contact_info) ? license.contact_info : [],
+    website_links: Array.isArray(license?.website_links) ? license.website_links : [],
+  };
+  const { data, error } = await supabase.rpc("resort_upkeep_save_license", {
+    p_license: payload,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function deactivateLicense(licenseId, reason, actorName = null) {
+  const { data, error } = await supabase.rpc("resort_upkeep_deactivate_license", {
+    p_license_id: licenseId,
+    p_reason: reason,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function loadLicenseLogs(locationId, licenseId) {
+  const { data, error } = await supabase
+    .from("resort_upkeep_license_logs")
+    .select("*")
+    .eq("location_id", locationId)
+    .eq("license_id", licenseId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function addLicenseLog(log, actorName = null) {
+  const { data, error } = await supabase.rpc("resort_upkeep_add_license_log", {
+    p_log: log,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function uploadResortUpkeepAttachment({ locationId, file, pathParts }) {
+  const safeName = (file?.name || "attachment")
+    .replace(/[\x00-\x1F\x7F]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, 120) || "attachment";
+  const id = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const path = [locationId, ...pathParts, `${id}-${safeName}`].join("/");
+  const { error } = await supabase.storage
+    .from(RESORT_UPKEEP_ATTACHMENT_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      contentType: file?.type || "application/octet-stream",
+      upsert: false,
+    });
+  if (error) throw error;
+  return { id, path, safeName };
+}
+
+export async function recordResortUpkeepAttachment({
+  locationId,
+  attachmentScope,
+  file,
+  storagePath,
+  fileName,
+  actorName = null,
+  periodId = null,
+  itemStateId = null,
+  vendorId = null,
+  licenseId = null,
+}) {
+  const { data, error } = await supabase.rpc("resort_upkeep_record_attachment", {
+    p_attachment: {
+      location_id: locationId,
+      attachment_scope: attachmentScope,
+      period_id: periodId,
+      item_state_id: itemStateId,
+      vendor_id: vendorId,
+      license_id: licenseId,
+      file_name: fileName || file?.name || "attachment",
+      storage_bucket: RESORT_UPKEEP_ATTACHMENT_BUCKET,
+      storage_path: storagePath,
+      mime_type: file?.type || "application/octet-stream",
+      file_size_bytes: file?.size || 0,
+      uploaded_by_name: actorName,
+    },
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function createResortUpkeepSignedUrl(attachment) {
+  const { data, error } = await supabase.storage
+    .from(attachment?.storage_bucket || RESORT_UPKEEP_ATTACHMENT_BUCKET)
+    .createSignedUrl(attachment?.storage_path, 300);
+  if (error) throw error;
+  return data?.signedUrl || "";
+}
+
+export async function loadResortUpkeepAttachments(locationId, filters = {}) {
+  let query = supabase
+    .from("resort_upkeep_attachments")
+    .select("*")
+    .eq("location_id", locationId)
+    .is("deleted_at", null)
+    .order("uploaded_at", { ascending: false });
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) query = query.eq(key, value);
+  });
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function loadResortUpkeepAuditEvents(locationId, filters = {}) {
+  let query = supabase
+    .from("resort_upkeep_audit_events")
+    .select("*")
+    .eq("location_id", locationId)
+    .order("event_at", { ascending: false })
+    .limit(filters.limit || 30);
+  if (filters.entity_type) query = query.eq("entity_type", filters.entity_type);
+  if (filters.entity_id) query = query.eq("entity_id", filters.entity_id);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export function subscribeToResortUpkeep(locationId, onChange) {
+  const channel = supabase.channel(`resort-upkeep-web-${locationId}`);
+  [
+    "resort_upkeep_templates",
+    "resort_upkeep_periods",
+    "resort_upkeep_item_states",
+    "resort_upkeep_attachments",
+    "resort_upkeep_vendors",
+    "resort_upkeep_vendor_logs",
+    "resort_upkeep_licenses",
+    "resort_upkeep_license_logs",
+    "resort_upkeep_audit_events",
+  ].forEach((table) => {
+    channel.on("postgres_changes", { event: "*", schema: "public", table, filter: `location_id=eq.${locationId}` }, onChange);
+  });
+  ["resort_upkeep_template_versions", "resort_upkeep_troubleshooting_articles"].forEach((table) => {
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, onChange);
+  });
+  channel.subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
