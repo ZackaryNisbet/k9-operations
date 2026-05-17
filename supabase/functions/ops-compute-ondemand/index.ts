@@ -182,6 +182,18 @@ async function upsertComputedItems(
   computedItems: any,
 ): Promise<void> {
   const now = new Date().toISOString();
+  const reportDate = String(date || "").slice(0, 10);
+  const todayEt = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const shouldLock = !!reportDate && reportDate < todayEt;
+  if (shouldLock) {
+    const { data: existing } = await supabase
+      .from("lite_daily_ops")
+      .select("locked")
+      .eq("id", id)
+      .eq("location_id", locationId)
+      .maybeSingle();
+    if (existing?.locked) return;
+  }
   const { error } = await supabase
     .from("lite_daily_ops")
     .upsert(
@@ -191,6 +203,7 @@ async function upsertComputedItems(
         type,
         type_sub: typeSub,
         date,
+        locked: shouldLock,
         computed_items: computedItems,
         computed_at: now,
       },
