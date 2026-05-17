@@ -14,6 +14,7 @@ const sanitizeGingrSyncError = (value) => {
 };
 
 function useGingrData(locationId, refreshOptions = {}) {
+  const enabled = refreshOptions.enabled !== false;
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [reservations, setReservations] = useState(null);
@@ -31,7 +32,7 @@ function useGingrData(locationId, refreshOptions = {}) {
   // ── Restore cached data instantly on mount (zero network wait) ──
   const cacheRestored = useRef(false);
   useEffect(() => {
-    if (!locationId || cacheRestored.current) return;
+    if (!enabled || !locationId || cacheRestored.current) return;
     cacheRestored.current = true;
     idbGet(`data_v2_${locationId}`).then(cached => {
       if (cached && !hasLoadedOnce.current) {
@@ -42,7 +43,7 @@ function useGingrData(locationId, refreshOptions = {}) {
         if (cached.immunizationTypes) setImmunizationTypes(cached.immunizationTypes);
       }
     });
-  }, [locationId]);
+  }, [enabled, locationId]);
   const refreshTimerRef = useRef(null);
 
   // ── Transform Gingr owners → Lite client shape ──
@@ -253,7 +254,10 @@ function useGingrData(locationId, refreshOptions = {}) {
   // Phase 2a: today's reservations (fast — ~200 rows, dashboard-ready in <500ms)
   // Phase 2b: full reservations loaded in background (needed for ops hub, client detail)
   const loadData = useCallback(async () => {
-    if (!locationId) return;
+    if (!enabled || !locationId) {
+      setLoading(false);
+      return;
+    }
     try {
       setError(null);
 
@@ -610,7 +614,7 @@ function useGingrData(locationId, refreshOptions = {}) {
       console.error("Failed to load data:", err);
       setError(err.message);
     }
-  }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
+  }, [enabled, locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
 
   // ── Helper: extract real error from edge function responses ──
   const extractEdgeFnError = async (fnError) => {
@@ -636,7 +640,7 @@ function useGingrData(locationId, refreshOptions = {}) {
   // ── Trigger sync via Edge Function (auto-retries backfill until complete) ──
   const [syncProgress, setSyncProgress] = useState(null); // { chunksProcessed, chunksRemaining }
   const triggerSync = useCallback(async (syncType = "full") => {
-    if (!locationId || syncing) return;
+    if (!enabled || !locationId || syncing) return;
     try {
       setSyncing(true);
       setSyncProgress(null);
@@ -681,7 +685,7 @@ function useGingrData(locationId, refreshOptions = {}) {
       setSyncProgress(null);
       throw err;
     }
-  }, [locationId, syncing, loadData]);
+  }, [enabled, locationId, syncing, loadData]);
 
   // ── Refresh = reload from Supabase (no API call) ──
   const refresh = useCallback(() => {
@@ -690,26 +694,30 @@ function useGingrData(locationId, refreshOptions = {}) {
 
   // ── Auto-load on mount / location change ──
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     loadData();
-  }, [loadData]);
+  }, [enabled, loadData]);
 
   // ── Auto-sync at configured interval (default 15 min), pauses outside business hours ──
   const gingrIntervalMs = refreshOptions.refreshIntervalMs || 15 * 60 * 1000;
   const gingrBusinessCheck = refreshOptions.isWithinBusinessHours;
   useEffect(() => {
-    if (!locationId) return;
+    if (!enabled || !locationId) return;
     refreshTimerRef.current = setInterval(() => {
       if (typeof gingrBusinessCheck === "function" && !gingrBusinessCheck()) return;
       triggerSync("incremental").catch(() => {});
     }, gingrIntervalMs);
     return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
-  }, [locationId, triggerSync, gingrIntervalMs, gingrBusinessCheck]);
+  }, [enabled, locationId, triggerSync, gingrIntervalMs, gingrBusinessCheck]);
 
   // Fetch today's daily ops from Supabase (server-computed via ops-compute edge function)
   const td = todayStr();
   const [dailyOps, setDailyOps] = useState([]);
   useEffect(() => {
-    if (!locationId) return;
+    if (!enabled || !locationId) return;
     supabase.from("lite_daily_ops").select("*").eq("location_id", locationId).eq("date", td).then(({ data: rows }) => {
       if (rows && rows.length > 0) {
         setDailyOps(rows.map(r => ({
@@ -725,12 +733,12 @@ function useGingrData(locationId, refreshOptions = {}) {
         })));
       }
     });
-  }, [locationId, td]);
+  }, [enabled, locationId, td]);
 
   // Fetch checklist templates from DB (single source of truth for both web and mobile)
   const [checklistTemplates, setChecklistTemplates] = useState({});
   useEffect(() => {
-    if (!locationId) return;
+    if (!enabled || !locationId) return;
     supabase.from("lite_checklist_templates").select("template_type, items").eq("location_id", locationId).then(({ data: rows }) => {
       if (rows && rows.length > 0) {
         const map = {};
@@ -742,7 +750,7 @@ function useGingrData(locationId, refreshOptions = {}) {
         setChecklistTemplates(map);
       }
     });
-  }, [locationId]);
+  }, [enabled, locationId]);
 
   // ── Stable static arrays (created once, never change) ──
   const EMPTY = useRef([]).current;
