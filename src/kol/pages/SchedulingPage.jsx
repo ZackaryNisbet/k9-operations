@@ -3,7 +3,7 @@
 // Uses live Supabase data from scheduling_matrix_daily.
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { C, todayStr, addDays } from "../../shared/theme";
+import { C, K9_LOCATIONS, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, CalendarPicker } from "../../shared/ui";
 import { supabase } from "../../supabaseClient";
@@ -53,6 +53,44 @@ export {
 
 function formatVisibleSchedulingCopy(value) {
   return String(value ?? "").replace(/\bGINGR\b/g, "Gingr");
+}
+
+const KNOWN_LOCATION_DISPLAY_NAMES = new Map([
+  ["8ea382b0-63f7-44ac-b6f8-83243c03d946", "Cherry Hill"],
+]);
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
+function humanizeLocationKey(value) {
+  return String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function cleanReadableLocationName(value) {
+  const text = String(value || "").trim();
+  if (!text || isUuid(text)) return "";
+  return text;
+}
+
+function resolveSchedulingLocationName({ profile, locationMeta, locationId }) {
+  const staticLocation = K9_LOCATIONS.find((location) => location.id === locationId || location.slug === locationId);
+  return cleanReadableLocationName(locationMeta?.name)
+    || cleanReadableLocationName(locationMeta?.display_name)
+    || cleanReadableLocationName(locationMeta?.data?.name)
+    || cleanReadableLocationName(locationMeta?.data?.display_name)
+    || cleanReadableLocationName(locationMeta?.data?.location_name)
+    || cleanReadableLocationName(profile?.location_name)
+    || cleanReadableLocationName(profile?.locationName)
+    || cleanReadableLocationName(profile?.resort_name)
+    || cleanReadableLocationName(profile?.location)
+    || cleanReadableLocationName(staticLocation?.name)
+    || KNOWN_LOCATION_DISPLAY_NAMES.get(String(locationId || "").trim())
+    || (locationId && !isUuid(locationId) ? humanizeLocationKey(locationId) : "K9 Operations Location");
 }
 
 function SectionCard({ title, subtitle, icon, children, style }) {
@@ -144,8 +182,8 @@ function StatusChip({ status }) {
 function TrustBadge({ state, blocked }) {
   const effective = blocked ? "blocked" : state;
   const map = {
-    trusted: { bg: C.sucLt, color: C.suc, label: "Trusted" },
-    estimated: { bg: C.warnLt, color: C.warn, label: "Estimated" },
+    trusted: { bg: C.sucLt, color: C.suc, label: "Ready" },
+    estimated: { bg: C.warnLt, color: C.warn, label: "Projected" },
     missing: { bg: "#FEE2E2", color: "#991B1B", label: "Missing" },
     blocked: { bg: "#FEE2E2", color: "#991B1B", label: "Blocked" },
   };
@@ -1249,6 +1287,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
   const [copyNarrativeStatus, setCopyNarrativeStatus] = useState("idle");
   const [matrixExportState, setMatrixExportState] = useState({ status: "idle", message: "" });
+  const [locationMeta, setLocationMeta] = useState(null);
+  const [matrixHistoryOrigin, setMatrixHistoryOrigin] = useState({
+    status: "idle",
+    message: "",
+    firstDate: null,
+    lastDate: null,
+    source: null,
+  });
   const [matrixBackfillState, setMatrixBackfillState] = useState({
     status: "idle",
     message: "",
@@ -1256,6 +1302,32 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     completedDays: 0,
     totalDays: 0,
   });
+  const readableLocationName = useMemo(
+    () => resolveSchedulingLocationName({ profile, locationMeta, locationId }),
+    [locationId, locationMeta, profile?.location, profile?.locationName, profile?.location_name, profile?.resort_name],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setLocationMeta(null);
+    if (!isUuid(locationId)) return () => {
+      cancelled = true;
+    };
+
+    supabase
+      .from("locations")
+      .select("*")
+      .eq("id", locationId)
+      .maybeSingle()
+      .then(({ data: row, error: locationError }) => {
+        if (cancelled) return;
+        setLocationMeta(locationError ? null : row || null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
 
   useEffect(() => {
     setMatrixExportState((current) => (
@@ -1269,6 +1341,16 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       totalDays: 0,
     });
   }, [locationId, demandRange.startDate, demandRange.endDate]);
+
+  useEffect(() => {
+    setMatrixHistoryOrigin({
+      status: "idle",
+      message: "",
+      firstDate: null,
+      lastDate: null,
+      source: null,
+    });
+  }, [locationId]);
 
   // Version & override state
   const [savedVersions, setSavedVersions] = useState([]);
@@ -1596,13 +1678,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   const handleExportDemandMatrixXlsx = useCallback(async () => {
     if (!matrixExportReady) {
-      const message = matrixRangeReadiness.reason || "Export is blocked until every selected day is computed and reconciled.";
+      const message = matrixRangeReadiness.reason || "Export is blocked until every selected day has a computed Demand Matrix row.";
       setMatrixExportState({ status: "blocked", message });
       addGlobalToast?.(message, matrixRangeReadiness.status === "failed" ? "error" : "info");
       return;
     }
 
-    const locationName = profile?.location_name || profile?.locationName || profile?.location || profile?.resort_name || profile?.location_id || "Location";
     const generatedAt = new Date().toISOString();
     const model = buildDemandMatrixExportModel({
       days: workbookDays,
@@ -1610,7 +1691,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       startDate: demandRange.startDate,
       endDate: demandRange.endDate,
       locationId,
-      locationName,
+      locationName: readableLocationName,
       generatedAt,
       readiness: matrixRangeReadiness,
     });
@@ -1642,11 +1723,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     locationId,
     matrixExportReady,
     matrixRangeReadiness,
-    profile?.location,
-    profile?.locationName,
-    profile?.location_id,
-    profile?.location_name,
-    profile?.resort_name,
+    readableLocationName,
     workbookDays,
   ]);
 
@@ -1731,6 +1808,59 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     setViewStartDate(cleanStart);
     setMatrixPage(0);
   }, [today]);
+
+  const applyAllHistoricalRange = useCallback(async () => {
+    if (!locationId) {
+      const message = "Select a location before loading all historical Scheduling Demand Matrix data.";
+      setMatrixHistoryOrigin({ status: "failed", message, firstDate: null, lastDate: null, source: null });
+      addGlobalToast?.(message, "error");
+      return;
+    }
+
+    setMatrixHistoryOrigin({
+      status: "checking",
+      message: "Finding earliest operational GINGR reservation day for this location...",
+      firstDate: null,
+      lastDate: null,
+      source: null,
+    });
+
+    try {
+      const { data: originData, error: originError } = await supabase.functions.invoke("scheduling-matrix-backfill", {
+        body: {
+          action: "origin",
+          location_id: locationId,
+        },
+      });
+      if (originError || originData?.error) {
+        throw new Error(originError?.message || originData?.error || "Failed to find historical Scheduling Demand Matrix origin.");
+      }
+
+      const origin = originData?.origin || {};
+      const firstDate = origin.first_operational_date;
+      const lastDate = origin.last_historical_date;
+      if (!firstDate || !lastDate) {
+        throw new Error("No operational GINGR reservation history was found for this location.");
+      }
+
+      setMatrixRangeMode("custom");
+      applyCustomRange(firstDate, lastDate);
+      const dayCount = buildSchedulingDateRange(firstDate, lastDate).length;
+      const message = `All history selected for ${readableLocationName}: ${firstDate} through ${lastDate} (${dayCount} days).`;
+      setMatrixHistoryOrigin({
+        status: "ready",
+        message,
+        firstDate,
+        lastDate,
+        source: origin.source || "gingr_reservations",
+      });
+      addGlobalToast?.(message, "success");
+    } catch (originError) {
+      const message = originError?.message || "Failed to find historical Scheduling Demand Matrix origin.";
+      setMatrixHistoryOrigin({ status: "failed", message, firstDate: null, lastDate: null, source: null });
+      addGlobalToast?.(message, "error");
+    }
+  }, [addGlobalToast, applyCustomRange, locationId, readableLocationName]);
 
   const handleRangeJump = useCallback((delta) => {
     if (matrixRangeMode === "custom") {
@@ -1852,6 +1982,21 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }[matrixRangeReadiness.status] || { bg: "#F1F5F9", color: C.textMut, label: "Unknown" };
   const matrixExportRunning = matrixExportState.status === "running";
   const matrixExportDisabled = matrixRangeReadiness.status === "checking" || matrixExportRunning;
+  const allHistorySelected = matrixRangeMode === "custom"
+    && matrixHistoryOrigin.firstDate === demandRange.startDate
+    && matrixHistoryOrigin.lastDate === demandRange.endDate;
+  const displayedComputedMatrixDays = backfillRunning
+    ? Math.min(
+      matrixRangeReadiness.expectedDayCount,
+      Math.max(matrixRangeReadiness.computedMatrixRowCount, matrixBackfillState.completedDays || 0),
+    )
+    : matrixRangeReadiness.computedMatrixRowCount;
+  const displayedMissingMatrixDays = backfillRunning
+    ? Math.max(0, matrixRangeReadiness.expectedDayCount - displayedComputedMatrixDays)
+    : matrixRangeReadiness.missingDays.length;
+  const readinessReasonText = backfillRunning
+    ? `Historical matrix backfill running: ${displayedComputedMatrixDays}/${matrixRangeReadiness.expectedDayCount} computed days. Export unlocks after every selected day has a persisted Demand Matrix row.`
+    : matrixRangeReadiness.reason;
 
   const gridData = visibleRotation?.grid || { lanes: [], slots: [], cells: {} };
   const { lanes, slots, cells: serverGrid } = gridData;
@@ -1920,6 +2065,25 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 {option.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={applyAllHistoricalRange}
+              disabled={matrixHistoryOrigin.status === "checking"}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                border: `1px solid ${allHistorySelected ? C.pri : C.border}`,
+                background: allHistorySelected ? C.priLt : C.surface,
+                color: allHistorySelected ? C.pri : C.textMut,
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: matrixHistoryOrigin.status === "checking" ? "default" : "pointer",
+                fontFamily: "inherit",
+                opacity: matrixHistoryOrigin.status === "checking" ? 0.7 : 1,
+              }}
+            >
+              {matrixHistoryOrigin.status === "checking" ? "Finding History..." : "All History"}
+            </button>
             {matrixRangeMode === "custom" && (
               <div style={{
                 display: "flex",
@@ -2120,6 +2284,11 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             {matrixRangeMode !== "month" && workbookDays.length > MATRIX_PAGE_SIZE && ` Showing ${visibleMatrixDays.length} table days at a time across the ${workbookDays.length}-day range.`}
           </div>
         )}
+        {matrixHistoryOrigin.message && (
+          <div style={{ fontSize: 11, color: matrixHistoryOrigin.status === "failed" ? C.dan : matrixHistoryOrigin.status === "checking" ? C.pri : C.textMut, marginBottom: 14, lineHeight: 1.55, fontWeight: 700 }}>
+            Historical source: {matrixHistoryOrigin.message}
+          </div>
+        )}
         <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "grid", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2127,17 +2296,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                 {readinessTone.label}
               </span>
               <span style={{ fontSize: 12, color: C.text, fontWeight: 800 }}>
-                XLSX readiness: {matrixRangeReadiness.computedMatrixRowCount}/{matrixRangeReadiness.expectedDayCount} computed matrix days
+                XLSX readiness: {displayedComputedMatrixDays}/{matrixRangeReadiness.expectedDayCount} computed matrix days
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 11, color: C.textMut, fontWeight: 700 }}>
-              <span>Missing {matrixRangeReadiness.missingDays.length}</span>
+              <span>Missing {displayedMissingMatrixDays}</span>
             </div>
           </div>
           <div style={{ fontSize: 11, color: matrixRangeReadiness.status === "ready" ? C.suc : matrixRangeReadiness.status === "checking" ? C.pri : C.dan, lineHeight: 1.55, fontWeight: 700 }}>
-            {matrixRangeReadiness.reason}
+            {readinessReasonText}
           </div>
-          {matrixRangeReadiness.blockingReasons.length > 0 && (
+          {!backfillRunning && matrixRangeReadiness.blockingReasons.length > 0 && (
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3, fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
               {matrixRangeReadiness.blockingReasons.slice(0, 5).map((reason) => <li key={reason}>{formatVisibleSchedulingCopy(reason)}</li>)}
               {matrixRangeReadiness.blockingReasons.length > 5 && <li>{matrixRangeReadiness.blockingReasons.length - 5} more readiness issue groups.</li>}
@@ -2262,9 +2431,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                       <div style={{ fontSize: 10, color: blocked ? C.dan : generationBlockers.length > 0 ? C.warn : C.textMut, marginTop: 6, minHeight: 28, lineHeight: 1.35 }}>
                         {blocked
                           ? formatVisibleSchedulingCopy(generationBlockers[0] || "Waiting on matrix")
-                          : generationBlockers.length > 0
-                            ? "Review notes"
-                            : "Ready to schedule"}
+                          : "Ready to schedule"}
                       </div>
                       {column.type === "day" && matrixMode === "projected" && getProjectionSummaryLines(day).length > 0 && (
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, lineHeight: 1.35 }}>
@@ -2429,9 +2596,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
             </span>
             <span style={{ fontSize: 11, color: C.textMut }}>
-              Trust notes: {selectedDay?.trust?.notes?.length ? selectedDay.trust.notes.map(formatVisibleSchedulingCopy).join(" ") : "Verified rows are ready for staffing logic."}
-            </span>
-            <span style={{ fontSize: 11, color: C.textMut }}>
               Weekly totals shown in the workbook are dog-days, not unique reservations.
             </span>
           </div>
@@ -2465,7 +2629,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           {!selectedDay.canGenerate || !optimalRotation ? (
             <div style={{ padding: "16px 18px", borderRadius: 12, background: C.warnLt, border: `1px solid ${C.warn}22` }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                Headcount stays provisional until this day has a trusted matrix.
+                Headcount stays provisional until this day has a computed Demand Matrix row.
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
                 {generateDisabledReason}
@@ -2555,7 +2719,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           {!selectedDay?.canGenerate ? (
             <div style={{ padding: "16px 18px", borderRadius: 12, background: C.surfaceHover, border: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                Rotation generation is locked until the selected day has a trusted matrix.
+                Rotation generation is locked until the selected day has a computed Demand Matrix row.
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginTop: 6, lineHeight: 1.6 }}>
                 {generateDisabledReason}

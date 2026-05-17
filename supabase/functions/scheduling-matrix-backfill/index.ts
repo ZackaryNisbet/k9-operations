@@ -65,6 +65,14 @@ function minDate(a: string, b: string) {
   return a <= b ? a : b;
 }
 
+function isAllHistoryRequest(body: Record<string, unknown>) {
+  const dateFrom = String(body.date_from || "").trim().toLowerCase();
+  const range = String(body.range || "").trim().toLowerCase();
+  return body.all_history === true
+    || ["origin", "all-history", "all_history", "beginning", "beginning-of-time"].includes(dateFrom)
+    || ["all-history", "all_history", "origin"].includes(range);
+}
+
 function serviceClient() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -182,6 +190,82 @@ async function readCoverage(client: any, locationId: string, rangeStart: string,
   };
 }
 
+async function fetchHistoricalMatrixOrigin(client: any, locationId: string) {
+  const lastHistoricalDate = addDaysStr(dateStrET(), -1);
+  const sql = [
+    "SELECT",
+    "  min(r.start_date::date)::text AS first_operational_date,",
+    "  max(r.start_date::date)::text AS last_operational_start_date,",
+    "  count(*)::int AS operational_reservation_count",
+    "FROM public.gingr_reservations r",
+    "LEFT JOIN public.gingr_reservation_types rt",
+    "  ON rt.location_id = r.location_id",
+    " AND rt.gingr_id::text = r.reservation_type_id::text",
+    "WHERE r.location_id = ($1)::text",
+    "  AND r.cancelled_date IS NULL",
+    "  AND r.start_date IS NOT NULL",
+    "  AND CASE",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%tour%' THEN false",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%groom%' THEN false",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%bath%' THEN false",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%evaluation%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%eval%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day boarding%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day board%' THEN true",
+    "    WHEN coalesce(rt.is_daycare, false) THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%daycare%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%day care%' THEN true",
+    "    WHEN coalesce(rt.is_boarding, false) THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%boarding%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%lodge%' THEN true",
+    "    WHEN lower(coalesce(r.reservation_type_name, '')) LIKE '%kennel%' THEN true",
+    "    ELSE false",
+    "  END",
+  ].join("\n");
+
+  const { data, error } = await client.rpc("exec_sql", {
+    query: sql,
+    params: [locationId],
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : null;
+  const firstOperationalDate = parseDate(row?.first_operational_date);
+  const lastOperationalStartDate = parseDate(row?.last_operational_start_date);
+  return {
+    location_id: locationId,
+    source: "gingr_reservations",
+    first_operational_date: firstOperationalDate,
+    last_operational_start_date: lastOperationalStartDate,
+    last_historical_date: lastHistoricalDate,
+    operational_reservation_count: Number(row?.operational_reservation_count || 0),
+  };
+}
+
+async function resolveBackfillRange(client: any, locationId: string, body: Record<string, unknown>) {
+  const allHistory = isAllHistoryRequest(body);
+  let origin = null;
+  let rangeStart = parseDate(body.date_from);
+  let rangeEnd = parseDate(body.date_to);
+
+  if (allHistory) {
+    origin = await fetchHistoricalMatrixOrigin(client, locationId);
+    rangeStart = origin.first_operational_date;
+    rangeEnd = rangeEnd || origin.last_historical_date;
+    if (!rangeStart) {
+      throw Object.assign(
+        new Error("No operational GINGR reservation history was found for this location. Configure or sync GINGR history before starting an all-history Scheduling Demand Matrix backfill."),
+        { status: 404 },
+      );
+    }
+  }
+
+  if (!rangeStart || !rangeEnd) throw Object.assign(new Error("date_from and date_to must be YYYY-MM-DD"), { status: 400 });
+  if (rangeEnd < rangeStart) throw Object.assign(new Error("date_to must be on or after date_from"), { status: 400 });
+
+  return { rangeStart, rangeEnd, origin };
+}
+
 async function fetchRun(client: any, runId: string) {
   const { data, error } = await client
     .from("scheduling_matrix_backfill_runs")
@@ -197,10 +281,8 @@ async function startRun(req: Request, body: Record<string, unknown>) {
   const requestedLocationId = String(body.location_id || "").trim();
   const locationId = normalizeLocationId(requestedLocationId);
   if (!locationId) throw Object.assign(new Error("location_id required"), { status: 400 });
-  const rangeStart = parseDate(body.date_from);
-  const rangeEnd = parseDate(body.date_to);
-  if (!rangeStart || !rangeEnd) throw Object.assign(new Error("date_from and date_to must be YYYY-MM-DD"), { status: 400 });
-  if (rangeEnd < rangeStart) throw Object.assign(new Error("date_to must be on or after date_from"), { status: 400 });
+  const { client, userId } = await assertLocationAccess(req, locationId, { write: true });
+  const { rangeStart, rangeEnd, origin } = await resolveBackfillRange(client, locationId, body);
   if (!isSchedulingBackfillRangeAllowed(rangeStart, rangeEnd)) {
     throw Object.assign(new Error(`Historical backfill is limited to ${SCHEDULING_MATRIX_BACKFILL_MAX_RANGE_DAYS} days per run.`), { status: 400 });
   }
@@ -208,7 +290,6 @@ async function startRun(req: Request, body: Record<string, unknown>) {
     throw Object.assign(new Error("Historical backfill only supports dates before today. Current/future matrix rows stay on the rolling compute path."), { status: 400 });
   }
 
-  const { client, userId } = await assertLocationAccess(req, locationId, { write: true });
   const batchSize = clampBatchSize(body.batch_size);
   const mode = String(body.mode || "historical_location_bootstrap").trim() || "historical_location_bootstrap";
   const coverage = await readCoverage(client, locationId, rangeStart, rangeEnd);
@@ -273,7 +354,7 @@ async function startRun(req: Request, body: Record<string, unknown>) {
     queueBackgroundProcess(run.id);
   }
 
-  return { run, coverage };
+  return { run, coverage, origin };
 }
 
 async function updateRunCoverage(client: any, run: any, patch: Record<string, unknown> = {}) {
@@ -468,6 +549,15 @@ Deno.serve(async (req: Request) => {
     if (action === "start") {
       const result = await startRun(req, body);
       return jsonResponse({ ok: true, action, ...result }, result.coverage.is_complete ? 200 : 202);
+    }
+
+    if (action === "origin") {
+      const requestedLocationId = String(body.location_id || "").trim();
+      const locationId = normalizeLocationId(requestedLocationId);
+      if (!locationId) throw Object.assign(new Error("location_id required"), { status: 400 });
+      const { client } = await assertLocationAccess(req, locationId);
+      const origin = await fetchHistoricalMatrixOrigin(client, locationId);
+      return jsonResponse({ ok: true, action, origin });
     }
 
     if (action === "status") {
