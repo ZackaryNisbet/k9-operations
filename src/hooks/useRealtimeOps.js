@@ -9,12 +9,13 @@ import { supabase } from "../supabaseClient";
  * Merges incoming rows into the local dailyOps state via setDailyOps.
  * Skips self-originated writes using a timestamp guard.
  */
-export default function useRealtimeOps(locationId, setDailyOps) {
+export default function useRealtimeOps(locationId, setDailyOps, options = {}) {
+  const enabled = options.enabled !== false;
   // Track last local write timestamp to avoid double-applying our own changes
   const lastLocalWrite = useRef(0);
 
   useEffect(() => {
-    if (!locationId) return;
+    if (!enabled || !locationId) return;
 
     const channel = supabase
       .channel("ops-realtime")
@@ -66,7 +67,7 @@ export default function useRealtimeOps(locationId, setDailyOps) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [locationId, setDailyOps]);
+  }, [enabled, locationId, setDailyOps]);
 
   // Expose a function to mark local writes so realtime skips the echo
   return { markLocalWrite: () => { lastLocalWrite.current = Date.now(); } };
