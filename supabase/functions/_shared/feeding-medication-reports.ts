@@ -12,6 +12,18 @@ export type CareReportKind = "feeding-meds" | "feeding-report" | "medication-rep
 
 const CARE_SESSIONS: CareSession[] = ["am", "midday", "pm"];
 
+const CARE_SESSION_LABELS: Record<CareSession, string> = {
+  am: "AM",
+  midday: "Midday",
+  pm: "PM",
+};
+
+const STANDARD_TIME_WINDOWS: Record<CareSession, [number, number]> = {
+  am: [5 * 60, 8 * 60],
+  midday: [11 * 60 + 30, 13 * 60],
+  pm: [16 * 60, 20 * 60],
+};
+
 const ROOM_ORDER = [
   "1C", "2C", "3C", "4C", "5C", "6C", "7C", "8C",
   "201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212",
@@ -59,6 +71,79 @@ function addDays(dateStr: string, days: number): string {
   const date = new Date(`${dateStr}T12:00:00`);
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function stableToken(value: unknown): string {
+  return normalizeText(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item";
+}
+
+function parseClockMinutes(value: string): number | null {
+  const text = String(value || "").toLowerCase().replace(/\./g, "");
+  const meridiem = text.match(/\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b/);
+  if (meridiem) {
+    let hour = Number.parseInt(meridiem[1], 10);
+    const minute = meridiem[2] ? Number.parseInt(meridiem[2], 10) : 0;
+    if (hour < 1 || hour > 12 || minute > 59) return null;
+    if (meridiem[3] === "pm" && hour !== 12) hour += 12;
+    if (meridiem[3] === "am" && hour === 12) hour = 0;
+    return (hour * 60) + minute;
+  }
+  const clock24 = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (clock24) {
+    return (Number.parseInt(clock24[1], 10) * 60) + Number.parseInt(clock24[2], 10);
+  }
+  return null;
+}
+
+function clockLabel(minutes: number): string {
+  const hour24 = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+function standardSessionForClock(minutes: number): CareSession | null {
+  for (const session of CARE_SESSIONS) {
+    const [start, end] = STANDARD_TIME_WINDOWS[session];
+    if (minutes >= start && minutes < end) return session;
+  }
+  return null;
+}
+
+function careEntryTypeSub(session: CareSession): string {
+  return careTypeSub("feeding-meds", session);
+}
+
+function neighboringSafetyDisplays(minutes: number, scheduledDate: string): Array<{
+  session: CareSession;
+  date: string;
+  position: "top" | "bottom";
+}> {
+  const standard = standardSessionForClock(minutes);
+  if (standard) return [{ session: standard, date: scheduledDate, position: "top" }];
+  if (minutes >= STANDARD_TIME_WINDOWS.am[1] && minutes < STANDARD_TIME_WINDOWS.midday[0]) {
+    return [
+      { session: "am", date: scheduledDate, position: "bottom" },
+      { session: "midday", date: scheduledDate, position: "top" },
+    ];
+  }
+  if (minutes >= STANDARD_TIME_WINDOWS.midday[1] && minutes < STANDARD_TIME_WINDOWS.pm[0]) {
+    return [
+      { session: "midday", date: scheduledDate, position: "bottom" },
+      { session: "pm", date: scheduledDate, position: "top" },
+    ];
+  }
+  if (minutes >= STANDARD_TIME_WINDOWS.pm[1]) {
+    return [
+      { session: "pm", date: scheduledDate, position: "bottom" },
+      { session: "am", date: addDays(scheduledDate, 1), position: "top" },
+    ];
+  }
+  return [
+    { session: "pm", date: addDays(scheduledDate, -1), position: "bottom" },
+    { session: "am", date: scheduledDate, position: "top" },
+  ];
 }
 
 function formatShortDate(value: string | null | undefined): string {
@@ -292,6 +377,7 @@ function buildFeedingItem(row: any) {
   const kind = foodKindFor(row);
   return {
     id: `feed_${row?.gingr_id || row?.id || first?.animalId || `${foodLabel}_${schedule}`}`,
+    itemType: "feeding",
     summary: [method, foodLabel, amount].filter(Boolean).join(" · ") || foodLabel,
     detail: [foodLabel, amount].filter(Boolean).join(" · ") || foodLabel,
     method,
@@ -328,6 +414,7 @@ function buildMedicationItem(row: any, override?: any) {
   const notes = normalizeText(first?.medication_notes?.value || row?.special_instructions || row?.notes || raw?.special_instructions || raw?.notes);
   return {
     id: `med_${row?.gingr_id || row?.id || `${name}_${schedule}`}_${normalizeText(first?.id || name).replace(/\s+/g, "_")}`,
+    itemType: "medication",
     summary: [name, dosage].filter(Boolean).join(" · ") || name,
     detail: [name, dosage, route].filter(Boolean).join(" · ") || name,
     medicationName: name,
@@ -393,10 +480,32 @@ function isPriorOvernight(row: any, date: string): boolean {
   return dateKey(row?.start_date) < date && dateKey(row?.end_date) >= date;
 }
 
+function careSectionFor(row: {
+  statusBucket: "checked_in" | "checked_out" | "pending";
+  endDate: string;
+  checkOutDate: string;
+}, date: string): { id: string; label: string; sort: number } {
+  if (row.statusBucket === "pending") return { id: "scheduled_arrival", label: "Scheduled to come in", sort: 20 };
+  if (row.endDate === date || row.checkOutDate === date) return { id: "scheduled_departure", label: "Scheduled to check out", sort: 30 };
+  if (row.statusBucket === "checked_out") return { id: "checked_out", label: "Checked out", sort: 40 };
+  return { id: "currently_in", label: "Currently checked in", sort: 10 };
+}
+
+function reservationCoversDate(row: any, date: string): boolean {
+  const start = row?.startDate || dateKey(row?.start_date);
+  const end = row?.endDate || dateKey(row?.end_date);
+  if (!date) return true;
+  if (start && start > date) return false;
+  if (end && end < date) return false;
+  return true;
+}
+
 function buildSummary(rows: any[]) {
   const summary = {
     total: rows.length,
+    totalTasks: 0,
     feedingCount: 0,
+    feedingTaskCount: 0,
     medicationCount: 0,
     foodFromHome: 0,
     houseFoodChicken: 0,
@@ -408,7 +517,9 @@ function buildSummary(rows: any[]) {
     byCategory: {} as Record<string, number>,
   };
   for (const row of rows) {
+    summary.totalTasks += (row.feedingItems || []).length + (row.medicationItems || []).length;
     if ((row.feedingItems || []).length > 0) summary.feedingCount += 1;
+    summary.feedingTaskCount += (row.feedingItems || []).length;
     summary.medicationCount += (row.medicationItems || []).length;
     const kinds = new Set((row.feedingItems || []).map((item: any) => item.foodKind));
     if (kinds.has("food_from_home")) summary.foodFromHome += 1;
@@ -520,6 +631,11 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
     const { roomLabel, areaName } = resolveRoomInfo(context.roomLookup, context.currentRoomMap, reservation);
     const playgroup = context.playgroupMap.get(animalId) || "";
     const bucket = statusBucket(reservation);
+    const startDate = dateKey(reservation?.start_date);
+    const endDate = dateKey(reservation?.end_date);
+    const checkInDate = dateKey(reservation?.check_in_date);
+    const checkOutDate = dateKey(reservation?.check_out_date);
+    const careSection = careSectionFor({ statusBucket: bucket, endDate, checkOutDate }, date);
     const animalMedicationNotes = normalizeText(animal?.raw_data?.medicines);
     const medicationItems = dedupeInstructionItems((context.medicationMap.get(animalId) || []).flatMap(buildMedicationItems))
       .map((item) => ({ ...item, notes: medicationAdminNote(item, animalMedicationNotes) }));
@@ -539,8 +655,10 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
       reservationDates: reservationDates(reservation),
       dropoffTime: formatTime(reservation?.check_in_date || reservation?.start_date),
       pickupTime: formatTime(reservation?.check_out_date || reservation?.end_date),
-      startDate: dateKey(reservation?.start_date),
-      endDate: dateKey(reservation?.end_date),
+      startDate,
+      endDate,
+      checkInDate,
+      checkOutDate,
       imageUrl: animal?.local_photo_url || animal?.image_url || null,
       playgroup: playgroup || null,
       hasPrivatePlay: playgroup.toLowerCase().includes("private"),
@@ -550,6 +668,9 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
       isCheckedOut: bucket === "checked_out",
       isPending: bucket === "pending",
       isPriorOvernight: isPriorOvernight(reservation, date),
+      careSection: careSection.id,
+      careSectionLabel: careSection.label,
+      careSectionSort: careSection.sort,
       feedingItems: dedupeInstructionItems((context.feedingMap.get(animalId) || []).map(buildFeedingItem)),
       medicationItems,
       reservationNotes: normalizeText(raw?.notes?.reservation_notes || reservation?.notes_reservation),
@@ -561,16 +682,124 @@ function buildBaseRows(context: Awaited<ReturnType<typeof fetchCareContext>>, da
   });
 }
 
-function withSessionItems(row: any, context: Awaited<ReturnType<typeof fetchCareContext>>, session: CareSession) {
+function itemCompletionKey(
+  row: any,
+  item: any,
+  type: "feeding" | "medication",
+  scheduledDate: string,
+  session: CareSession,
+  minutes: number | null,
+  isSafetyDuplicate: boolean,
+): string {
+  const clockPart = isSafetyDuplicate && minutes != null ? `clock_${minutes}` : session;
+  return [
+    "care",
+    type,
+    stableToken(row?.animalGingrId || row?.id),
+    stableToken(item?.sourceItemId || item?.id || item?.summary),
+    scheduledDate,
+    clockPart,
+  ].join(":");
+}
+
+function buildSafetyOccurrence(
+  row: any,
+  item: any,
+  type: "feeding" | "medication",
+  reportDate: string,
+  session: CareSession,
+) {
+  const text = scheduleText(item);
+  const minutes = parseClockMinutes(text);
+  if (minutes == null) return null;
+
+  const candidateDates = [addDays(reportDate, -1), reportDate, addDays(reportDate, 1)];
+  for (const scheduledDate of candidateDates) {
+    if (!reservationCoversDate(row, scheduledDate)) continue;
+    const displays = neighboringSafetyDisplays(minutes, scheduledDate);
+    const display = displays.find((candidate) => candidate.date === reportDate && candidate.session === session);
+    if (!display) continue;
+    const standardSession = standardSessionForClock(minutes);
+    const completionKey = itemCompletionKey(row, item, type, scheduledDate, session, minutes, !standardSession);
+    if (standardSession) {
+      return {
+        ...item,
+        id: completionKey,
+        sourceItemId: item.id,
+        itemType: type,
+        scheduledDate,
+        scheduledTimeMinutes: minutes,
+        scheduledTimeLabel: clockLabel(minutes),
+      };
+    }
+    const paired = displays.find((candidate) => candidate.date !== display.date || candidate.session !== display.session) || display;
+    return {
+      ...item,
+      id: completionKey,
+      sourceItemId: item.id,
+      itemType: type,
+      scheduledDate,
+      scheduledTimeMinutes: minutes,
+      scheduledTimeLabel: clockLabel(minutes),
+      safetyDuplicate: {
+        message: `Safety duplicate: this is the same ${clockLabel(minutes)} ${type === "feeding" ? "feeding" : "medication dose"} shown in ${CARE_SESSION_LABELS[display.session]} and ${CARE_SESSION_LABELS[paired.session]}. Complete it once only.`,
+        position: display.position,
+        pairedSession: paired.session,
+        pairedDate: paired.date,
+        pairedTypeSub: careEntryTypeSub(paired.session),
+        pairedEntryId: careEntryId("feeding-meds", paired.session, paired.date),
+      },
+    };
+  }
+  return null;
+}
+
+function buildSessionOccurrence(
+  row: any,
+  item: any,
+  type: "feeding" | "medication",
+  reportDate: string,
+  session: CareSession,
+) {
+  const safetyOccurrence = buildSafetyOccurrence(row, item, type, reportDate, session);
+  if (safetyOccurrence) return safetyOccurrence;
+  if (!reservationCoversDate(row, reportDate)) return null;
+  if (!matchesCareSession(item, session, type)) return null;
+  const completionKey = itemCompletionKey(row, item, type, reportDate, session, null, false);
+  return {
+    ...item,
+    id: completionKey,
+    sourceItemId: item.id,
+    itemType: type,
+    scheduledDate: reportDate,
+  };
+}
+
+function withSessionItems(row: any, session: CareSession, date: string) {
+  const feedingItems = row.feedingItems
+    .map((item: any) => buildSessionOccurrence(row, item, "feeding", date, session))
+    .filter(Boolean);
+  const medicationItems = row.medicationItems
+    .map((item: any) => buildSessionOccurrence(row, item, "medication", date, session))
+    .filter(Boolean);
+  const safetyPositions = [...feedingItems, ...medicationItems]
+    .map((item: any) => item?.safetyDuplicate?.position)
+    .filter(Boolean);
   return {
     ...row,
-    feedingItems: row.feedingItems.filter((item: any) => matchesCareSession(item, session, "feeding")),
-    medicationItems: row.medicationItems.filter((item: any) => matchesCareSession(item, session, "medication")),
+    feedingItems,
+    medicationItems,
+    displaySortRank: safetyPositions.includes("top") ? -1 : safetyPositions.includes("bottom") ? 1 : 0,
   };
 }
 
 function sortRows(rows: any[]) {
-  return rows.sort((a, b) => a.roomSortKey.localeCompare(b.roomSortKey) || a.dogName.localeCompare(b.dogName));
+  return rows.sort((a, b) =>
+    (a.displaySortRank || 0) - (b.displaySortRank || 0) ||
+    (a.careSectionSort || 99) - (b.careSectionSort || 99) ||
+    a.roomSortKey.localeCompare(b.roomSortKey) ||
+    a.dogName.localeCompare(b.dogName)
+  );
 }
 
 function buildPayload(rows: any[], kind: CareReportKind, session: CareSession, date: string) {
@@ -610,7 +839,7 @@ export async function computeCareReportsForDate(
   const byKey: Record<string, any> = {};
 
   for (const session of CARE_SESSIONS) {
-    const sessionRows = baseRows.map((row) => withSessionItems(row, context, session));
+    const sessionRows = baseRows.map((row) => withSessionItems(row, session, date));
 
     const feedingMedsRows = sortRows(
       sessionRows

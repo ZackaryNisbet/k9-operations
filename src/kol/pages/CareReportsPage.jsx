@@ -13,11 +13,23 @@ const SESSIONS = [
   { id: "pm", label: "PM" },
 ];
 
+const TASK_MODES = [
+  { id: "feeding", label: "Feeding" },
+  { id: "meds", label: "Meds" },
+];
+
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
   { id: "checked_in", label: "Checked In" },
   { id: "checked_out", label: "Checked Out" },
   { id: "pending", label: "Not Checked In" },
+];
+
+const CARE_SECTIONS = [
+  { id: "currently_in", label: "Currently checked in" },
+  { id: "scheduled_arrival", label: "Scheduled to come in" },
+  { id: "scheduled_departure", label: "Scheduled to check out" },
+  { id: "checked_out", label: "Checked out" },
 ];
 
 const OUTCOMES = [
@@ -58,17 +70,42 @@ function timeLabel(value) {
   }
 }
 
-function buildSummary(rows) {
+function itemCompleted(state) {
+  return !!(state?.completedAt || state?.outcome || state?.decision || state?.checkOutAt);
+}
+
+function visibleItemsFor(row, kind, taskMode) {
+  if (kind === "feeding-meds") return taskMode === "feeding" ? (row.feedingItems || []) : (row.medicationItems || []);
+  if (kind === "feeding-report") return row.feedingItems || [];
+  if (kind === "medication-report") return row.medicationItems || [];
+  return [...(row.feedingItems || []), ...(row.medicationItems || [])];
+}
+
+function rowCompletionKeys(row, kind, taskMode) {
+  if (kind !== "feeding-meds") return [row.id];
+  const itemKeys = visibleItemsFor(row, kind, taskMode).map((item) => item.id).filter(Boolean);
+  return itemKeys.length ? itemKeys : [row.id];
+}
+
+function rowCompleted(row, items, kind, taskMode) {
+  const keys = rowCompletionKeys(row, kind, taskMode);
+  return keys.length > 0 && keys.every((key) => itemCompleted(items?.[key]));
+}
+
+function buildSummary(rows, items, kind, taskMode) {
   return rows.reduce((acc, row) => {
     acc.total += 1;
-    if ((row.feedingItems || []).length) acc.feeding += 1;
+    const visibleItems = visibleItemsFor(row, kind, taskMode);
+    acc.tasks += visibleItems.length || 1;
+    acc.completedTasks += rowCompletionKeys(row, kind, taskMode).filter((key) => itemCompleted(items?.[key])).length;
+    if ((row.feedingItems || []).length) acc.feeding += (row.feedingItems || []).length;
     acc.meds += (row.medicationItems || []).length;
     const kinds = new Set((row.feedingItems || []).map((item) => item.foodKind));
     if (kinds.has("food_from_home")) acc.ffh += 1;
     if (kinds.has("house_food_chicken")) acc.chicken += 1;
     if (kinds.has("house_food_salmon")) acc.salmon += 1;
     return acc;
-  }, { total: 0, feeding: 0, meds: 0, ffh: 0, chicken: 0, salmon: 0 });
+  }, { total: 0, tasks: 0, completedTasks: 0, feeding: 0, meds: 0, ffh: 0, chicken: 0, salmon: 0 });
 }
 
 function isCompleted(state) {
@@ -120,10 +157,19 @@ function InstructionBlock({ title, items, tone }) {
     <div style={{ display: "grid", gap: 8 }}>
       <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", color: C.textMut, textTransform: "uppercase" }}>{title}</div>
       {items.map((item) => (
-        <div key={item.id} style={{ border: `1px solid ${C.border}`, background: C.bg, borderRadius: 10, padding: "10px 12px" }}>
+        <div
+          key={item.id}
+          style={{
+            border: `1px solid ${item.safetyDuplicate ? "#FCA5A5" : C.border}`,
+            background: item.safetyDuplicate ? "#FEF2F2" : C.bg,
+            borderRadius: 10,
+            padding: "10px 12px",
+          }}
+        >
           <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{item.summary}</div>
           <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{item.detail}</div>
           {item.schedule ? <div style={{ fontSize: 11, fontWeight: 800, color: accent, marginTop: 5 }}>{item.schedule}</div> : null}
+          {item.safetyDuplicate ? <div style={{ fontSize: 11, fontWeight: 900, color: "#B91C1C", marginTop: 6 }}>{item.safetyDuplicate.message}</div> : null}
           {item.notes ? <div style={{ fontSize: 12, color: "#B45309", marginTop: 5, whiteSpace: "pre-wrap" }}>{item.notes}</div> : null}
         </div>
       ))}
@@ -137,13 +183,13 @@ function rowStatusLabel(row) {
   return "Not checked in";
 }
 
-function CareReportsPage({ kind = "feeding-report", initialSession = "am", profile, currentLocation, nav }) {
+function CareReportsPage({ kind = "feeding-report", initialSession = "am", initialTaskMode, profile, currentLocation, nav }) {
   const locationId = currentLocation || profile?.location_id;
   const actorName = profile?.name || profile?.full_name || profile?.email || "Staff";
   const [session, setSession] = useState(initialSession);
+  const [taskMode, setTaskMode] = useState(initialTaskMode || (kind === "medication-report" ? "meds" : "feeding"));
   const [viewDate, setViewDate] = useState(todayStr());
   const [statusFilter, setStatusFilter] = useState("checked_in");
-  const [medsOnly, setMedsOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savingId, setSavingId] = useState(null);
@@ -153,6 +199,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
 
   const typeSub = useMemo(() => typeSubFor(kind, session), [kind, session]);
   const entryId = useMemo(() => entryIdFor(kind, session, viewDate), [kind, session, viewDate]);
+  const isLocked = !!entry?.locked || viewDate < todayStr();
 
   const loadEntry = useCallback(async ({ forceCompute = false } = {}) => {
     if (!locationId) return;
@@ -164,7 +211,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
       }
       let { data } = await supabase
         .from("lite_daily_ops")
-        .select("id, items, computed_items, computed_at, updated_at")
+        .select("id, items, computed_items, computed_at, updated_at, locked")
         .eq("id", entryId)
         .eq("location_id", locationId)
         .maybeSingle();
@@ -172,7 +219,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
         await supabase.functions.invoke("ops-compute-ondemand", { body: { location_id: locationId, date: viewDate } });
         const retry = await supabase
           .from("lite_daily_ops")
-          .select("id, items, computed_items, computed_at, updated_at")
+          .select("id, items, computed_items, computed_at, updated_at, locked")
           .eq("id", entryId)
           .eq("location_id", locationId)
           .maybeSingle();
@@ -205,12 +252,20 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
   const computedItems = summarizeComputed(entry?.computed_items || {}, items);
   const rows = (computedItems.rows || [])
     .filter((row) => statusFilter === "all" || row.statusBucket === statusFilter)
-    .filter((row) => !medsOnly || (row.medicationItems || []).length > 0);
-  const summary = buildSummary(rows);
-  const completed = rows.filter((row) => isCompleted(items[row.id])).length;
-  const pct = rows.length ? Math.round((completed / rows.length) * 100) : 0;
+    .filter((row) => visibleItemsFor(row, kind, taskMode).length > 0);
+  const summary = buildSummary(rows, items, kind, taskMode);
+  const completed = kind === "feeding-meds" ? summary.completedTasks : rows.filter((row) => rowCompleted(row, items, kind, taskMode)).length;
+  const totalWork = kind === "feeding-meds" ? summary.tasks : rows.length;
+  const pct = totalWork ? Math.round((completed / totalWork) * 100) : 0;
+  const groupedRows = CARE_SECTIONS
+    .map((section) => ({
+      ...section,
+      rows: rows.filter((row) => (row.careSection || (row.statusBucket === "pending" ? "scheduled_arrival" : "currently_in")) === section.id),
+    }))
+    .filter((section) => section.rows.length > 0);
 
   const persist = async (nextItems) => {
+    if (isLocked) return;
     const summarized = summarizeComputed(computedItems, nextItems);
     const { error } = await supabase.from("lite_daily_ops").upsert({
       id: entryId,
@@ -218,34 +273,74 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
       type: "workflow",
       type_sub: typeSub,
       date: viewDate,
-      locked: false,
+      locked: viewDate < todayStr(),
       items: nextItems,
       computed_items: summarized,
     }, { onConflict: "id" });
     if (!error) setEntry((prev) => ({ ...(prev || {}), id: entryId, items: nextItems, computed_items: summarized }));
   };
 
+  const syncSafetyDuplicates = async (changedItems, state) => {
+    if (!locationId || !changedItems.length) return;
+    await Promise.all(changedItems
+      .filter((item) => item?.safetyDuplicate?.pairedEntryId)
+      .map(async (item) => {
+        const paired = item.safetyDuplicate;
+        const { data } = await supabase
+          .from("lite_daily_ops")
+          .select("items")
+          .eq("id", paired.pairedEntryId)
+          .eq("location_id", locationId)
+          .maybeSingle();
+        const nextItems = { ...(data?.items || {}) };
+        if (state) nextItems[item.id] = state;
+        else delete nextItems[item.id];
+        await supabase.from("lite_daily_ops").upsert({
+          id: paired.pairedEntryId,
+          location_id: locationId,
+          type: "workflow",
+          type_sub: paired.pairedTypeSub,
+          date: paired.pairedDate,
+          items: nextItems,
+        }, { onConflict: "id" });
+      }));
+  };
+
   const markComplete = async (row, outcome) => {
+    if (isLocked) return;
     setSavingId(row.id);
     const now = new Date().toISOString();
+    const visibleItems = visibleItemsFor(row, kind, taskMode);
+    const state = {
+      ...(outcome ? { outcome } : {}),
+      completedAt: now,
+      completedBy: actorName,
+      note: notes[row.id] || "",
+    };
     const nextItems = {
       ...items,
-      [row.id]: {
-        ...(items[row.id] || {}),
-        ...(outcome ? { outcome } : {}),
-        completedAt: now,
-        completedBy: actorName,
-        note: notes[row.id] || "",
-      },
     };
+    if (kind === "feeding-meds" && visibleItems.length) {
+      for (const item of visibleItems) nextItems[item.id] = { ...(items[item.id] || {}), ...state };
+      await syncSafetyDuplicates(visibleItems, state);
+    } else {
+      nextItems[row.id] = { ...(items[row.id] || {}), ...state };
+    }
     await persist(nextItems);
     setSavingId(null);
   };
 
   const clearRow = async (row) => {
+    if (isLocked) return;
     setSavingId(row.id);
     const nextItems = { ...items };
-    delete nextItems[row.id];
+    const visibleItems = visibleItemsFor(row, kind, taskMode);
+    if (kind === "feeding-meds" && visibleItems.length) {
+      for (const item of visibleItems) delete nextItems[item.id];
+      await syncSafetyDuplicates(visibleItems, null);
+    } else {
+      delete nextItems[row.id];
+    }
     await persist(nextItems);
     setSavingId(null);
   };
@@ -257,25 +352,25 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
           <div>
             <button type="button" onClick={() => nav?.("role-page")} style={{ border: 0, background: "transparent", color: C.textMut, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 800 }}>Back to My Work</button>
             <h2 style={{ margin: "6px 0 4px", fontSize: 24, fontWeight: 900, color: C.text, letterSpacing: "-0.02em" }}>{titleFor(kind, session)}</h2>
-            <div style={{ fontSize: 13, color: C.textMut }}>{dateLabel(viewDate)} - {completed}/{rows.length} complete</div>
+            <div style={{ fontSize: 13, color: C.textMut }}>{dateLabel(viewDate)} - {completed}/{totalWork} complete{isLocked ? " - locked" : ""}</div>
           </div>
           <button
             type="button"
             onClick={() => loadEntry({ forceCompute: true })}
-            disabled={refreshing}
+            disabled={refreshing || isLocked}
             style={{
               border: `1.5px solid ${C.border}`,
               background: C.surface,
               borderRadius: 10,
               padding: "9px 14px",
-              cursor: refreshing ? "default" : "pointer",
+              cursor: refreshing || isLocked ? "default" : "pointer",
               fontSize: 12,
               fontWeight: 900,
               color: C.text,
-              opacity: refreshing ? 0.6 : 1,
+              opacity: refreshing || isLocked ? 0.6 : 1,
             }}
           >
-            {refreshing ? "Refreshing..." : "Refresh from GINGR"}
+            {isLocked ? "Locked Snapshot" : refreshing ? "Refreshing..." : "Refresh from GINGR"}
           </button>
         </div>
 
@@ -314,9 +409,13 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
         <div style={{ display: "flex", gap: 8, marginTop: 16, overflowX: "auto", paddingBottom: 2 }}>
           {SESSIONS.map((item) => <PillButton key={item.id} active={session === item.id} onClick={() => setSession(item.id)}>{item.label}</PillButton>)}
         </div>
+        {kind === "feeding-meds" ? (
+          <div style={{ display: "flex", gap: 8, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
+            {TASK_MODES.map((item) => <PillButton key={item.id} active={taskMode === item.id} onClick={() => setTaskMode(item.id)}>{item.label}</PillButton>)}
+          </div>
+        ) : null}
         <div style={{ display: "flex", gap: 8, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
           {STATUS_FILTERS.map((item) => <PillButton key={item.id} active={statusFilter === item.id} onClick={() => setStatusFilter(item.id)}>{item.label}</PillButton>)}
-          <PillButton active={medsOnly} onClick={() => setMedsOnly((value) => !value)}>Meds Only</PillButton>
         </div>
 
         <div style={{ marginTop: 16, height: 8, borderRadius: 999, background: C.borderLight, overflow: "hidden" }}>
@@ -326,20 +425,17 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 16 }}>
         {[
-          ["Dogs", summary.total],
+          ["Tasks", totalWork],
+          ["Done", completed],
           ["Food From Home", summary.ffh],
           ["House Chicken", summary.chicken],
-          ["House Salmon", summary.salmon],
           ["Medications", summary.meds],
         ].map(([label, value]) => (
           <Card
             key={label}
-            onClick={label === "Medications" ? () => setMedsOnly((current) => !current) : undefined}
             style={{
               padding: 14,
-              cursor: label === "Medications" ? "pointer" : "default",
-              borderColor: label === "Medications" && medsOnly ? "#8B5CF6" : undefined,
-              boxShadow: label === "Medications" && medsOnly ? "0 0 0 3px rgba(139,92,246,0.12)" : undefined,
+              cursor: "default",
             }}
           >
             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.06em", color: C.textMut, textTransform: "uppercase" }}>{label}</div>
@@ -358,11 +454,18 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
         </Card>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {rows.map((row) => {
-            const state = items[row.id] || {};
-            const done = isCompleted(state);
-            const open = !!expanded[row.id];
-            return (
+          {groupedRows.map((section) => (
+            <div key={section.id} style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", color: C.textMut, textTransform: "uppercase", marginTop: 4 }}>
+                {section.label} ({section.rows.length})
+              </div>
+              {section.rows.map((row) => {
+                const completionKeys = rowCompletionKeys(row, kind, taskMode);
+                const state = items[completionKeys[0]] || items[row.id] || {};
+                const done = rowCompleted(row, items, kind, taskMode);
+                const open = !!expanded[row.id];
+                const visibleItems = visibleItemsFor(row, kind, taskMode);
+                return (
               <Card key={row.id} style={{ padding: 0, overflow: "hidden", borderColor: done ? "#86EFAC" : C.border }}>
                 <button
                   type="button"
@@ -389,7 +492,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 900, color: C.pri }}>{row.roomLabel || "-"}</div>
                   <div style={{ minWidth: 0, fontSize: 12, color: C.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {[...(row.feedingItems || []), ...(row.medicationItems || [])].slice(0, 2).map((item) => item.summary).join(" - ") || rowStatusLabel(row)}
+                    {visibleItems.slice(0, 2).map((item) => item.summary).join(" - ") || rowStatusLabel(row)}
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {done ? <span style={{ color: "#059669", fontSize: 12, fontWeight: 900 }}>{state.outcome ? state.outcome.toUpperCase() : "DONE"}</span> : null}
@@ -405,8 +508,8 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
                       <div><strong style={{ color: C.text }}>Drop / Pick:</strong> {row.dropoffTime} / {row.pickupTime}</div>
                       {row.breed ? <div><strong style={{ color: C.text }}>Breed:</strong> {row.breed}</div> : null}
                     </div>
-                    <InstructionBlock title="Feeding" items={row.feedingItems || []} tone="feeding" />
-                    <InstructionBlock title="Medications" items={row.medicationItems || []} tone="meds" />
+                    <InstructionBlock title="Feeding" items={kind === "feeding-meds" && taskMode === "meds" ? [] : (row.feedingItems || [])} tone="feeding" />
+                    <InstructionBlock title="Medications" items={kind === "feeding-meds" && taskMode === "feeding" ? [] : (row.medicationItems || [])} tone="meds" />
                     {row.animalMedicationNotes ? (
                       <div style={{ border: `1px solid ${C.border}`, background: "#FAF5FF", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#6D28D9", fontWeight: 700 }}>
                         Animal Medication Notes: <span style={{ fontWeight: 600 }}>{row.animalMedicationNotes}</span>
@@ -417,6 +520,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
                       onChange={(event) => setNotes((prev) => ({ ...prev, [row.id]: event.target.value }))}
                       placeholder="Optional notes"
                       rows={2}
+                      disabled={isLocked}
                       style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 10, padding: 10, fontFamily: "inherit", fontSize: 13, resize: "vertical" }}
                     />
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
@@ -424,17 +528,19 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", profi
                         {kind === "feeding-report" ? OUTCOMES.map((option) => (
                           <PillButton key={option.id} active={state.outcome === option.id} onClick={() => markComplete(row, option.id)}>{option.label}</PillButton>
                         )) : (
-                          <PillButton active={done} onClick={() => markComplete(row)}>{done ? "Completed" : "Mark Complete"}</PillButton>
+                          <PillButton active={done} onClick={() => markComplete(row)}>{isLocked ? "Locked" : done ? "Completed" : "Mark Complete"}</PillButton>
                         )}
                       </div>
-                      {done ? <button type="button" onClick={() => clearRow(row)} disabled={savingId === row.id} style={{ border: 0, background: "transparent", color: C.textMut, fontWeight: 800, cursor: "pointer" }}>Clear</button> : null}
+                      {done && !isLocked ? <button type="button" onClick={() => clearRow(row)} disabled={savingId === row.id} style={{ border: 0, background: "transparent", color: C.textMut, fontWeight: 800, cursor: "pointer" }}>Clear</button> : null}
                     </div>
                     {done ? <div style={{ fontSize: 11, color: C.textMut }}>{state.completedBy || actorName} - {timeLabel(state.completedAt)}</div> : null}
                   </div>
                 ) : null}
               </Card>
-            );
-          })}
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>
