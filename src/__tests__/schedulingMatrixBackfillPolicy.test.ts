@@ -61,4 +61,14 @@ describe("scheduling matrix backfill policy", () => {
     expect(source).toContain("all_history === true");
     expect(source).toContain("No operational GINGR reservation history was found");
   });
+
+  it("does not trust unsigned service-role claims for background processing", () => {
+    const source = readFileSync("supabase/functions/scheduling-matrix-backfill/index.ts", "utf8");
+    expect(source).not.toContain("parseJwtClaims");
+    expect(source).not.toContain("role === \"service_role\"");
+    expect(source).not.toContain("isVerifiedServiceRoleToken");
+    expect(source).toContain("bearerToken === serviceRoleKey");
+    expect(source).toContain("authClient.auth.getUser()");
+    expect(source).toContain("serviceRoleOnly");
+  });
 });
