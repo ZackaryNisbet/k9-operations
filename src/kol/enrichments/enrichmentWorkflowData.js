@@ -2,6 +2,18 @@ export const ENRICHMENT_WORKFLOW_REFRESH_MS = 60_000;
 export const ENRICHMENT_WORKFLOW_STALE_MS = 10 * 60_000;
 export const ENRICHMENT_DISPLAY_TIME_ZONE = "America/New_York";
 export const WORKFLOW_PLAYGROUP_BADGE_ORDER = ["large", "small", "private_play", "evaluation"];
+export const ENRICHMENT_WORKFLOW_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "daycare", label: "Daycare" },
+  { id: "boarding", label: "Boarding" },
+  { id: "day_boarding", label: "Day boarding" },
+  { id: "needs_review", label: "Needs review" },
+];
+export const ENRICHMENT_WORKFLOW_SORTS = [
+  { id: "departure", label: "Departure time" },
+  { id: "room", label: "Room wing" },
+  { id: "dog", label: "Dog name" },
+];
 
 export function buildEnrichmentOpsRowId(date) {
   return `ops_svc_${date}`;
@@ -58,6 +70,27 @@ export function normalizeWorkflowDog(row = {}, photoMap = {}, playgroupMap = {},
   const checkOutDate = firstPresent(row.checkOutDate, row.check_out_date, reservationContext.checkOutDate, reservationContext.check_out_date);
   const reservationCategory = row.reservationCategory || row.reservation_category || reservationContext.reservationCategory || reservationContext.reservation_category || classifyEnrichmentReservationContext(reservationType);
   const reservationWindow = formatEnrichmentReservationWindow(startDate, endDate);
+  const arrivalTimeRaw = firstPresent(
+    row.arrivalTimeRaw,
+    row.arrival_time_raw,
+    row.scheduledArrivalTimeRaw,
+    row.scheduled_arrival_time_raw,
+    checkInDate,
+    startDate,
+  );
+  const scheduledDepartureTimeRaw = firstPresent(
+    row.scheduledDepartureTimeRaw,
+    row.scheduled_departure_time_raw,
+    row.departureTimeRaw,
+    row.departure_time_raw,
+    endDate,
+    checkOutDate,
+  );
+  const actualDepartureTimeRaw = firstPresent(
+    row.actualDepartureTimeRaw,
+    row.actual_departure_time_raw,
+    checkOutDate,
+  );
   const serviceDates = firstServiceDates(
     row.serviceDates,
     row.service_dates,
@@ -73,11 +106,21 @@ export function normalizeWorkflowDog(row = {}, photoMap = {}, playgroupMap = {},
     animalName: row.animalName || row.animal_name || "Unknown",
     ownerName: row.ownerName || row.owner_name || "Unknown",
     roomLabel: row.roomLabel || row.room_label || "",
+    roomWing: row.roomWing || row.room_wing || classifyWorkflowRoomWing(row.roomLabel || row.room_label || "", reservationType),
     reservationType,
     reservationCategory,
     reservationLabel: formatEnrichmentReservationKind(reservationType, reservationCategory),
     reservationDates: { start: startDate, end: endDate, checkIn: checkInDate, checkOut: checkOutDate },
     reservationWindow,
+    timing: {
+      arrivalTimeRaw,
+      scheduledDepartureTimeRaw,
+      actualDepartureTimeRaw,
+      isCheckedOut: toBoolean(row.isCheckedOut ?? row.is_checked_out) || Boolean(actualDepartureTimeRaw),
+    },
+    arrivalLabel: formatWorkflowTimeLabel(arrivalTimeRaw),
+    departureLabel: formatWorkflowTimeLabel(scheduledDepartureTimeRaw),
+    actualDepartureLabel: formatWorkflowTimeLabel(actualDepartureTimeRaw),
     services: Array.isArray(row.services) ? row.services : [],
     serviceDates,
     reason: formatWorkflowReviewReason(row.reason || "", reportDate, { serviceDates, reservationWindow }),
@@ -134,6 +177,22 @@ export function formatEnrichmentReservationKind(typeName = "", category = "") {
   return raw || "";
 }
 
+export function classifyWorkflowRoomWing(roomLabel = "", reservationType = "") {
+  const room = String(roomLabel || "").trim();
+  const type = String(reservationType || "").toLowerCase();
+  const lower = room.toLowerCase();
+  const roomNumber = room.match(/\b(\d{3})\b/)?.[1] || "";
+  if (lower.includes("luxury") || type.includes("luxury")) return "Luxury Suites";
+  if (lower.includes("double") || type.includes("double")) return "Double Compartments";
+  if (lower.includes("single") || type.includes("single")) return "Single Compartments";
+  if (lower.includes("temporary") || type.includes("temporary")) return "Temporary Lodging";
+  if (lower.includes("executive") || type.includes("executive") || ["2", "3", "4", "5"].includes(roomNumber.charAt(0))) {
+    return roomNumber ? `Executive ${roomNumber.charAt(0)}00s` : "Executive";
+  }
+  if (roomNumber.startsWith("1")) return "Single Compartments";
+  return room ? "Other Rooms" : "Unassigned";
+}
+
 export function formatEnrichmentReservationWindow(startDate = "", endDate = "") {
   const start = formatReservationDatePart(startDate);
   const end = formatReservationDatePart(endDate);
@@ -145,6 +204,41 @@ export function formatEnrichmentReservationWindow(startDate = "", endDate = "") 
     return start.date;
   }
   return `${start.full} to ${end.full}`;
+}
+
+export function applyEnrichmentWorkflowView(dogs = [], { filter = "all", sort = "departure" } = {}) {
+  return sortEnrichmentWorkflowDogs(filterEnrichmentWorkflowDogs(dogs, filter), sort);
+}
+
+export function filterEnrichmentWorkflowDogs(dogs = [], filter = "all") {
+  if (filter === "all") return [...dogs];
+  if (filter === "needs_review") return dogs.filter((dog) => dog.status === "needs_review");
+  return dogs.filter((dog) => String(dog.reservationCategory || "").toLowerCase() === filter);
+}
+
+export function sortEnrichmentWorkflowDogs(dogs = [], sort = "departure") {
+  const sorted = [...dogs];
+  sorted.sort((a, b) => {
+    if (sort === "room") {
+      return compareText(a.roomWing, b.roomWing) ||
+        compareRoomLabels(a.roomLabel, b.roomLabel) ||
+        compareDepartureTimes(a, b) ||
+        compareText(a.animalName, b.animalName);
+    }
+    if (sort === "dog") {
+      return compareText(a.animalName, b.animalName) ||
+        compareDepartureTimes(a, b) ||
+        compareRoomLabels(a.roomLabel, b.roomLabel);
+    }
+    return compareDepartureTimes(a, b) ||
+      compareText(a.animalName, b.animalName) ||
+      compareRoomLabels(a.roomLabel, b.roomLabel);
+  });
+  return sorted;
+}
+
+export function countEnrichmentWorkflowFilter(dogs = [], filter = "all") {
+  return filterEnrichmentWorkflowDogs(dogs, filter).length;
 }
 
 function firstPresent(...values) {
@@ -161,6 +255,64 @@ function firstServiceDates(...values) {
     if (dates.length) return dates;
   }
   return [];
+}
+
+function toBoolean(value) {
+  if (typeof value === "boolean") return value;
+  return ["true", "1", "yes"].includes(String(value || "").trim().toLowerCase());
+}
+
+export function formatWorkflowTimeLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: ENRICHMENT_DISPLAY_TIME_ZONE,
+    });
+  }
+  const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (timeMatch) {
+    const hours = Number(timeMatch[1]);
+    const minutes = timeMatch[2];
+    const suffix = hours >= 12 ? "PM" : "AM";
+    const displayHour = hours % 12 || 12;
+    return `${displayHour}:${minutes} ${suffix}`;
+  }
+  return raw;
+}
+
+function compareDepartureTimes(a, b) {
+  return compareTimeValues(a?.timing?.scheduledDepartureTimeRaw, b?.timing?.scheduledDepartureTimeRaw);
+}
+
+function compareTimeValues(a, b) {
+  const aValue = timeSortValue(a);
+  const bValue = timeSortValue(b);
+  if (aValue == null && bValue == null) return 0;
+  if (aValue == null) return 1;
+  if (bValue == null) return -1;
+  return aValue - bValue;
+}
+
+function timeSortValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  const match = raw.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function compareText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareRoomLabels(a, b) {
+  return compareText(a || "", b || "");
 }
 
 export function normalizeWorkflowServiceDates(value) {
