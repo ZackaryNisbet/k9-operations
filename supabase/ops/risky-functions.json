@@ -7,6 +7,9 @@
     "compute-scheduling-matrix": {
       "verifyJwt": false
     },
+    "scheduling-matrix-backfill": {
+      "verifyJwt": false
+    },
     "compute-rotation-schedule": {
       "verifyJwt": false
     },

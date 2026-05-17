@@ -28,6 +28,7 @@ import {
   canGenerateSchedule,
   getMatrixDisplay,
   getMatrixProjectedDisplay,
+  getMatrixTrust,
   getMatrixTrustState,
 } from '../shared/schedulingEngine';
 
@@ -519,6 +520,35 @@ describe('Matrix trust gating', () => {
     expect(summary.canGenerate).toBe(true);
     expect(summary.generationBlockers).toContain('3 daytime dogs are missing a verified size/playgroup assignment.');
     expect(summary.openingResult).toBeDefined();
+  });
+
+  it('filters known demand limitations out of generation blockers for trusted matrix rows', () => {
+    const matrix = makeMatrix({
+      detail_json: {
+        trust: {
+          state: 'trusted',
+          source: 'gingr_reservations',
+          can_generate: false,
+          blockers: [
+            '1 dog missing actionable play icon in closing boarding',
+            'Operational splits do not reconcile to GINGR source totals: total dog volume source delta +16.',
+          ],
+          blocker_details: [
+            { kind: 'missing_actionable_play_icon', label: '1 dog missing actionable play icon in closing boarding' },
+          ],
+          notes: [],
+        },
+      },
+      boarding_unknown_size: 1,
+    });
+
+    const trust = getMatrixTrust(matrix);
+    const summary = buildDaySummary(matrix, makeStaffPlan(), cfg);
+    expect(trust.blockers).toEqual([]);
+    expect(trust.limitations).toHaveLength(2);
+    expect(canGenerateSchedule(matrix)).toBe(true);
+    expect(summary.generationBlockers).toEqual([]);
+    expect(summary.canGenerate).toBe(true);
   });
 });
 

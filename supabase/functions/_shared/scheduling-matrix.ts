@@ -1177,6 +1177,11 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function isKnownDemandLimitation(detail: { kind?: string | null }) {
+  return detail?.kind === "evaluation_boarding_pending_playgroup_outcome"
+    || detail?.kind === "missing_actionable_play_icon";
+}
+
 export function buildBlockerDetails(
   rows: any[],
   targetDate: string,
@@ -1239,6 +1244,7 @@ export function buildBlockerDetails(
       count: detail.count,
       scope: detail.scope,
       dog_ids: [...new Set(detail.dogIds)],
+      blocks_generation: !isKnownDemandLimitation(detail),
     };
   });
 }
@@ -1255,7 +1261,10 @@ export function buildTrustPayload({
   sourceRequired?: boolean;
 }) {
   const notes: string[] = [];
-  const blockers = blockerDetails.map((detail) => detail.label);
+  const generationBlockerDetails = blockerDetails.filter((detail) => !isKnownDemandLimitation(detail));
+  const limitationDetails = blockerDetails.filter(isKnownDemandLimitation);
+  const blockers = generationBlockerDetails.map((detail) => detail.label);
+  const limitations = limitationDetails.map((detail) => detail.label);
 
   if (roomCountsEstimated) {
     notes.push("Room occupancy counts are estimated from the latest available room totals.");
@@ -1263,7 +1272,22 @@ export function buildTrustPayload({
 
   if (sourceReconciliation) {
     notes.push("GINGR Calendar Details source totals imported from reservation_widget_data.");
-    const deltas = sourceReconciliation.deltas || {};
+    const deltas = sourceReconciliation.remaining_deltas || sourceReconciliation.deltas || {};
+    const sourceAdjustments = sourceReconciliation.source_adjustments || {};
+    const adjustmentLabels = [
+      ["opening_boarding", "opening boarding"],
+      ["closing_boarding", "closing boarding"],
+      ["daytime_total", "daytime volume"],
+      ["total_dog_volume", "total dog volume"],
+    ]
+      .map(([key, label]) => {
+        const value = Number(sourceAdjustments[key] || 0);
+        return value > 0 ? `${label} +${value}` : null;
+      })
+      .filter(Boolean);
+    if (adjustmentLabels.length) {
+      limitations.push(`GINGR source totals were carried into unclassified demand buckets: ${adjustmentLabels.join(", ")}.`);
+    }
     const mismatchLabels = [
       ["opening_boarding", "opening boarding"],
       ["closing_boarding", "closing boarding"],
@@ -1289,7 +1313,9 @@ export function buildTrustPayload({
       : "gingr_reservations + v_dog_playgroup_assignments_current",
     can_generate: blockers.length === 0,
     blockers,
-    blocker_details: blockerDetails,
+    blocker_details: generationBlockerDetails,
+    limitation_details: limitationDetails,
+    limitations: [...new Set(limitations)],
     notes,
     source_reconciliation: sourceReconciliation || null,
   };
@@ -1508,6 +1534,18 @@ export function applyGingrWidgetSourceCountsToDisplay(
     daytime_total: source.daytime_total - derived.daytime_total,
     total_dog_volume: source.total - derived.total_dog_volume,
   };
+  const sourceAdjustments = {
+    opening_boarding: Math.max(0, deltas.opening_boarding),
+    closing_boarding: Math.max(0, deltas.closing_boarding),
+    daytime_total: Math.max(0, deltas.daytime_total),
+    total_dog_volume: Math.max(0, deltas.total_dog_volume),
+  };
+  const remainingDeltas = {
+    opening_boarding: Math.min(0, deltas.opening_boarding),
+    closing_boarding: Math.min(0, deltas.closing_boarding),
+    daytime_total: Math.min(0, deltas.daytime_total),
+    total_dog_volume: Math.min(0, deltas.total_dog_volume),
+  };
 
   if (deltas.opening_boarding > 0) {
     nextDisplay.opening.unclassified_boarding = Number(nextDisplay.opening.unclassified_boarding || 0) + deltas.opening_boarding;
@@ -1533,9 +1571,11 @@ export function applyGingrWidgetSourceCountsToDisplay(
       source,
       derived,
       deltas,
+      source_adjustments: sourceAdjustments,
+      remaining_deltas: remainingDeltas,
       per_type: sourceCounts.per_type,
       synced_at: sourceCounts.synced_at || null,
-      is_reconciled: Object.values(deltas).every((delta) => Number(delta) === 0),
+      is_reconciled: Object.values(remainingDeltas).every((delta) => Number(delta) === 0),
       source_endpoint: "reservation_widget_data",
     },
   };
