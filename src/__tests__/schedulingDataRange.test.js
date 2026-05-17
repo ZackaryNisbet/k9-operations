@@ -17,6 +17,7 @@ describe("scheduling data range helpers", () => {
       "2026-05-17",
     ]);
     expect(buildSchedulingDateRange("2026-05-11", "2026-05-31")).toHaveLength(21);
+    expect(buildSchedulingDateRange("2019-01-01", "2025-12-31")).toHaveLength(2557);
   });
 
   it("flags future matrix rows whose projection as-of date is stale", () => {

@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
+import JSZip from "jszip";
 import { buildSchedulingDateRange } from "../hooks/useSchedulingData.js";
 import {
   buildDemandMatrixExportModel,
+  buildDemandMatrixExportRowGroups,
   buildDemandMatrixRangeReadiness,
   buildDemandMatrixRowGroups,
 } from "../kol/pages/schedulingDemandMatrixModel.js";
-import { createDemandMatrixXlsxBlob } from "../kol/pages/schedulingDemandMatrixXlsx.js";
+import {
+  buildDemandMatrixExportFilename,
+  createDemandMatrixXlsxBlob,
+} from "../kol/pages/schedulingDemandMatrixXlsx.js";
 
 function makeDisplay(seed = 1) {
   return {
@@ -115,6 +120,20 @@ function makeDay(date, overrides = {}) {
   };
 }
 
+async function loadWorkbookXml(blob) {
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const parts = {};
+  for (const path of [
+    "xl/worksheets/sheet1.xml",
+    "xl/sharedStrings.xml",
+    "xl/styles.xml",
+    "docProps/core.xml",
+  ]) {
+    parts[path] = await zip.file(path).async("string");
+  }
+  return { zip, parts };
+}
+
 describe("Scheduling Demand Matrix export model", () => {
   it("builds a 365-day range model and XLSX artifact without client-side scheduling compute", async () => {
     const dates = buildSchedulingDateRange("2025-01-01", "2025-12-31");
@@ -138,6 +157,66 @@ describe("Scheduling Demand Matrix export model", () => {
     expect(model.rows.filter((row) => row.type === "metric").every((row) => row.cells.length === 365)).toBe(true);
     const blob = await createDemandMatrixXlsxBlob(model);
     expect(blob.size).toBeGreaterThan(10_000);
+  });
+
+  it("writes readable workbook metadata, real date headers, export-only rows, and K9 Operations branding", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]).buffer,
+    });
+
+    try {
+      const dates = ["2025-01-01", "2025-01-02"];
+      const days = dates.map((date, index) => makeDay(date, { seed: index + 1 }));
+      const readiness = buildDemandMatrixRangeReadiness({ days, expectedDates: dates, today: "2026-05-17" });
+      const model = buildDemandMatrixExportModel({
+        days,
+        expectedDates: dates,
+        startDate: "2025-01-01",
+        endDate: "2025-01-02",
+        locationId: "11111111-1111-1111-1111-111111111111",
+        locationName: "Adair Forsythe",
+        readiness,
+        generatedAt: "2026-05-17T12:00:00.000Z",
+      });
+
+      expect(buildDemandMatrixExportFilename(model)).toBe("scheduling-demand-matrix-cherry-hill-2025-01-01-to-2025-01-02.xlsx");
+      expect(model.rows.some((row) => row.section === "Gingr Source Counts")).toBe(false);
+      expect(model.rows.some((row) => row.section === "Historical")).toBe(false);
+      expect(model.rows.find((row) => row.key === "opening.total_boarding")).toBeTruthy();
+      expect(model.rows.find((row) => row.key === "closing.total_boarding")).toBeTruthy();
+
+      const blob = await createDemandMatrixXlsxBlob(model);
+      const { zip, parts } = await loadWorkbookXml(blob);
+      const sheetXml = parts["xl/worksheets/sheet1.xml"];
+      const sharedStringsXml = parts["xl/sharedStrings.xml"];
+      const stylesXml = parts["xl/styles.xml"];
+      const coreXml = parts["docProps/core.xml"];
+
+      expect(sharedStringsXml).toContain("K9 Operations");
+      expect(sharedStringsXml).toContain("The operating system for pet care facilities");
+      expect(sharedStringsXml).toContain("Location");
+      expect(sharedStringsXml).toContain("Start Date");
+      expect(sharedStringsXml).toContain("End Date");
+      expect(sharedStringsXml).toContain("Generated At");
+      expect(sharedStringsXml).not.toContain("Location ID");
+      expect(sharedStringsXml).not.toContain("Mode");
+      expect(sharedStringsXml).not.toContain("Readiness");
+      expect(sharedStringsXml).not.toContain("Gingr Source Counts");
+      expect(sharedStringsXml).not.toContain("Historical");
+      expect(coreXml).toContain("<dc:creator>K9 Operations LLC</dc:creator>");
+      expect(stylesXml).toContain('formatCode="ddd mmm d yyyy"');
+      expect(sheetXml).toContain('<c r="B9" s="7"><v>45658</v></c>');
+      expect(sheetXml).toContain('<drawing r:id="rId1"/>');
+      expect(zip.file("xl/media/k9-logo.png")).toBeTruthy();
+    } finally {
+      if (originalFetch) {
+        globalThis.fetch = originalFetch;
+      } else {
+        delete globalThis.fetch;
+      }
+    }
   });
 
   it("blocks readiness when any selected day is missing", () => {
@@ -192,6 +271,7 @@ describe("Scheduling Demand Matrix export model", () => {
 
   it("keeps row labels and order aligned with Demand Matrix semantics", () => {
     const groups = buildDemandMatrixRowGroups([makeDay("2025-01-01")]);
+    const exportGroups = buildDemandMatrixExportRowGroups([makeDay("2025-01-01")]);
     expect(groups.map((group) => group.section)).toEqual([
       "Gingr Source Counts",
       "Historical",
@@ -208,6 +288,12 @@ describe("Scheduling Demand Matrix export model", () => {
       "Boarding Dogs Closing",
       "Gingr Daytime Dogs",
       "Gingr Total Volume",
+    ]);
+    expect(exportGroups.map((group) => group.section)).toEqual([
+      "Opening Boarding",
+      "Closing Boarding",
+      "Daytime Volume",
+      "Support Workload",
     ]);
     expect(groups[2].rows.at(-1).label).toBe("Total Boarding Dogs Opening");
     expect(groups[5].rows.map((row) => row.label)).toContain("Total Dog Volume");

@@ -138,6 +138,12 @@ export function buildDemandMatrixRowGroups(days) {
   }));
 }
 
+const DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS = new Set(["Gingr Source Counts", "Historical"]);
+
+export function buildDemandMatrixExportRowGroups(days) {
+  return buildDemandMatrixRowGroups(days).filter((group) => !DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS.has(group.section));
+}
+
 export function formatDemandMatrixValue(value, format) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
@@ -435,7 +441,7 @@ export function buildDemandMatrixExportModel({
     .filter((day) => day?.date && (!startDate || day.date >= startDate) && (!endDate || day.date <= endDate))
     .sort((a, b) => a.date.localeCompare(b.date));
   const expected = expectedDates || sortedDays.map((day) => day.date);
-  const rowGroups = buildDemandMatrixRowGroups(sortedDays);
+  const rowGroups = buildDemandMatrixExportRowGroups(sortedDays);
   const rows = rowGroups.flatMap((group) => [
     { type: "section", section: group.section, label: group.section, cells: [] },
     ...group.rows.map((row) => ({

@@ -1,4 +1,4 @@
-export const SCHEDULING_MATRIX_BACKFILL_MAX_RANGE_DAYS = 370;
+export const SCHEDULING_MATRIX_BACKFILL_MAX_RANGE_DAYS = 10000;
 export const SCHEDULING_MATRIX_BACKFILL_STALE_AFTER_MS = 10 * 60 * 1000;
 
 export function countDateSpanInclusive(dateFrom: string, dateTo: string) {
