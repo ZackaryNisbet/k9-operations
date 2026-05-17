@@ -276,7 +276,62 @@ describe("resortUpkeepData", () => {
 
     expect(catchStart).toBeGreaterThan(-1);
     expect(catchBlock).not.toContain("setDashboard(EMPTY_DASHBOARD)");
-    expect(catchBlock).toContain("setError(nextError?.message || \"Resort Upkeep could not be loaded.\");");
+    expect(catchBlock).toContain("if (isInitialLocationLoad)");
+    expect(catchBlock).toContain("setError(friendlyErrorMessage(nextError, \"Resort Upkeep could not be loaded.\"));");
+  });
+
+  it("does not blank dashboard metrics during resort upkeep realtime refreshes", () => {
+    const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("const loadedLocationRef = useRef(\"\");");
+    expect(source).toContain("const isInitialLocationLoad = loadedLocationRef.current !== locationId;");
+    expect(source).toContain("if (isInitialLocationLoad) {\n      setLoading(true);");
+    expect(source).toContain("loadedLocationRef.current = locationId;");
+    expect(source).not.toContain("loadSeq.current = seq;\n    setLoading(true);");
+  });
+
+  it("does not show raw background fetch failures after resort upkeep has loaded", () => {
+    const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("if (isInitialLocationLoad) {\n      setLoading(true);\n      setError(\"\");\n    }");
+    expect(source).toContain("loadedLocationRef.current = locationId;\n      setError(\"\");");
+    expect(source).toContain("if (isInitialLocationLoad) {\n        setError(friendlyErrorMessage(nextError, \"Resort Upkeep could not be loaded.\"));\n      }");
+    expect(source).toContain("Resort Upkeep dashboard took too long to load.");
+    expect(source).not.toContain('setError(friendlyErrorMessage(nextError, "Resort Upkeep could not be loaded."));\n    } finally');
+  });
+
+  it("keeps resort upkeep tab loaders from triggering Recovery Mode", () => {
+    const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("friendlyErrorMessage");
+    expect(source).toContain("withUpkeepTimeout");
+    expect(source).toContain("loadVendors(locationId, includeArchived)");
+    expect(source).toContain("Local vendors took too long to load.");
+    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Local vendors could not be loaded.\"));");
+    expect(source).toContain("return subscribeToResortUpkeep(locationId, () => load({ silent: true }));");
+    expect(source).toContain("loadLicenses(locationId, includeInactive)");
+    expect(source).toContain("Licenses took too long to load.");
+    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Licenses could not be loaded.\"));");
+    expect(source).toContain("Checklist details took too long to load.");
+    expect(source).toContain("Vendor detail load failed");
+    expect(source).toContain("License detail load failed");
+    expect(source).not.toContain("loadVendors(locationId, includeArchived).then(setVendors)");
+    expect(source).not.toContain("loadLicenses(locationId, includeInactive).then(setLicenses)");
+    expect(source).not.toContain("useEffect(() => { if (draft.id) loadVendorLogs");
+    expect(source).not.toContain("useEffect(() => { if (draft.id) loadLicenseLogs");
+  });
+
+  it("adds a polished operational shell around Resort Upkeep web tabs", () => {
+    const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("Admin Workspace");
+    expect(source).toContain("Live Supabase");
+    expect(source).toContain("tabRail");
+    expect(source).toContain("Checklist command center");
+    expect(source).toContain("Track contractors, service partners, contract proof, and development notes.");
+    expect(source).toContain("Keep permits, compliance requirements, proof files, and renewal timing in one view.");
+    expect(source).toContain("Search the facilities reference without leaving the upkeep workflow.");
+    expect(source).toContain("LoadingRows");
   });
 
   it("creates the item state before uploading the first web maintenance attachment", () => {
