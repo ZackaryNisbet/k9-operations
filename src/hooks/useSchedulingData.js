@@ -19,7 +19,7 @@ import {
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_RANGE_DAYS = 7;
-const MAX_RANGE_DAYS = 370;
+const MAX_RANGE_DAYS = 10000;
 const DEFAULT_RECOMPUTE_LIMIT_DAYS = 14;
 
 function localTodayStr() {
