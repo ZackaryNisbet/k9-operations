@@ -16,18 +16,18 @@
       "updatedAt": "2026-05-17T01:31:32.649Z"
     },
     "ops-compute": {
-      "commit": "8ac020be08871362d5ba7f4ded3c0a08bf6537bc",
+      "commit": "b53fd0d07d31b272cd28dc1771793b36a8561594",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "enrichment workflow data accuracy",
-      "updatedAt": "2026-05-06T11:10:44.054Z"
+      "note": "centralized feeding and medication report tasks",
+      "updatedAt": "2026-05-17T15:33:22.412Z"
     },
     "ops-compute-ondemand": {
-      "commit": "d630f9b67a145f314b5dce4339599d546b763e42",
-      "sourceRef": "codex/enrichment-workflow-parity",
+      "commit": "b53fd0d07d31b272cd28dc1771793b36a8561594",
+      "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "enrichment workflow timing and mobile parity",
-      "updatedAt": "2026-05-17T13:57:39.179Z"
+      "note": "centralized feeding and medication report tasks",
+      "updatedAt": "2026-05-17T15:33:22.412Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
