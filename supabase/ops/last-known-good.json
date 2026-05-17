@@ -16,18 +16,18 @@
       "updatedAt": "2026-05-17T01:31:32.649Z"
     },
     "ops-compute": {
-      "commit": "b53fd0d07d31b272cd28dc1771793b36a8561594",
+      "commit": "90e05d1bd80c70d025fd9c9e6230f660be577df7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "centralized feeding and medication report tasks",
-      "updatedAt": "2026-05-17T15:33:22.412Z"
+      "note": "centralized feeding and medication reports production main",
+      "updatedAt": "2026-05-17T15:48:41.386Z"
     },
     "ops-compute-ondemand": {
-      "commit": "b53fd0d07d31b272cd28dc1771793b36a8561594",
+      "commit": "90e05d1bd80c70d025fd9c9e6230f660be577df7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "centralized feeding and medication report tasks",
-      "updatedAt": "2026-05-17T15:33:22.412Z"
+      "note": "centralized feeding and medication reports production main",
+      "updatedAt": "2026-05-17T15:48:41.386Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
