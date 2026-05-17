@@ -80,25 +80,6 @@ function serviceClient() {
   );
 }
 
-async function isVerifiedServiceRoleToken(token: string) {
-  if (!token) return false;
-  try {
-    const tokenClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      token,
-      { global: { headers: { Authorization: `Bearer ${token}` } } },
-    );
-    const { data, error } = await tokenClient.rpc("exec_sql", {
-      query: "SELECT 1 AS ok",
-      params: [],
-    });
-    if (error) return false;
-    return Array.isArray(data) && data.some((row: any) => Number(row?.ok) === 1);
-  } catch {
-    return false;
-  }
-}
-
 async function assertLocationAccess(
   req: Request,
   locationId: string,
@@ -113,7 +94,7 @@ async function assertLocationAccess(
   const client = serviceClient();
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  if (bearerToken === serviceRoleKey || await isVerifiedServiceRoleToken(bearerToken)) {
+  if (bearerToken === serviceRoleKey) {
     return { client, userId: null, isServiceRole: true };
   }
 
