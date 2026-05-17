@@ -504,6 +504,18 @@ async function upsertComputedItems(
   computedItems: any,
 ): Promise<void> {
   const now = new Date().toISOString();
+  const reportDate = String(date || "").slice(0, 10);
+  const shouldLock = !!reportDate && reportDate < todayStr();
+
+  if (shouldLock) {
+    const { data: existing } = await supabase
+      .from("lite_daily_ops")
+      .select("locked")
+      .eq("id", id)
+      .eq("location_id", locationId)
+      .maybeSingle();
+    if (existing?.locked) return;
+  }
 
   // Upsert computed_items only — never touch the items column.
   // Primary key is (id) so conflict target is just "id".
@@ -516,6 +528,7 @@ async function upsertComputedItems(
         type,
         type_sub: typeSub,
         date,
+        locked: shouldLock,
         computed_items: computedItems,
         computed_at: now,
       },
@@ -526,6 +539,29 @@ async function upsertComputedItems(
     console.error(`Upsert error for ${id}:`, error.message);
     throw new Error(`Upsert failed for ${id}: ${error.message}`);
   }
+}
+
+async function lockPastCareReportRows(supabase: any, locationId: string, today: string): Promise<void> {
+  const careTypeSubs = [
+    "feeding_meds_am",
+    "feeding_meds_midday",
+    "feeding_meds_pm",
+    "feeding_report",
+    "feeding_report_midday",
+    "feeding_report_pm",
+    "medication_report",
+    "medication_report_midday",
+    "medication_report_pm",
+  ];
+  const { error } = await supabase
+    .from("lite_daily_ops")
+    .update({ locked: true })
+    .eq("location_id", locationId)
+    .eq("type", "workflow")
+    .in("type_sub", careTypeSubs)
+    .lt("date", today)
+    .neq("locked", true);
+  if (error) console.warn("Failed to lock past care report rows:", error.message);
 }
 
 // ─── Template loader ──────────────────────────────────────────────────────
@@ -2717,6 +2753,7 @@ Deno.serve(async (req: Request) => {
     // Initialize Supabase
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    await lockPastCareReportRows(supabase, locationId, today);
 
     // ─── Load Gingr credentials for this location ─────────────────────
     // Primary: lite_settings gingr_config (same as gingr-sync)

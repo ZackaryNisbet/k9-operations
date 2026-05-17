@@ -1177,7 +1177,7 @@ function LeanAppInner() {
       case "ops-feeding-report":
         return <CareReportsPage kind="feeding-report" initialSession="am" nav={nav} profile={profile} currentLocation={currentLocation} />;
       case "ops-medication-report":
-        return <CareReportsPage kind="medication-report" initialSession="am" nav={nav} profile={profile} currentLocation={currentLocation} />;
+        return <CareReportsPage kind="feeding-meds" initialSession="am" initialTaskMode="meds" nav={nav} profile={profile} currentLocation={currentLocation} />;
       case "ops-weekly-maintenance":
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "ops-roll-call-opening":
