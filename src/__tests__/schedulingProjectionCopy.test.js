@@ -284,6 +284,7 @@ describe("scheduling projection explanation copy", () => {
       type: "day",
       parentSegmentId: segments[1].id,
       day: { date: "2026-05-04" },
+      dateLabel: "05/04/2026",
     });
   });
 
