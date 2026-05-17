@@ -200,6 +200,11 @@ function formatMatrixDate(date) {
   return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
 }
 
+function formatMatrixHeaderDate(date) {
+  const dt = new Date(`${date}T12:00:00`);
+  return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+}
+
 function formatMatrixDateRange(startDate, endDate) {
   if (!startDate || !endDate) return "";
   if (startDate === endDate) return formatMatrixDate(startDate);
@@ -435,7 +440,7 @@ function dayToMatrixColumn(day, absoluteIndex, extra = {}) {
     days: [day],
     absoluteIndex,
     label: day.dayName || getDayColumnLabel(day.date),
-    dateLabel: formatMatrixDate(day.date),
+    dateLabel: formatMatrixHeaderDate(day.date),
     ...extra,
   };
 }
