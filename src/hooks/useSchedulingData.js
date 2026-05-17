@@ -61,6 +61,21 @@ export function findStaleSchedulingMatrixDates(matrixRows, dates, today = localT
   });
 }
 
+export function isSchedulingDateRecomputable(date, today = localTodayStr()) {
+  return Boolean(date) && date >= today;
+}
+
+export function shouldRecomputeSchedulingMatrixRange(dates, options = {}) {
+  const today = options?.today || localTodayStr();
+  const recomputeLimitDays = Number.isFinite(Number(options?.recomputeLimitDays))
+    ? Number(options.recomputeLimitDays)
+    : DEFAULT_RECOMPUTE_LIMIT_DAYS;
+  const selectedDates = dates || [];
+  return selectedDates.length > 0
+    && selectedDates.length <= recomputeLimitDays
+    && selectedDates.some((date) => isSchedulingDateRecomputable(date, today));
+}
+
 async function extractEdgeFunctionError(fnError) {
   if (!fnError) return "Unknown edge function error";
   try {
@@ -115,11 +130,12 @@ export function useSchedulingData(locationId, startDate, options = {}) {
     return buildSchedulingDateRange(startDate, requestedEndDate);
   }, [startDate, requestedEndDate]);
 
+  const today = localTodayStr();
   const endDate = dates[dates.length - 1] || startDate;
-  const canRecomputeVisibleRange = dates.length > 0 && dates.length <= recomputeLimitDays;
+  const canRecomputeVisibleRange = shouldRecomputeSchedulingMatrixRange(dates, { recomputeLimitDays, today });
 
   const recomputeDates = useCallback(async (targetDates) => {
-    const orderedDates = [...new Set((targetDates || []).filter(Boolean))].sort();
+    const orderedDates = [...new Set((targetDates || []).filter((date) => isSchedulingDateRecomputable(date, today)))].sort();
     if (!orderedDates.length) return [];
 
     const projectionScopeDateFrom = projectionScopeDateFromOption || dates[0] || orderedDates[0];
@@ -151,7 +167,7 @@ export function useSchedulingData(locationId, startDate, options = {}) {
     }
 
     return failures;
-  }, [locationId, dates, projectionScopeDateFromOption, projectionScopeDateToOption]);
+  }, [locationId, dates, today, projectionScopeDateFromOption, projectionScopeDateToOption]);
 
   const fetchAll = useCallback(async ({ recompute = false } = {}) => {
     if (!locationId || !startDate || dates.length === 0) return;

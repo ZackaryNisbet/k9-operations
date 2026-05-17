@@ -328,6 +328,18 @@ function safeRatioCoverage(count, ratio) {
   return normalizedCount > 0 ? Math.ceil(normalizedCount / normalizedRatio) : 0;
 }
 
+function isKnownDemandLimitationDetail(detail) {
+  return detail?.kind === "evaluation_boarding_pending_playgroup_outcome"
+    || detail?.kind === "missing_actionable_play_icon";
+}
+
+function isKnownDemandLimitationLabel(label) {
+  const normalized = String(label || "").toLowerCase();
+  return normalized.includes("missing actionable play icon")
+    || (normalized.includes("evaluation boarder") && normalized.includes("pending playgroup outcome"))
+    || normalized.includes("operational splits do not reconcile to gingr source totals");
+}
+
 export function getMatrixTrust(matrix) {
   if (!matrix) {
     return {
@@ -343,14 +355,29 @@ export function getMatrixTrust(matrix) {
     const trust = matrix.detail_json.trust;
     const sourceMissing = requiresGingrSourceCounts(matrix) && !hasGingrSourceCounts(matrix);
     const sourceBlocker = "GINGR Calendar Details source totals are missing for this date.";
+    const rawBlockers = Array.isArray(trust.blockers) ? trust.blockers : [];
+    const rawBlockerDetails = Array.isArray(trust.blocker_details) ? trust.blocker_details : [];
+    const blockingLabels = rawBlockers.filter((label) => !isKnownDemandLimitationLabel(label));
+    const limitationLabels = rawBlockers.filter(isKnownDemandLimitationLabel);
+    const blockingDetails = rawBlockerDetails.filter((detail) => !isKnownDemandLimitationDetail(detail));
+    const limitationDetails = rawBlockerDetails.filter(isKnownDemandLimitationDetail);
     return {
       state: sourceMissing ? "estimated" : trust.state || "trusted",
       source: trust.source || "scheduling_matrix_daily",
-      can_generate: !sourceMissing && trust.can_generate !== false,
+      can_generate: !sourceMissing && blockingLabels.length === 0 && blockingDetails.length === 0,
       blockers: sourceMissing
-        ? [...new Set([sourceBlocker, ...(Array.isArray(trust.blockers) ? trust.blockers : [])])]
-        : Array.isArray(trust.blockers) ? trust.blockers : [],
-      blocker_details: Array.isArray(trust.blocker_details) ? trust.blocker_details : [],
+        ? [...new Set([sourceBlocker, ...blockingLabels])]
+        : blockingLabels,
+      blocker_details: blockingDetails,
+      limitations: [...new Set([
+        ...(Array.isArray(trust.limitations) ? trust.limitations : []),
+        ...limitationLabels,
+        ...limitationDetails.map((detail) => detail.label || detail.kind).filter(Boolean),
+      ])],
+      limitation_details: [
+        ...(Array.isArray(trust.limitation_details) ? trust.limitation_details : []),
+        ...limitationDetails,
+      ],
       notes: Array.isArray(trust.notes) ? trust.notes : [],
     };
   }

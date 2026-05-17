@@ -48,6 +48,11 @@ verify_jwt = false
 # Supabase vault service key, which is not always a JWT.
 verify_jwt = false
 
+[functions.scheduling-matrix-backfill]
+# Historical setup/backfill runs are authorized in-function, and server-side
+# continuation calls use the Supabase service key.
+verify_jwt = false
+
 [functions.ops-compute]
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.
