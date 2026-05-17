@@ -414,6 +414,24 @@ const LABOR_TAB_PERMISSION_MAP = {
   "hour-analysis": "Labor Roster",
 };
 
+const PAGE_OWNED_DATA_PAGES = new Set([
+  "home",
+  "training",
+  "grassroots",
+  "resort-upkeep",
+  "resources",
+  "settings",
+  "role-layout",
+  "enterprise-directory",
+  "enterprise-org-chart",
+  "enterprise-ops",
+  "enterprise-attendance",
+  "enterprise-users",
+  "test-health",
+  "onboarding",
+  "pricing",
+]);
+
 function getPagePermissionRequirements(page, params = {}) {
   if (page === "training") {
     const laborTab = params?.laborTab || "home";
@@ -538,7 +556,11 @@ function LeanAppInner() {
 
   // Dashboard refresh settings (interval + business hours) from Supabase
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
-  const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
+  const shouldLoadGlobalData = !PAGE_OWNED_DATA_PAGES.has(page);
+  const refreshOptions = useMemo(
+    () => ({ refreshIntervalMs, isWithinBusinessHours, enabled: shouldLoadGlobalData }),
+    [refreshIntervalMs, isWithinBusinessHours, shouldLoadGlobalData]
+  );
 
   // Canonical facility presence — server-owned sync, browser reads Supabase only.
   const bohEnabled = page === "home" || page === "dashboard";
@@ -568,14 +590,15 @@ function LeanAppInner() {
   const [liveResortPolicies, setLiveResortPolicies] = useState(null);
 
   // Realtime subscription for cross-device sync
-  const { markLocalWrite } = useRealtimeOps(currentLocation, setLiveDailyOps);
+  const { markLocalWrite } = useRealtimeOps(currentLocation, setLiveDailyOps, { enabled: shouldLoadGlobalData });
 
   // Load persisted resort policies (retention thresholds) from lite_settings
   useEffect(() => {
+    if (!shouldLoadGlobalData || !currentLocation) return;
     supabase.from("lite_settings").select("setting_value").eq("location_id", currentLocation).eq("setting_key", "resort_policies").then(({ data: rows }) => {
       if (rows && rows.length > 0 && rows[0].setting_value) setLiveResortPolicies(rows[0].setting_value);
     });
-  }, [currentLocation]);
+  }, [currentLocation, shouldLoadGlobalData]);
 
   // Merged data object — mock + live Supabase
   const data = useMemo(() => ({
@@ -662,6 +685,7 @@ function LeanAppInner() {
 
   // Load ops data from Supabase on mount & location change
   useEffect(() => {
+    if (!shouldLoadGlobalData || !currentLocation) return;
     const loadOpsData = async () => {
       try {
         const [opsResult, auditResult] = await Promise.all([
@@ -705,7 +729,7 @@ function LeanAppInner() {
       }
     };
     loadOpsData();
-  }, [currentLocation]);
+  }, [currentLocation, shouldLoadGlobalData]);
 
   // Save function — persists dailyOps and auditLog to Supabase
   const save = useCallback(async (newData) => {
