@@ -9,11 +9,11 @@
       "updatedAt": "2026-05-11T16:28:08.361Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "f4e8229bca57a5734590721e0800bc30e066e7ed",
+      "commit": "1780ab5d8ffe0bd2b867271e9451d980781fc1d7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Cherry Hill QA 23 scheduling horizon and projection freshness",
-      "updatedAt": "2026-05-11T16:28:08.361Z"
+      "note": "Scheduling matrix XLSX export and historical backfill",
+      "updatedAt": "2026-05-17T01:31:32.649Z"
     },
     "ops-compute": {
       "commit": "8ac020be08871362d5ba7f4ded3c0a08bf6537bc",
@@ -112,6 +112,13 @@
       "action": "deploy",
       "note": "Reduce Supabase storage egress for photo AI",
       "updatedAt": "2026-05-04T03:50:38.116Z"
+    },
+    "scheduling-matrix-backfill": {
+      "commit": "1780ab5d8ffe0bd2b867271e9451d980781fc1d7",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "Scheduling matrix XLSX export and historical backfill",
+      "updatedAt": "2026-05-17T01:31:32.649Z"
     }
   }
 }
