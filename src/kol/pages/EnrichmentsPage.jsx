@@ -31,7 +31,11 @@ import {
   serializeProducts,
 } from "../enrichments/enrichmentData";
 import {
+  ENRICHMENT_WORKFLOW_FILTERS,
   ENRICHMENT_WORKFLOW_REFRESH_MS,
+  ENRICHMENT_WORKFLOW_SORTS,
+  applyEnrichmentWorkflowView,
+  countEnrichmentWorkflowFilter,
   formatHealthAge,
 } from "../enrichments/enrichmentWorkflowData";
 import {
@@ -127,6 +131,8 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   const [graphicsLoading, setGraphicsLoading] = useState(false);
   const [uploadingGraphic, setUploadingGraphic] = useState("");
   const [healthOpen, setHealthOpen] = useState(false);
+  const [workflowFilter, setWorkflowFilter] = useState("all");
+  const [workflowSort, setWorkflowSort] = useState("departure");
 
   const canManage = MANAGE_ROLES.has(profile?.role);
   const { events, visibleMonthEvents, loading, error, storageMode, saveEvent, deleteEvent } = useEnrichmentEvents(locationId, monthDate);
@@ -421,6 +427,10 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
             setSelectedDate={setSelectedDate}
             selectedDateEvents={selectedDateEvents}
             workflowState={workflowState}
+            filter={workflowFilter}
+            onFilterChange={setWorkflowFilter}
+            sort={workflowSort}
+            onSortChange={setWorkflowSort}
             onSelectCalendar={() => setActiveTab("calendar")}
             onOpenHealth={() => setHealthOpen(true)}
           />
@@ -706,24 +716,55 @@ function WorkflowHealthButton({ health, refreshState, onClick, compact = false }
   );
 }
 
-function WorkflowView({ workflowState }) {
+function WorkflowView({ workflowState, filter, onFilterChange, sort, onSortChange }) {
   const { workflow, completions, loading, toggleDog } = workflowState;
+  const visibleDogs = useMemo(
+    () => applyEnrichmentWorkflowView(workflow.dogs, { filter, sort }),
+    [workflow.dogs, filter, sort]
+  );
   return (
     <section className="workflow-command workflow-command-tight">
       <div className="workflow-table-card">
         <div className="workflow-table-toolbar">
           <div>
             <span className="section-title">Dogs for This Date</span>
+            <p>{visibleDogs.length} of {workflow.rowCount} rows shown. Default order is earliest scheduled departure first.</p>
           </div>
-          <WorkflowPlaygroupLegend />
+          <div className="workflow-table-controls">
+            <div className="workflow-filter-pills" aria-label="Filter enrichment workflow dogs">
+              {ENRICHMENT_WORKFLOW_FILTERS.map((option) => {
+                const count = countEnrichmentWorkflowFilter(workflow.dogs, option.id);
+                if (option.id !== "all" && count === 0) return null;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={filter === option.id ? "active" : ""}
+                    onClick={() => onFilterChange(option.id)}
+                  >
+                    {option.label} <span>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <label className="workflow-sort-select">
+              <span>Sort</span>
+              <select value={sort} onChange={(event) => onSortChange(event.target.value)}>
+                {ENRICHMENT_WORKFLOW_SORTS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <WorkflowPlaygroupLegend />
+          </div>
         </div>
-        {renderWorkflowTable({ loading, workflow, completions, toggleDog })}
+        {renderWorkflowTable({ loading, workflow, visibleDogs, completions, toggleDog })}
       </div>
     </section>
   );
 }
 
-function renderWorkflowTable({ loading, workflow, completions, toggleDog }) {
+function renderWorkflowTable({ loading, workflow, visibleDogs, completions, toggleDog }) {
   if (loading && !workflow.rowCount) {
     return (
       <div className="workflow-loading">
@@ -747,14 +788,15 @@ function renderWorkflowTable({ loading, workflow, completions, toggleDog }) {
         <thead>
           <tr>
             <th>Dog</th>
-            <th>Room</th>
+            <th>Room / Wing</th>
+            <th>Timing</th>
             <th>Owner</th>
             <th>Status</th>
             <th>Completed</th>
           </tr>
         </thead>
         <tbody>
-          {workflow.dogs.map((dog) => {
+          {visibleDogs.map((dog) => {
             const completion = completions[dog.id];
             const serviceDetail = getWorkflowExtraServiceDetail(dog.services);
             return (
@@ -773,7 +815,15 @@ function renderWorkflowTable({ loading, workflow, completions, toggleDog }) {
                     </div>
                   </div>
                 </td>
-                <td>{dog.roomLabel || "-"}</td>
+                <td>
+                  <div className="workflow-room-cell">
+                    <strong>{dog.roomLabel || "-"}</strong>
+                    <span>{dog.roomWing || "Unassigned"}</span>
+                  </div>
+                </td>
+                <td>
+                  <WorkflowTimingCell dog={dog} />
+                </td>
                 <td>{dog.ownerName}</td>
                 <td><span className={`workflow-status ${dog.status}`}>{dog.status === "needs_review" ? "Needs review" : "Scheduled"}</span></td>
                 <td>
@@ -802,6 +852,17 @@ function getWorkflowExtraServiceDetail(services = []) {
     .map((service) => String(service || "").trim())
     .filter((service) => service && !service.toLowerCase().includes("enrichment"))
     .join(", ");
+}
+
+function WorkflowTimingCell({ dog }) {
+  const isCheckedOut = dog?.timing?.isCheckedOut;
+  return (
+    <div className="workflow-timing-cell">
+      <span><strong>In</strong>{dog.arrivalLabel || "-"}</span>
+      <span><strong>Out</strong>{dog.departureLabel || "-"}</span>
+      {isCheckedOut ? <small>Checked out {dog.actualDepartureLabel || ""}</small> : null}
+    </div>
+  );
 }
 
 function WorkflowReservationLine({ dog }) {
@@ -2082,6 +2143,13 @@ button.daily-module-card{width:100%;cursor:pointer}
 .workflow-table-wrap{overflow:auto}
 .workflow-table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid ${C.borderLight};background:#fff}
 .workflow-table-toolbar p{font-size:12px;line-height:18px;color:${C.textSec};margin:2px 0 0;max-width:780px}
+.workflow-table-controls{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:280px}
+.workflow-filter-pills{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.workflow-filter-pills button{border:1px solid ${C.border};background:#fff;color:${C.textSec};border-radius:999px;padding:6px 9px;font:850 11px/14px ${K9_FONT_STACK};cursor:pointer;white-space:nowrap}
+.workflow-filter-pills button.active{background:${C.pri};border-color:${C.pri};color:#fff;box-shadow:0 8px 18px rgba(20,83,45,.14)}
+.workflow-filter-pills button span{font-variant-numeric:tabular-nums;opacity:.78}
+.workflow-sort-select{display:flex;align-items:center;gap:6px;color:${C.textMut};font:850 11px/14px ${K9_FONT_STACK};text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.workflow-sort-select select{height:32px;border:1px solid ${C.border};border-radius:6px;background:#fff;color:${C.text};font:800 12px/16px ${K9_FONT_STACK};padding:0 26px 0 9px}
 .workflow-table{width:100%;border-collapse:collapse;font-size:13px}
 .workflow-table th{background:${C.surfaceHover};border-bottom:1px solid ${C.border};text-align:left;padding:11px 14px;font-size:11px;line-height:16px;font-weight:850;color:${C.textMut};text-transform:uppercase;letter-spacing:.05em}
 .workflow-table td{padding:13px 14px;border-bottom:1px solid ${C.borderLight};vertical-align:middle;color:${C.textSec}}
@@ -2103,6 +2171,13 @@ button.daily-module-card{width:100%;cursor:pointer}
 .workflow-reservation-window{display:inline-flex!important;align-items:center;width:max-content;margin:0!important;color:${C.textSec}!important;font:800 11px/15px ${K9_FONT_STACK}!important;letter-spacing:0}
 .workflow-service-line{font-weight:650}
 .workflow-review-reason{max-width:560px;color:#92400E!important;font:850 11px/16px ${K9_FONT_STACK}!important;margin-top:6px!important}
+.workflow-room-cell{display:grid;gap:2px;min-width:112px}
+.workflow-room-cell strong{font-size:13px;line-height:18px;color:${C.text};font-weight:900}
+.workflow-room-cell span{font-size:10px;line-height:13px;color:${C.textMut};font-weight:850;text-transform:uppercase;letter-spacing:.04em}
+.workflow-timing-cell{display:grid;gap:4px;min-width:112px}
+.workflow-timing-cell span{display:flex;align-items:center;justify-content:space-between;gap:8px;font:900 12px/15px ${K9_FONT_STACK};color:${C.text};font-variant-numeric:tabular-nums}
+.workflow-timing-cell span strong{font-size:9px;line-height:12px;color:${C.textMut};text-transform:uppercase;letter-spacing:.04em}
+.workflow-timing-cell small{font:800 10px/13px ${K9_FONT_STACK};color:${C.warn};white-space:nowrap}
 .workflow-playgroup-badges{display:inline-flex!important;align-items:center;gap:4px;margin-top:0!important}
 .workflow-playgroup-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:22px;height:18px;border-radius:999px;padding:0 6px;font:900 9px/18px ${K9_FONT_STACK};text-transform:uppercase;letter-spacing:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.42)}
 .workflow-playgroup-legend{display:flex;align-items:center;justify-content:flex-end;gap:8px 10px;flex-wrap:wrap}
