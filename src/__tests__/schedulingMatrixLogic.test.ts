@@ -179,6 +179,75 @@ describe("scheduling matrix logic", () => {
     expect(adjustment.reconciliation?.deltas.total_dog_volume).toBe(16);
   });
 
+  it("treats positive GINGR source deltas as source-aligned unclassified demand, not unreconciled blockers", () => {
+    const adjustment = applyGingrWidgetSourceCountsToDisplay({
+      opening: {
+        large_boarding: 10,
+        small_boarding: 0,
+        private_play_boarding: 0,
+        half_and_half_boarding: 0,
+        evaluation_boarding: 0,
+        unclassified_boarding: 0,
+        total_boarding: 10,
+      },
+      closing: {
+        large_boarding: 10,
+        small_boarding: 0,
+        private_play_boarding: 0,
+        half_and_half_boarding: 0,
+        evaluation_boarding: 0,
+        unclassified_boarding: 0,
+        total_boarding: 10,
+      },
+      daycare: {
+        evaluations: 0,
+        private_play_dayboarding: 0,
+        half_and_half_daytime: 0,
+        large_daycare: 10,
+        small_daycare: 0,
+        unclassified_daycare: 0,
+        total_daycare: 10,
+      },
+      support: {
+        departure_baths: 0,
+        morning_feeding_dogs: 10,
+        evening_feeding_dogs: 10,
+        medication_dogs: 0,
+        tours: 0,
+        total_dog_volume: 20,
+      },
+      play_yard: {},
+    }, {
+      date: "2026-04-28",
+      check_ins: 0,
+      check_outs: 0,
+      overnight: 13,
+      total: 27,
+      boarding: { check_ins: 0, check_outs: 0, overnight: 13, opening: 12, total: 13 },
+      daytime: { check_ins: 0, check_outs: 0, overnight: 0, total: 14 },
+      other: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+      per_type: [],
+      synced_at: null,
+    });
+
+    expect(adjustment.display.opening.unclassified_boarding).toBe(2);
+    expect(adjustment.display.closing.unclassified_boarding).toBe(3);
+    expect(adjustment.display.daycare.unclassified_daycare).toBe(4);
+    expect(adjustment.reconciliation?.source_adjustments.total_dog_volume).toBe(7);
+    expect(adjustment.reconciliation?.remaining_deltas.total_dog_volume).toBe(0);
+    expect(adjustment.reconciliation?.is_reconciled).toBe(true);
+
+    const trust = buildTrustPayload({
+      blockerDetails: [],
+      roomCountsEstimated: false,
+      sourceReconciliation: adjustment.reconciliation,
+      sourceRequired: true,
+    });
+    expect(trust.can_generate).toBe(true);
+    expect(trust.blockers).toHaveLength(0);
+    expect(trust.limitations[0]).toContain("unclassified demand buckets");
+  });
+
   it("treats first-ever daycare visits as evaluations instead of standard daycare", () => {
     const baseRows = [
       makeReservation({
@@ -257,9 +326,10 @@ describe("scheduling matrix logic", () => {
 
     const blockerDetails = buildBlockerDetails(dayTwo.openingBoarding, "2026-04-21", "opening_boarding");
     const trust = buildTrustPayload({ blockerDetails, roomCountsEstimated: false });
-    expect(trust.can_generate).toBe(false);
-    expect(trust.blockers[0]).toContain("evaluation boarder");
-    expect(trust.blockers[0]).toContain("opening boarding");
+    expect(trust.can_generate).toBe(true);
+    expect(trust.blockers).toHaveLength(0);
+    expect(trust.limitation_details[0].label).toContain("evaluation boarder");
+    expect(trust.limitation_details[0].label).toContain("opening boarding");
   });
 
   it("projects using exact prior year completion first when available", () => {

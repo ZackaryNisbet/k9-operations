@@ -2,11 +2,12 @@
 // Week plan + optimal headcount + BE rotation + explanations + warnings + assumptions.
 // Uses live Supabase data from scheduling_matrix_daily.
 
-import React, { useState, useMemo, useCallback } from "react";
-import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
+import { C, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, CalendarPicker } from "../../shared/ui";
-import { useSchedulingData } from "../../hooks/useSchedulingData";
+import { supabase } from "../../supabaseClient";
+import { buildSchedulingDateRange, useSchedulingData } from "../../hooks/useSchedulingData";
 import {
   TASK_COLORS,
   SHIFT_POSITION_OPTIONS,
@@ -18,6 +19,35 @@ import {
   deriveStaffPlanFromShiftEntries,
   getShiftEntries,
 } from "../../shared/schedulingEngine";
+import {
+  MATRIX_PAGE_SIZE,
+  buildDemandMatrixExportModel,
+  buildDemandMatrixRangeReadiness,
+  buildDemandMatrixRowGroups,
+  buildHistoricalRangeSummary,
+  buildSchedulingNarrative,
+  buildSchedulingNarrativeHtml,
+  formatDemandMatrixValue as formatMatrixValue,
+  getDayColumnLabel,
+  getDayCurrentDisplay,
+  getDayMatrixValue,
+  getDayProjectedDisplay,
+  getDayProjection,
+  summarizeAggregateMatrixCell,
+  sumMatrixValues,
+} from "./schedulingDemandMatrixModel";
+import {
+  buildDemandMatrixExportFilename,
+  createDemandMatrixXlsxBlob,
+  downloadBlob,
+} from "./schedulingDemandMatrixXlsx";
+
+export {
+  buildHistoricalRangeSummary,
+  buildSchedulingNarrative,
+  buildSchedulingNarrativeHtml,
+  summarizeAggregateMatrixCell,
+};
 
 // ─── Utility Components ───────────────────────────────────────────────────
 
@@ -127,134 +157,6 @@ function TrustBadge({ state, blocked }) {
   );
 }
 
-const MATRIX_GROUP_TEMPLATES = [
-  {
-    section: "Gingr Source Counts",
-    hideRowsWhenCollapsed: true,
-    rows: [
-      { key: "source.check_ins", label: "Gingr Check-Ins", source: true },
-      { key: "source.check_outs", label: "Gingr Check-Outs", source: true },
-      { key: "source.overnight", label: "Gingr Overnight", source: true },
-      { key: "source.boarding_opening", label: "Boarding Dogs Opening", total: true, source: true },
-      { key: "source.boarding_closing", label: "Boarding Dogs Closing", total: true, source: true },
-      { key: "source.daytime_total", label: "Gingr Daytime Dogs", total: true, source: true },
-      { key: "source.total", label: "Gingr Total Volume", total: true, source: true },
-    ],
-  },
-  {
-    section: "Historical",
-    rows: [
-      { key: "comparison.yoy_overnight", label: "YOY Overnight", comparison: true },
-      { key: "comparison.yoy_daytime", label: "YOY Daytime", comparison: true },
-      { key: "comparison.yoy_total", label: "YOY Total", total: true, comparison: true },
-      { key: "comparison.yoy_total_pct_vs_current_year", label: "YOY Total % vs Current Year", comparison: true, format: "percent" },
-    ],
-  },
-  {
-    section: "Opening Boarding",
-    rows: [
-      { key: "opening.large_boarding", label: "Large Boarding Opening" },
-      { key: "opening.small_boarding", label: "Small Boarding Opening" },
-      { key: "opening.private_play_boarding", label: "Private Play Boarding Opening" },
-      { key: "opening.half_and_half_boarding", label: "Half and Half Boarding Opening", optional: true },
-      { key: "opening.evaluation_boarding", label: "Evaluation Boarding Opening", optional: true },
-      { key: "opening.unclassified_boarding", label: "Unresolved Boarding Opening", optional: true },
-      { key: "opening.total_boarding", label: "Total Boarding Dogs Opening", total: true },
-    ],
-  },
-  {
-    section: "Closing Boarding",
-    rows: [
-      { key: "closing.large_boarding", label: "Large Boarding Closing" },
-      { key: "closing.small_boarding", label: "Small Boarding Closing" },
-      { key: "closing.private_play_boarding", label: "Private Play Boarding Closing" },
-      { key: "closing.half_and_half_boarding", label: "Half and Half Boarding Closing", optional: true },
-      { key: "closing.evaluation_boarding", label: "Evaluation Boarding Closing", optional: true },
-      { key: "closing.unclassified_boarding", label: "Unresolved Boarding Closing", optional: true },
-      { key: "closing.total_boarding", label: "Total Boarding Dogs Closing", total: true },
-    ],
-  },
-  {
-    section: "Daytime Volume",
-    rows: [
-      { key: "daycare.evaluations", label: "Evaluations" },
-      { key: "daycare.private_play_dayboarding", label: "Private Play Dayboarding" },
-      { key: "daycare.half_and_half_daytime", label: "Half and Half Daytime Dogs", optional: true },
-      { key: "daycare.large_daycare", label: "Large Daycare" },
-      { key: "daycare.small_daycare", label: "Small Daycare" },
-      { key: "daycare.unclassified_daycare", label: "Unresolved Daytime Dogs", optional: true },
-      { key: "daycare.total_daycare", label: "Total Daycare Dogs", total: true },
-    ],
-  },
-  {
-    section: "Support Workload",
-    rows: [
-      { key: "support.departure_baths", label: "Departure Baths", alwaysVisible: true },
-      { key: "support.total_dog_volume", label: "Total Dog Volume", total: true },
-      { key: "play_yard.large_play_dogs", label: "Large Play Demand", alwaysVisible: true },
-      { key: "play_yard.small_play_dogs", label: "Small Play Demand", alwaysVisible: true },
-      { key: "play_yard.private_play_dogs", label: "Private Play Demand", alwaysVisible: true },
-      { key: "play_yard.split_play_dogs", label: "Split Play Demand", optional: true, alwaysVisible: true },
-      { key: "support.tours", label: "Tours" },
-    ],
-  },
-];
-
-const SCHEDULING_NARRATIVE_ROWS = [
-  { key: "opening.total_boarding", label: "Total opening boarding dogs" },
-  { key: "support.departure_baths", label: "Total departure baths" },
-  { key: "closing.total_boarding", label: "Total closing boarding dogs" },
-  { key: "daycare.total_daycare", label: "Total daycare dogs" },
-];
-
-function getNestedValue(obj, key) {
-  return key.split(".").reduce((acc, part) => acc?.[part], obj);
-}
-
-function getDayCurrentDisplay(day) {
-  return day?.currentDisplay || getMatrixDisplay(day?.matrix || day || {});
-}
-
-function getDayProjectedDisplay(day) {
-  return day?.projectedDisplay || getMatrixProjectedDisplay(day?.matrix || day || {});
-}
-
-function getDayProjection(day) {
-  return day?.projection || getMatrixProjection(day?.matrix || day || {});
-}
-
-function getDayComparison(day) {
-  return day?.comparison || getMatrixComparison(day?.matrix || day || {});
-}
-
-function getDayMatrixValue(day, row, mode = "current") {
-  if (row.comparison) {
-    return getNestedValue({ comparison: getDayComparison(day) }, row.key);
-  }
-
-  const source = (row.source || mode === "current") ? getDayCurrentDisplay(day) : getDayProjectedDisplay(day);
-  return getNestedValue(source, row.key);
-}
-
-function hasAnyNonZeroValue(days, key) {
-  return days.some((day) => {
-    const value = key.startsWith("comparison.")
-      ? getNestedValue({ comparison: getDayComparison(day) }, key)
-      : (
-        getNestedValue(getDayCurrentDisplay(day), key)
-        ?? getNestedValue(getDayProjectedDisplay(day), key)
-      );
-    return value !== null && value !== undefined && Number(value) !== 0;
-  });
-}
-
-function buildMatrixRowGroups(days) {
-  return MATRIX_GROUP_TEMPLATES.map((group) => ({
-    ...group,
-    rows: group.rows.filter((row) => !row.optional || hasAnyNonZeroValue(days, row.key)),
-  }));
-}
-
 function formatMatrixDate(date) {
   const dt = new Date(`${date}T12:00:00`);
   return dt.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
@@ -269,84 +171,6 @@ function formatMatrixDateRange(startDate, endDate) {
   const startText = start.toLocaleDateString("en-US", sameMonth ? { month: "short", day: "numeric" } : { month: "short", day: "numeric" });
   const endText = end.toLocaleDateString("en-US", { month: sameMonth ? undefined : "short", day: "numeric" });
   return `${startText} - ${endText}`;
-}
-
-function getDayColumnLabel(date) {
-  const dt = new Date(`${date}T12:00:00`);
-  return DAY_NAMES_SHORT[dt.getDay()] || dt.toLocaleDateString("en-US", { weekday: "short" });
-}
-
-function formatNarrativeDate(date) {
-  const dt = new Date(`${date}T12:00:00`);
-  return dt.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
-}
-
-function formatNarrativeDay(date, fallbackDayName) {
-  if (date) {
-    const dt = new Date(`${date}T12:00:00`);
-    return dt.toLocaleDateString("en-US", { weekday: "long" });
-  }
-
-  const map = {
-    Mon: "Monday",
-    Tue: "Tuesday",
-    Wed: "Wednesday",
-    Thu: "Thursday",
-    Fri: "Friday",
-    Sat: "Saturday",
-    Sun: "Sunday",
-  };
-  return map[fallbackDayName] || fallbackDayName || "Day";
-}
-
-function formatNarrativeNumber(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "—";
-  return String(Math.round(numeric));
-}
-
-function getSchedulingNarrativeDay(day) {
-  const heading = `${formatNarrativeDay(day?.date, day?.dayName)}, ${formatNarrativeDate(day?.date || todayStr())}`;
-  const items = SCHEDULING_NARRATIVE_ROWS.map((row) => {
-    const currentValue = getDayMatrixValue(day, row, "current");
-    const projectedValue = getDayMatrixValue(day, row, "projected");
-    return `${row.label}: ${formatNarrativeNumber(currentValue)} current → ${formatNarrativeNumber(projectedValue ?? currentValue)} projected`;
-  });
-  return { heading, items };
-}
-
-export function buildSchedulingNarrative(days) {
-  return (days || [])
-    .map((day) => {
-      const { heading, items } = getSchedulingNarrativeDay(day);
-      return [heading, ...items.map((item) => `• ${item}`)].join("\n");
-    })
-    .join("\n\n");
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-export function buildSchedulingNarrativeHtml(days) {
-  return (days || [])
-    .map((day) => {
-      const { heading, items } = getSchedulingNarrativeDay(day);
-      return [
-        '<div style="margin:0 0 24px 0;">',
-        `<p style="margin:0 0 8px 0;"><strong>${escapeHtml(heading)}</strong></p>`,
-        '<ul style="margin:0 0 0 22px; padding:0;">',
-        ...items.map((item) => `<li style="margin:0 0 4px 0;">${escapeHtml(item)}</li>`),
-        "</ul>",
-        "</div>",
-      ].join("");
-    })
-    .join("");
 }
 
 function copyWithClipboardEvent({ text, html }) {
@@ -477,8 +301,6 @@ function getDayIndexFromMonday(dateStr) {
   const day = date.getDay();
   return day === 0 ? 6 : day - 1;
 }
-
-const MATRIX_PAGE_SIZE = 14;
 
 function getMonthStart(dateStr) {
   const date = new Date(`${dateStr}T12:00:00`);
@@ -642,81 +464,6 @@ function dateIndexInRange(startDate, endDate, dateStr) {
   const start = new Date(`${startDate}T12:00:00`);
   const date = new Date(`${dateStr}T12:00:00`);
   return Math.max(0, Math.round((date.getTime() - start.getTime()) / 86400000));
-}
-
-function formatMatrixValue(value, format) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "—";
-  if (format === "percent") return `${numeric.toFixed(Number.isInteger(numeric) ? 0 : 1)}%`;
-  return Math.round(numeric);
-}
-
-function getFiniteMatrixValues(days, row, mode) {
-  return days
-    .map((day) => getDayMatrixValue(day, row, mode))
-    .filter((value) => value !== null && value !== undefined && value !== "")
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
-}
-
-function sumMatrixValues(days, row, mode) {
-  const values = getFiniteMatrixValues(days, row, mode);
-  if (!values.length) return null;
-  return values.reduce((sum, value) => sum + value, 0);
-}
-
-function totalHistoricalPct(days) {
-  const currentValues = days
-    .map((day) => Number(getDayComparison(day)?.current_total))
-    .filter((value) => Number.isFinite(value));
-  const lastYearValues = days
-    .map((day) => Number(getDayComparison(day)?.yoy_total))
-    .filter((value) => Number.isFinite(value));
-  const currentTotal = currentValues.reduce((sum, value) => sum + value, 0);
-  const lastYearTotal = lastYearValues.reduce((sum, value) => sum + value, 0);
-  if (currentTotal <= 0 || !lastYearValues.length) return null;
-  return Number(((lastYearTotal / currentTotal) * 100).toFixed(1));
-}
-
-export function summarizeAggregateMatrixCell(days, row, mode = "current") {
-  if (row.format === "percent") {
-    const value = totalHistoricalPct(days);
-    return {
-      value,
-      hasValue: value !== null && value !== undefined,
-      unavailableLabel: "No history",
-      unavailableTitle: "No canonical prior-year total is available for this aggregate.",
-    };
-  }
-
-  const value = sumMatrixValues(days, row, mode);
-  const isComparison = Boolean(row.comparison);
-  return {
-    value,
-    hasValue: value !== null && value !== undefined,
-    unavailableLabel: isComparison ? "No history" : "No data",
-    unavailableTitle: isComparison
-      ? "No canonical year-over-year source count is available for this aggregate."
-      : "No canonical source count is available for this aggregate.",
-  };
-}
-
-export function buildHistoricalRangeSummary(days) {
-  const currentOvernight = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_overnight) || 0), 0);
-  const currentDaytime = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_daytime) || 0), 0);
-  const currentTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.current_total) || 0), 0);
-  const yoyOvernight = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_overnight) || 0), 0);
-  const yoyDaytime = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_daytime) || 0), 0);
-  const yoyTotal = days.reduce((sum, day) => sum + (Number(getDayComparison(day)?.yoy_total) || 0), 0);
-  return {
-    currentOvernight,
-    currentDaytime,
-    currentTotal,
-    yoyOvernight,
-    yoyDaytime,
-    yoyTotal,
-    yoyTotalPctVsCurrentYear: currentTotal > 0 ? Number(((yoyTotal / currentTotal) * 100).toFixed(1)) : null,
-  };
 }
 
 function getShiftHourSummary(frame, breakMinutes = 30) {
@@ -1501,6 +1248,27 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [scheduleView, setScheduleView] = useState("optimal");
   const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
   const [copyNarrativeStatus, setCopyNarrativeStatus] = useState("idle");
+  const [matrixExportState, setMatrixExportState] = useState({ status: "idle", message: "" });
+  const [matrixBackfillState, setMatrixBackfillState] = useState({
+    status: "idle",
+    message: "",
+    runId: null,
+    completedDays: 0,
+    totalDays: 0,
+  });
+
+  useEffect(() => {
+    setMatrixExportState((current) => (
+      current.status === "idle" ? current : { status: "idle", message: "" }
+    ));
+    setMatrixBackfillState({
+      status: "idle",
+      message: "",
+      runId: null,
+      completedDays: 0,
+      totalDays: 0,
+    });
+  }, [locationId, demandRange.startDate, demandRange.endDate]);
 
   // Version & override state
   const [savedVersions, setSavedVersions] = useState([]);
@@ -1526,6 +1294,155 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     })),
     [weekData]
   );
+  const demandRangeDates = useMemo(
+    () => buildSchedulingDateRange(demandRange.startDate, demandRange.endDate),
+    [demandRange.startDate, demandRange.endDate],
+  );
+  const matrixRangeReadiness = useMemo(() => buildDemandMatrixRangeReadiness({
+    days: workbookDays,
+    expectedDates: demandRangeDates,
+    loading,
+    error,
+    today,
+  }), [workbookDays, demandRangeDates, loading, error, today]);
+  const matrixExportReady = matrixRangeReadiness.status === "ready";
+  const historicalBackfillAvailable = demandRange.endDate < today && matrixRangeReadiness.missingDays.length > 0;
+  const backfillRunning = ["queued", "running", "starting"].includes(matrixBackfillState.status);
+  const refreshMatrixBackfillStatus = useCallback(async (runId) => {
+    if (!runId) return null;
+    const { data: statusData, error: statusError } = await supabase.functions.invoke("scheduling-matrix-backfill", {
+      body: {
+        action: "status",
+        run_id: runId,
+      },
+    });
+    if (statusError || statusData?.error) {
+      throw new Error(statusError?.message || statusData?.error || "Failed to load historical matrix backfill status.");
+    }
+
+    const run = statusData?.run || {};
+    const coverage = statusData?.coverage || run.coverage_snapshot || {};
+    const completedDays = Number(coverage.computed_days ?? run.completed_days ?? 0);
+    const totalDays = Number(coverage.expected_days ?? run.total_days ?? 0);
+    const status = run.status || "running";
+    const message = status === "complete"
+      ? `Historical matrix backfill complete: ${completedDays}/${totalDays} computed days.`
+      : status === "failed"
+        ? `Historical matrix backfill failed: ${run.error_message || "See backfill run details."}`
+        : `Historical matrix backfill running: ${completedDays}/${totalDays} computed days.`;
+
+    setMatrixBackfillState({
+      status,
+      message,
+      runId,
+      completedDays,
+      totalDays,
+    });
+
+    if (status === "complete") {
+      await refresh();
+      addGlobalToast?.(message, "success");
+    }
+
+    return { run, coverage };
+  }, [addGlobalToast, refresh]);
+
+  const startHistoricalMatrixBackfill = useCallback(async () => {
+    if (!historicalBackfillAvailable || backfillRunning) return;
+    setMatrixBackfillState({
+      status: "starting",
+      message: "Starting historical matrix backfill...",
+      runId: null,
+      completedDays: matrixRangeReadiness.computedMatrixRowCount,
+      totalDays: matrixRangeReadiness.expectedDayCount,
+    });
+
+    try {
+      const { data: startData, error: startError } = await supabase.functions.invoke("scheduling-matrix-backfill", {
+        body: {
+          action: "start",
+          location_id: locationId,
+          date_from: demandRange.startDate,
+          date_to: demandRange.endDate,
+          batch_size: 14,
+          mode: "historical_location_bootstrap",
+        },
+      });
+      if (startError || startData?.error) {
+        throw new Error(startError?.message || startData?.error || "Failed to start historical matrix backfill.");
+      }
+
+      const run = startData?.run || {};
+      const coverage = startData?.coverage || {};
+      const completedDays = Number(coverage.computed_days ?? run.completed_days ?? 0);
+      const totalDays = Number(coverage.expected_days ?? run.total_days ?? 0);
+      const status = run.status || "queued";
+      const message = status === "complete"
+        ? `Historical matrix backfill complete: ${completedDays}/${totalDays} computed days.`
+        : `Historical matrix backfill queued: ${completedDays}/${totalDays} computed days.`;
+
+      setMatrixBackfillState({
+        status,
+        message,
+        runId: run.id || null,
+        completedDays,
+        totalDays,
+      });
+      addGlobalToast?.(message, status === "complete" ? "success" : "info");
+      if (status === "complete") await refresh();
+    } catch (backfillError) {
+      const message = backfillError?.message || "Failed to start historical matrix backfill.";
+      setMatrixBackfillState({
+        status: "failed",
+        message,
+        runId: null,
+        completedDays: matrixRangeReadiness.computedMatrixRowCount,
+        totalDays: matrixRangeReadiness.expectedDayCount,
+      });
+      addGlobalToast?.(message, "error");
+    }
+  }, [
+    addGlobalToast,
+    backfillRunning,
+    demandRange.endDate,
+    demandRange.startDate,
+    historicalBackfillAvailable,
+    locationId,
+    matrixRangeReadiness.computedMatrixRowCount,
+    matrixRangeReadiness.expectedDayCount,
+    refresh,
+  ]);
+
+  useEffect(() => {
+    if (!matrixBackfillState.runId || !backfillRunning || matrixBackfillState.status === "starting") return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const result = await refreshMatrixBackfillStatus(matrixBackfillState.runId);
+        if (!cancelled && result?.run?.status && !["queued", "running"].includes(result.run.status)) {
+          return false;
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          setMatrixBackfillState((current) => ({
+            ...current,
+            status: "failed",
+            message: pollError?.message || "Failed to refresh historical matrix backfill status.",
+          }));
+        }
+        return false;
+      }
+      return true;
+    };
+    const intervalId = window.setInterval(() => {
+      poll();
+    }, 5000);
+    poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [backfillRunning, matrixBackfillState.runId, matrixBackfillState.status, refreshMatrixBackfillStatus]);
   const matrixColumnState = useMemo(() => buildMatrixColumns({
     days: workbookDays,
     rangeMode: matrixRangeMode,
@@ -1541,7 +1458,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const narrativeDays = matrixRangeMode === "week" ? workbookDays : visibleMatrixDays;
   const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(narrativeDays), [narrativeDays]);
   const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(narrativeDays), [narrativeDays]);
-  const matrixRowGroups = useMemo(() => buildMatrixRowGroups(visibleMatrixDays), [visibleMatrixDays]);
+  const matrixRowGroups = useMemo(() => buildDemandMatrixRowGroups(visibleMatrixDays), [visibleMatrixDays]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
   const toggleMonthSegment = useCallback((segmentId) => {
     setExpandedMonthSegments((current) => {
@@ -1676,6 +1593,62 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       }, 1800);
     }
   }, [schedulingNarrativeText, schedulingNarrativeHtml, addGlobalToast]);
+
+  const handleExportDemandMatrixXlsx = useCallback(async () => {
+    if (!matrixExportReady) {
+      const message = matrixRangeReadiness.reason || "Export is blocked until every selected day is computed and reconciled.";
+      setMatrixExportState({ status: "blocked", message });
+      addGlobalToast?.(message, matrixRangeReadiness.status === "failed" ? "error" : "info");
+      return;
+    }
+
+    const locationName = profile?.location_name || profile?.locationName || profile?.location || profile?.resort_name || profile?.location_id || "Location";
+    const generatedAt = new Date().toISOString();
+    const model = buildDemandMatrixExportModel({
+      days: workbookDays,
+      expectedDates: demandRangeDates,
+      startDate: demandRange.startDate,
+      endDate: demandRange.endDate,
+      locationId,
+      locationName,
+      generatedAt,
+      readiness: matrixRangeReadiness,
+    });
+
+    const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    setMatrixExportState({
+      status: "running",
+      message: `Generating XLSX with ${model.days.length} day column${model.days.length === 1 ? "" : "s"} and ${model.rows.filter((row) => row.type === "metric").length} matrix rows.`,
+    });
+
+    try {
+      const blob = await createDemandMatrixXlsxBlob(model);
+      const elapsedMs = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt);
+      downloadBlob(blob, buildDemandMatrixExportFilename(model));
+      const message = `XLSX export complete: ${model.days.length} day column${model.days.length === 1 ? "" : "s"}, actual/current canonical values only.`;
+      setMatrixExportState({ status: "complete", message: `${message} Generated in ${elapsedMs}ms.` });
+      addGlobalToast?.(message, "success");
+    } catch (err) {
+      const detail = err?.message || "XLSX generation failed";
+      const message = `XLSX export failed: ${detail}. If this range keeps failing in-browser, use an async server artifact job instead.`;
+      setMatrixExportState({ status: "failed", message });
+      addGlobalToast?.(message, "error");
+    }
+  }, [
+    addGlobalToast,
+    demandRange.endDate,
+    demandRange.startDate,
+    demandRangeDates,
+    locationId,
+    matrixExportReady,
+    matrixRangeReadiness,
+    profile?.location,
+    profile?.locationName,
+    profile?.location_id,
+    profile?.location_name,
+    profile?.resort_name,
+    workbookDays,
+  ]);
 
   const handleStaffPlanSave = useCallback(async (plan) => {
     try {
@@ -1871,6 +1844,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const saveButtonLabel = showingAdjustedSchedule ? "Save Staff-Adjusted Schedule" : "Save Optimal Schedule";
   const generateDisabled = !selectedDay?.canGenerate || !visibleRotation?.saveable_payload;
   const generateDisabledReason = formatVisibleSchedulingCopy(rotationError || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation yet.");
+  const readinessTone = {
+    checking: { bg: "#EFF6FF", color: C.pri, label: "Checking Coverage" },
+    ready: { bg: C.sucLt, color: C.suc, label: "Ready" },
+    blocked: { bg: C.danLt, color: C.dan, label: "Blocked" },
+    failed: { bg: C.danLt, color: C.dan, label: "Failed" },
+  }[matrixRangeReadiness.status] || { bg: "#F1F5F9", color: C.textMut, label: "Unknown" };
+  const matrixExportRunning = matrixExportState.status === "running";
+  const matrixExportDisabled = matrixRangeReadiness.status === "checking" || matrixExportRunning;
 
   const gridData = visibleRotation?.grid || { lanes: [], slots: [], cells: {} };
   const { lanes, slots, cells: serverGrid } = gridData;
@@ -2015,6 +1996,29 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <button
+              onClick={handleExportDemandMatrixXlsx}
+              disabled={matrixExportDisabled}
+              title={matrixRangeReadiness.reason}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: `1px solid ${matrixExportReady ? C.suc : C.border}`,
+                background: matrixExportReady ? C.sucLt : C.surface,
+                color: matrixExportReady ? C.suc : C.text,
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: matrixExportDisabled ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+                opacity: matrixExportDisabled ? 0.6 : 1,
+              }}
+            >
+              <span style={{ display: "flex" }}>{matrixExportRunning ? <I.RefreshCw /> : <I.Download />}</span>
+              {matrixExportRunning ? "Exporting..." : "Export XLSX"}
+            </button>
+            <button
               onClick={handleCopySchedulingNarrative}
               disabled={!schedulingNarrativeText || loading}
               title="Copy week narrative"
@@ -2116,6 +2120,69 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             {matrixRangeMode !== "month" && workbookDays.length > MATRIX_PAGE_SIZE && ` Showing ${visibleMatrixDays.length} table days at a time across the ${workbookDays.length}-day range.`}
           </div>
         )}
+        <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "3px 9px", borderRadius: 999, background: readinessTone.bg, color: readinessTone.color, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                {readinessTone.label}
+              </span>
+              <span style={{ fontSize: 12, color: C.text, fontWeight: 800 }}>
+                XLSX readiness: {matrixRangeReadiness.computedMatrixRowCount}/{matrixRangeReadiness.expectedDayCount} computed matrix days
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 11, color: C.textMut, fontWeight: 700 }}>
+              <span>Missing {matrixRangeReadiness.missingDays.length}</span>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: matrixRangeReadiness.status === "ready" ? C.suc : matrixRangeReadiness.status === "checking" ? C.pri : C.dan, lineHeight: 1.55, fontWeight: 700 }}>
+            {matrixRangeReadiness.reason}
+          </div>
+          {matrixRangeReadiness.blockingReasons.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3, fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>
+              {matrixRangeReadiness.blockingReasons.slice(0, 5).map((reason) => <li key={reason}>{formatVisibleSchedulingCopy(reason)}</li>)}
+              {matrixRangeReadiness.blockingReasons.length > 5 && <li>{matrixRangeReadiness.blockingReasons.length - 5} more readiness issue groups.</li>}
+            </ul>
+          )}
+          {historicalBackfillAvailable && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={startHistoricalMatrixBackfill}
+                disabled={backfillRunning}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.pri}`,
+                  background: backfillRunning ? "#EFF6FF" : C.surface,
+                  color: C.pri,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: backfillRunning ? "default" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <span style={{ display: "flex" }}><I.RefreshCw /></span>
+                {backfillRunning ? "Backfill Running" : "Start Historical Backfill"}
+              </button>
+              <span style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45 }}>
+                Server-side setup job. Computes missing historical matrix days once, then exports read persisted rows.
+              </span>
+            </div>
+          )}
+          {matrixBackfillState.message && (
+            <div style={{ fontSize: 11, color: matrixBackfillState.status === "complete" ? C.suc : matrixBackfillState.status === "failed" ? C.dan : C.pri, lineHeight: 1.5, fontWeight: 700 }}>
+              Backfill status: {matrixBackfillState.message}
+            </div>
+          )}
+          {matrixExportState.message && (
+            <div style={{ fontSize: 11, color: matrixExportState.status === "complete" ? C.suc : matrixExportState.status === "failed" || matrixExportState.status === "blocked" ? C.dan : C.textMut, lineHeight: 1.5 }}>
+              Export status: {matrixExportState.message}
+            </div>
+          )}
+        </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
             <thead>

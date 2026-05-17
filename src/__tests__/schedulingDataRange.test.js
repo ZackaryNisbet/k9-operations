@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSchedulingDateRange,
   findStaleSchedulingMatrixDates,
+  shouldRecomputeSchedulingMatrixRange,
 } from "../hooks/useSchedulingData.js";
 
 describe("scheduling data range helpers", () => {
@@ -35,5 +36,22 @@ describe("scheduling data range helpers", () => {
     );
 
     expect(staleDates).toEqual(["2026-05-17"]);
+  });
+
+  it("does not allow browser-triggered recompute for fully historical ranges", () => {
+    expect(shouldRecomputeSchedulingMatrixRange(
+      buildSchedulingDateRange("2025-01-01", "2025-01-07"),
+      { today: "2026-05-17", recomputeLimitDays: 14 },
+    )).toBe(false);
+
+    expect(shouldRecomputeSchedulingMatrixRange(
+      buildSchedulingDateRange("2026-05-11", "2026-05-17"),
+      { today: "2026-05-17", recomputeLimitDays: 14 },
+    )).toBe(true);
+
+    expect(shouldRecomputeSchedulingMatrixRange(
+      buildSchedulingDateRange("2026-05-17", "2026-05-31"),
+      { today: "2026-05-17", recomputeLimitDays: 14 },
+    )).toBe(false);
   });
 });
