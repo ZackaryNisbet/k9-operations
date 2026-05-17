@@ -23,11 +23,11 @@
       "updatedAt": "2026-05-06T11:10:44.054Z"
     },
     "ops-compute-ondemand": {
-      "commit": "8f0ef76066c2e96b1472875461a01f435ea98cf0",
-      "sourceRef": "HEAD",
+      "commit": "d630f9b67a145f314b5dce4339599d546b763e42",
+      "sourceRef": "codex/enrichment-workflow-parity",
       "action": "deploy",
-      "note": "enrichment workflow UI and review reason logic",
-      "updatedAt": "2026-05-06T13:13:58.000Z"
+      "note": "enrichment workflow timing and mobile parity",
+      "updatedAt": "2026-05-17T13:57:39.179Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
