@@ -58,6 +58,11 @@ verify_jwt = false
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.
 verify_jwt = false
 
+[functions.ops-compute-ondemand]
+# The function validates callers in-function and server-side callers may use
+# Supabase service keys that the gateway cannot always validate as user JWTs.
+verify_jwt = false
+
 [functions.gingr-boh-poll]
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.

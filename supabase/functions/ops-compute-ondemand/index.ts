@@ -1264,6 +1264,26 @@ async function computeEnrichmentReport(
   };
   const getServiceDates = (services: any[]) =>
     [...new Set((services || []).map((service: any) => extractServiceScheduledDate(service) || "missing"))];
+  const firstNonBlank = (...values: any[]) => {
+    for (const value of values) {
+      const text = String(value || "").trim();
+      if (text) return text;
+    }
+    return "";
+  };
+  const buildReservationTiming = (res: any) => {
+    const startDate = firstNonBlank(res.startDate, res.start_date);
+    const endDate = firstNonBlank(res.endDate, res.end_date);
+    const checkInDate = firstNonBlank(res.checkInDate, res.check_in_date);
+    const checkOutDate = firstNonBlank(res.checkOutDate, res.check_out_date);
+    return {
+      arrivalTimeRaw: checkInDate || startDate,
+      scheduledDepartureTimeRaw: endDate || checkOutDate,
+      actualDepartureTimeRaw: checkOutDate,
+      departureTimeRaw: endDate || checkOutDate,
+      isCheckedOut: Boolean(checkOutDate),
+    };
+  };
   const buildEnrichmentReviewReason = (serviceDates: string[] = [], startDate = "", endDate = "") => {
     const dated = serviceDates.filter((date) => date && date !== "missing");
     const hasMissing = serviceDates.includes("missing");
@@ -1315,6 +1335,7 @@ async function computeEnrichmentReport(
     const serviceDates = getServiceDates(enrichmentServices);
 
     const dog = {
+      gingrReservationId: String(res.gingrReservationId || res.gingr_id || res.id || ""),
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
@@ -1337,6 +1358,7 @@ async function computeEnrichmentReport(
       endDate: res.endDate || res.end_date || "",
       checkInDate: res.checkInDate || res.check_in_date || "",
       checkOutDate: res.checkOutDate || res.check_out_date || "",
+      ...buildReservationTiming(res),
       serviceDates,
       summary: serviceRows.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
     };
@@ -1388,7 +1410,7 @@ async function computeEnrichmentReport(
     try {
       const { data: reservations } = await supabase
         .from("gingr_reservations")
-        .select("animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, services")
+        .select("id, gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, services")
         .eq("location_id", locationId)
         .lte("start_date", `${targetDate}T23:59:59`)
         .gte("end_date", `${targetDate}T00:00:00`)
@@ -1425,6 +1447,7 @@ async function computeEnrichmentReport(
         const serviceDates = getServiceDates(enrichmentSvcs);
 
         const dog = {
+          gingrReservationId: String(row?.gingr_id || row?.id || ""),
           animalId,
           animalName: row?.animal_name || "",
           ownerName: `${row?.owner_first_name || ""} ${row?.owner_last_name || ""}`.trim(),
@@ -1446,6 +1469,7 @@ async function computeEnrichmentReport(
           endDate: row?.end_date || "",
           checkInDate: row?.check_in_date || "",
           checkOutDate: row?.check_out_date || "",
+          ...buildReservationTiming(row),
           serviceDates,
           summary: serviceRows.map((s: any) => s.name || s.service_name || "enrichment").join(", "),
         };

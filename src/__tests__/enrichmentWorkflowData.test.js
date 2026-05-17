@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyEnrichmentWorkflowView,
   buildEnrichmentCompletionKey,
   buildEnrichmentOpsRowId,
+  countEnrichmentWorkflowFilter,
   deriveWorkflowHealth,
+  formatWorkflowTimeLabel,
   formatEnrichmentReservationKind,
   formatEnrichmentReservationWindow,
   formatWorkflowReviewReason,
@@ -83,6 +86,37 @@ describe("enrichment workflow helpers", () => {
     expect(workflow.dogs[0].reservationWindow).toBe("May 6, 8:00 AM to May 8, 12:00 PM");
   });
 
+  it("normalizes arrival and scheduled departure times for daycare rows", () => {
+    const workflow = normalizeEnrichmentWorkflow({
+      dogs: [{
+        animalId: "8071",
+        animalName: "Buddy",
+        status: "scheduled",
+        reservationType: "Full Day Daycare",
+        checkInDate: "2026-05-06T07:14:00-04:00",
+        endDate: "2026-05-06T18:00:00-04:00",
+      }],
+    });
+
+    expect(workflow.dogs[0].reservationCategory).toBe("daycare");
+    expect(workflow.dogs[0].arrivalLabel).toBe("7:14 AM");
+    expect(workflow.dogs[0].departureLabel).toBe("6:00 PM");
+  });
+
+  it("filters and sorts workflow rows by the selected operational view", () => {
+    const workflow = normalizeEnrichmentWorkflow({
+      dogs: [
+        { animalId: "1", animalName: "Zulu", status: "scheduled", reservationType: "Boarding", endDate: "2026-05-06T17:30:00-04:00", roomLabel: "Executive 302" },
+        { animalId: "2", animalName: "Alpha", status: "scheduled", reservationType: "Full Day Daycare", endDate: "2026-05-06T12:00:00-04:00", roomLabel: "Daycare" },
+        { animalId: "3", animalName: "Mango", status: "needs_review", reservationType: "Boarding", endDate: "2026-05-06T10:00:00-04:00", roomLabel: "Luxury 1" },
+      ],
+    });
+
+    expect(applyEnrichmentWorkflowView(workflow.dogs, { filter: "all", sort: "departure" }).map((dog) => dog.animalName)).toEqual(["Mango", "Alpha", "Zulu"]);
+    expect(applyEnrichmentWorkflowView(workflow.dogs, { filter: "daycare", sort: "dog" }).map((dog) => dog.animalName)).toEqual(["Alpha"]);
+    expect(countEnrichmentWorkflowFilter(workflow.dogs, "boarding")).toBe(2);
+  });
+
   it("expands both-daycare assignment into large and small badges", () => {
     expect(getWorkflowPlaygroupTags({
       animal_gingr_id: "8071",
@@ -114,6 +148,7 @@ describe("enrichment workflow helpers", () => {
   it("formats concise reservation kind and same-day windows", () => {
     expect(formatEnrichmentReservationKind("Full Day Daycare")).toBe("Daycare");
     expect(formatEnrichmentReservationWindow("2026-05-06T07:00:00-04:00", "2026-05-06T18:00:00-04:00")).toBe("May 6, 7:00 AM to 6:00 PM");
+    expect(formatWorkflowTimeLabel("2026-05-06T18:00:00-04:00")).toBe("6:00 PM");
   });
 
   it("formats needs-review service dates without raw ISO timestamps", () => {
