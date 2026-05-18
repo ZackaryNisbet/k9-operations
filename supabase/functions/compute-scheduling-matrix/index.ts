@@ -512,13 +512,18 @@ Deno.serve(async (req: Request) => {
     const chunks = chunkDateRange(dateFrom, dateTo);
     for (const chunk of chunks) {
       try {
+        // Keep each Edge worker invocation bounded. The caller may request a
+        // week/range projection scope, but the shared compute path builds
+        // multi-year comparison and booking-curve context for every date in
+        // that scope. Passing the whole scope into every one-day chunk can
+        // exceed the worker resource ceiling before any rows are written.
         const rows = await computeSchedulingMatrixRows({
           supabase: serviceClient,
           locationId,
           dateFrom: chunk.from,
           dateTo: chunk.to,
-          projectionScopeDateFrom,
-          projectionScopeDateTo,
+          projectionScopeDateFrom: chunk.from,
+          projectionScopeDateTo: chunk.to,
         });
         const result = await upsertSchedulingMatrixRows(serviceClient, rows);
         rowsUpserted += Number(result.count || 0);
@@ -542,6 +547,7 @@ Deno.serve(async (req: Request) => {
       requested_location_id: requestedLocationId !== locationId ? requestedLocationId : undefined,
       date_range: [dateFrom, dateTo],
       projection_scope_date_range: [projectionScopeDateFrom, projectionScopeDateTo],
+      effective_projection_scope: "chunk_local",
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
       chunk_failures: chunkFailures,
