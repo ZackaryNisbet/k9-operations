@@ -60,11 +60,67 @@
       }
     },
     {
-      "jobname": "compute-scheduling-matrix-cherry-hill-current-week",
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-0",
       "schedule": "*/5 * * * *",
       "auth": "vault",
       "function": "compute-scheduling-matrix",
-      "payloadMode": "current_week"
+      "payloadMode": "single_day",
+      "dayOffset": 0,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-1",
+      "schedule": "11 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 1,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-2",
+      "schedule": "12 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 2,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-3",
+      "schedule": "13 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 3,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-4",
+      "schedule": "14 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 4,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-5",
+      "schedule": "15 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 5,
+      "projectionScopeMode": "target_week"
+    },
+    {
+      "jobname": "compute-scheduling-matrix-cherry-hill-day-6",
+      "schedule": "16 * * * *",
+      "auth": "vault",
+      "function": "compute-scheduling-matrix",
+      "payloadMode": "single_day",
+      "dayOffset": 6,
+      "projectionScopeMode": "target_week"
     },
     {
       "jobname": "compute-scheduling-matrix-cherry-hill-day-7",
