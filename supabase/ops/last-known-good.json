@@ -9,11 +9,11 @@
       "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
+      "commit": "d9b0b6a50f60c15216d43b15209d0d1174691f4d",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix export and historical compute load refinement",
-      "updatedAt": "2026-05-18T20:19:31.139Z"
+      "note": "Bound demand matrix compute chunks after resource-limit verification",
+      "updatedAt": "2026-05-18T20:21:43.855Z"
     },
     "ops-compute": {
       "commit": "e37a1d545f67567112b3a66e77784221f1eb1977",
