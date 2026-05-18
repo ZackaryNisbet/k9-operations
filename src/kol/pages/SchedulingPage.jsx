@@ -41,6 +41,17 @@ import {
   createDemandMatrixXlsxBlob,
   downloadBlob,
 } from "./schedulingDemandMatrixXlsx";
+import {
+  buildDayCapacityIndicators,
+  getHighestCapacityStatus,
+  getVisibleCapacityIndicators,
+} from "../scheduling/capacityIndicators";
+import {
+  buildRotationTemplateMatches,
+  getRotationTemplateCatalogSummary,
+  getTemplateDisplayName,
+} from "../scheduling/rotationTemplateMatcher";
+import RotationCreationStudio from "../scheduling/RotationCreationStudio";
 
 export {
   buildHistoricalRangeSummary,
@@ -91,6 +102,27 @@ function resolveSchedulingLocationName({ profile, locationMeta, locationId }) {
     || cleanReadableLocationName(staticLocation?.name)
     || KNOWN_LOCATION_DISPLAY_NAMES.get(String(locationId || "").trim())
     || (locationId && !isUuid(locationId) ? humanizeLocationKey(locationId) : "K9 Operations Location");
+}
+
+function normalizeRotationLaneRole(lane) {
+  const raw = String(lane?.position || lane?.role || lane?.label || lane?.id || "").toLowerCase();
+  if (raw.includes("pct")) return "pct";
+  if (raw.includes("supervisor") || /\bsup\b/.test(raw)) return "supervisor";
+  if (raw.includes("csr")) return "csr";
+  if (raw.includes("mod") || raw.includes("manager")) return "manager";
+  return "other";
+}
+
+function rotationLaneSortValue(lane) {
+  const order = { pct: 0, supervisor: 1, csr: 2, manager: 3, other: 4 };
+  return order[normalizeRotationLaneRole(lane)] ?? order.other;
+}
+
+function sortRotationLanes(lanes = []) {
+  return [...lanes].sort((a, b) => (
+    rotationLaneSortValue(a) - rotationLaneSortValue(b)
+    || String(a.label || a.id || "").localeCompare(String(b.label || b.id || ""))
+  ));
 }
 
 function SectionCard({ title, subtitle, icon, children, style }) {
@@ -192,6 +224,286 @@ function TrustBadge({ state, blocked }) {
     <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "3px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: chip.bg, color: chip.color }}>
       {chip.label}
     </span>
+  );
+}
+
+function SchedulingSubtabs({ activeTab, onChange }) {
+  const tabs = [
+    { id: "volume", label: "Volume", subtitle: "Demand matrix and capacity pressure" },
+    { id: "rotation", label: "Rotation Schedule", subtitle: "Create, preview, and tune the backend grid" },
+  ];
+  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
+  return (
+    <div
+      className="scheduling-view-switcher"
+      style={{
+        "--scheduling-view-count": tabs.length,
+        "--scheduling-view-active-index": activeIndex,
+      }}
+    >
+      <style>{`
+        .scheduling-view-switcher {
+          position: relative;
+          display: grid;
+          grid-template-columns: repeat(var(--scheduling-view-count), minmax(0, 1fr));
+          min-height: 82px;
+          margin-bottom: 18px;
+          padding: 6px;
+          border: 1px solid rgba(148, 163, 184, 0.32);
+          border-radius: 16px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.95));
+          box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          overflow: hidden;
+        }
+        .scheduling-view-switcher-indicator {
+          position: absolute;
+          top: 6px;
+          bottom: 6px;
+          left: 6px;
+          z-index: 0;
+          width: calc((100% - 12px) / var(--scheduling-view-count));
+          border: 1px solid rgba(20, 83, 45, 0.20);
+          border-radius: 12px;
+          background:
+            radial-gradient(circle at 18% 0%, rgba(34, 197, 94, 0.18), transparent 34%),
+            linear-gradient(180deg, #F0FDF4, #FFFFFF);
+          box-shadow: 0 12px 28px rgba(20, 83, 45, 0.12);
+          transform: translateX(calc(var(--scheduling-view-active-index) * 100%));
+          transition: transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .scheduling-view-option {
+          position: relative;
+          z-index: 1;
+          display: grid;
+          align-content: center;
+          gap: 4px;
+          min-width: 0;
+          border: 0;
+          border-radius: 12px;
+          background: transparent;
+          color: ${C.textSec};
+          cursor: pointer;
+          font: inherit;
+          padding: 14px 16px;
+          text-align: left;
+          transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+        }
+        .scheduling-view-option:hover {
+          background: rgba(20, 83, 45, 0.045);
+          transform: translateY(-1px);
+        }
+        .scheduling-view-option.is-active {
+          color: ${C.pri};
+        }
+        .scheduling-view-option strong {
+          color: inherit;
+          font-size: 14px;
+          font-weight: 950;
+          line-height: 1.15;
+        }
+        .scheduling-view-option span {
+          color: ${C.textMut};
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.35;
+        }
+        .scheduling-view-option.is-active span {
+          color: ${C.pri};
+        }
+        @media (max-width: 700px) {
+          .scheduling-view-switcher {
+            grid-template-columns: 1fr;
+            min-height: auto;
+          }
+          .scheduling-view-switcher-indicator {
+            display: none;
+          }
+          .scheduling-view-option.is-active {
+            background: #F0FDF4;
+            box-shadow: inset 0 0 0 1px rgba(20, 83, 45, 0.18);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .scheduling-view-switcher * {
+            transition: none !important;
+          }
+        }
+      `}</style>
+      <div className="scheduling-view-switcher-indicator" />
+      {tabs.map((tab) => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onChange(tab.id)}
+            className={`scheduling-view-option${active ? " is-active" : ""}`}
+          >
+            <strong>{tab.label}</strong>
+            <span>{tab.subtitle}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const CAPACITY_STYLE = {
+  over: { bg: C.danLt, border: "#FCA5A5", text: C.dan, label: "At cap" },
+  near: { bg: C.warnLt, border: "#FCD34D", text: C.warn, label: "Near cap" },
+  ok: { bg: C.sucLt, border: "#86EFAC", text: C.suc, label: "Open" },
+  unset: { bg: "#F8FAFC", border: C.border, text: C.textMut, label: "No cap" },
+};
+
+function CapacityPill({ indicator, compact = false }) {
+  const style = CAPACITY_STYLE[indicator?.status] || CAPACITY_STYLE.unset;
+  return (
+    <span
+      title={`${indicator.label}: ${indicator.text}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: compact ? "3px 6px" : "5px 8px",
+        borderRadius: 8,
+        border: `1px solid ${style.border}`,
+        background: style.bg,
+        color: style.text,
+        fontSize: compact ? 9 : 10,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {!compact && <span>{indicator.label}</span>}
+      <span>{indicator.text}</span>
+    </span>
+  );
+}
+
+function CapacityWatchPanel({ selectedDay, visibleDays, config, matrixMode, onOpenSettings }) {
+  const selectedIndicators = useMemo(
+    () => buildDayCapacityIndicators(selectedDay, config, matrixMode),
+    [selectedDay, config, matrixMode],
+  );
+  const visiblePressure = useMemo(() => (
+    (visibleDays || []).map((day) => {
+      const indicators = buildDayCapacityIndicators(day, config, matrixMode);
+      return {
+        day,
+        indicators,
+        status: getHighestCapacityStatus(indicators),
+      };
+    })
+  ), [visibleDays, config, matrixMode]);
+  const overDays = visiblePressure.filter((entry) => entry.status === "over");
+  const nearDays = visiblePressure.filter((entry) => entry.status === "near");
+  const hasConfiguredCaps = selectedIndicators.length > 0;
+
+  return (
+    <div style={{ marginBottom: 14, padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: C.text }}>Capacity Watch</div>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, lineHeight: 1.45 }}>
+            Play-yard capacity is checked against operating-day demand, including opening/closing boarding pressure plus daytime dogs.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: C.surface,
+            color: C.text,
+            fontSize: 11,
+            fontWeight: 800,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          <span style={{ display: "flex" }}><I.Settings /></span>
+          Capacity Settings
+        </button>
+      </div>
+
+      {hasConfiguredCaps ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+            {selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || todayStr())}
+          </span>
+          {getVisibleCapacityIndicators(selectedIndicators, 6).map((indicator) => (
+            <CapacityPill key={indicator.key} indicator={indicator} />
+          ))}
+          <span style={{ fontSize: 11, color: overDays.length ? C.dan : nearDays.length ? C.warn : C.textMut, fontWeight: 800 }}>
+            {overDays.length ? `${overDays.length} day${overDays.length === 1 ? "" : "s"} at cap`
+              : nearDays.length ? `${nearDays.length} day${nearDays.length === 1 ? "" : "s"} near cap`
+                : "Visible days are below configured caps"}
+          </span>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
+          No play capacity caps are configured yet. Set caps for large play, small play, private play, half-and-half, or mapped Gingr icon categories in Scheduling Capacity settings.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ForecastDetailsPanel({ day, matrixMode, expanded, onToggle }) {
+  return (
+    <div style={{ marginTop: 14, borderTop: `1px solid ${C.borderLight}`, paddingTop: 12 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "10px 12px",
+          borderRadius: 10,
+          border: `1px solid ${C.border}`,
+          background: expanded ? "#F8FAFC" : C.surface,
+          color: C.text,
+          cursor: "pointer",
+          fontFamily: "inherit",
+          textAlign: "left",
+        }}
+      >
+        <span>
+          <span style={{ display: "block", fontSize: 12, fontWeight: 900 }}>Forecast Details</span>
+          <span style={{ display: "block", marginTop: 2, fontSize: 11, color: C.textMut }}>
+            Projection math, historical accuracy, and capacity risk for {day?.dayName} {formatMatrixDate(day?.date || todayStr())}
+          </span>
+        </span>
+        <span style={{ display: "flex", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s", color: C.textMut }}>
+          <I.ChevronDown />
+        </span>
+      </button>
+      {expanded && (
+        <>
+          {matrixMode === "projected" ? (
+            <ProjectionMethodologyPanel day={day} />
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+              <span style={{ fontSize: 11, color: C.textMut }}>
+                Selected day: <span style={{ fontWeight: 700, color: C.text }}>{day?.dayName} {formatMatrixDate(day?.date || todayStr())}</span>
+              </span>
+              <span style={{ fontSize: 11, color: C.textMut }}>
+                Weekly totals shown in the workbook are dog-days, not unique reservations.
+              </span>
+            </div>
+          )}
+          <ProjectionAccuracyPanel day={day} />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1104,7 +1416,170 @@ function createDefaultShiftEntry(day, position = "pct") {
   };
 }
 
-function StaffShiftPlanner({ day, onSave, onGenerated, disabled }) {
+const STAFFING_MATRIX_ROLES = [
+  { key: "manager", label: "Manager", position: "mod" },
+  { key: "supervisor", label: "Supervisor", position: "supervisor" },
+  { key: "csr", label: "CSR", position: "csr" },
+  { key: "pct", label: "PCT", position: "pct" },
+];
+
+const STAFFING_MATRIX_SHIFTS = [
+  { key: "opening", label: "Opening" },
+  { key: "closing", label: "Closing" },
+];
+
+function buildDefaultStaffingMatrix(day, rotation) {
+  return {
+    opening: {
+      manager: 1,
+      supervisor: 1,
+      csr: 0,
+      pct: 4,
+    },
+    closing: {
+      manager: 1,
+      supervisor: 1,
+      csr: 0,
+      pct: 4,
+    },
+  };
+}
+
+function buildShiftEntriesFromStaffingMatrix(day, matrix) {
+  const openingStart = day?.isWeekend ? "07:00" : "06:00";
+  const closingEnd = day?.isWeekend ? "18:00" : "19:30";
+  const windows = {
+    opening: { start: openingStart, end: "13:00" },
+    closing: { start: "13:00", end: closingEnd },
+  };
+  const entries = [];
+  for (const shift of STAFFING_MATRIX_SHIFTS) {
+    for (const role of STAFFING_MATRIX_ROLES) {
+      const count = Math.max(0, Math.round(Number(matrix?.[shift.key]?.[role.key]) || 0));
+      for (let index = 0; index < count; index += 1) {
+        entries.push({
+          id: `${shift.key}-${role.position}-${index + 1}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          position: role.position,
+          name: "",
+          shift_start: windows[shift.key].start,
+          shift_end: windows[shift.key].end,
+        });
+      }
+    }
+  }
+  return entries.length ? entries : [createDefaultShiftEntry(day)];
+}
+
+function StaffingMatrixGenerator({ day, rotation, matrixMode, onGenerate, disabled }) {
+  const defaultMatrix = useMemo(() => buildDefaultStaffingMatrix(day, rotation), [day?.date, rotation?.shift_recommendations]);
+  const [staffingMatrix, setStaffingMatrix] = useState(defaultMatrix);
+  const demandDisplay = matrixMode === "projected" ? day?.projectedDisplay : day?.currentDisplay;
+  const matches = useMemo(
+    () => buildRotationTemplateMatches({
+      date: day?.date,
+      staffingMatrix,
+      demandDisplay,
+    }),
+    [day?.date, staffingMatrix, demandDisplay],
+  );
+
+  useEffect(() => {
+    setStaffingMatrix(defaultMatrix);
+  }, [defaultMatrix]);
+
+  const inputStyle = {
+    width: "100%",
+    minWidth: 68,
+    padding: "7px 8px",
+    border: `1px solid ${C.border}`,
+    borderRadius: 8,
+    fontSize: 12,
+    fontWeight: 800,
+    color: C.text,
+    fontFamily: "inherit",
+    background: C.surface,
+    textAlign: "center",
+  };
+
+  const updateCount = (shiftKey, roleKey, value) => {
+    const count = Math.max(0, Math.min(24, Math.round(Number(value) || 0)));
+    setStaffingMatrix((current) => ({
+      ...current,
+      [shiftKey]: {
+        ...current[shiftKey],
+        [roleKey]: count,
+      },
+    }));
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 580 }}>
+          <thead>
+            <tr>
+              <th style={{ width: 120, padding: "8px 10px", textAlign: "left", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut, background: "#F8FAFC" }}>Shift</th>
+              {STAFFING_MATRIX_ROLES.map((role) => (
+                <th key={role.key} style={{ padding: "8px 10px", textAlign: "center", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut, background: "#F8FAFC" }}>
+                  {role.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {STAFFING_MATRIX_SHIFTS.map((shift) => (
+              <tr key={shift.key}>
+                <td style={{ padding: "10px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, fontWeight: 900, color: C.text }}>
+                  {shift.label}
+                </td>
+                {STAFFING_MATRIX_ROLES.map((role) => (
+                  <td key={role.key} style={{ padding: "8px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      value={staffingMatrix[shift.key]?.[role.key] ?? 0}
+                      onChange={(event) => updateCount(shift.key, role.key, event.target.value)}
+                      disabled={disabled}
+                      style={inputStyle}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+        {STAFFING_MATRIX_SHIFTS.map((shift) => {
+          const match = matches[shift.key];
+          const template = getTemplateDisplayName(match);
+          return (
+            <div key={shift.key} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC" }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: C.text, marginBottom: 4 }}>{shift.label} Template Match</div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: match?.template ? C.pri : C.dan }}>
+                {match?.template ? `Matched: ${template}` : "No matching template"}
+              </div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, lineHeight: 1.45 }}>
+                {match?.template ? `Reason: ${match.explanation}` : match?.explanation}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <Btn variant="primary" size="sm" onClick={() => onGenerate(staffingMatrix, matches)} disabled={disabled}>
+          Generate From Staffing Matrix
+        </Btn>
+        <span style={{ fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
+          Names and one-off time changes stay optional and can be adjusted below after generation.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function StaffShiftPlanner({ day, rotation, matrixMode, onSave, onGenerated, disabled }) {
   const existingEntries = useMemo(() => getShiftEntries(day?.staffPlan), [day?.date, day?.staffPlan]);
   const [shiftEntries, setShiftEntries] = useState(existingEntries.length ? existingEntries : [createDefaultShiftEntry(day)]);
   const [dirty, setDirty] = useState(false);
@@ -1130,8 +1605,8 @@ function StaffShiftPlanner({ day, onSave, onGenerated, disabled }) {
     setDirty(true);
   };
 
-  const handleSave = () => {
-    const cleaned = shiftEntries
+  const buildPlanFromEntries = (entries) => {
+    const cleaned = entries
       .map((entry) => ({
         ...entry,
         name: String(entry.name || "").trim(),
@@ -1140,15 +1615,28 @@ function StaffShiftPlanner({ day, onSave, onGenerated, disabled }) {
       }))
       .filter((entry) => entry.shift_start && entry.shift_end);
 
-    const plan = deriveStaffPlanFromShiftEntries({
+    return deriveStaffPlanFromShiftEntries({
       locationId: day?.matrix?.location_id,
       planDate: day.date,
       shiftEntries: cleaned,
     });
+  };
+
+  const handleSave = () => {
+    const plan = buildPlanFromEntries(shiftEntries);
 
     onSave(plan);
     setDirty(false);
     onGenerated?.();
+  };
+
+  const handleGenerateFromMatrix = (staffingMatrix, templateMatches) => {
+    const generatedEntries = buildShiftEntriesFromStaffingMatrix(day, staffingMatrix);
+    setShiftEntries(generatedEntries);
+    const plan = buildPlanFromEntries(generatedEntries);
+    onSave(plan);
+    setDirty(false);
+    onGenerated?.(templateMatches);
   };
 
   const inputStyle = {
@@ -1163,6 +1651,20 @@ function StaffShiftPlanner({ day, onSave, onGenerated, disabled }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <StaffingMatrixGenerator
+        day={day}
+        rotation={rotation}
+        matrixMode={matrixMode}
+        onGenerate={handleGenerateFromMatrix}
+        disabled={disabled}
+      />
+      <div style={{ height: 1, background: C.borderLight, margin: "2px 0" }} />
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 900, color: C.text, marginBottom: 4 }}>Shift Details</div>
+        <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45 }}>
+          Use this table for optional names, custom roles, and start/end micro-adjustments after the staffing matrix creates the base plan.
+        </div>
+      </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 620 }}>
           <thead>
@@ -1249,6 +1751,12 @@ function countShiftCoverage(entries, startTime, endTime) {
   }).length;
 }
 
+function getInitialSchedulingTab() {
+  if (typeof window === "undefined") return "volume";
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  return tab === "rotation" ? "rotation" : "volume";
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────
 
 export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
@@ -1261,6 +1769,9 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [matrixPage, setMatrixPage] = useState(0);
   const [matrixMode, setMatrixMode] = useState("current");
   const [expandedMonthSegments, setExpandedMonthSegments] = useState(new Set());
+  const [activeSchedulingTab, setActiveSchedulingTab] = useState(getInitialSchedulingTab);
+  const [forecastDetailsExpanded, setForecastDetailsExpanded] = useState(false);
+  const [headcountExpanded, setHeadcountExpanded] = useState(false);
   const demandRange = useMemo(
     () => getDemandRange(matrixRangeMode, viewStartDate, customStartDate, customEndDate),
     [matrixRangeMode, viewStartDate, customStartDate, customEndDate],
@@ -1288,6 +1799,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const handleSchedulingTabChange = useCallback((nextTab) => {
+    const normalized = nextTab === "rotation" ? "rotation" : "volume";
+    setActiveSchedulingTab(normalized);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (normalized === "volume") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", normalized);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
   const [scheduleView, setScheduleView] = useState("optimal");
   const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
   const [copyNarrativeStatus, setCopyNarrativeStatus] = useState("idle");
@@ -1976,9 +2496,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const projectedDisplay = selectedDay?.projectedDisplay || getMatrixProjectedDisplay(selectedDay?.matrix || {});
   const matrixDisplay = matrixMode === "projected" ? projectedDisplay : display;
   const visibleWarnings = (visibleRotation?.warnings || []).map(formatVisibleSchedulingCopy);
-  const saveButtonLabel = showingAdjustedSchedule ? "Save Staff-Adjusted Schedule" : "Save Optimal Schedule";
   const generateDisabled = !selectedDay?.canGenerate || !visibleRotation?.saveable_payload;
   const generateDisabledReason = formatVisibleSchedulingCopy(rotationError || selectedDay?.generationBlockers?.[0] || "This day is not ready for schedule generation yet.");
+  const templateCatalogSummary = useMemo(() => getRotationTemplateCatalogSummary(), []);
+  const openCapacitySettings = useCallback(() => {
+    nav?.("settings");
+    addGlobalToast?.("Open Scheduling Capacity in Settings > Operations.", "info");
+  }, [addGlobalToast, nav]);
   const readinessTone = {
     checking: { bg: "#EFF6FF", color: C.pri, label: "Checking Coverage" },
     ready: { bg: C.sucLt, color: C.suc, label: "Ready" },
@@ -2005,6 +2529,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
   const gridData = visibleRotation?.grid || { lanes: [], slots: [], cells: {} };
   const { lanes, slots, cells: serverGrid } = gridData;
+  const orderedLanes = useMemo(() => sortRotationLanes(lanes), [lanes]);
 
   const fmt12 = (t) => {
     const [h, mn] = t.split(":").map(Number);
@@ -2028,7 +2553,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Scheduling</h1>
-          <p style={{ fontSize: 13, color: C.textMut, marginTop: 2 }}>Week plan, required headcount, and rotation rationale</p>
+          <p style={{ fontSize: 13, color: C.textMut, marginTop: 2 }}>Volume pressure, capacity risk, and backend rotation planning</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {error && <span style={{ fontSize: 11, color: C.dan }}>{error}</span>}
@@ -2036,13 +2561,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           <Btn variant="secondary" size="sm" onClick={() => setShowAssumptions(!showAssumptions)}>
             {showAssumptions ? "Hide" : "Show"} Assumptions
           </Btn>
-          <Btn variant="primary" size="sm" onClick={handleGenerate} disabled={generateDisabled} title={generateDisabledReason}>
-            {saveButtonLabel}
-          </Btn>
         </div>
       </div>
+      <SchedulingSubtabs activeTab={activeSchedulingTab} onChange={handleSchedulingTabChange} />
 
       {/* ── Section 1: Demand Matrix ──────────────────────────────────── */}
+      {activeSchedulingTab === "volume" && (
       <SectionCard title={matrixRangeMode === "week" ? "7-Day Demand Matrix" : "Demand Matrix"} subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2294,6 +2818,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             Historical source: {matrixHistoryOrigin.message}
           </div>
         )}
+        <CapacityWatchPanel
+          selectedDay={selectedDay}
+          visibleDays={visibleMatrixDays}
+          config={config}
+          matrixMode={matrixMode}
+          onOpenSettings={openCapacitySettings}
+        />
         <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "grid", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2378,6 +2909,9 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     ? columnDays.flatMap((candidate) => candidate.generationBlockers || [])
                     : (day.generationBlockers || []);
                   const isExpandedSegment = column.type === "segment" && expandedMonthSegments.has(column.segment.id);
+                  const dayCapacityIndicators = column.type === "day"
+                    ? getVisibleCapacityIndicators(buildDayCapacityIndicators(day, config, matrixMode), 2)
+                    : [];
                   return (
                     <th
                       key={column.key}
@@ -2399,6 +2933,13 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                       <div style={{ marginTop: 8 }}>
                         <TrustBadge state={trustState} blocked={blocked} />
                       </div>
+                      {dayCapacityIndicators.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, marginTop: 7 }}>
+                          {dayCapacityIndicators.map((indicator) => (
+                            <CapacityPill key={`${column.key}-${indicator.key}`} indicator={indicator} compact />
+                          ))}
+                        </div>
+                      )}
                       {column.type === "segment" && (
                         <button
                           type="button"
@@ -2593,41 +3134,48 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </div>
           </div>
         )}
-        {matrixMode === "projected" ? (
-          <ProjectionMethodologyPanel day={selectedDay} />
-        ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
-            <span style={{ fontSize: 11, color: C.textMut }}>
-              Selected day: <span style={{ fontWeight: 700, color: C.text }}>{selectedDay?.dayName} {formatMatrixDate(selectedDay?.date || today)}</span>
-            </span>
-            <span style={{ fontSize: 11, color: C.textMut }}>
-              Weekly totals shown in the workbook are dog-days, not unique reservations.
-            </span>
-          </div>
-        )}
-        <ProjectionAccuracyPanel day={selectedDay} />
+        <ForecastDetailsPanel
+          day={selectedDay}
+          matrixMode={matrixMode}
+          expanded={forecastDetailsExpanded}
+          onToggle={() => setForecastDetailsExpanded((value) => !value)}
+        />
       </SectionCard>
+      )}
 
       {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}
-      {selectedDay && (
+      {activeSchedulingTab === "rotation" && selectedDay && (
         <SectionCard
-          title={`Staff Shift Plan — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="Optional second step. The ideal BE rotation schedule already auto-generates from projected Gingr demand; enter real shifts to compare and adjust it."
+          title={`Rotation Builder — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Configure headcount, preview workbook templates without mutating the draft, apply the best fit, then customize before saving the day."
           icon={<I.Users />}
-          style={{ marginTop: 16 }}
         >
-          <StaffShiftPlanner day={selectedDay} onSave={handleStaffPlanSave} onGenerated={() => setScheduleView("actual_staffing")} />
+          <RotationCreationStudio
+            day={selectedDay}
+            rotation={optimalRotation}
+            config={config}
+            matrixMode={matrixMode}
+            serverGridData={gridData}
+            onSaveStaffPlan={handleStaffPlanSave}
+            onGenerated={() => setScheduleView("actual_staffing")}
+            onApplyTemplateGrid={setLocalGrid}
+            onSaveDay={handleGenerate}
+            canSaveDay={!generateDisabled}
+            saveDisabledReason={generateDisabledReason}
+            disabled={rotationLoading}
+            templateCatalogSummary={templateCatalogSummary}
+          />
           <p style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.6 }}>
-            Enter shifts in the format <strong>Position | Name | Shift Start | Shift End</strong>. Saving the shift plan keeps the optimal schedule intact and creates a staff-adjusted comparison view for this day.
+            Hover preview is intentionally temporary. Click a template to apply it to the local draft grid, then use Save Day Draft when Zack is ready to persist a version.
           </p>
         </SectionCard>
       )}
 
       {/* ── Section 2: Optimal Headcount ───────────────────────────────── */}
-      {selectedDay && (
+      {activeSchedulingTab === "rotation" && selectedDay && (
         <SectionCard
-          title={`Optimal Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
-          subtitle="The ideal opening and closing shift recommendation auto-generates from projected Gingr demand. Peak daytime coverage is absorbed into those two shifts instead of being shown as a third shift."
+          title={`Headcount Reference — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Compact reference for the model's ideal opening and closing PCT coverage. The staffing generator above is the manager input surface."
           icon={<I.Users />}
           style={{ marginTop: 16 }}
         >
@@ -2647,6 +3195,22 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </div>
           ) : (
             <>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: headcountExpanded ? 12 : 0 }}>
+                <MetricPill label="Opening PCTs" value={openingFrame?.headcount ?? "—"} />
+                <MetricPill label="Closing PCTs" value={closingFrame?.headcount ?? "—"} />
+                <span style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>
+                  {projectedDisplay?.support?.total_dog_volume || 0} projected dogs · {hasAdjustedSchedule ? "Actual staffing comparison available" : "No staff-adjusted plan saved yet"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setHeadcountExpanded((value) => !value)}
+                  style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}
+                >
+                  {headcountExpanded ? "Hide Details" : "Show Details"}
+                </button>
+              </div>
+              {headcountExpanded && (
+              <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                 {[openingFrame, closingFrame].filter(Boolean).map((frame, index) => {
                   const assigned = index === 0 ? actualOpeningCount : actualClosingCount;
@@ -2708,13 +3272,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   ))}
                 </ul>
               </div>
+              </>
+              )}
             </>
           )}
         </SectionCard>
       )}
 
       {/* ── Section 3: Full-Day Rotation Grid ─────────────────────────── */}
-      {selectedDay && (
+      {activeSchedulingTab === "rotation" && selectedDay && (
         <SectionCard
           title={`Rotation Schedule — ${selectedDay.dayName} ${selectedDay.dayNum}`}
           subtitle="The ideal BE rotation schedule auto-generates from projected Gingr demand. Save shifts above to compare the optimal plan with a staff-adjusted version."
@@ -2755,6 +3321,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             </div>
           ) : (
             <>
+              <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 900, color: C.text }}>Template Library</span>
+                <span style={{ fontSize: 11, color: C.textMut }}>
+                  {templateCatalogSummary.templateCount} extracted workbook templates · {templateCatalogSummary.shiftCounts.AM || 0} AM · {templateCatalogSummary.shiftCounts.PM || 0} PM
+                </span>
+                <span style={{ fontSize: 11, color: C.textMut }}>
+                  Source sheet is shown in the staffing generator match explanation.
+                </span>
+              </div>
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   onClick={() => setScheduleView("optimal")}
@@ -2827,7 +3402,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   <thead>
                     <tr>
                       <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", padding: "6px 10px", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, textAlign: "left", color: C.textMut }}>Time</th>
-                      {lanes.map((lane) => (
+                      {orderedLanes.map((lane) => (
                         <th key={lane.id} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, textAlign: "center", color: C.textMut, whiteSpace: "nowrap", background: "#F8FAFC" }}>{lane.label}</th>
                       ))}
                     </tr>
@@ -2836,7 +3411,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                     {slots.map((slot, index) => (
                       <tr key={slot.time}>
                         <td style={{ position: "sticky", left: 0, zIndex: 1, background: slot.segment === "pre_open" ? "#F8FAFC" : index % 2 === 0 ? "#F8FAFC" : "#F1F5F9", padding: `${rowH / 2 - 6}px 10px`, borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontWeight: slot.segment === "pre_open" ? 700 : 600, color: C.text, whiteSpace: "nowrap", fontSize: 10 }}>{slot.label}</td>
-                        {lanes.map((lane) => {
+                        {orderedLanes.map((lane) => {
                           const displayGrid = localGrid || serverGrid || {};
                           const cell = displayGrid?.[lane.id]?.[slot.time] || { task: "float", label: TASK_COLORS.float.label };
                           const taskKey = cell?.task || "float";
@@ -2931,7 +3506,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                   }}
                 >
                   <div style={{ fontSize: 12, fontWeight: 800, color: C.text, marginBottom: 8 }}>
-                    {lanes.find((lane) => lane.id === selectedCell.laneId)?.label} at {fmt12(selectedCell.slotTime)}
+                    {orderedLanes.find((lane) => lane.id === selectedCell.laneId)?.label} at {fmt12(selectedCell.slotTime)}
                   </div>
                   <div style={{ display: "grid", gap: 8 }}>
                     <select value={overrideTask} onChange={(e) => setOverrideTask(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: "inherit" }}>
@@ -2970,6 +3545,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       )}
 
       {/* ── Section 5: Shortage / Warnings Area ───────────────────────── */}
+      {activeSchedulingTab === "rotation" && (
       <SectionCard
         title="Shortages & Warnings"
         subtitle="Issues that need manager attention for the selected day"
@@ -3003,6 +3579,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           </div>
         )}
       </SectionCard>
+      )}
 
       {/* ── Section 6: Assumptions & Configuration ─────────────────────── */}
       {showAssumptions && (
