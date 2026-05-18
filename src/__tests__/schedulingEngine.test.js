@@ -79,6 +79,58 @@ function makeStaffPlan(overrides = {}) {
 }
 
 describe('Projected matrix display', () => {
+  it('keeps visible dog volume as closing boarding plus daytime and exposes boarding departures separately', () => {
+    const display = getMatrixDisplay(makeMatrix({
+      detail_json: {
+        display: {
+          source: {
+            check_outs: 22,
+            overnight: 55,
+            total: 77,
+            boarding_check_outs: 18,
+            boarding_departing: 18,
+            daytime_total: 35,
+          },
+          closing: {
+            large_boarding: 30,
+            small_boarding: 20,
+            private_play_boarding: 5,
+            half_and_half_boarding: 0,
+            evaluation_boarding: 0,
+            unclassified_boarding: 0,
+            total_boarding: 55,
+          },
+          departing: {
+            large_boarding: 8,
+            small_boarding: 7,
+            private_play_boarding: 3,
+            half_and_half_boarding: 0,
+            evaluation_boarding: 0,
+            unclassified_boarding: 0,
+            total_boarding: 18,
+          },
+          daycare: {
+            evaluations: 2,
+            private_play_dayboarding: 5,
+            half_and_half_daytime: 0,
+            large_daycare: 18,
+            small_daycare: 10,
+            unclassified_daycare: 0,
+            total_daycare: 35,
+          },
+          support: {
+            total_dog_volume: 77,
+          },
+        },
+      },
+    }));
+
+    expect(display.support.total_dog_volume).toBe(90);
+    expect(display.support.total_daily_dog_volume).toBe(108);
+    expect(display.source.total).toBe(77);
+    expect(display.departing.total_boarding).toBe(18);
+  });
+
   it('uses canonical projected totals while deriving play-yard demand from components', () => {
     const display = getMatrixProjectedDisplay(makeMatrix({
       detail_json: {
@@ -136,6 +188,7 @@ describe('Projected matrix display', () => {
     expect(display.support.morning_feeding_dogs).toBe(50);
     expect(display.support.evening_feeding_dogs).toBe(70);
     expect(display.support.total_dog_volume).toBe(160);
+    expect(display.support.total_daily_dog_volume).toBe(166);
     expect(display.play_yard.large_play_dogs).toBe(9);
   });
 });
