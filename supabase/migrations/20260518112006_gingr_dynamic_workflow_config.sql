@@ -676,10 +676,7 @@ normalized as (
 keyed_services as (
   select
     location_id,
-    case
-      when service_id is not null then 'service:' || service_id
-      else 'service_name:' || lower(regexp_replace(service_name, '\s+', ' ', 'g'))
-    end as source_key,
+    'service_name:' || lower(regexp_replace(service_name, '\s+', ' ', 'g')) as source_key,
     service_id,
     service_name,
     reservation_type_id,
@@ -933,12 +930,12 @@ addon_base_capabilities as (
       when label_key like '%hypo%' and label_key like '%no spray%' then 'bathing.type.hypoallergenic_no_spray'
       when label_key like '%hypo%' and label_key like '%with spray%' then 'bathing.type.hypoallergenic_with_spray'
       when label_key like '%hypo%' then 'bathing.type.hypoallergenic'
-      when label_key like '%shampoo from home%' or label_key like '%from home%' then 'bathing.type.shampoo_from_home'
+      when label_key like '%shampoo from home%' then 'bathing.type.shampoo_from_home'
       when label_key like '%fresh n clean%' or label_key like '%fresh & clean%' then 'bathing.type.fresh_n_clean'
       when label_key like '%water rinse%' then 'bathing.type.water_rinse'
-      when label_key like '%premium%' then 'bathing.type.premium'
-      when label_key like '%medicated%' then 'bathing.type.medicated'
-      when label_key like '%whitening%' then 'bathing.type.whitening'
+      when label_key = 'premium' or label_key like '%premium bath%' then 'bathing.type.premium'
+      when label_key = 'medicated' or label_key like '%medicated bath%' then 'bathing.type.medicated'
+      when label_key = 'whitening' or label_key like '%whitening bath%' then 'bathing.type.whitening'
       when label_key = 'bath' or label_key like '%standard%' then 'bathing.type.standard'
       when label_key like '%no crate dryer%' then 'bathing.modifier.no_crate_dryer'
       when label_key like '%no velocity dryer%' then 'bathing.modifier.no_velocity_dryer'
