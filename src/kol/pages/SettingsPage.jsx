@@ -480,7 +480,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
       case "gingr":
         return <GingrIntegrationTab />;
       case "gingr-icons":
-        return <GingrIconsTab />;
+        return <GingrIconsTab locationId={profile?.location_id || ""} />;
       case "team":
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":

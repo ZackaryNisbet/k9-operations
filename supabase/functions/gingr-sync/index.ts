@@ -370,6 +370,24 @@ function normalizeText(value: any): string | null {
   return text || null;
 }
 
+function normalizeSourceKeyText(value: any): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function serviceSourceKey(service: any): string {
+  const id = normalizeText(service?.id ?? service?.service_id ?? service?.value);
+  if (id) return `service:${id}`;
+  const name = normalizeSourceKeyText(service?.name ?? service?.service_name ?? service?.label ?? service?.title);
+  return name ? `service_name:${name}` : "";
+}
+
+function addonSourceKey(addon: any): string {
+  const id = normalizeText(addon?.id ?? addon?.addon_id ?? addon?.value);
+  if (id) return `service_addon:${id}`;
+  const name = normalizeSourceKeyText(addon?.name ?? addon?.addon_name ?? addon?.label ?? addon?.title);
+  return name ? `service_addon_name:${name}` : "";
+}
+
 function normalizeIso(value: any): string | null {
   if (value == null || value === "") return null;
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -1405,6 +1423,196 @@ async function syncReservationTypes(
   return { synced: types.length };
 }
 
+async function syncServicesByType(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string,
+  gingrLocationId = "1",
+): Promise<{ synced: number; services: number; addons: number; reservation_types: number }> {
+  let { data: reservationTypes } = await supabase
+    .from("gingr_reservation_types")
+    .select("gingr_id, name, type_label")
+    .eq("location_id", locationId);
+
+  if (!Array.isArray(reservationTypes) || reservationTypes.length === 0) {
+    await syncReservationTypes(supabase, subdomain, apiKey, locationId);
+    const retry = await supabase
+      .from("gingr_reservation_types")
+      .select("gingr_id, name, type_label")
+      .eq("location_id", locationId);
+    reservationTypes = retry.data || [];
+  }
+
+  const serviceRows: any[] = [];
+  const addonRows: any[] = [];
+  const typeFailures: string[] = [];
+
+  for (const type of reservationTypes || []) {
+    const typeId = String(type.gingr_id || "").trim();
+    if (!typeId) continue;
+
+    let result: any;
+    try {
+      result = await gingrFetch(subdomain, "get_services_by_type", apiKey, "GET", {
+        type_id: typeId,
+        location_id: gingrLocationId || "1",
+      });
+    } catch (err) {
+      console.error(`get_services_by_type failed for reservation type ${typeId}:`, err);
+      typeFailures.push(`${typeId}${type.name ? ` (${type.name})` : ""}`);
+      continue;
+    }
+
+    const payload = result?.data || result || {};
+    const services = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload.allowable_services)
+        ? payload.allowable_services
+        : [];
+    const topLevelAddons = Array.isArray(payload.allowable_services_addons)
+      ? payload.allowable_services_addons
+      : [];
+    const reservationTypeName = type.type_label || type.name || "";
+
+    for (const service of services) {
+      const sourceKey = serviceSourceKey(service);
+      const serviceName = normalizeText(service?.name ?? service?.service_name ?? service?.label ?? service?.title);
+      if (!sourceKey || !serviceName) continue;
+
+      serviceRows.push({
+        location_id: locationId,
+        source_key: sourceKey,
+        service_id: normalizeText(service?.id ?? service?.service_id ?? service?.value),
+        service_name: serviceName,
+        service_type_id: normalizeText(service?.type_id ?? service?.service_type_id),
+        service_type_name: normalizeText(service?.type_name ?? service?.service_type),
+        reservation_type_id: typeId,
+        reservation_type_name: reservationTypeName,
+        source_kind: "service",
+        is_active: service?.status === "0" ? false : true,
+        raw_payload: service,
+        last_seen_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+      });
+
+      const nestedAddons = Array.isArray(service?.addons) ? service.addons : [];
+      for (const addon of nestedAddons) {
+        const addonKey = addonSourceKey(addon);
+        const addonName = normalizeText(addon?.name ?? addon?.addon_name ?? addon?.label ?? addon?.title);
+        if (!addonKey || !addonName) continue;
+        addonRows.push({
+          location_id: locationId,
+          source_key: addonKey,
+          service_source_key: sourceKey,
+          service_id: normalizeText(service?.id ?? service?.service_id ?? service?.value),
+          addon_id: normalizeText(addon?.id ?? addon?.addon_id ?? addon?.value),
+          addon_name: addonName,
+          reservation_type_id: typeId,
+          reservation_type_name: reservationTypeName,
+          is_active: addon?.status === "0" ? false : true,
+          raw_payload: addon,
+          last_seen_at: new Date().toISOString(),
+          synced_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    for (const addon of topLevelAddons) {
+      const addonKey = addonSourceKey(addon);
+      const addonName = normalizeText(addon?.name ?? addon?.addon_name ?? addon?.label ?? addon?.title);
+      if (!addonKey || !addonName) continue;
+      addonRows.push({
+        location_id: locationId,
+        source_key: addonKey,
+        service_source_key: normalizeText(addon?.service_id) ? `service:${addon.service_id}` : null,
+        service_id: normalizeText(addon?.service_id),
+        addon_id: normalizeText(addon?.id ?? addon?.addon_id ?? addon?.value),
+        addon_name: addonName,
+        reservation_type_id: typeId,
+        reservation_type_name: reservationTypeName,
+        is_active: addon?.status === "0" ? false : true,
+        raw_payload: addon,
+        last_seen_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    await sleep(150);
+  }
+
+  if (typeFailures.length > 0) {
+    throw new Error(
+      `get_services_by_type failed for ${typeFailures.length} reservation type(s): ${typeFailures.join(", ")}`,
+    );
+  }
+
+  const dedupeCatalogRows = (rows: any[]) => {
+    const byKey = new Map<string, any>();
+    for (const row of rows) {
+      const mapKey = `${row.location_id}|${row.source_key}`;
+      const existing = byKey.get(mapKey);
+      if (!existing) {
+        byKey.set(mapKey, {
+          ...row,
+          raw_payload: {
+            ...(row.raw_payload || {}),
+            reservation_type_refs: row.reservation_type_id
+              ? [{ id: row.reservation_type_id, name: row.reservation_type_name || "" }]
+              : [],
+          },
+        });
+        continue;
+      }
+
+      const refs = Array.isArray(existing.raw_payload?.reservation_type_refs)
+        ? existing.raw_payload.reservation_type_refs
+        : [];
+      if (row.reservation_type_id && !refs.some((ref: any) => ref?.id === row.reservation_type_id)) {
+        refs.push({ id: row.reservation_type_id, name: row.reservation_type_name || "" });
+      }
+      existing.raw_payload = {
+        ...(existing.raw_payload || {}),
+        reservation_type_refs: refs,
+      };
+      existing.last_seen_at = row.last_seen_at || existing.last_seen_at;
+      existing.synced_at = row.synced_at || existing.synced_at;
+      existing.is_active = existing.is_active || row.is_active;
+    }
+    return [...byKey.values()];
+  };
+
+  const dedupedServiceRows = dedupeCatalogRows(serviceRows);
+  const dedupedAddonRows = dedupeCatalogRows(addonRows);
+
+  let servicesSynced = 0;
+  for (let i = 0; i < dedupedServiceRows.length; i += 500) {
+    const chunk = dedupedServiceRows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_service_catalog")
+      .upsert(chunk, { onConflict: "location_id,source_key" });
+    if (error) throw new Error(`gingr_service_catalog upsert error: ${error.message}`);
+    servicesSynced += chunk.length;
+  }
+
+  let addonsSynced = 0;
+  for (let i = 0; i < dedupedAddonRows.length; i += 500) {
+    const chunk = dedupedAddonRows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_service_addon_catalog")
+      .upsert(chunk, { onConflict: "location_id,source_key" });
+    if (error) throw new Error(`gingr_service_addon_catalog upsert error: ${error.message}`);
+    addonsSynced += chunk.length;
+  }
+
+  return {
+    synced: servicesSynced + addonsSynced,
+    services: servicesSynced,
+    addons: addonsSynced,
+    reservation_types: (reservationTypes || []).length,
+  };
+}
+
 async function syncInvoices(
   supabase: any,
   subdomain: string,
@@ -2337,11 +2545,11 @@ async function syncAnimalIcons(
     throw new Error(`gingr_reservations icon scope query error: ${error.message}`);
   }
 
-  const animalIds = [...new Set(
+  const animalIds: string[] = Array.from(new Set<string>(
     (horizonReservations || [])
       .map((row: any) => String(row.animal_gingr_id || "").trim())
       .filter(Boolean),
-  )];
+  ));
 
   if (animalIds.length === 0) {
     return { synced: 0, animals: 0 };
@@ -2875,11 +3083,11 @@ async function fetchOperationalAnimalIds(
     throw new Error(`Operational animal scope query failed: ${error.message}`);
   }
 
-  return [...new Set(
+  return Array.from(new Set<string>(
     (horizonReservations || [])
       .map((row: any) => String(row.animal_gingr_id || "").trim())
       .filter(Boolean),
-  )];
+  ));
 }
 
 async function replaceOperationalDetailRows(
@@ -3151,6 +3359,97 @@ function updateSyncState(
     },
     { onConflict: "location_id,entity_type" }
   );
+}
+
+const REFERENCE_SYNC_ENTITIES = new Set([
+  "reservation_types",
+  "services",
+  "runs_and_occupancy",
+  "animal_icons",
+  "animal_icons_all",
+]);
+
+function syncEntityLabel(entity: string) {
+  return String(entity || "")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getSyncRecordCount(result: any) {
+  const value = result?.synced ?? result?.occupancy ?? result?.services ?? result?.animals ?? result?.runs ?? 0;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function shouldTrackReferenceRun(syncType: string, toSync: string[]) {
+  if (syncType === "full") return true;
+  return toSync.some((entity) => REFERENCE_SYNC_ENTITIES.has(entity));
+}
+
+function getReferenceRunMode(syncType: string, toSync: string[]) {
+  if (syncType === "full" && toSync.includes("owners") && toSync.includes("reservations")) {
+    return "initial_bootstrap";
+  }
+  return "reference_discovery";
+}
+
+async function startReferenceSyncRun(
+  supabase: any,
+  locationId: string,
+  mode: string,
+  toSync: string[],
+) {
+  const nowIso = new Date().toISOString();
+  try {
+    const { data, error } = await supabase
+      .from("gingr_reference_sync_runs")
+      .insert({
+        location_id: locationId,
+        mode,
+        status: "running",
+        total_units: toSync.length,
+        completed_units: 0,
+        failed_units: 0,
+        current_entity: toSync[0] || null,
+        current_label: syncEntityLabel(toSync[0] || ""),
+        entity_progress: {},
+        last_message: `Starting ${mode === "initial_bootstrap" ? "initial GINGR sync" : "GINGR reference refresh"}`,
+        started_at: nowIso,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("Reference sync run tracking unavailable:", error.message);
+      return null;
+    }
+    return data?.id || null;
+  } catch (err: any) {
+    console.warn("Reference sync run tracking failed:", err.message);
+    return null;
+  }
+}
+
+async function updateReferenceSyncRun(
+  supabase: any,
+  runId: string | null,
+  patch: Record<string, any>,
+) {
+  if (!runId) return;
+  try {
+    const { error } = await supabase
+      .from("gingr_reference_sync_runs")
+      .update({
+        ...patch,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
+    if (error) console.warn("Reference sync progress update failed:", error.message);
+  } catch (err: any) {
+    console.warn("Reference sync progress update failed:", err.message);
+  }
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────
@@ -3607,13 +3906,35 @@ Deno.serve(async (req: Request) => {
     // Full sync: all entities. Incremental: only fast entities that fit within
     // the edge function timeout (~150s). Reservations and owners/animals are too
     // heavy for incremental — they run only on full sync.
-    const toSync =
-      entities ||
+    const toSync: string[] =
+      Array.isArray(entities) ? entities :
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "feeding_schedules", "medications", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_icons_all", "animal_photos"]
+        ? ["reservation_types", "services", "immunization_types", "owners", "animals", "reservations", "feeding_schedules", "medications", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_icons_all", "animal_photos"]
         : ["feeding_schedules", "medications", "invoices", "invoice_payments", "deposits", "animal_photos"]);
 
+    const referenceProgress: Record<string, any> = {};
+    let referenceCompletedUnits = 0;
+    let referenceFailedUnits = 0;
+    const referenceRunId = shouldTrackReferenceRun(sync_type, toSync)
+      ? await startReferenceSyncRun(
+          supabase,
+          location_id,
+          getReferenceRunMode(sync_type, toSync),
+          toSync,
+        )
+      : null;
+
     for (const entity of toSync) {
+      await updateReferenceSyncRun(supabase, referenceRunId, {
+        status: "running",
+        current_entity: entity,
+        current_label: syncEntityLabel(entity),
+        completed_units: referenceCompletedUnits,
+        failed_units: referenceFailedUnits,
+        entity_progress: referenceProgress,
+        last_message: `Syncing ${syncEntityLabel(entity)}`,
+      });
+
       await updateSyncState(supabase, location_id, entity, {
         status: "syncing",
         last_sync_at: new Date().toISOString(),
@@ -3641,6 +3962,15 @@ Deno.serve(async (req: Request) => {
               subdomain,
               api_key,
               location_id
+            );
+            break;
+          case "services":
+            results.services = await syncServicesByType(
+              supabase,
+              subdomain,
+              api_key,
+              location_id,
+              gingr_location_id || "1",
             );
             break;
           case "immunization_types":
@@ -3748,9 +4078,22 @@ Deno.serve(async (req: Request) => {
 
         await updateSyncState(supabase, location_id, entity, {
           status: "idle",
-          records_synced: results[entity]?.synced || 0,
+          records_synced: getSyncRecordCount(results[entity]),
           sync_duration_ms: Date.now() - startTime,
           error_message: null,
+        });
+        referenceCompletedUnits += 1;
+        referenceProgress[entity] = {
+          status: "complete",
+          records_synced: getSyncRecordCount(results[entity]),
+          completed_at: new Date().toISOString(),
+        };
+        await updateReferenceSyncRun(supabase, referenceRunId, {
+          status: "running",
+          completed_units: referenceCompletedUnits,
+          failed_units: referenceFailedUnits,
+          entity_progress: referenceProgress,
+          last_message: `${syncEntityLabel(entity)} complete`,
         });
       } catch (err: any) {
         await updateSyncState(supabase, location_id, entity, {
@@ -3758,8 +4101,35 @@ Deno.serve(async (req: Request) => {
           error_message: err.message,
         });
         results[entity] = { error: err.message };
+        referenceFailedUnits += 1;
+        referenceProgress[entity] = {
+          status: "failed",
+          error: err.message,
+          failed_at: new Date().toISOString(),
+        };
+        await updateReferenceSyncRun(supabase, referenceRunId, {
+          status: "running",
+          completed_units: referenceCompletedUnits,
+          failed_units: referenceFailedUnits,
+          entity_progress: referenceProgress,
+          last_message: `${syncEntityLabel(entity)} failed`,
+          error_message: err.message,
+        });
       }
     }
+
+    await updateReferenceSyncRun(supabase, referenceRunId, {
+      status: referenceFailedUnits > 0 ? "failed" : "complete",
+      completed_units: referenceCompletedUnits,
+      failed_units: referenceFailedUnits,
+      current_entity: null,
+      current_label: null,
+      entity_progress: referenceProgress,
+      last_message: referenceFailedUnits > 0
+        ? `GINGR sync finished with ${referenceFailedUnits} failed step${referenceFailedUnits === 1 ? "" : "s"}`
+        : "GINGR sync complete",
+      completed_at: new Date().toISOString(),
+    });
 
     // Update full sync timestamp
     if (sync_type === "full") {

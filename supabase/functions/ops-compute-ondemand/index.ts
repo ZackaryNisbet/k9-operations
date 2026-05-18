@@ -11,15 +11,24 @@ import {
   buildManualBathStatusContext,
   buildSuggestedBathStatusContext,
   calculateNights,
-  extractBathLikeServices,
   getBathSchedulingForDate,
-  isBoardingReservation,
 } from "../_shared/bathing-logic.ts";
 import {
   fetchLocationIconMappings,
   resolveBathDisplayFromIconRows,
   type GingrAnimalIconRow,
 } from "../_shared/gingr-icon-mappings.ts";
+import {
+  extractConfiguredWorkflowServices,
+  getReservationCategoryFromConfig,
+  getWorkflowNumberSetting,
+  loadGingrWorkflowConfig,
+  reservationTypeHasCapability,
+  resolveBathDisplayFromServiceCapabilities,
+  sourceHasCapabilityForSourceTypes,
+  type GingrWorkflowConfig,
+  workflowConfigHasCapability,
+} from "../_shared/gingr-workflow-config.ts";
 import {
   getRollCallWorkflowTitle,
   loadRollCallSessionRow,
@@ -43,6 +52,85 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+function assertBaseWorkflowConfig(
+  workflowConfig: GingrWorkflowConfig | null,
+  locationId: string,
+) {
+  const missing: string[] = [];
+  if (!workflowConfig?.hasMappings) {
+    missing.push("workflow mappings");
+  }
+  if (!workflowConfigHasCapability(workflowConfig, "reservation_categories", "reservation.category.")) {
+    missing.push("reservation category mappings");
+  }
+  if (!workflowConfigHasCapability(workflowConfig, "bathing", "bathing.include")) {
+    missing.push("bathing service mappings");
+  }
+  if (!workflowConfigHasCapability(workflowConfig, "private_play", "private_play.include")) {
+    missing.push("private play mappings");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `GINGR workflow configuration incomplete for location ${locationId}: ${missing.join(", ")}. Run reference sync and complete Gingr Icons workflow mappings before computing operational reports.`,
+    );
+  }
+}
+
+async function assertActiveReservationTypesConfigured({
+  supabase,
+  workflowConfig,
+  locationId,
+  date,
+}: {
+  supabase: any;
+  workflowConfig: GingrWorkflowConfig | null;
+  locationId: string;
+  date: string;
+}) {
+  const windowEnd = addDays(date, 14);
+  const { data, error } = await supabase
+    .from("gingr_reservations")
+    .select("reservation_type_id, reservation_type_name, start_date, end_date, cancelled_date, raw_data")
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .lte("start_date", `${windowEnd}T23:59:59`)
+    .gte("end_date", `${date}T00:00:00`)
+    .limit(10000);
+
+  if (error) throw new Error(`Reservation type configuration validation failed: ${error.message}`);
+
+  const missing = new Map<string, string>();
+  for (const row of data || []) {
+    const raw = row.raw_data || {};
+    const rawType = raw.reservation_type || {};
+    const typeId = String(row.reservation_type_id || rawType.id || "").trim();
+    const typeName = String(rawType.type || rawType.name || row.reservation_type_name || "").trim();
+    if (!typeId && !typeName) continue;
+    const source = buildReservationTypeSource(typeId, typeName);
+    if (!getReservationCategoryFromConfig(workflowConfig, source)) {
+      missing.set(`${typeId}|${typeName}`, typeName || typeId);
+    }
+  }
+
+  if (missing.size > 0) {
+    const labels = [...missing.values()].slice(0, 12).join(", ");
+    const extra = missing.size > 12 ? `, plus ${missing.size - 12} more` : "";
+    throw new Error(
+      `GINGR workflow configuration incomplete for location ${locationId}: unmapped active reservation types through ${windowEnd}: ${labels}${extra}. Complete reservation category mappings before computing dependent reports.`,
+    );
+  }
+}
+
+async function assertRequiredWorkflowConfig(args: {
+  supabase: any;
+  workflowConfig: GingrWorkflowConfig | null;
+  locationId: string;
+  date: string;
+}) {
+  assertBaseWorkflowConfig(args.workflowConfig, args.locationId);
+  await assertActiveReservationTypesConfigured(args);
+}
 
 function resolveCanonicalRoomEntry(
   roomLookup: RoomOccupancyLookup | null | undefined,
@@ -130,15 +218,6 @@ function formatTimeHuman(isoStr: string): string {
 
 // ─── Bath type resolution helpers ──────────────────────────────────────────
 
-const BATH_TYPE_ADDONS = new Set([
-  "Premium", "Medicated", "Whitening", "Shampoo From Home",
-  "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY",
-]);
-
-const BATH_MODIFIER_ADDONS = new Set([
-  "NO DRYER", "NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*",
-]);
-
 function extractBathTypeFromName(svcName: string): string | null {
   if (!svcName) return null;
   const l = svcName.toLowerCase();
@@ -154,20 +233,18 @@ function extractBathTypeFromName(svcName: string): string | null {
   return null;
 }
 
-function parseBathAddonsFromServices(svcs: any[]): { addonType: string | null; modifiers: string[] } {
-  let addonType: string | null = null;
-  const modifiers: string[] = [];
-  for (const svc of svcs) {
-    const n = typeof svc === "string" ? svc : svc?.name || "";
-    if (!n) continue;
-    if (BATH_TYPE_ADDONS.has(n)) { if (!addonType) addonType = n; }
-    else if (BATH_MODIFIER_ADDONS.has(n)) { modifiers.push(n); }
-    else {
-      for (const t of BATH_TYPE_ADDONS) { if (n.toLowerCase() === t.toLowerCase()) { if (!addonType) addonType = t; break; } }
-      for (const m of BATH_MODIFIER_ADDONS) { if (n.toLowerCase() === m.toLowerCase()) { modifiers.push(m); break; } }
-    }
-  }
-  return { addonType, modifiers };
+function parseBathAddonsFromServices(
+  svcs: any[],
+  workflowConfig: GingrWorkflowConfig | null,
+): { addonType: string | null; modifiers: string[] } {
+  const mappedServices = extractConfiguredWorkflowServices(
+    svcs,
+    [],
+    workflowConfig,
+    "bathing",
+    null,
+  );
+  return resolveBathDisplayFromServiceCapabilities(mappedServices);
 }
 
 // ─── Upsert helper ────────────────────────────────────────────────────────
@@ -392,14 +469,28 @@ async function computeRoomCleaning(
 
 // ─── Reservation type classification ─────────────────────────────────────
 
-function classifyReservationCategory(typeName: string): string {
-  if (!typeName) return "other";
-  const t = typeName.toLowerCase();
-  if (t.includes("evaluation") || t.includes("eval") || t.includes("first stay")) return "evaluation";
-  if (t.includes("day boarding") || t === "day boarding") return "day_boarding";
-  if (t.includes("daycare") || t.includes("day care")) return "daycare";
-  if (t.includes("boarding")) return "boarding";
-  return "other";
+function buildReservationTypeSource(id: string | null | undefined, typeName: string | null | undefined): any {
+  const cleanId = String(id || "").trim();
+  const cleanName = String(typeName || "").trim();
+  return { id: cleanId, name: cleanName, type: cleanName };
+}
+
+function classifyReservationCategory(
+  workflowConfig: GingrWorkflowConfig | null,
+  typeName: string,
+  source?: any,
+): string {
+  return getReservationCategoryFromConfig(
+    workflowConfig,
+    source || buildReservationTypeSource("", typeName),
+  ) || "other";
+}
+
+function isConfiguredBoardingReservation(
+  workflowConfig: GingrWorkflowConfig | null,
+  source: any,
+): boolean {
+  return getReservationCategoryFromConfig(workflowConfig, source) === "boarding";
 }
 
 // ─── Average checkout time helpers ───────────────────────────────────────
@@ -410,6 +501,7 @@ async function fetchAvgCheckoutFromSupabase(
   animalName: string,
   reservationType: string,
   supabase: any,
+  workflowConfig: GingrWorkflowConfig | null,
 ): Promise<{ avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }> {
   try {
     const { data: reservations, error } = await supabase
@@ -429,12 +521,12 @@ async function fetchAvgCheckoutFromSupabase(
       return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
     }
 
-    const targetCategory = reservationType ? classifyReservationCategory(reservationType) : "other";
+    const targetCategory = reservationType ? classifyReservationCategory(workflowConfig, reservationType) : "other";
     const filteredReservations = reservations.filter((row: any) => {
       const rowType = row?.reservation_type_name || "";
       if (!reservationType) return true;
       if (rowType === reservationType) return true;
-      return targetCategory !== "other" && classifyReservationCategory(rowType) === targetCategory;
+      return targetCategory !== "other" && classifyReservationCategory(workflowConfig, rowType) === targetCategory;
     });
     const sourceReservations = filteredReservations.length > 0 ? filteredReservations : reservations;
 
@@ -514,6 +606,7 @@ async function getAvgCheckoutTimes(
   animalNames: Record<string, string>,
   resTypes: Record<string, string>,
   supabase: any,
+  workflowConfig: GingrWorkflowConfig | null,
 ): Promise<Record<string, { avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }>> {
   if (animalIds.length === 0) return {};
 
@@ -557,7 +650,7 @@ async function getAvgCheckoutTimes(
     while (queue.length > 0) {
       const id = queue.shift();
       if (!id) break;
-      const data = await fetchAvgCheckoutFromSupabase(locationId, id, animalNames[id] || "", resTypes[id] || "", supabase);
+      const data = await fetchAvgCheckoutFromSupabase(locationId, id, animalNames[id] || "", resTypes[id] || "", supabase, workflowConfig);
       result[id] = data;
     }
   }
@@ -573,6 +666,7 @@ async function computeBathingReport(
   supabase: any,
   locationId: string,
   targetDate: string,
+  workflowConfig: GingrWorkflowConfig | null,
   roomLookup?: RoomOccupancyLookup | null,
 ): Promise<any> {
   const nextDay = addDays(targetDate, 1);
@@ -609,7 +703,13 @@ async function computeBathingReport(
     const rd = r.raw_data || {};
     const rawSvcs = rd.services || [];
     const topSvcs = Array.isArray(r.services) ? r.services : [];
-    const bathServices = extractBathLikeServices(rawSvcs, topSvcs);
+    const bathServices = extractConfiguredWorkflowServices(
+      rawSvcs,
+      topSvcs,
+      workflowConfig,
+      "bathing",
+      "bathing.include",
+    );
     const { scheduledToday, scheduledOtherDay, hasBathOrGroom } = getBathSchedulingForDate(bathServices, targetDate);
     if (!hasBathOrGroom) continue;
 
@@ -617,11 +717,15 @@ async function computeBathingReport(
     const endDate = rd.end_date || r.end_date || "";
     const resType = rd.reservation_type || {};
     const resTypeName = resType.type || r.reservation_type_name || "";
+    const reservationTypeSource = buildReservationTypeSource(
+      resType.id || r.reservation_type_id,
+      resTypeName,
+    );
     const isDepartingToday = endDate.includes(targetDate);
     const nights = calculateNights(startDate, endDate);
 
     if (!scheduledToday) {
-      if (isDepartingToday && isBoardingReservation(resTypeName) && nights >= 2) {
+      if (isDepartingToday && isConfiguredBoardingReservation(workflowConfig, reservationTypeSource) && nights >= 2) {
         const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
         if (animalGingrId) animalIds.push(animalGingrId);
 
@@ -645,7 +749,7 @@ async function computeBathingReport(
           ),
           suiteType: resTypeName,
           reservationType: resTypeName,
-          reservationCategory: classifyReservationCategory(resTypeName),
+          reservationCategory: classifyReservationCategory(workflowConfig, resTypeName, reservationTypeSource),
           addonType: null,
           bathServiceName: scheduledOtherDay?.name || "",
           bathModifiers: [],
@@ -670,7 +774,10 @@ async function computeBathingReport(
     if (animalGingrId) animalIds.push(animalGingrId);
 
     const svcsForAddons = rawSvcs.length > 0 ? rawSvcs : topSvcs;
-    const { addonType, modifiers } = parseBathAddonsFromServices(svcsForAddons);
+    const { addonType, modifiers } = parseBathAddonsFromServices(
+      svcsForAddons,
+      workflowConfig,
+    );
     const roomLabel = resolveCanonicalRoomLabel(
       roomLookup,
       {
@@ -699,7 +806,7 @@ async function computeBathingReport(
       roomLabel,
       suiteType: resTypeName,
       reservationType: resTypeName,
-      reservationCategory: classifyReservationCategory(resTypeName),
+      reservationCategory: classifyReservationCategory(workflowConfig, resTypeName, reservationTypeSource),
       addonType,
       bathServiceName: scheduledToday.name || "",
       bathModifiers: modifiers,
@@ -729,14 +836,24 @@ async function computeBathingReport(
     const endDate = rd.end_date || r.end_date || "";
     const resType = rd.reservation_type || {};
     const resTypeName = resType.type || r.reservation_type_name || "";
+    const reservationTypeSource = buildReservationTypeSource(
+      resType.id || r.reservation_type_id,
+      resTypeName,
+    );
 
-    if (!isBoardingReservation(resTypeName)) continue;
+    if (!isConfiguredBoardingReservation(workflowConfig, reservationTypeSource)) continue;
     if (!endDate.includes(targetDate)) continue;
     if (calculateNights(startDate, endDate) !== 1) continue;
 
     const rawSvcs = rd.services || [];
     const topSvcs = Array.isArray(r.services) ? r.services : [];
-    const bathServices = extractBathLikeServices(rawSvcs, topSvcs);
+    const bathServices = extractConfiguredWorkflowServices(
+      rawSvcs,
+      topSvcs,
+      workflowConfig,
+      "bathing",
+      "bathing.include",
+    );
     if (bathServices.length > 0) continue;
 
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
@@ -768,7 +885,7 @@ async function computeBathingReport(
       roomLabel,
       suiteType: resTypeName,
       reservationType: resTypeName,
-      reservationCategory: classifyReservationCategory(resTypeName),
+      reservationCategory: classifyReservationCategory(workflowConfig, resTypeName, reservationTypeSource),
       addonType: "",
       bathServiceName: "",
       bathModifiers: [],
@@ -793,9 +910,14 @@ async function computeBathingReport(
     const resId = String(r.gingr_id || "");
     if (bathDogResIds.has(resId)) continue; // already has a bath
 
-    const resTypeName = (r.reservation_type_name || "").toLowerCase();
-    if (!resTypeName.includes("boarding")) continue; // must be boarding
-    if (resTypeName.includes("day boarding")) continue; // day boarding excluded
+    const rd = r.raw_data || {};
+    const resType = rd.reservation_type || {};
+    const fullResTypeName = resType.type || r.reservation_type_name || "";
+    const reservationTypeSource = buildReservationTypeSource(
+      resType.id || r.reservation_type_id,
+      fullResTypeName,
+    );
+    if (!isConfiguredBoardingReservation(workflowConfig, reservationTypeSource)) continue;
 
     // Must be checked in (not just pending)
     if (!r.check_in_date) continue;
@@ -814,20 +936,20 @@ async function computeBathingReport(
     if (endDay !== targetDate) continue;
 
     // Confirm no bath/grooming service on this reservation for today or tomorrow
-    const rd = r.raw_data || {};
     const rawSvcs = rd.services || [];
     const topSvcs = Array.isArray(r.services) ? r.services : [];
-    const allSvcs = [...rawSvcs, ...topSvcs];
-    const hasBathOrGroom = allSvcs.some((s: any) => {
-      const n = typeof s === "string" ? s : s?.name || "";
-      return n.toLowerCase().includes("bath") || n.toLowerCase().includes("groom");
-    });
-    if (hasBathOrGroom) continue;
+    const bathServices = extractConfiguredWorkflowServices(
+      rawSvcs,
+      topSvcs,
+      workflowConfig,
+      "bathing",
+      "bathing.include",
+    );
+    if (bathServices.length > 0) continue;
 
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
     if (animalGingrId) animalIds.push(animalGingrId);
 
-    const resType = rd.reservation_type || {};
     const roomLabel = resolveCanonicalRoomLabel(
       roomLookup,
       {
@@ -839,8 +961,6 @@ async function computeBathingReport(
       },
       r.room_assignment || rd.run?.name || "",
     );
-    const fullResTypeName = resType.type || r.reservation_type_name || "";
-
     suggestedDogs.push({
       animalGingrId,
       gingrReservationId: resId,
@@ -851,7 +971,7 @@ async function computeBathingReport(
       roomLabel,
       suiteType: fullResTypeName,
       reservationType: fullResTypeName,
-      reservationCategory: classifyReservationCategory(fullResTypeName),
+      reservationCategory: classifyReservationCategory(workflowConfig, fullResTypeName, reservationTypeSource),
       addonType: null,
       bathServiceName: "",
       bathModifiers: [],
@@ -890,6 +1010,10 @@ async function computeBathingReport(
     const endDate = rd.end_date || r.end_date || "";
     const resType = rd.reservation_type || {};
     const resTypeName = resType.type || r.reservation_type_name || "";
+    const reservationTypeSource = buildReservationTypeSource(
+      resType.id || r.reservation_type_id,
+      resTypeName,
+    );
     const animalGingrId = String(override.animal_gingr_id || r.animal_gingr_id || rd.animal?.id || "").trim();
     const roomLabel = resolveCanonicalRoomLabel(
       roomLookup,
@@ -922,7 +1046,7 @@ async function computeBathingReport(
       roomLabel,
       suiteType: resTypeName,
       reservationType: resTypeName,
-      reservationCategory: classifyReservationCategory(resTypeName),
+      reservationCategory: classifyReservationCategory(workflowConfig, resTypeName, reservationTypeSource),
       addonType: manualBathType,
       bathServiceName: manualBathType,
       bathModifiers: manualBathModifiers,
@@ -951,7 +1075,7 @@ async function computeBathingReport(
   if (animalIds.length > 0) {
     const [{ data: icons }, playAssignments, { data: animals }] = await Promise.all([
       supabase.from("gingr_animal_icons_live").select("animal_gingr_id, icon_title, icon_comment, icon_template_id, icon_identity_key, icon_group, icon_color, icon_class")
-        .eq("location_id", locationId).eq("icon_group", "Bath").in("animal_gingr_id", animalIds),
+        .eq("location_id", locationId).in("animal_gingr_id", animalIds),
       fetchPlaygroupAssignments({
         supabase,
         locationId,
@@ -997,7 +1121,7 @@ async function computeBathingReport(
     }
   }
 
-  const checkoutAvgs = await getAvgCheckoutTimes(locationId, uniqueAnimalIds, animalNameMap, animalResTypeMap, supabase);
+  const checkoutAvgs = await getAvgCheckoutTimes(locationId, uniqueAnimalIds, animalNameMap, animalResTypeMap, supabase, workflowConfig);
 
   // ─── Build final dog objects ───────────────────────────────────────────
   function buildDogOutput(d: any): any {
@@ -1242,6 +1366,7 @@ async function computeEnrichmentReport(
   locationId: string,
   targetDate: string,
   localReservations: Record<string, any>,
+  workflowConfig: GingrWorkflowConfig | null,
   roomLookup?: RoomOccupancyLookup | null,
 ): Promise<any> {
   const scheduled: any[] = [];
@@ -1367,7 +1492,7 @@ async function computeEnrichmentReport(
       services: serviceRows.map((s: any) => s.name || s.service_name || "enrichment"),
       status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
       reservationType: resType,
-      reservationCategory: classifyReservationCategory(resType),
+      reservationCategory: classifyReservationCategory(workflowConfig, resType),
       startDate: res.startDate || res.start_date || "",
       endDate: res.endDate || res.end_date || "",
       checkInDate: res.checkInDate || res.check_in_date || "",
@@ -1478,7 +1603,7 @@ async function computeEnrichmentReport(
           services: serviceRows.map((s: any) => s.name || s.service_name || "enrichment"),
           status: scheduledServices.length > 0 ? "scheduled" : "needs_review",
           reservationType: row?.reservation_type_name || "",
-          reservationCategory: classifyReservationCategory(row?.reservation_type_name || ""),
+          reservationCategory: classifyReservationCategory(workflowConfig, row?.reservation_type_name || ""),
           startDate: row?.start_date || "",
           endDate: row?.end_date || "",
           checkInDate: row?.check_in_date || "",
@@ -1522,6 +1647,7 @@ async function computePrivatePlay(
   targetDate: string,
   reservations: Record<string, any>,
   privatePlayAnimalIds: Set<string>,
+  workflowConfig: GingrWorkflowConfig | null,
   roomLookup?: RoomOccupancyLookup | null,
 ): Promise<any> {
   const dogs: any[] = [];
@@ -1536,15 +1662,37 @@ async function computePrivatePlay(
     const animalName = res.animal?.name || "";
     const ownerName = `${res.owner?.first_name || ""} ${res.owner?.last_name || ""}`.trim();
     const resType = res.reservation_type?.type || "";
-    const isDayBoarding = resType.toLowerCase().startsWith("day boarding");
+    const reservationTypeSource = {
+      id: res.reservation_type?.id || res.reservation_type_id || "",
+      name: resType,
+      type: resType,
+    };
+    const isConfiguredReservationType = reservationTypeHasCapability(
+      workflowConfig,
+      "private_play",
+      reservationTypeSource,
+      "private_play.include",
+    );
     const hasCanonicalPrivatePlay = privatePlayAnimalIds.has(animalId);
     const services = res.services || [];
-    const hasPPService = services.some((s: any) =>
-      (s.name || s.service_name || "").toLowerCase().includes("private play"),
+    const hasPPService = services.some((service: any) =>
+      sourceHasCapabilityForSourceTypes({
+        config: workflowConfig,
+        workflowKey: "private_play",
+        sourceTypes: ["service", "service_addon"],
+        source: service,
+        capabilityKey: "private_play.include",
+      }),
     );
     const hasPP = hasCanonicalPrivatePlay || hasPPService;
+    const requiredSessions = getWorkflowNumberSetting(
+      workflowConfig,
+      "private_play",
+      "required_sessions",
+      3,
+    );
 
-    if ((isDayBoarding || hasPP) && animalId && !seenAnimalIds.has(animalId)) {
+    if ((isConfiguredReservationType || hasPP) && animalId && !seenAnimalIds.has(animalId)) {
       seenAnimalIds.add(animalId);
       if (gingrReservationId) seenReservationIds.add(gingrReservationId);
       dogs.push({
@@ -1553,8 +1701,8 @@ async function computePrivatePlay(
         animalName,
         ownerName,
         reservationType: resType,
-        requiredSessions: 3,
-        source: isDayBoarding
+        requiredSessions,
+        source: isConfiguredReservationType
           ? "day_boarding"
           : hasCanonicalPrivatePlay
             ? "private_play_icon"
@@ -1599,7 +1747,12 @@ async function computePrivatePlay(
       animalName: reservation.animal?.name || "",
       ownerName: `${reservation.owner?.first_name || ""} ${reservation.owner?.last_name || ""}`.trim(),
       reservationType: reservation.reservation_type?.type || "",
-      requiredSessions: 3,
+      requiredSessions: getWorkflowNumberSetting(
+        workflowConfig,
+        "private_play",
+        "required_sessions",
+        3,
+      ),
       source: "manual_override",
       roomLabel: String(override.room_label_override || "").trim() || resolveCanonicalRoomLabel(
         roomLookup,
@@ -1618,7 +1771,10 @@ async function computePrivatePlay(
   dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
   return {
     dogs,
-    summary: { totalDogs: dogs.length, requiredSessions: dogs.length * 3 },
+    summary: {
+      totalDogs: dogs.length,
+      requiredSessions: dogs.reduce((sum, dog) => sum + Number(dog.requiredSessions || 0), 0),
+    },
   };
 }
 
@@ -1812,6 +1968,7 @@ Deno.serve(async (req: Request) => {
     const sb = createClient(supabaseUrl, supabaseServiceKey);
     const authFailure = await requireAuthenticatedRequest(req, sb, supabaseServiceKey);
     if (authFailure) return authFailure;
+    const gingrWorkflowConfig = await loadGingrWorkflowConfig({ supabase: sb, locationId });
 
     if (kind === "roll_call_opening" || kind === "roll_call_closing") {
       const session = normalizeRollCallSession(
@@ -1838,6 +1995,13 @@ Deno.serve(async (req: Request) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
+    await assertRequiredWorkflowConfig({
+      supabase: sb,
+      workflowConfig: gingrWorkflowConfig,
+      locationId,
+      date,
+    });
 
     const roomOccupancySnapshot = await fetchRoomOccupancySnapshotForDate({
       supabase: sb,
@@ -1876,9 +2040,9 @@ Deno.serve(async (req: Request) => {
 
     const [roomCleaning, bathing, pamper, enrichment, lodgingTransfers, careReports] = await Promise.all([
       computeRoomCleaning(sb, locationId, date),
-      computeBathingReport(sb, locationId, date, roomOccupancyLookup),
+      computeBathingReport(sb, locationId, date, gingrWorkflowConfig, roomOccupancyLookup),
       Promise.resolve(computeServiceReport(reservations, "pamper", roomOccupancyLookup)),
-      computeEnrichmentReport(sb, locationId, date, reservations, roomOccupancyLookup),
+      computeEnrichmentReport(sb, locationId, date, reservations, gingrWorkflowConfig, roomOccupancyLookup),
       computeLodgingTransfers(sb, locationId, date),
       computeCareReportsForDate(sb, locationId, date, roomOccupancyLookup),
     ]);
@@ -1888,6 +2052,7 @@ Deno.serve(async (req: Request) => {
       date,
       reservations,
       privatePlayAnimalIds,
+      gingrWorkflowConfig,
       roomOccupancyLookup,
     );
 

@@ -1,4 +1,4 @@
-import { normalizeBathDisplay, normalizeBathModifierLabel, normalizeBathTypeLabel, sanitizeBathTypeLabels } from "./bathing-logic.ts";
+import { normalizeBathDisplay, sanitizeBathTypeLabels } from "./bathing-logic.ts";
 
 type SupabaseClient = any;
 
@@ -92,13 +92,6 @@ export const GINGR_ICON_CAPABILITY_META: Record<string, { label: string; group: 
   "bathing.modifier.see_account_notes": { label: "Bath Modifier: *See account notes*", group: "Bathing" },
 };
 
-const PLAY_FALLBACK_CAPABILITIES: Record<string, string> = {
-  "private play": "play.private_play",
-  "large dog playgroup": "play.large_daycare",
-  "small dog playgroup": "play.small_daycare",
-  "evaluation": "play.evaluation",
-};
-
 const BATH_TYPE_CAPABILITY_LABELS: Record<string, string> = {
   "bathing.type.standard": "Standard",
   "bathing.type.premium": "Premium",
@@ -187,35 +180,6 @@ function mappingMatchesIcon(mapping: GingrIconMappingRow, icon: GingrAnimalIconR
   return false;
 }
 
-function getFallbackCapabilities(icon: GingrAnimalIconRow): string[] {
-  const titleKey = toKey(icon.icon_title);
-  const groupKey = toKey(icon.icon_group);
-  const capabilities: string[] = [];
-
-  if (groupKey === "play" && PLAY_FALLBACK_CAPABILITIES[titleKey]) {
-    capabilities.push(PLAY_FALLBACK_CAPABILITIES[titleKey]);
-  }
-
-  if (groupKey === "bath" || groupKey === "bathing") {
-    capabilities.push("bathing.include");
-
-    const typeLabel = normalizeBathTypeLabel(icon.icon_title);
-    const modifierLabel = normalizeBathModifierLabel(icon.icon_title);
-
-    if (typeLabel) {
-      const matchedCapability = Object.entries(BATH_TYPE_CAPABILITY_LABELS).find(([, label]) => label === typeLabel)?.[0];
-      if (matchedCapability) capabilities.push(matchedCapability);
-    }
-
-    if (modifierLabel) {
-      const matchedCapability = Object.entries(BATH_MODIFIER_CAPABILITY_LABELS).find(([, label]) => label === modifierLabel)?.[0];
-      if (matchedCapability) capabilities.push(matchedCapability);
-    }
-  }
-
-  return uniqueStrings(capabilities);
-}
-
 export function getCapabilitiesForIcon(
   icon: GingrAnimalIconRow,
   mappings: GingrIconMappingRow[] = [],
@@ -228,7 +192,7 @@ export function getCapabilitiesForIcon(
     return uniqueStrings(explicitMatches);
   }
 
-  return getFallbackCapabilities(icon);
+  return [];
 }
 
 export function resolveBathDisplayFromIconRows(args: {
@@ -244,7 +208,6 @@ export function resolveBathDisplayFromIconRows(args: {
   const typeLabels = new Set<string>();
   const modifierLabels = new Set<string>();
   const unmatchedBathTitles: string[] = [];
-  const rawTitlesForFallback: string[] = [];
 
   for (const icon of iconRows) {
     const capabilities = getCapabilitiesForIcon(icon, mappings);
@@ -266,7 +229,6 @@ export function resolveBathDisplayFromIconRows(args: {
     }
 
     if (iconTitle) {
-      rawTitlesForFallback.push(iconTitle);
       if (!matched && (toKey(icon.icon_group) === "bath" || toKey(icon.icon_group) === "bathing")) {
         unmatchedBathTitles.push(iconTitle);
       }
@@ -274,7 +236,7 @@ export function resolveBathDisplayFromIconRows(args: {
   }
 
   const fallbackDisplay = normalizeBathDisplay({
-    iconTitles: rawTitlesForFallback,
+    iconTitles: [],
     addonType: args.addonType,
     serviceName: args.serviceName,
     rawModifiers: args.rawModifiers,
@@ -284,7 +246,6 @@ export function resolveBathDisplayFromIconRows(args: {
   const mergedBathIcons = sanitizeBathTypeLabels(uniqueStrings([
     ...fallbackDisplay.bathIcons,
     ...typeLabels,
-    ...unmatchedBathTitles,
   ]), args.defaultType);
   const mergedBathModifiers = uniqueStrings([
     ...fallbackDisplay.bathModifiers,

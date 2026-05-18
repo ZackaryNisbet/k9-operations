@@ -20,15 +20,18 @@ Already real:
 - Current playgroup assignments can be computed from icon mappings through `v_dog_playgroup_assignments_current`.
 - Rooms/runs/occupancy can be pulled from `POST /api/v1/get_runs_and_reservations`.
 - Historical reservation backfill already starts from `2015-01-01` using `gingr_sync_state.backfill_cursor`.
+- This branch adds the first generic runtime layer: `gingr_reference_sync_runs`, service/add-on catalogs, `gingr_workflow_settings`, `gingr_workflow_mappings`, workflow mapping status, a route-level Gingr Icons workspace, and shared Edge Function config loading.
+- Runtime playgroup and bathing icon logic no longer falls back to Cherry Hill title matches when deciding capabilities.
+- Private Play, Bathing, Belongings, Collars, and Enrichment reservation-category decisions now use configured workflow mappings in the updated compute path.
 
 Not yet solved:
 
 - Client icons are not verified or wired.
 - Full system/template icon catalog is not verified or wired.
-- Services and add-ons are endpoint-verified but not persisted as a canonical catalog.
+- Room/run catalog persistence is still only partially covered by existing room occupancy and `gingr_runs` data.
 - Onboarding writes credentials to a path that does not match what `gingr-sync` reads.
 - Onboarding tests GINGR directly from the browser with the API key.
-- Runtime compute still falls back to hard-coded icon titles, service strings, reservation type names, room names, workflow IDs, and Cherry Hill-specific cron payloads.
+- Runtime compute still has hard-coded category/string logic outside the first migrated daily-op reports, especially scheduling, feeding/medication classification, generic web helpers, mobile fallbacks, service report keyword parsing, and Cherry Hill-specific cron payloads.
 
 ## Hard-Coded Runtime Surface
 
