@@ -9,11 +9,11 @@
       "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "d9b0b6a50f60c15216d43b15209d0d1174691f4d",
+      "commit": "a5d221677e291a64e191046bf3ca8f4876fda7be",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Bound demand matrix compute chunks after resource-limit verification",
-      "updatedAt": "2026-05-18T20:21:43.855Z"
+      "note": "Chunk demand matrix hydration after resource-limit verification",
+      "updatedAt": "2026-05-18T20:24:02.250Z"
     },
     "ops-compute": {
       "commit": "e37a1d545f67567112b3a66e77784221f1eb1977",
