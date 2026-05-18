@@ -79,15 +79,20 @@ describe('playgroupAssignments', () => {
     const rows = derivePlaygroupAssignmentsFromIcons([
       {
         animal_gingr_id: '789',
+        icon_identity_key: 'private-play',
         icon_title: 'Private Play',
         icon_group: 'Play',
         icon_comment: 'AM only',
       },
       {
         animal_gingr_id: '789',
+        icon_identity_key: 'large-play',
         icon_title: 'Large Dog Playgroup',
         icon_group: 'Play',
       },
+    ], [
+      { capability_key: 'play.private_play', icon_identity_key: 'private-play', is_active: true },
+      { capability_key: 'play.large_daycare', icon_identity_key: 'large-play', is_active: true },
     ]);
 
     expect(rows).toEqual([
@@ -104,7 +109,7 @@ describe('playgroupAssignments', () => {
     ]);
   });
 
-  it('uses configured icon mappings before title fallback', () => {
+  it('uses configured icon mappings instead of title fallback', () => {
     const rows = derivePlaygroupAssignmentsFromIcons([
       {
         animal_gingr_id: '246',
@@ -133,8 +138,11 @@ describe('playgroupAssignments', () => {
 
   it('labels large and small icons as Both Daycares for TV display', () => {
     const map = buildPlaygroupAssignmentMap(derivePlaygroupAssignmentsFromIcons([
-      { animal_gingr_id: '135', icon_title: 'Large Dog Playgroup', icon_group: 'Play' },
-      { animal_gingr_id: '135', icon_title: 'Small Dog Playgroup', icon_group: 'Play' },
+      { animal_gingr_id: '135', icon_identity_key: 'large-play', icon_title: 'Large Dog Playgroup', icon_group: 'Play' },
+      { animal_gingr_id: '135', icon_identity_key: 'small-play', icon_title: 'Small Dog Playgroup', icon_group: 'Play' },
+    ], [
+      { capability_key: 'play.large_daycare', icon_identity_key: 'large-play', is_active: true },
+      { capability_key: 'play.small_daycare', icon_identity_key: 'small-play', is_active: true },
     ]));
 
     expect(map['135'].unresolved_reason).toBeNull();
