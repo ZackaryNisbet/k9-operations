@@ -469,6 +469,7 @@ function getDemandSolverInputs(matrix, requestedMode = "current") {
 
 export function getMatrixDisplay(matrix) {
   const display = matrix?.detail_json?.display || {};
+  const displaySource = display.source || {};
 
   const opening = {
     large_boarding: toNullableNumber(display.opening?.large_boarding) ?? toNumber(matrix?.boarding_large, 0),
@@ -494,6 +495,36 @@ export function getMatrixDisplay(matrix) {
     ?? [closing.large_boarding, closing.small_boarding, closing.private_play_boarding, closing.half_and_half_boarding, closing.evaluation_boarding, closing.unclassified_boarding]
       .reduce((sum, value) => sum + (toNumber(value, 0)), 0);
 
+  const departing = {
+    large_boarding: toNullableNumber(display.departing?.large_boarding) ?? 0,
+    small_boarding: toNullableNumber(display.departing?.small_boarding) ?? 0,
+    private_play_boarding: toNullableNumber(display.departing?.private_play_boarding) ?? 0,
+    half_and_half_boarding: toNullableNumber(display.departing?.half_and_half_boarding) ?? 0,
+    evaluation_boarding: toNullableNumber(display.departing?.evaluation_boarding) ?? 0,
+    unclassified_boarding: toNullableNumber(display.departing?.unclassified_boarding) ?? 0,
+  };
+  const departingComponentTotal = [
+    departing.large_boarding,
+    departing.small_boarding,
+    departing.private_play_boarding,
+    departing.half_and_half_boarding,
+    departing.evaluation_boarding,
+    departing.unclassified_boarding,
+  ].reduce((sum, value) => sum + (toNumber(value, 0)), 0);
+  const matrixDepartingTotal = toNullableNumber(matrix?.dogs_departing);
+  const departingFallbackTotal = toNullableNumber(display.departing?.total_boarding)
+    ?? toNullableNumber(displaySource.boarding_departing)
+    ?? toNullableNumber(displaySource.boarding_check_outs)
+    ?? (departingComponentTotal > 0 ? departingComponentTotal : matrixDepartingTotal);
+  if (departingComponentTotal <= 0 && departingFallbackTotal > 0) {
+    departing.unclassified_boarding = departingFallbackTotal;
+  }
+  departing.total_boarding = toNullableNumber(display.departing?.total_boarding)
+    ?? toNullableNumber(displaySource.boarding_departing)
+    ?? toNullableNumber(displaySource.boarding_check_outs)
+    ?? (departingComponentTotal > 0 ? departingComponentTotal : matrixDepartingTotal)
+    ?? departingComponentTotal;
+
   const daycare = {
     evaluations: toNullableNumber(display.daycare?.evaluations) ?? toNumber(matrix?.evaluations, 0),
     private_play_dayboarding: toNullableNumber(display.daycare?.private_play_dayboarding) ?? toNumber(matrix?.pp_dayboarders, 0),
@@ -517,7 +548,8 @@ export function getMatrixDisplay(matrix) {
     morning_feeding_dogs: toNullableNumber(display.support?.morning_feeding_dogs) ?? opening.total_boarding,
     evening_feeding_dogs: toNullableNumber(display.support?.evening_feeding_dogs) ?? toNumber(matrix?.feeding_dogs, closing.total_boarding),
     medication_dogs: toNullableNumber(display.support?.medication_dogs) ?? toNumber(matrix?.medication_dogs, 0),
-    total_dog_volume: toNullableNumber(display.support?.total_dog_volume) ?? toNumber(matrix?.gross_dogs_in_building, closing.total_boarding + daycare.total_daycare),
+    total_dog_volume: closing.total_boarding + daycare.total_daycare,
+    total_daily_dog_volume: closing.total_boarding + daycare.total_daycare + departing.total_boarding,
     tours: toNullableNumber(display.support?.tours) ?? toNumber(matrix?.tours, 0),
   };
   const play_yard = {
@@ -531,14 +563,16 @@ export function getMatrixDisplay(matrix) {
     check_outs: toNullableNumber(display.source?.check_outs),
     overnight: toNullableNumber(display.source?.overnight),
     total: toNullableNumber(display.source?.total),
+    default_dog_volume: toNullableNumber(display.source?.default_dog_volume) ?? support.total_dog_volume,
     boarding_opening: toNullableNumber(display.source?.boarding_opening),
     boarding_closing: toNullableNumber(display.source?.boarding_closing),
     boarding_check_ins: toNullableNumber(display.source?.boarding_check_ins),
     boarding_check_outs: toNullableNumber(display.source?.boarding_check_outs),
+    boarding_departing: toNullableNumber(display.source?.boarding_departing) ?? departing.total_boarding,
     daytime_total: toNullableNumber(display.source?.daytime_total),
   };
 
-  return { opening, closing, daycare, support, play_yard, source };
+  return { opening, closing, departing, daycare, support, play_yard, source };
 }
 
 export function getMatrixProjectedDisplay(matrix) {
@@ -547,6 +581,7 @@ export function getMatrixProjectedDisplay(matrix) {
   if (!projected) {
     return getMatrixDisplay(matrix);
   }
+  const currentDisplay = getMatrixDisplay(matrix);
 
   const opening = {
     large_boarding: toNullableNumber(projected.opening?.large_boarding) ?? 0,
@@ -582,6 +617,23 @@ export function getMatrixProjectedDisplay(matrix) {
     closing.unclassified_boarding,
   ]);
 
+  const departing = {
+    large_boarding: toNullableNumber(projected.departing?.large_boarding) ?? currentDisplay.departing?.large_boarding ?? 0,
+    small_boarding: toNullableNumber(projected.departing?.small_boarding) ?? currentDisplay.departing?.small_boarding ?? 0,
+    private_play_boarding: toNullableNumber(projected.departing?.private_play_boarding) ?? currentDisplay.departing?.private_play_boarding ?? 0,
+    half_and_half_boarding: toNullableNumber(projected.departing?.half_and_half_boarding) ?? currentDisplay.departing?.half_and_half_boarding ?? 0,
+    evaluation_boarding: toNullableNumber(projected.departing?.evaluation_boarding) ?? currentDisplay.departing?.evaluation_boarding ?? 0,
+    unclassified_boarding: toNullableNumber(projected.departing?.unclassified_boarding) ?? currentDisplay.departing?.unclassified_boarding ?? 0,
+  };
+  departing.total_boarding = toNullableNumber(projected.departing?.total_boarding) ?? sumDemandValues([
+    departing.large_boarding,
+    departing.small_boarding,
+    departing.private_play_boarding,
+    departing.half_and_half_boarding,
+    departing.evaluation_boarding,
+    departing.unclassified_boarding,
+  ]);
+
   const daycare = {
     evaluations: toNullableNumber(projected.daycare?.evaluations) ?? 0,
     private_play_dayboarding: toNullableNumber(projected.daycare?.private_play_dayboarding) ?? 0,
@@ -602,13 +654,15 @@ export function getMatrixProjectedDisplay(matrix) {
   return {
     opening,
     closing,
+    departing,
     daycare,
     support: {
       departure_baths: toNullableNumber(projected.support?.departure_baths) ?? 0,
       morning_feeding_dogs: opening.total_boarding,
       evening_feeding_dogs: closing.total_boarding,
       medication_dogs: toNullableNumber(projected.support?.medication_dogs) ?? 0,
-      total_dog_volume: toNullableNumber(projected.support?.total_dog_volume) ?? closing.total_boarding + daycare.total_daycare,
+      total_dog_volume: closing.total_boarding + daycare.total_daycare,
+      total_daily_dog_volume: closing.total_boarding + daycare.total_daycare + departing.total_boarding,
       tours: toNullableNumber(projected.support?.tours) ?? 0,
     },
     play_yard: {
@@ -628,23 +682,106 @@ export function getMatrixComparison(matrix) {
   const comparisons = matrix?.detail_json?.projection?.comparisons || {};
   const lastYearTotalDogVolume = toNullableNumber(comparisons.last_year_total_dog_volume);
   const yoyTotal = toNullableNumber(comparisons.yoy_total);
-  return {
+  const currentYear = comparisons.current_year || null;
+  const priorYears = Array.isArray(comparisons.prior_years)
+    ? comparisons.prior_years
+    : [];
+  const normalizedPriorYears = priorYears
+    .map((entry) => {
+      const yearOffset = Number(entry?.year_offset);
+      const metrics = entry?.metrics || {};
+      const total = toNullableNumber(metrics.total);
+      const boardingDeparting = toNullableNumber(metrics.boarding_departing);
+      const totalDailyVolume = toNullableNumber(metrics.total_daily_volume)
+        ?? (
+          total !== null && boardingDeparting !== null
+            ? total + boardingDeparting
+            : null
+        );
+      if (!Number.isFinite(yearOffset) || yearOffset < 1) return null;
+      return {
+        year_offset: yearOffset,
+        comparison_date: entry?.comparison_date || null,
+        label: entry?.label || (yearOffset === 1 ? "YOY" : `YO${yearOffset}Y`),
+        metrics,
+        overnight: toNullableNumber(metrics.overnight),
+        daytime: toNullableNumber(metrics.daytime),
+        total,
+        boarding_departing: boardingDeparting,
+        total_daily_volume: totalDailyVolume,
+        total_pct_vs_current_year: toNullableNumber(entry?.total_pct_vs_current_year),
+        total_daily_volume_pct_vs_current_year: toNullableNumber(entry?.total_daily_volume_pct_vs_current_year),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.year_offset - b.year_offset);
+  if (!normalizedPriorYears.some((entry) => entry.year_offset === 1)) {
+    normalizedPriorYears.unshift({
+      year_offset: 1,
+      comparison_date: comparisons.last_year_date || null,
+      label: "YOY",
+      metrics: comparisons.last_year || null,
+      overnight: toNullableNumber(comparisons.yoy_overnight),
+      daytime: toNullableNumber(comparisons.yoy_daytime),
+      total: yoyTotal ?? lastYearTotalDogVolume,
+      boarding_departing: toNullableNumber(comparisons.yoy_boarding_departing),
+      total_daily_volume: toNullableNumber(comparisons.yoy_total_daily_volume)
+        ?? (
+          (yoyTotal ?? lastYearTotalDogVolume) !== null && toNullableNumber(comparisons.yoy_boarding_departing) !== null
+            ? (yoyTotal ?? lastYearTotalDogVolume) + toNullableNumber(comparisons.yoy_boarding_departing)
+            : null
+        ),
+      total_pct_vs_current_year: toNullableNumber(comparisons.yoy_total_pct_vs_current_year),
+      total_daily_volume_pct_vs_current_year: toNullableNumber(comparisons.yoy_total_daily_volume_pct_vs_current_year),
+    });
+  }
+  const currentTotal = toNullableNumber(currentYear?.total);
+  const currentBoardingDeparting = toNullableNumber(currentYear?.boarding_departing);
+  const currentTotalDailyVolume = toNullableNumber(currentYear?.total_daily_volume)
+    ?? (
+      currentTotal !== null && currentBoardingDeparting !== null
+        ? currentTotal + currentBoardingDeparting
+        : null
+    );
+  const yoyBoardingDeparting = normalizedPriorYears.find((entry) => entry.year_offset === 1)?.boarding_departing
+    ?? toNullableNumber(comparisons.yoy_boarding_departing);
+  const yoyTotalDailyVolume = normalizedPriorYears.find((entry) => entry.year_offset === 1)?.total_daily_volume
+    ?? toNullableNumber(comparisons.yoy_total_daily_volume);
+  const result = {
     source: comparisons.source || null,
     current_year_date: comparisons.current_year_date || null,
     last_year_date: comparisons.last_year_date || null,
-    current_year: comparisons.current_year || null,
+    current_year: currentYear,
     last_year: comparisons.last_year || null,
-    current_overnight: toNullableNumber(comparisons.current_year?.overnight),
-    current_daytime: toNullableNumber(comparisons.current_year?.daytime),
-    current_total: toNullableNumber(comparisons.current_year?.total),
+    prior_years: normalizedPriorYears,
+    current_overnight: toNullableNumber(currentYear?.overnight),
+    current_daytime: toNullableNumber(currentYear?.daytime),
+    current_total: currentTotal,
+    current_boarding_departing: currentBoardingDeparting,
+    current_total_daily_volume: currentTotalDailyVolume,
     yoy_overnight: toNullableNumber(comparisons.yoy_overnight),
     yoy_daytime: toNullableNumber(comparisons.yoy_daytime),
     yoy_total: yoyTotal ?? lastYearTotalDogVolume,
+    yoy_boarding_departing: yoyBoardingDeparting,
+    yoy_total_daily_volume: yoyTotalDailyVolume,
     yoy_total_pct_vs_current_year: toNullableNumber(comparisons.yoy_total_pct_vs_current_year),
+    yoy_total_daily_volume_pct_vs_current_year: toNullableNumber(comparisons.yoy_total_daily_volume_pct_vs_current_year),
     source_available: Boolean(comparisons.source_available),
     last_year_total_dog_volume: lastYearTotalDogVolume,
     exact_last_year_display: matrix?.detail_json?.projection?.exact_last_year_display || null,
   };
+  for (const entry of normalizedPriorYears) {
+    const prefix = `prior_year_${entry.year_offset}`;
+    result[`${prefix}_date`] = entry.comparison_date;
+    result[`${prefix}_overnight`] = entry.overnight;
+    result[`${prefix}_daytime`] = entry.daytime;
+    result[`${prefix}_total`] = entry.total;
+    result[`${prefix}_boarding_departing`] = entry.boarding_departing;
+    result[`${prefix}_total_daily_volume`] = entry.total_daily_volume;
+    result[`${prefix}_total_pct_vs_current_year`] = entry.total_pct_vs_current_year;
+    result[`${prefix}_total_daily_volume_pct_vs_current_year`] = entry.total_daily_volume_pct_vs_current_year;
+  }
+  return result;
 }
 
 export function getMatrixSolverInputs(matrix) {

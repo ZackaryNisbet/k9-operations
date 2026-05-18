@@ -2,7 +2,7 @@
 // Week plan + optimal headcount + BE rotation + explanations + warnings + assumptions.
 // Uses live Supabase data from scheduling_matrix_daily.
 
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { C, K9_LOCATIONS, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, CalendarPicker } from "../../shared/ui";
@@ -59,6 +59,8 @@ export {
   buildSchedulingNarrativeHtml,
   summarizeAggregateMatrixCell,
 };
+
+const MATRIX_TABLE_FONT = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
 // ─── Utility Components ───────────────────────────────────────────────────
 
@@ -1148,9 +1150,9 @@ function renderMatrixCellValue({ row, day, mode }) {
   const missingValue = (mode === "projected" ? projectedValue : currentValue) === null || (mode === "projected" ? projectedValue : currentValue) === undefined;
 
   if (row.comparison) {
-    const unavailableLabel = row.format === "percent" ? "No history" : "No history";
+    const unavailableLabel = "Not populated";
     return {
-      title: comparisonValue === null || comparisonValue === undefined ? "No canonical year-over-year source count available." : `${row.label}: ${formatMatrixValue(comparisonValue, row.format)}`,
+      title: comparisonValue === null || comparisonValue === undefined ? "No populated prior-year source count is available for this row." : `${row.label}: ${formatMatrixValue(comparisonValue, row.format)}`,
       content: comparisonValue === null || comparisonValue === undefined ? unavailableLabel : formatMatrixValue(comparisonValue, row.format),
       missingValue: comparisonValue === null || comparisonValue === undefined,
     };
@@ -1812,6 +1814,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, []);
   const [scheduleView, setScheduleView] = useState("optimal");
   const [expandedMatrixGroups, setExpandedMatrixGroups] = useState(new Set());
+  const appliedDefaultMatrixGroupsRef = useRef(false);
   const [copyNarrativeStatus, setCopyNarrativeStatus] = useState("idle");
   const [matrixExportState, setMatrixExportState] = useState({ status: "idle", message: "" });
   const [locationMeta, setLocationMeta] = useState(null);
@@ -2069,6 +2072,15 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(narrativeDays), [narrativeDays]);
   const matrixRowGroups = useMemo(() => buildDemandMatrixRowGroups(visibleMatrixDays), [visibleMatrixDays]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
+  useEffect(() => {
+    if (appliedDefaultMatrixGroupsRef.current) return;
+    const defaultExpandedSections = matrixRowGroups
+      .filter((group) => group.defaultExpanded)
+      .map((group) => group.section);
+    if (!defaultExpandedSections.length) return;
+    setExpandedMatrixGroups((current) => new Set([...current, ...defaultExpandedSections]));
+    appliedDefaultMatrixGroupsRef.current = true;
+  }, [matrixRowGroups]);
   const toggleMonthSegment = useCallback((segmentId) => {
     setExpandedMonthSegments((current) => {
       const next = new Set(current);
@@ -2607,7 +2619,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
       {/* ── Section 1: Demand Matrix ──────────────────────────────────── */}
       {activeSchedulingTab === "volume" && (
-      <SectionCard title={matrixRangeMode === "week" ? "7-Day Demand Matrix" : "Demand Matrix"} subtitle="Days are columns. Rows show the dogs you walk into at opening, the dogs you close with at night, peak daytime volume, and key support workload." icon={<I.Calendar />}>
+      <SectionCard title={matrixRangeMode === "week" ? "7-Day Demand Matrix" : "Demand Matrix"} subtitle="Days are columns. Rows separate boarding, daytime dogs, daily volume, departures, total daily volume, play demand, ancillary work, and history." icon={<I.Calendar />}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {[
@@ -2929,7 +2941,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           )}
         </div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", fontFamily: MATRIX_TABLE_FONT }}>
             <thead>
               <tr>
                 <th style={{ position: "sticky", left: 0, zIndex: 3, background: "#F8FAFC", width: 250, padding: "12px 12px", textAlign: "left", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMut }}>
@@ -3040,125 +3052,204 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
               </tr>
             </thead>
             <tbody>
-              {matrixRowGroups.flatMap((group) => {
+              {matrixRowGroups.flatMap((group, groupIndex) => {
                 const groupExpanded = expandedMatrixGroups.has(group.section);
-                const visibleRows = group.rows.filter((row) => {
-                  if (groupExpanded) return true;
-                  if (group.hideRowsWhenCollapsed) return false;
-                  return row.total || row.alwaysVisible;
-                });
-                return (
-                  [
-                    <tr key={`${group.section}-section`}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "8px 12px", background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}` }}>
-                        <button
-                          onClick={() => toggleMatrixGroup(group.section)}
+                const summaryRow = group.summaryKey ? group.rows.find((row) => row.key === group.summaryKey) : null;
+                const detailRows = summaryRow ? group.rows.filter((row) => row.key !== summaryRow.key) : group.rows;
+                const visibleRows = summaryRow
+                  ? (groupExpanded ? detailRows : [])
+                  : detailRows.filter((row) => {
+                    if (groupExpanded) return true;
+                    if (group.hideRowsWhenCollapsed) return false;
+                    return row.total || row.alwaysVisible;
+                  });
+                const expandable = detailRows.length > 0;
+                const sectionBand = groupIndex % 2 === 0 ? "#FFFFFF" : "#F8FAFC";
+                const totalBand = groupIndex % 2 === 0 ? "#F7FAFF" : "#F2F6FB";
+                const detailBand = (rowIndex) => (rowIndex % 2 === 0 ? "#FFFFFF" : "#FBFCFF");
+                const getRowBackground = (row, { summary = false, rowIndex = 0 } = {}) => {
+                  if (summary) return sectionBand;
+                  if (row.total) return totalBand;
+                  return detailBand(rowIndex);
+                };
+                const renderMetricRow = (row, { summary = false, indented = false, rowIndex = 0 } = {}) => {
+                  const rowBackground = getRowBackground(row, { summary, rowIndex });
+                  const isStrongRow = row.total || summary;
+                  const borderBottom = isStrongRow ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`;
+                  const selectedBackground = isStrongRow ? "#EAF2FF" : "#F8FBFF";
+                  return (
+                    <tr key={summary ? `${group.section}-summary` : row.key}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 2, padding: indented ? "8px 12px 8px 34px" : "9px 12px", background: rowBackground, borderBottom, borderRight: `1px solid ${C.border}`, fontSize: isStrongRow ? 13 : 12, fontWeight: isStrongRow ? 700 : 600, color: C.text, fontFamily: MATRIX_TABLE_FONT }}>
+                        {summary ? (
+                          <button
+                            type="button"
+                            onClick={() => expandable && toggleMatrixGroup(group.section)}
+                            aria-disabled={!expandable}
+                            title={group.summaryTitle || row.label}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              width: "100%",
+                              border: "none",
+                              background: "transparent",
+                              padding: 0,
+                              color: C.text,
+                              cursor: expandable ? "pointer" : "default",
+                              fontFamily: MATRIX_TABLE_FONT,
+                              fontSize: "inherit",
+                              fontWeight: "inherit",
+                              lineHeight: "inherit",
+                              textAlign: "left",
+                            }}
+                          >
+                            <span style={{ minWidth: 0 }}>{group.summaryLabel || row.label}</span>
+                            {expandable && (
+                              <span
+                                aria-hidden="true"
+                                style={{
+                                  display: "flex",
+                                  flex: "0 0 auto",
+                                  transform: groupExpanded ? "rotate(180deg)" : "none",
+                                  transition: "transform 0.15s",
+                                  color: C.textMut,
+                                }}
+                              >
+                                <I.ChevronDown />
+                              </span>
+                            )}
+                          </button>
+                        ) : row.label}
+                      </td>
+                      {visibleMatrixColumns.map((column) => {
+                        const selected = column.days?.some((day) => day.date === selectedDay?.date);
+                        const cellValue = column.type === "segment"
+                          ? renderAggregateMatrixCellValue({
+                            row,
+                            days: column.days,
+                            mode: matrixMode,
+                          })
+                          : renderMatrixCellValue({
+                            row,
+                            day: column.day,
+                            mode: matrixMode,
+                          });
+                        return (
+                          <td
+                            key={`${row.key}-${column.key}`}
+                            onClick={() => setSelectedDayIdx(column.absoluteIndex)}
+                            title={cellValue.title}
+                            style={{
+                              cursor: "pointer",
+                              textAlign: "center",
+                              padding: "10px 8px",
+                              borderBottom,
+                              background: selected ? selectedBackground : rowBackground,
+                              color: cellValue.missingValue ? C.textMut : isStrongRow ? C.text : C.textSec,
+                              fontSize: cellValue.missingValue ? 11 : 16,
+                              fontWeight: isStrongRow ? 800 : 700,
+                              fontFamily: MATRIX_TABLE_FONT,
+                            }}
+                          >
+                            {cellValue.content}
+                          </td>
+                        );
+                      })}
+                      <td
+                        style={{
+                          position: "sticky",
+                          right: 0,
+                          zIndex: 2,
+                          textAlign: "center",
+                          padding: "9px 8px",
+                          borderBottom,
+                          background: rowBackground,
+                          color: isStrongRow ? C.text : C.textSec,
+                          fontSize: 16,
+                          fontWeight: isStrongRow ? 800 : 700,
+                          fontFamily: MATRIX_TABLE_FONT,
+                          boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)",
+                        }}
+                      >
+                        {(() => {
+                          const aggregate = summarizeAggregateMatrixCell(visibleMatrixDays, row, matrixMode);
+                          if (!aggregate.hasValue) {
+                            return (
+                              <span title={aggregate.unavailableTitle} style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>
+                                {aggregate.unavailableLabel}
+                              </span>
+                            );
+                          }
+                          const total = aggregate.value;
+
+                          if (matrixMode === "projected" && !row.comparison) {
+                            const currentTotal = sumMatrixValues(visibleMatrixDays, row, "current");
+                            return (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal ?? "No data"}</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
+                                <span>{formatMatrixValue(total, row.format)}</span>
+                              </div>
+                            );
+                          }
+
+                          return formatMatrixValue(total, row.format);
+                        })()}
+                      </td>
+                    </tr>
+                  );
+                };
+                const sectionHeaderBg = groupIndex % 2 === 0 ? "#F8FAFC" : "#F3F6FA";
+                const sectionHeaderRow = summaryRow ? null : (
+                  <tr key={`${group.section}-section`}>
+                    <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "8px 12px", background: sectionHeaderBg, borderBottom: `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}` }}>
+                      <button
+                        onClick={() => toggleMatrixGroup(group.section)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          width: "100%",
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          color: C.textSec,
+                          cursor: "pointer",
+                          fontFamily: MATRIX_TABLE_FONT,
+                          fontSize: "inherit",
+                          fontWeight: "inherit",
+                          lineHeight: "inherit",
+                          textAlign: "left",
+                        }}
+                      >
+                        <span style={{ fontSize: 12, fontWeight: 800 }}>{group.section}</span>
+                        <span
+                          aria-hidden="true"
                           style={{
                             display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            width: "100%",
-                            border: "none",
-                            background: "transparent",
-                            padding: 0,
+                            flex: "0 0 auto",
+                            transform: groupExpanded ? "rotate(180deg)" : "none",
+                            transition: "transform 0.15s",
                             color: C.textMut,
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                            textAlign: "left",
                           }}
                         >
-                          <span style={{ display: "flex", transform: groupExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><I.ChevronDown /></span>
-                          <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>{group.section}</span>
-                          {!groupExpanded && <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>+{Math.max(group.rows.length - visibleRows.length, 0)}</span>}
-                        </button>
-                      </td>
-                      {visibleMatrixColumns.map((column) => (
-                        <td key={`${group.section}-${column.key}`} style={{ background: column.days?.some((day) => day.date === selectedDay?.date) ? "#F8FBFF" : "#F8FAFC", borderBottom: `1px solid ${C.borderLight}` }} />
-                      ))}
-                      <td style={{ position: "sticky", right: 0, zIndex: 2, background: "#F8FAFC", borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
-                    </tr>,
-                    ...visibleRows.map((row) => (
-                      <tr key={row.key}>
-                        <td style={{ position: "sticky", left: 0, zIndex: 2, padding: "9px 12px", background: row.total ? "#F4F7FB" : C.surface, borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`, borderRight: `1px solid ${C.border}`, fontSize: 12, fontWeight: row.total ? 800 : 600, color: C.text }}>
-                          {row.label}
-                        </td>
-                        {visibleMatrixColumns.map((column) => {
-                          const selected = column.days?.some((day) => day.date === selectedDay?.date);
-                          const cellValue = column.type === "segment"
-                            ? renderAggregateMatrixCellValue({
-                              row,
-                              days: column.days,
-                              mode: matrixMode,
-                            })
-                            : renderMatrixCellValue({
-                              row,
-                              day: column.day,
-                              mode: matrixMode,
-                            });
-                          return (
-                            <td
-                              key={`${row.key}-${column.key}`}
-                              onClick={() => setSelectedDayIdx(column.absoluteIndex)}
-                              title={cellValue.title}
-                              style={{
-                                cursor: "pointer",
-                                textAlign: "center",
-                                padding: "10px 8px",
-                                borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
-                                background: row.total ? (selected ? "#EAF2FF" : "#F4F7FB") : (selected ? "#F8FBFF" : column.parentSegmentId ? "#FBFCFF" : C.surface),
-                                color: cellValue.missingValue ? C.textMut : row.total ? C.text : C.textSec,
-                                fontSize: cellValue.missingValue ? 11 : 16,
-                                fontWeight: row.total ? 800 : 700,
-                              }}
-                            >
-                              {cellValue.content}
-                            </td>
-                          );
-                        })}
-                        <td
-                          style={{
-                            position: "sticky",
-                            right: 0,
-                            zIndex: 2,
-                            textAlign: "center",
-                            padding: "9px 8px",
-                            borderBottom: row.total ? `2px solid ${C.border}` : `1px solid ${C.borderLight}`,
-                            background: row.total ? "#F4F7FB" : C.surface,
-                            color: row.total ? C.text : C.textSec,
-                            fontSize: 16,
-                            fontWeight: row.total ? 800 : 700,
-                            boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)",
-                          }}
-                        >
-                          {(() => {
-                            const aggregate = summarizeAggregateMatrixCell(visibleMatrixDays, row, matrixMode);
-                            if (!aggregate.hasValue) {
-                              return (
-                                <span title={aggregate.unavailableTitle} style={{ fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-                                  {aggregate.unavailableLabel}
-                                </span>
-                              );
-                            }
-                            const total = aggregate.value;
-
-                            if (matrixMode === "projected" && !row.comparison) {
-                              const currentTotal = sumMatrixValues(visibleMatrixDays, row, "current");
-                              return (
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap" }}>
-                                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>{currentTotal ?? "No data"}</span>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>→</span>
-                                  <span>{formatMatrixValue(total, row.format)}</span>
-                                </div>
-                              );
-                            }
-
-                            return formatMatrixValue(total, row.format);
-                          })()}
-                        </td>
-                      </tr>
-                    )),
-                  ]
+                          <I.ChevronDown />
+                        </span>
+                      </button>
+                    </td>
+                    {visibleMatrixColumns.map((column) => (
+                      <td key={`${group.section}-${column.key}`} style={{ background: column.days?.some((day) => day.date === selectedDay?.date) ? "#F8FBFF" : sectionHeaderBg, borderBottom: `1px solid ${C.borderLight}` }} />
+                    ))}
+                    <td style={{ position: "sticky", right: 0, zIndex: 2, background: sectionHeaderBg, borderBottom: `1px solid ${C.borderLight}`, boxShadow: "-8px 0 12px rgba(15, 23, 42, 0.05)" }} />
+                  </tr>
                 );
+                return [
+                  sectionHeaderRow,
+                  summaryRow ? renderMetricRow(summaryRow, { summary: true }) : null,
+                  ...visibleRows.map((row, rowIndex) => renderMetricRow(row, { indented: Boolean(summaryRow) || Boolean(row.detail), rowIndex })),
+                ].filter(Boolean);
               })}
             </tbody>
           </table>

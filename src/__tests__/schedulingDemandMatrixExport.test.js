@@ -6,6 +6,7 @@ import {
   buildDemandMatrixExportRowGroups,
   buildDemandMatrixRangeReadiness,
   buildDemandMatrixRowGroups,
+  getDayMatrixValue,
 } from "../kol/pages/schedulingDemandMatrixModel.js";
 import {
   buildDemandMatrixExportFilename,
@@ -20,7 +21,9 @@ function makeDisplay(seed = 1) {
       overnight: 8 + seed,
       boarding_opening: 7 + seed,
       boarding_closing: 8 + seed,
+      boarding_departing: 3 + seed,
       daytime_total: 5 + seed,
+      default_dog_volume: 13 + (2 * seed),
       total: 11 + seed,
     },
     opening: {
@@ -41,6 +44,15 @@ function makeDisplay(seed = 1) {
       unclassified_boarding: 0,
       total_boarding: 7 + seed,
     },
+    departing: {
+      large_boarding: 2 + seed,
+      small_boarding: 1,
+      private_play_boarding: 0,
+      half_and_half_boarding: 0,
+      evaluation_boarding: 0,
+      unclassified_boarding: 0,
+      total_boarding: 3 + seed,
+    },
     daycare: {
       evaluations: 1,
       private_play_dayboarding: 2,
@@ -55,7 +67,8 @@ function makeDisplay(seed = 1) {
       morning_feeding_dogs: 6 + seed,
       evening_feeding_dogs: 7 + seed,
       medication_dogs: 2,
-      total_dog_volume: 19 + seed,
+      total_dog_volume: 19 + (2 * seed),
+      total_daily_dog_volume: 22 + (3 * seed),
       tours: 1,
     },
     play_yard: {
@@ -183,7 +196,7 @@ describe("Scheduling Demand Matrix export model", () => {
 
       expect(buildDemandMatrixExportFilename(model)).toBe("scheduling-demand-matrix-cherry-hill-2025-01-01-to-2025-01-02.xlsx");
       expect(model.rows.some((row) => row.section === "Gingr Source Counts")).toBe(false);
-      expect(model.rows.some((row) => row.section === "Historical")).toBe(false);
+      expect(model.rows.some((row) => row.section === "Historical Comparison")).toBe(false);
       expect(model.rows.find((row) => row.key === "opening.total_boarding")).toBeTruthy();
       expect(model.rows.find((row) => row.key === "closing.total_boarding")).toBeTruthy();
 
@@ -204,7 +217,7 @@ describe("Scheduling Demand Matrix export model", () => {
       expect(sharedStringsXml).not.toContain("Mode");
       expect(sharedStringsXml).not.toContain("Readiness");
       expect(sharedStringsXml).not.toContain("Gingr Source Counts");
-      expect(sharedStringsXml).not.toContain("Historical");
+      expect(sharedStringsXml).not.toContain("Historical Comparison");
       expect(coreXml).toContain("<dc:creator>K9 Operations LLC</dc:creator>");
       expect(stylesXml).toContain('formatCode="ddd mmm d yyyy"');
       expect(sheetXml).toContain('<c r="B9" s="7"><v>45658</v></c>');
@@ -273,30 +286,159 @@ describe("Scheduling Demand Matrix export model", () => {
     const groups = buildDemandMatrixRowGroups([makeDay("2025-01-01")]);
     const exportGroups = buildDemandMatrixExportRowGroups([makeDay("2025-01-01")]);
     expect(groups.map((group) => group.section)).toEqual([
-      "Gingr Source Counts",
-      "Historical",
       "Opening Boarding",
       "Closing Boarding",
-      "Daytime Volume",
-      "Support Workload",
+      "Total Daytime Dogs",
+      "Daily Dog Volume",
+      "Boarding Dogs Departing Today",
+      "Total Daily Dog Volume",
+      "Play Yard Demand",
+      "Ancillary",
+      "Historical Comparison",
+      "Gingr Source Counts",
     ]);
-    expect(groups[0].rows.map((row) => row.label)).toEqual([
+    expect(groups.at(-1).rows.map((row) => row.label)).toEqual([
       "Gingr Check-Ins",
       "Gingr Check-Outs",
       "Gingr Overnight",
       "Boarding Dogs Opening",
       "Boarding Dogs Closing",
+      "Boarding Dogs Departing",
       "Gingr Daytime Dogs",
-      "Gingr Total Volume",
+      "Gingr Daytime + Overnight",
+      "Gingr Raw Check-Outs + Overnight",
     ]);
     expect(exportGroups.map((group) => group.section)).toEqual([
       "Opening Boarding",
       "Closing Boarding",
-      "Daytime Volume",
-      "Support Workload",
+      "Total Daytime Dogs",
+      "Daily Dog Volume",
+      "Boarding Dogs Departing Today",
+      "Total Daily Dog Volume",
+      "Play Yard Demand",
+      "Ancillary",
     ]);
-    expect(groups[2].rows.at(-1).label).toBe("Total Boarding Dogs Opening");
-    expect(groups[5].rows.map((row) => row.label)).toContain("Total Dog Volume");
+    expect(groups[0].rows.at(-1).label).toBe("Total Boarding Dogs Opening");
+    expect(groups[3].rows.map((row) => row.label)).toContain("Daily Dog Volume");
+    expect(groups[4].rows.map((row) => row.label)).toEqual(["Total Boarding Dogs Departing Today"]);
+    expect(groups[5].rows.map((row) => row.label)).toContain("Total Daily Dog Volume");
+    expect(groups[6].defaultExpanded).toBe(true);
+    expect(groups[6].rows.map((row) => row.label)).toContain("Large Play Demand");
+    expect(groups[6].rows.map((row) => row.label)).toContain("Small Play Demand");
+    expect(groups[7].defaultExpanded).toBe(true);
+  });
+
+  it("keeps departing play splits in Play Yard Demand instead of the departures total row", () => {
+    const display = makeDisplay(1);
+    display.departing = {
+      ...display.departing,
+      large_boarding: 0,
+      small_boarding: 0,
+      private_play_boarding: 0,
+      half_and_half_boarding: 0,
+      evaluation_boarding: 0,
+      unclassified_boarding: 0,
+      total_boarding: 22,
+    };
+    const day = makeDay("2026-05-18", { display });
+    const departingGroup = buildDemandMatrixRowGroups([day]).find((group) => group.section === "Boarding Dogs Departing Today");
+    const playGroup = buildDemandMatrixRowGroups([day]).find((group) => group.section === "Play Yard Demand");
+    const departingLabels = departingGroup.rows.map((row) => row.label);
+    const labels = playGroup.rows.map((row) => row.label);
+    expect(labels).not.toContain("Large Play from Departing Boarding");
+    expect(labels).not.toContain("Small Play from Departing Boarding");
+    expect(labels).not.toContain("Departing Boarding Pending Play Type");
+    expect(departingLabels).toEqual(["Total Boarding Dogs Departing Today"]);
+    expect(labels).toContain("Unassigned Departing Play");
+
+    const pendingRow = playGroup.rows.find((row) => row.label === "Unassigned Departing Play");
+    expect(getDayMatrixValue(day, pendingRow)).toBe(22);
+  });
+
+  it("hides historical comparison rows that are not populated and derives available percent cells", () => {
+    const groups = buildDemandMatrixRowGroups([
+      makeDay("2026-05-18", {
+        comparison: {
+          current_total: 18,
+          yoy_total: 16,
+        },
+      }),
+    ]);
+
+    const historical = groups.find((group) => group.section === "Historical Comparison");
+    expect(historical.rows.map((row) => row.label)).toEqual([
+      "YOY Dog Volume",
+      "YOY Dog Volume % of Current Year",
+    ]);
+
+    const pctRow = historical.rows.find((row) => row.label === "YOY Dog Volume % of Current Year");
+    expect(getDayMatrixValue(makeDay("2026-05-18", {
+      comparison: {
+        current_total: 18,
+        yoy_total: 16,
+      },
+    }), pctRow)).toBe(88.9);
+  });
+
+  it("builds historical comparison rows for every populated prior-year offset", () => {
+    const groups = buildDemandMatrixRowGroups([
+      makeDay("2026-05-18", {
+        comparison: {
+          current_total: 90,
+          prior_years: [
+            { year_offset: 1, total: 80, boarding_departing: 12, total_daily_volume: 92 },
+            { year_offset: 2, total: 74, boarding_departing: 10, total_daily_volume: 84 },
+            { year_offset: 3, total: 68, boarding_departing: 9, total_daily_volume: 77 },
+          ],
+          prior_year_1_total: 80,
+          prior_year_1_total_daily_volume: 92,
+          prior_year_1_overnight: 48,
+          prior_year_1_daytime: 32,
+          prior_year_1_boarding_departing: 12,
+          prior_year_1_total_pct_vs_current_year: 88.9,
+          prior_year_1_total_daily_volume_pct_vs_current_year: 90.2,
+          prior_year_2_total: 74,
+          prior_year_2_total_daily_volume: 84,
+          prior_year_2_overnight: 45,
+          prior_year_2_daytime: 29,
+          prior_year_2_boarding_departing: 10,
+          prior_year_2_total_pct_vs_current_year: 82.2,
+          prior_year_2_total_daily_volume_pct_vs_current_year: 82.4,
+          prior_year_3_total: 68,
+          prior_year_3_total_daily_volume: 77,
+          prior_year_3_overnight: 41,
+          prior_year_3_daytime: 27,
+          prior_year_3_boarding_departing: 9,
+          prior_year_3_total_pct_vs_current_year: 75.6,
+          prior_year_3_total_daily_volume_pct_vs_current_year: 75.5,
+        },
+      }),
+    ]);
+
+    const historical = groups.find((group) => group.section === "Historical Comparison");
+    expect(historical.rows.map((row) => row.label)).toEqual([
+      "YOY Dog Volume",
+      "YOY Total Daily Dog Volume",
+      "YOY Overnight Dogs",
+      "YOY Daytime Dogs",
+      "YOY Boarding Dogs Departing",
+      "YOY Dog Volume % of Current Year",
+      "YOY Total Daily Dog Volume % of Current Year",
+      "YO2Y Dog Volume",
+      "YO2Y Total Daily Dog Volume",
+      "YO2Y Overnight Dogs",
+      "YO2Y Daytime Dogs",
+      "YO2Y Boarding Dogs Departing",
+      "YO2Y Dog Volume % of Current Year",
+      "YO2Y Total Daily Dog Volume % of Current Year",
+      "YO3Y Dog Volume",
+      "YO3Y Total Daily Dog Volume",
+      "YO3Y Overnight Dogs",
+      "YO3Y Daytime Dogs",
+      "YO3Y Boarding Dogs Departing",
+      "YO3Y Dog Volume % of Current Year",
+      "YO3Y Total Daily Dog Volume % of Current Year",
+    ]);
   });
 
   it("does not block computed export rows for trust or reconciliation limitations", () => {

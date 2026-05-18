@@ -94,6 +94,10 @@ function getProjectionScope(body: Record<string, unknown>, dateFrom: string, dat
   };
 }
 
+function shouldSyncIcons(body: Record<string, unknown>) {
+  return body.sync_icons === true;
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -452,6 +456,7 @@ Deno.serve(async (req: Request) => {
     const projectionScopeDateTo = projectionScope.to;
     const liveHydrationThrough = addDaysStr(dateStrET(), LIVE_HYDRATION_HORIZON_DAYS);
     const shouldLiveHydrate = dateFrom <= liveHydrationThrough;
+    const iconSyncRequested = shouldSyncIcons(body);
 
     const serviceClient = await assertLocationAccess(req, locationId);
     if (schedulingComputeDisabled()) {
@@ -485,7 +490,9 @@ Deno.serve(async (req: Request) => {
       dateTo,
     );
 
-    const iconSync = shouldLiveHydrate
+    // Icon refreshes are expensive and are handled by gingr-sync. Keep this
+    // compute path focused on reservation/widget hydration plus matrix upserts.
+    const iconSync = shouldLiveHydrate && iconSyncRequested
       ? await syncSchedulingIconsForRange(
         serviceClient,
         locationId,
@@ -493,7 +500,12 @@ Deno.serve(async (req: Request) => {
         dateFrom,
         dateTo,
       )
-      : { synced: 0, animals: 0, skipped: true, mode: "synced_icons_only" };
+      : {
+        synced: 0,
+        animals: 0,
+        skipped: true,
+        mode: shouldLiveHydrate ? "gingr_sync_owned" : "synced_icons_only",
+      };
 
     let rowsUpserted = 0;
     const chunkFailures: Array<{ from: string; to: string; error: string }> = [];

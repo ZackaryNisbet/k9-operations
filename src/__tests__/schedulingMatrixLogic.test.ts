@@ -5,6 +5,7 @@ import {
   buildBlockerDetails,
   buildGingrWidgetSourceCountsByDate,
   buildProjectionForDate,
+  buildReservationRecord,
   buildWeeklyPaceCalibration,
   buildReservationTypeMaps,
   buildTrustPayload,
@@ -171,12 +172,14 @@ describe("scheduling matrix logic", () => {
 
     expect(adjustment.display.opening.total_boarding).toBe(37);
     expect(adjustment.display.closing.total_boarding).toBe(22);
+    expect(adjustment.display.departing.total_boarding).toBe(18);
     expect(adjustment.display.daycare.total_daycare).toBe(19);
-    expect(adjustment.display.support.total_dog_volume).toBe(59);
+    expect(adjustment.display.support.total_dog_volume).toBe(41);
     expect(adjustment.display.source.check_ins).toBe(22);
+    expect(adjustment.display.source.total).toBe(59);
     expect(adjustment.reconciliation?.deltas.opening_boarding).toBe(33);
     expect(adjustment.reconciliation?.deltas.daytime_total).toBe(-2);
-    expect(adjustment.reconciliation?.deltas.total_dog_volume).toBe(16);
+    expect(adjustment.reconciliation?.deltas.total_dog_volume).toBe(-2);
   });
 
   it("treats positive Gingr source deltas as source-aligned unclassified demand, not unreconciled blockers", () => {
@@ -973,8 +976,9 @@ describe("scheduling matrix logic", () => {
     expect(projection.display.opening.total_boarding).toBe(49);
     expect(projection.display.closing.total_boarding).toBe(29);
     expect(projection.display.daycare.total_daycare).toBe(25);
-    expect(projection.display.support.total_dog_volume).toBe(79);
+    expect(projection.display.support.total_dog_volume).toBe(54);
     expect(projection.explanations.opening_total_boarding.completion_basis).toBe("support_total_dog_volume");
+    expect(projection.explanations.support_total_dog_volume.fallback_mode).toBe("derived_from_projected_components");
   });
 
   it("uses total dog completion rate for baths so sparse bath history cannot triple the count", () => {
@@ -1218,6 +1222,140 @@ describe("scheduling matrix logic", () => {
     expect(snapshot.display.support.departure_baths).toBe(2);
   });
 
+  it("allocates same-day checked-out boarding departures to play groups even when stay dates do not overlap the day", () => {
+    const reservations = [
+      makeReservation({
+        gingr_id: "checked-out-large-bath",
+        animalId: "dog-large",
+        cls: "boarding",
+        startKey: "2026-05-16",
+        endKey: "2026-05-17",
+        check_out_date: "2026-05-18T08:30:00-04:00",
+        playgroup: "large",
+        services: [{ name: "Premium Bath", scheduled_at: "2026-05-18T08:00:00-04:00" }],
+      }),
+      makeReservation({
+        gingr_id: "checked-out-small-bath",
+        animalId: "dog-small",
+        cls: "boarding",
+        startKey: "2026-05-16",
+        endKey: "2026-05-17",
+        check_out_date: "2026-05-18T09:15:00-04:00",
+        playgroup: "small",
+        services: [{ name: "Bath", scheduled_at: "2026-05-18T08:45:00-04:00" }],
+      }),
+    ];
+
+    const snapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-18",
+      reservations,
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(snapshot.departingCounts.large).toBe(1);
+    expect(snapshot.departingCounts.small).toBe(1);
+    expect(snapshot.display.departing.large_boarding).toBe(1);
+    expect(snapshot.display.departing.small_boarding).toBe(1);
+    expect(snapshot.display.departing.unclassified_boarding).toBe(0);
+    expect(snapshot.display.support.departure_baths).toBe(2);
+
+    const adjusted = applyGingrWidgetSourceCountsToDisplay(snapshot.display, {
+      date: "2026-05-18",
+      check_ins: 0,
+      check_outs: 3,
+      overnight: 0,
+      total: 3,
+      boarding: { check_ins: 0, check_outs: 3, overnight: 0, opening: 0, total: 3 },
+      daytime: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+      other: { check_ins: 0, check_outs: 0, overnight: 0, total: 0 },
+      per_type: [],
+    });
+
+    expect(adjusted.display.departing.large_boarding).toBe(1);
+    expect(adjusted.display.departing.small_boarding).toBe(1);
+    expect(adjusted.display.departing.unclassified_boarding).toBe(1);
+    expect(adjusted.display.departing.total_boarding).toBe(3);
+  });
+
+  it("builds departing boarding rows from raw reservation services and playgroup assignments", () => {
+    const playgroupMap = new Map([
+      ["raw-dog", {
+        animalGingrId: "raw-dog",
+        sizeGroup: "small",
+        hasPrivatePlay: false,
+        hasEvaluation: false,
+        isHalfAndHalf: false,
+        primaryDisplayPlaygroup: "small",
+        schedulingPlaygroup: "small",
+        playgroupTags: ["small"],
+        sourceIconTitles: ["Small Play"],
+        sourceIconComments: [],
+        halfAndHalfNote: null,
+        unresolvedReason: null,
+      }],
+    ]);
+    const reservation = buildReservationRecord({
+      gingr_id: "raw-res",
+      animal_gingr_id: "raw-dog",
+      animal_name: "Raw Dog",
+      raw_data: {
+        reservation_type: { id: "boarding-suite", type: "Boarding | Luxury Suite" },
+        start_date: "2026-05-17T15:00:00-04:00",
+        end_date: "2026-05-18T12:00:00-04:00",
+        services: [{ name: "Premium Bath", scheduled_at: "2026-05-18T08:00:00-04:00" }],
+      },
+    }, buildReservationTypeMaps([]), playgroupMap);
+
+    const snapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-18",
+      reservations: [reservation],
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(reservation.services).toHaveLength(1);
+    expect(snapshot.display.departing.small_boarding).toBe(1);
+    expect(snapshot.display.support.departure_baths).toBe(1);
+  });
+
+  it("treats both-daycare boarding departures as split play instead of unresolved", () => {
+    const playgroupMap = new Map([
+      ["both-daycare-dog", {
+        animalGingrId: "both-daycare-dog",
+        sizeGroup: null,
+        hasPrivatePlay: false,
+        hasEvaluation: false,
+        isHalfAndHalf: false,
+        primaryDisplayPlaygroup: "both_daycares",
+        schedulingPlaygroup: null,
+        playgroupTags: ["both_daycares"],
+        sourceIconTitles: ["Large Dog Playgroup", "Small Dog Playgroup"],
+        sourceIconComments: [],
+        halfAndHalfNote: null,
+        unresolvedReason: null,
+      }],
+    ]);
+    const reservation = buildReservationRecord({
+      gingr_id: "both-daycare-departure",
+      animal_gingr_id: "both-daycare-dog",
+      animal_name: "Both Daycare Dog",
+      reservation_type_name: "Boarding | Executive Room",
+      start_date: "2026-05-22T13:00:00-04:00",
+      end_date: "2026-05-24T16:30:00-04:00",
+    }, buildReservationTypeMaps([]), playgroupMap);
+
+    const snapshot = computeDemandSnapshotForDate({
+      targetDate: "2026-05-24",
+      reservations: [reservation],
+      roomByDate: {},
+      totalRooms: 0,
+    });
+
+    expect(snapshot.display.departing.half_and_half_boarding).toBe(1);
+    expect(snapshot.display.departing.unclassified_boarding).toBe(0);
+  });
+
   it("exposes play yard demand as daycare plus the larger of opening or closing boarding", () => {
     const reservations = [
       makeReservation({
@@ -1329,6 +1467,11 @@ describe("scheduling matrix logic", () => {
     expect(projection.comparisons.yoy_overnight).toBe(48);
     expect(projection.comparisons.yoy_daytime).toBe(32);
     expect(projection.comparisons.yoy_total_pct_vs_current_year).toBe(88.9);
+    expect(projection.comparisons.prior_years[0]).toMatchObject({
+      year_offset: 1,
+      label: "YOY",
+      metrics: { total: 80, overnight: 48, daytime: 32 },
+    });
     expect(projection.comparisons.source_available).toBe(true);
   });
 });
