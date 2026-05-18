@@ -40,16 +40,22 @@ function uniqueStrings(values) {
 }
 
 function mappingMatchesIcon(mapping, icon) {
-  const mappingTemplateId = normalizeString(mapping?.icon_template_id);
-  const iconTemplateId = normalizeString(icon?.icon_template_id);
-  if (mappingTemplateId && iconTemplateId) {
-    return mappingTemplateId === iconTemplateId;
-  }
-
   const mappingIdentityKey = normalizeString(mapping?.icon_identity_key);
   const iconIdentityKey = normalizeString(icon?.icon_identity_key);
   if (mappingIdentityKey && iconIdentityKey) {
     return mappingIdentityKey === iconIdentityKey;
+  }
+
+  const mappingGroup = normalizeString(mapping?.icon_group).toLowerCase();
+  const iconGroup = normalizeString(icon?.icon_group).toLowerCase();
+  if (mappingGroup && iconGroup && mappingGroup !== iconGroup) {
+    return false;
+  }
+
+  const mappingTemplateId = normalizeString(mapping?.icon_template_id);
+  const iconTemplateId = normalizeString(icon?.icon_template_id);
+  if (mappingTemplateId && iconTemplateId) {
+    return mappingTemplateId === iconTemplateId;
   }
 
   return false;

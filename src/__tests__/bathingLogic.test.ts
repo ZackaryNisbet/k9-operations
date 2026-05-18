@@ -80,4 +80,41 @@ describe('bathing logic', () => {
     expect(normalized.bathType).toBe('Fresh N Clean');
     expect(normalized.bathIcons).toEqual(['Fresh N Clean', 'Hypoallergenic - NO SPRAY']);
   });
+
+  it('does not match a system icon by reused template id when identity differs', () => {
+    const normalized = resolveBathDisplayFromIconRows({
+      iconRows: [
+        {
+          icon_title: 'Immunizations',
+          icon_group: null,
+          icon_template_id: '13',
+          icon_identity_key: '13::::immunizations',
+        },
+        {
+          icon_title: 'Hypo - NO Spray',
+          icon_group: 'Bath',
+          icon_template_id: '30',
+          icon_identity_key: '30::bath::hypo - no spray',
+        },
+      ],
+      mappings: [
+        {
+          capability_key: 'bathing.type.premium',
+          icon_template_id: '13',
+          icon_identity_key: '13::bath::premium',
+          icon_group: 'Bath',
+        },
+        {
+          capability_key: 'bathing.type.hypoallergenic_no_spray',
+          icon_template_id: '30',
+          icon_identity_key: '30::bath::hypo - no spray',
+          icon_group: 'Bath',
+        },
+      ],
+      defaultType: 'Standard',
+    });
+
+    expect(normalized.bathType).toBe('Hypoallergenic - NO SPRAY');
+    expect(normalized.bathIcons).toEqual(['Hypoallergenic - NO SPRAY']);
+  });
 });
