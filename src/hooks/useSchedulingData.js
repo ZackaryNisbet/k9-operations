@@ -507,6 +507,47 @@ export function useSchedulingData(locationId, startDate, options = {}) {
     return data || [];
   }, [locationId]);
 
+  const fetchScheduleVersionSummaries = useCallback(async ({ startDate: summaryStartDate, endDate: summaryEndDate }) => {
+    if (!locationId || !summaryStartDate || !summaryEndDate) return {};
+
+    const { data, error: err } = await supabase
+      .from("rotation_schedules")
+      .select("id, schedule_date, version, status, updated_at, published_at, overrides")
+      .eq("location_id", locationId)
+      .gte("schedule_date", summaryStartDate)
+      .lte("schedule_date", summaryEndDate)
+      .order("schedule_date", { ascending: true })
+      .order("version", { ascending: false });
+
+    if (err && err.code !== "42P01") throw err;
+    const rows = data || [];
+    return rows.reduce((acc, row) => {
+      const date = String(row.schedule_date || "").slice(0, 10);
+      if (!date) return acc;
+      const current = acc[date] || {
+        date,
+        total: 0,
+        draft: 0,
+        published: 0,
+        archived: 0,
+        latestVersion: 0,
+        latestStatus: "",
+        latestUpdatedAt: null,
+        overrideCount: 0,
+      };
+      current.total += 1;
+      current[row.status] = (current[row.status] || 0) + 1;
+      current.overrideCount += Array.isArray(row.overrides) ? row.overrides.length : 0;
+      if (Number(row.version || 0) >= Number(current.latestVersion || 0)) {
+        current.latestVersion = row.version || current.latestVersion;
+        current.latestStatus = row.status || current.latestStatus;
+        current.latestUpdatedAt = row.updated_at || row.published_at || current.latestUpdatedAt;
+      }
+      acc[date] = current;
+      return acc;
+    }, {});
+  }, [locationId]);
+
   const runAudit = useCallback(async ({ dateFrom, dateTo }) => {
     const { data, error: auditErr } = await supabase.functions.invoke("scheduling-audit", {
       body: {
@@ -548,6 +589,7 @@ export function useSchedulingData(locationId, startDate, options = {}) {
     publishSchedule,
     applyScheduleOverride,
     fetchScheduleVersions,
+    fetchScheduleVersionSummaries,
     runAudit,
     computeRotationSchedule,
   };

@@ -1794,10 +1794,12 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     publishSchedule,
     applyScheduleOverride,
     fetchScheduleVersions,
+    fetchScheduleVersionSummaries,
     computeRotationSchedule,
   } = useSchedulingData(locationId, demandRange.startDate, schedulingDataOptions);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
+  const [selectedDateTarget, setSelectedDateTarget] = useState(today);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const handleSchedulingTabChange = useCallback((nextTab) => {
     const normalized = nextTab === "rotation" ? "rotation" : "volume";
@@ -2150,10 +2152,14 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, [selectedDayIdx]);
 
   React.useEffect(() => {
-    setSelectedDayIdx(dateIndexInRange(demandRange.startDate, demandRange.endDate, today));
+    const targetDate = selectedDateTarget >= demandRange.startDate && selectedDateTarget <= demandRange.endDate
+      ? selectedDateTarget
+      : today;
+    const nextIndex = dateIndexInRange(demandRange.startDate, demandRange.endDate, targetDate);
+    setSelectedDayIdx(nextIndex);
     setMatrixPage(0);
     setExpandedMonthSegments(new Set());
-  }, [demandRange.startDate, demandRange.endDate, today]);
+  }, [demandRange.startDate, demandRange.endDate, selectedDateTarget, today]);
 
   React.useEffect(() => {
     if (matrixPage >= matrixPageCount) {
@@ -2325,6 +2331,20 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     }
   }, [viewStartDate, demandRange.startDate, demandRange.endDate]);
 
+  const handleRotationDateSelect = useCallback((date) => {
+    if (!date) return;
+    const weekStart = getMondayStart(date);
+    const weekEnd = addDays(weekStart, 6);
+    setSelectedDateTarget(date);
+    setMatrixRangeMode("week");
+    setViewStartDate(weekStart);
+    setCustomStartDate(weekStart);
+    setCustomEndDate(weekEnd);
+    setSelectedDayIdx(dateIndexInRange(weekStart, weekEnd, date));
+    setMatrixPage(0);
+    setExpandedMonthSegments(new Set());
+  }, []);
+
   const applyCustomRange = useCallback((startDate, endDate) => {
     const cleanStart = startDate || today;
     const cleanEnd = endDate && endDate >= cleanStart ? endDate : cleanStart;
@@ -2435,6 +2455,26 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       // Silently handle if table not deployed
     }
   }, [selectedDay, fetchScheduleVersions]);
+
+  React.useEffect(() => {
+    if (activeSchedulingTab !== "rotation" || !selectedDay?.date) {
+      setSavedVersions([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    fetchScheduleVersions(selectedDay.date)
+      .then((versions) => {
+        if (!cancelled) setSavedVersions(versions);
+      })
+      .catch(() => {
+        if (!cancelled) setSavedVersions([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSchedulingTab, fetchScheduleVersions, selectedDay?.date]);
 
   const handleCellSelect = useCallback((laneId, slotTime, rect) => {
     const currentGrid = localGrid || visibleRotation?.grid?.cells || {};
@@ -3164,6 +3204,10 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
             saveDisabledReason={generateDisabledReason}
             disabled={rotationLoading}
             templateCatalogSummary={templateCatalogSummary}
+            visibleDays={workbookDays}
+            today={today}
+            onSelectDate={handleRotationDateSelect}
+            onFetchScheduleSummaries={fetchScheduleVersionSummaries}
           />
           <p style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.6 }}>
             Hover preview is intentionally temporary. Click a template to apply it to the local draft grid, then use Save Day Draft when Skyler is ready to persist a version.
