@@ -2,18 +2,18 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
+      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix reorg and departing play splits",
-      "updatedAt": "2026-05-18T19:46:41.107Z"
+      "note": "Demand matrix export and historical compute load refinement",
+      "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
+      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix reorg and departing play splits",
-      "updatedAt": "2026-05-18T19:46:41.107Z"
+      "note": "Demand matrix export and historical compute load refinement",
+      "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "ops-compute": {
       "commit": "e37a1d545f67567112b3a66e77784221f1eb1977",
@@ -30,11 +30,11 @@
       "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "scheduling-audit": {
-      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
+      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix reorg and departing play splits",
-      "updatedAt": "2026-05-18T19:46:41.107Z"
+      "note": "Demand matrix export and historical compute load refinement",
+      "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "gingr-boh-poll": {
       "commit": "8f83744280f2f3cb70e8fc5c2d211e6350fb2590",
@@ -114,11 +114,11 @@
       "updatedAt": "2026-05-04T03:50:38.116Z"
     },
     "scheduling-matrix-backfill": {
-      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
+      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix reorg and departing play splits",
-      "updatedAt": "2026-05-18T19:46:41.107Z"
+      "note": "Demand matrix export and historical compute load refinement",
+      "updatedAt": "2026-05-18T20:19:31.139Z"
     },
     "ops-audit": {
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
