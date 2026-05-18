@@ -23,9 +23,9 @@ const LOCATION_ID_ALIASES: Record<string, string> = {
   "cherry-hill": CHERRY_HILL_LOCATION_ID,
   your-gingr-subdomain: CHERRY_HILL_LOCATION_ID,
 };
-const DEFAULT_BATCH_SIZE = 14;
-const MAX_BATCH_SIZE = 31;
-const MAX_BATCHES_PER_INVOCATION = 3;
+const DEFAULT_BATCH_SIZE = 1;
+const MAX_BATCH_SIZE = 1;
+const MAX_BATCHES_PER_INVOCATION = 1;
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
