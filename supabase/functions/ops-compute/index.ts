@@ -2875,12 +2875,19 @@ Deno.serve(async (req: Request) => {
 
     let locationId: string | null = null;
     let dateOverride: string | null = null;
+    let futureDays = 0;
 
     // Parse body if present
     try {
       const body = await req.json();
       if (body.location_id) locationId = body.location_id;
       if (body.date) dateOverride = body.date;
+      const requestedFutureDays = Number(
+        body.future_days ?? body.futureDays ?? (body.include_future ? 14 : 0),
+      );
+      if (Number.isFinite(requestedFutureDays)) {
+        futureDays = Math.max(0, Math.min(14, Math.floor(requestedFutureDays)));
+      }
     } catch {
       // No body or invalid JSON
     }
@@ -3122,7 +3129,7 @@ Deno.serve(async (req: Request) => {
       roomOccupancyLookup,
     );
 
-    // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
+    // ─── Compute FUTURE days when explicitly requested ─────────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
     const futureSummaries: Array<{
       date: string;
@@ -3137,7 +3144,7 @@ Deno.serve(async (req: Request) => {
     }> = [];
     const futureUpsertErrors: string[] = [];
 
-    for (let offset = 1; offset <= 14; offset++) {
+    for (let offset = 1; offset <= futureDays; offset++) {
       const futureDate = addDays(today, offset);
       const futureRoomOccupancySnapshot = await fetchRoomOccupancySnapshotForDate({
         supabase,
@@ -3477,6 +3484,7 @@ Deno.serve(async (req: Request) => {
           ),
         },
         computed_future: futureSummaries,
+        computedFutureCount: futureSummaries.length,
         errors: errors.length > 0 ? errors : undefined,
       }),
       {
