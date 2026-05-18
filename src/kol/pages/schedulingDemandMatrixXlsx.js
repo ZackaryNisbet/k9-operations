@@ -195,7 +195,7 @@ function buildRows(model) {
   const rows = [];
   const sharedStrings = [];
   const merges = [];
-  const totalColumns = 1 + model.days.length;
+  const totalColumns = 1 + model.days.length + 1;
   const maxColumn = Math.max(totalColumns - 1, 3);
   const lastColumn = columnName(maxColumn);
   const brandLastColumn = columnName(Math.min(maxColumn, 5));
@@ -243,6 +243,7 @@ function buildRows(model) {
   model.days.forEach((day, index) => {
     addDateCell(headerCells, rowIndex, index + 1, day.date, 7);
   });
+  addStringCell(headerCells, rowIndex, model.days.length + 1, model.aggregateLabel || "Range Total", 3, sharedStrings);
   pushRow(rowIndex, headerCells);
   rowIndex += 1;
 
@@ -257,12 +258,20 @@ function buildRows(model) {
     } else {
       addStringCell(cells, rowIndex, 0, row.label, row.total ? 5 : 4, sharedStrings);
       row.cells.forEach((cell, index) => {
-        if (!cell.missingValue && Number.isFinite(Number(cell.value))) {
+        if (row.format !== "percent" && !cell.missingValue && Number.isFinite(Number(cell.value))) {
           addNumberCell(cells, rowIndex, index + 1, cell.value, row.total ? 5 : 6);
         } else {
           addStringCell(cells, rowIndex, index + 1, cell.displayValue, row.total ? 5 : 6, sharedStrings);
         }
       });
+      if (row.aggregate) {
+        const aggregateColumn = model.days.length + 1;
+        if (row.format !== "percent" && !row.aggregate.missingValue && Number.isFinite(Number(row.aggregate.value))) {
+          addNumberCell(cells, rowIndex, aggregateColumn, row.aggregate.value, row.total ? 5 : 6);
+        } else {
+          addStringCell(cells, rowIndex, aggregateColumn, row.aggregate.displayValue, row.total ? 5 : 6, sharedStrings);
+        }
+      }
     }
     pushRow(rowIndex, cells);
     rowIndex += 1;

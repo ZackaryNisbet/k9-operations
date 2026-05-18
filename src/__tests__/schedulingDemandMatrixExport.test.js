@@ -172,7 +172,7 @@ describe("Scheduling Demand Matrix export model", () => {
     expect(blob.size).toBeGreaterThan(10_000);
   });
 
-  it("writes readable workbook metadata, real date headers, export-only rows, and K9 Operations branding", async () => {
+  it("writes readable workbook metadata, real date headers, operational rows, historical trends, and K9 Operations branding", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => ({
       ok: true,
@@ -196,9 +196,11 @@ describe("Scheduling Demand Matrix export model", () => {
 
       expect(buildDemandMatrixExportFilename(model)).toBe("scheduling-demand-matrix-cherry-hill-2025-01-01-to-2025-01-02.xlsx");
       expect(model.rows.some((row) => row.section === "Gingr Source Counts")).toBe(false);
-      expect(model.rows.some((row) => row.section === "Historical Comparison")).toBe(false);
+      expect(model.rows.some((row) => row.section === "Historical Comparison")).toBe(true);
       expect(model.rows.find((row) => row.key === "opening.total_boarding")).toBeTruthy();
       expect(model.rows.find((row) => row.key === "closing.total_boarding")).toBeTruthy();
+      expect(model.rows.find((row) => row.key === "comparison.prior_year_1_total")).toBeTruthy();
+      expect(model.rows.find((row) => row.key === "comparison.prior_year_1_total")?.aggregate?.value).toBe(32);
 
       const blob = await createDemandMatrixXlsxBlob(model);
       const { zip, parts } = await loadWorkbookXml(blob);
@@ -217,7 +219,10 @@ describe("Scheduling Demand Matrix export model", () => {
       expect(sharedStringsXml).not.toContain("Mode");
       expect(sharedStringsXml).not.toContain("Readiness");
       expect(sharedStringsXml).not.toContain("Gingr Source Counts");
-      expect(sharedStringsXml).not.toContain("Historical Comparison");
+      expect(sharedStringsXml).toContain("Historical Comparison");
+      expect(sharedStringsXml).toContain("YOY Dog Volume");
+      expect(sharedStringsXml).toContain("Range Total");
+      expect(sharedStringsXml).toContain("88.9%");
       expect(coreXml).toContain("<dc:creator>K9 Operations LLC</dc:creator>");
       expect(stylesXml).toContain('formatCode="ddd mmm d yyyy"');
       expect(sheetXml).toContain('<c r="B9" s="7"><v>45658</v></c>');
@@ -317,6 +322,7 @@ describe("Scheduling Demand Matrix export model", () => {
       "Total Daily Dog Volume",
       "Play Yard Demand",
       "Ancillary",
+      "Historical Comparison",
     ]);
     expect(groups[0].rows.at(-1).label).toBe("Total Boarding Dogs Opening");
     expect(groups[3].rows.map((row) => row.label)).toContain("Daily Dog Volume");
