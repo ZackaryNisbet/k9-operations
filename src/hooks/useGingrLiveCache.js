@@ -1,5 +1,5 @@
 // Deprecated compatibility hook.
-// Live GINGR reads are server-owned; browser dashboards read Supabase only.
+// Live Gingr reads are server-owned; browser dashboards read Supabase only.
 
 /**
  * useGingrLiveCache(locationId)

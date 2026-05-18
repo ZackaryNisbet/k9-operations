@@ -3,7 +3,7 @@ export interface GingrCredentials {
   apiKey: string;
 }
 
-export const GINGR_UA =
+export const gingrUserAgent =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export function extractSetCookies(resp: Response): string[] {
@@ -41,7 +41,7 @@ export async function gingrWebLogin(subdomain: string, apiKey: string): Promise<
 
   const loginPageResp = await fetch(`${baseUrl}/auth/login`, {
     redirect: "manual",
-    headers: { "User-Agent": GINGR_UA },
+    headers: { "User-Agent": gingrUserAgent },
   });
   const step1Cookies = extractSetCookies(loginPageResp);
   const loginHtml = await loginPageResp.text();
@@ -68,7 +68,7 @@ export async function gingrWebLogin(subdomain: string, apiKey: string): Promise<
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "Cookie": cookieHeader,
-      "User-Agent": GINGR_UA,
+      "User-Agent": gingrUserAgent,
     },
     body: `identity=${encodeURIComponent(apiKey)}&password=${encodeURIComponent(apiKey)}&gingr_csrf_token=${encodeURIComponent(csrfToken)}`,
   });
@@ -113,7 +113,7 @@ export async function gingrWebGetJson(
     redirect: "manual",
     headers: {
       "Cookie": cookies,
-      "User-Agent": GINGR_UA,
+      "User-Agent": gingrUserAgent,
       "X-Requested-With": "XMLHttpRequest",
       "Accept": "application/json, text/javascript, */*; q=0.01",
       "Referer": `https://${subdomain}.gingrapp.com/`,

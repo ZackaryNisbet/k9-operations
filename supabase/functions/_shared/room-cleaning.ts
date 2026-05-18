@@ -786,7 +786,7 @@ export function buildRoomCleaningPayload(
 
     dataIssues.push({
       issue_type: "not_assigned_in_gingr",
-      message: `Not assigned in GINGR for ${unresolved.animal_name} on ${date}.`,
+      message: `Not assigned in Gingr for ${unresolved.animal_name} on ${date}.`,
       reservation_id: unresolved.reservation_id,
       animal_id: unresolved.animal_id,
       animal_name: unresolved.animal_name,

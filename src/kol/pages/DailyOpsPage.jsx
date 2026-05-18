@@ -1371,6 +1371,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         bathType: d.bathType || "Standard",
         bathIcons: d.bathIcons || [],
         bathModifiers: d.bathModifiers || [],
+        displayIcons: d.displayIcons || [],
         bathNotes: d.bathNotes || "",
         reservationNotes: d.reservationNotes || "",
         serviceNotes: d.serviceNotes || "",
@@ -1537,6 +1538,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     const isNewGroup = row.siblingGroup && (!prevRow || prevRow.siblingGroup !== row.siblingGroup);
                     const isInGroup = !!row.siblingGroup;
                     const avgTime = fmtAvgTime(row.avgCheckoutTime);
+                    const displayIconNotes = (row.displayIcons || [])
+                      .map(icon => icon?.note)
+                      .filter(Boolean);
 
                     return (
                       <tr key={row.resId} style={{
@@ -1554,6 +1558,19 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                             {row.sizeCategory === "large" && <span title={row.weight ? `${row.weight} lbs` : "Large dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>LG</span>}
                             {row.sizeCategory === "small" && <span title={row.weight ? `${row.weight} lbs` : "Small dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#DBEAFE", color: "#2563EB" }}>SM</span>}
                           </div>
+                          {row.displayIcons.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                              {row.displayIcons.map((icon, iconIndex) => (
+                                <span
+                                  key={`${icon.label}-${iconIndex}`}
+                                  title={icon.note || icon.group || icon.label}
+                                  style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#F0FDF4", color: "#166534", border: "1px solid #BBF7D0" }}
+                                >
+                                  {icon.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           {row.roommates.length > 0 && (
                             <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>
                               {row.roommates.map((rm, ri) => <span key={ri}>{ri > 0 ? ", " : ""}{rm}</span>)}
@@ -1598,8 +1615,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           {row.bathNotes && <div style={{ fontSize: 10, fontStyle: "italic", color: "#D97706", marginTop: 2 }}>{row.bathNotes}</div>}
                         </td>
                         <td style={{ padding: "12px 14px", color: C.textSec, fontSize: 12, fontFamily: "inherit", maxWidth: 240 }}>
-                          {(row.serviceNotes || row.reservationNotes) ? (
+                          {(row.serviceNotes || row.reservationNotes || displayIconNotes.length > 0) ? (
                             <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.3 }}>
+                              {displayIconNotes.length > 0 && <div style={{ color: "#166534", fontWeight: 600, marginBottom: row.serviceNotes || row.reservationNotes ? 4 : 0 }}>{displayIconNotes.join(" | ")}</div>}
                               {row.serviceNotes && <div style={{ color: C.text, fontWeight: 600, marginBottom: row.reservationNotes ? 4 : 0 }}>{row.serviceNotes}</div>}
                               {row.reservationNotes && <div style={{ color: C.textMut, fontSize: 11 }}>{row.reservationNotes}</div>}
                             </div>

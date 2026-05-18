@@ -3,7 +3,7 @@
 --
 -- One server-side checked-in snapshot plus an append-only transition ledger.
 -- Checkout TV and live dashboard surfaces should read this model instead of
--- independently diffing GINGR/BOH data in the browser.
+-- independently diffing Gingr/BOH data in the browser.
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

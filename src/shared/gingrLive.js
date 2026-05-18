@@ -1,5 +1,5 @@
 // Compatibility helpers for historical Dashboard code.
-// Browser code must not call GINGR directly; same-day freshness is server-owned.
+// Browser code must not call Gingr directly; same-day freshness is server-owned.
 
 /**
  * mergeGingrLive(supabaseRows, gingrLiveRows)

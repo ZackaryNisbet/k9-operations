@@ -23,7 +23,7 @@ const SECTION_TABS = [
   { id: "dog", label: "Dog Fields", icon: "M10 5.172C10 3.782 8.423 2.679 6.5 3c-2.823.47-4.113 6.006-4 7 .08.703 1.725 1.722 3.656 1 1.261-.472 1.96-1.45 2.344-2.5M14.267 5.172c0-1.39 1.577-2.493 3.5-2.172 2.823.47 4.113 6.006 4 7-.08.703-1.725 1.722-3.656 1-1.261-.472-1.855-1.45-2.239-2.5M8 14v.5M16 14v.5M11.25 16.25h1.5L12 17l-.75-.75z" },
 ];
 
-const DEFAULT_GINGR_CLIENT_FIELDS = [
+const defaultGingrClientFields = [
   { id: "g_first_name", name: "First Name", field_name: "first_name", form_type: "owner_registration", field_type: "text", is_required: true, section: "Basic Info", display_order: 0 },
   { id: "g_last_name", name: "Last Name", field_name: "last_name", form_type: "owner_registration", field_type: "text", is_required: true, section: "Basic Info", display_order: 1 },
   { id: "g_email", name: "Email Address", field_name: "email", form_type: "owner_registration", field_type: "email", is_required: true, section: "Basic Info", display_order: 2 },
@@ -38,7 +38,7 @@ const DEFAULT_GINGR_CLIENT_FIELDS = [
   { id: "g_notes", name: "Additional Notes", field_name: "notes", form_type: "owner_registration", field_type: "textarea", is_required: false, section: "Other", display_order: 11 },
 ];
 
-const DEFAULT_GINGR_DOG_FIELDS = [
+const defaultGingrDogFields = [
   { id: "g_dog_name", name: "Pet Name", field_name: "name", form_type: "animal_profile", field_type: "text", is_required: true, section: "Basic Info", display_order: 0 },
   { id: "g_breed", name: "Breed", field_name: "breed", form_type: "animal_profile", field_type: "text", is_required: true, section: "Basic Info", display_order: 1 },
   { id: "g_weight", name: "Weight", field_name: "weight", form_type: "animal_profile", field_type: "number", is_required: false, section: "Basic Info", display_order: 2 },
@@ -333,7 +333,7 @@ function RequiredFieldsTab() {
   const [dragState, setDragState] = useState(null); // { fromId, fromSide, startPos }
   const [dragPos, setDragPos] = useState(null);
   const [hoveredDot, setHoveredDot] = useState(null);
-  const [gingrFields, setGingrFields] = useState({ client: DEFAULT_GINGR_CLIENT_FIELDS, dog: DEFAULT_GINGR_DOG_FIELDS });
+  const [gingrFields, setGingrFields] = useState({ client: defaultGingrClientFields, dog: defaultGingrDogFields });
   const [gingrLoading, setGingrLoading] = useState(false);
   const [hoveredMapping, setHoveredMapping] = useState(null);
   const [dotPositions, setDotPositions] = useState({});
@@ -682,7 +682,7 @@ function RequiredFieldsTab() {
             display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
             background: C.acc, borderRadius: 10, color: "#fff",
           }}>
-            <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.03em" }}>GINGR</span>
+            <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.03em" }}>Gingr</span>
             <span style={{ fontSize: 10, opacity: 0.7, marginLeft: "auto" }}>{rightFields.length} fields</span>
             {gingrLoading && (
               <div style={{

@@ -147,7 +147,7 @@ function assertBaseWorkflowConfig(
   }
   if (missing.length > 0) {
     throw new Error(
-      `GINGR workflow configuration incomplete for location ${locationId}: ${missing.join(", ")}. Run reference sync and complete Gingr Icons workflow mappings before computing operational reports.`,
+      `Gingr workflow configuration incomplete for location ${locationId}: ${missing.join(", ")}. Run reference sync and complete Gingr Icons workflow mappings before computing operational reports.`,
     );
   }
 }
@@ -192,7 +192,7 @@ async function assertActiveReservationTypesConfigured({
     const labels = [...missing.values()].slice(0, 12).join(", ");
     const extra = missing.size > 12 ? `, plus ${missing.size - 12} more` : "";
     throw new Error(
-      `GINGR workflow configuration incomplete for location ${locationId}: unmapped active reservation types through ${windowEnd}: ${labels}${extra}. Complete reservation category mappings before computing dependent reports.`,
+      `Gingr workflow configuration incomplete for location ${locationId}: unmapped active reservation types through ${windowEnd}: ${labels}${extra}. Complete reservation category mappings before computing dependent reports.`,
     );
   }
 }
@@ -332,7 +332,7 @@ async function gingrFetch(
 
 // ─── Gingr Web Session Auth (for service-level notes) ─────────────────────
 
-const GINGR_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const gingrUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /**
  * Extract individual Set-Cookie headers from a response.
@@ -365,7 +365,7 @@ async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string>
   const baseUrl = `https://${subdomain}.gingrapp.com`;
 
   // Step 1: GET /auth/login to get CSRF token and session cookie
-  const loginPageResp = await fetch(`${baseUrl}/auth/login`, { redirect: "manual", headers: { "User-Agent": GINGR_UA } });
+  const loginPageResp = await fetch(`${baseUrl}/auth/login`, { redirect: "manual", headers: { "User-Agent": gingrUserAgent } });
   const step1Cookies = extractSetCookies(loginPageResp);
   const loginHtml = await loginPageResp.text();
 
@@ -385,7 +385,7 @@ async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string>
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "Cookie": cookieHeader,
-      "User-Agent": GINGR_UA,
+      "User-Agent": gingrUserAgent,
     },
     body: `identity=${encodeURIComponent(apiKey)}&password=${encodeURIComponent(apiKey)}&gingr_csrf_token=${encodeURIComponent(csrfToken)}`,
     redirect: "manual",
@@ -416,7 +416,7 @@ async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string>
 async function fetchServiceNotes(subdomain: string, cookies: string, serviceId: string): Promise<string | null> {
   try {
     const resp = await fetch(`https://${subdomain}.gingrapp.com/services/edit/id/${serviceId}`, {
-      headers: { "Cookie": cookies, "User-Agent": GINGR_UA },
+      headers: { "Cookie": cookies, "User-Agent": gingrUserAgent },
       redirect: "manual",
     });
     if (resp.status === 302 || resp.status === 301) {
@@ -475,7 +475,7 @@ async function fetchLodgingTransferReport(
     const dateParam = `${m}/${d}/${y}`;
     const url = `https://${subdomain}.gingrapp.com/reports/run_transfer?date=${dateParam}`;
     const resp = await fetch(url, {
-      headers: { "Cookie": cookies, "User-Agent": GINGR_UA },
+      headers: { "Cookie": cookies, "User-Agent": gingrUserAgent },
       redirect: "manual",
     });
     if (resp.status === 302 || resp.status === 301) {
@@ -1217,6 +1217,50 @@ function isConfiguredBoardingReservation(
   return getReservationCategoryFromConfig(workflowConfig, source) === "boarding";
 }
 
+function workflowIconMatchesMapping(mapping: any, icon: GingrAnimalIconRow): boolean {
+  const sourceIdentity = String(mapping?.source_identity_key || "").trim();
+  const sourceId = String(mapping?.source_id || "").trim();
+  const iconIdentity = String(icon?.icon_identity_key || "").trim();
+  const iconTemplateId = String(icon?.icon_template_id || "").trim();
+  const iconTitleKey = String(icon?.icon_title || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const possibleKeys = new Set([
+    iconIdentity,
+    iconIdentity ? `icon:${iconIdentity}` : "",
+    iconTemplateId,
+    iconTemplateId ? `icon:${iconTemplateId}` : "",
+    iconTitleKey ? `icon_name:${iconTitleKey}` : "",
+  ].filter(Boolean));
+
+  if (sourceIdentity && possibleKeys.has(sourceIdentity)) return true;
+  if (sourceId && (sourceId === iconTemplateId || sourceId === iconIdentity)) return true;
+  return false;
+}
+
+function getWorkflowDisplayIcons(
+  workflowConfig: GingrWorkflowConfig | null,
+  workflowKey: string,
+  iconRows: GingrAnimalIconRow[],
+): Array<{ label: string; note: string; group: string }> {
+  const selectedMappings = (workflowConfig?.mappings || []).filter((mapping) =>
+    String(mapping.workflow_key || "").trim() === workflowKey
+    && String(mapping.source_type || "").trim() === "icon"
+    && String(mapping.capability_key || "").trim() === `${workflowKey}.display_icon`
+    && mapping.is_active !== false
+  );
+  if (selectedMappings.length === 0 || iconRows.length === 0) return [];
+
+  const byKey = new Map<string, { label: string; note: string; group: string }>();
+  for (const icon of iconRows) {
+    if (!selectedMappings.some((mapping) => workflowIconMatchesMapping(mapping, icon))) continue;
+    const label = String(icon.icon_title || "").trim();
+    if (!label) continue;
+    const note = String(icon.icon_comment || "").trim();
+    const group = String(icon.icon_group || "").trim();
+    byKey.set(`${label}|${note}|${group}`, { label, note, group });
+  }
+  return [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
 async function computeBathingReport(
   supabase: any,
   locationId: string,
@@ -1726,7 +1770,8 @@ async function computeBathingReport(
   // Collect ALL bath icons per dog (e.g. "Hypo - NO Spray" AND "NO DRYER")
   function buildDogOutput(d: any, idx: number): any {
     const icons = iconMap[d.animalGingrId] || [];
-    const iconComments = icons.map((i: any) => i.icon_comment).filter(Boolean);
+    const displayIcons = getWorkflowDisplayIcons(workflowConfig || null, "bathing", icons);
+    const displayIconNotes = displayIcons.map((icon) => icon.note).filter(Boolean);
     const normalizedBath = resolveBathDisplayFromIconRows({
       iconRows: icons,
       mappings: _globalGingrIconMappings,
@@ -1777,7 +1822,8 @@ async function computeBathingReport(
       bathType: normalizedBath.bathType,
       bathIcons: normalizedBath.bathIcons,
       bathModifiers: normalizedBath.bathModifiers,
-      bathNotes: iconComments.join(" | "),
+      displayIcons,
+      bathNotes: [...new Set(displayIconNotes)].join(" | "),
       reservationNotes: d.reservationNotes || "",
       serviceNotes: d.status === "manual"
         ? (d.manualNote || "")

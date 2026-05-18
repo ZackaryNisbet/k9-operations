@@ -299,7 +299,7 @@ function ApiOverviewTab() {
             <div>2. Pulls owners (500/batch), animals (500/batch), and reservations (last 90 days)</div>
             <div>3. Full sync pulls all historical data using resumable 30-day reservation chunks</div>
             <div>4. Server Presence Sync reconciles checked-in state every <span style={{ fontWeight: 700, color: C.pri }}>{effectivePresenceCadence.intervalSeconds}s</span> right now and writes canonical Supabase presence rows/events.</div>
-            <div>5. Checkout TV, Home, and Dashboard read Supabase snapshots and realtime events; they do not call GINGR directly.</div>
+            <div>5. Checkout TV, Home, and Dashboard read Supabase snapshots and realtime events; they do not call Gingr directly.</div>
             <div>6. Post-sync RPCs recompute client stats and dashboard metrics.</div>
             <div>7. Ignite email webhooks process leads independently and are not affected by business hours.</div>
           </div>

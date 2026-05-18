@@ -229,13 +229,13 @@ const CHECKOUT_HEALTH_SPECS = {
     title: "Playgroup Assignment",
     frequencyLabel: "Every 60 seconds, restored from local TV cache first",
     staleAfterMs: 130_000,
-    description: "Reads v_dog_playgroup_assignments_current, falls back to GINGR icons, and prewarms scheduled dogs.",
+    description: "Reads v_dog_playgroup_assignments_current, falls back to Gingr icons, and prewarms scheduled dogs.",
   },
   reservations: {
     title: "Reservation Window",
     frequencyLabel: "useGingrData foreground refresh",
     staleAfterMs: 180_000,
-    description: "Loads checked-in dogs and mid-stay dogs from Supabase reservations synced from GINGR.",
+    description: "Loads checked-in dogs and mid-stay dogs from Supabase reservations synced from Gingr.",
   },
   firstDay: {
     title: "First-Day Evaluation Heuristic",
@@ -247,13 +247,13 @@ const CHECKOUT_HEALTH_SPECS = {
     title: "Photos + Profile Icons",
     frequencyLabel: "Every 5 minutes",
     staleAfterMs: 11 * 60_000,
-    description: "Loads cached profile photos and GINGR profile icons for TV cards and spotlight notices.",
+    description: "Loads cached profile photos and Gingr profile icons for TV cards and spotlight notices.",
   },
   photoSync: {
     title: "Server Photo Pull",
-    frequencyLabel: "Every 15 minutes from GINGR sync",
+    frequencyLabel: "Every 15 minutes from Gingr sync",
     staleAfterMs: 30 * 60_000,
-    description: "Tracks current GINGR animal photo URLs and Supabase Storage downloads.",
+    description: "Tracks current Gingr animal photo URLs and Supabase Storage downloads.",
   },
 };
 
@@ -1225,7 +1225,7 @@ function CheckoutTvHealthModal({ sections, overallStatus, nowMs, audit, auditLoa
   return (
     <TvModalShell
       title={`Checkout TV Health: ${overallTone.label}`}
-      subtitle="This is scoped to this TV surface only: live GINGR transition detection, Supabase reconciliation, playgroup classification, mid-stay reservations, first-day logic, and photo assets."
+      subtitle="This is scoped to this TV surface only: live Gingr transition detection, Supabase reconciliation, playgroup classification, mid-stay reservations, first-day logic, and photo assets."
       onClose={onClose}
       width={980}
     >
@@ -2279,7 +2279,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         let refreshFailed = Boolean(error);
 
         if (error) {
-          console.warn("[CheckoutTV] canonical playgroup assignment read failed; trying raw GINGR icon fallback.", error.message || error);
+          console.warn("[CheckoutTV] canonical playgroup assignment read failed; trying raw Gingr icon fallback.", error.message || error);
         }
 
         if (assignmentRows.length === 0) {
@@ -2297,7 +2297,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             return query;
           };
 
-          const rawIconSource = preferAnimalScoped ? "raw GINGR icons by prewarm animals" : "raw GINGR icons by location";
+          const rawIconSource = preferAnimalScoped ? "raw Gingr icons by prewarm animals" : "raw Gingr icons by location";
           let mappingRead = { data: [], error: null };
           let iconRead = { data: [], error: null };
           try {
@@ -2311,7 +2311,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                 readIconRows({ byAnimalIds: preferAnimalScoped }),
               ]),
               10_000,
-              "Raw GINGR icon read timed out"
+              "Raw Gingr icon read timed out"
             );
           } catch (readError) {
             iconRead = { data: [], error: readError };
@@ -2326,20 +2326,20 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           }
           if (iconError) {
             refreshFailed = true;
-            console.warn("[CheckoutTV] raw GINGR icon fallback read failed.", iconError.message || iconError);
+            console.warn("[CheckoutTV] raw Gingr icon fallback read failed.", iconError.message || iconError);
           } else {
             source = rawIconSource;
             assignmentRows = derivePlaygroupAssignmentsFromIcons(iconRows || [], mappingsError ? [] : (mappings || []));
           }
 
           if (assignmentRows.length === 0 && preferAnimalScoped) {
-            source = "raw GINGR icons by location fallback";
+            source = "raw Gingr icons by location fallback";
             let locationIconRead = { data: [], error: null };
             try {
               locationIconRead = await withTimeout(
                 readIconRows(),
                 10_000,
-                "Raw GINGR icon location fallback timed out"
+                "Raw Gingr icon location fallback timed out"
               );
             } catch (readError) {
               locationIconRead = { data: [], error: readError };
@@ -2350,7 +2350,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
             if (locationIconError) {
               refreshFailed = true;
-              console.warn("[CheckoutTV] location raw GINGR icon fallback read failed.", locationIconError.message || locationIconError);
+              console.warn("[CheckoutTV] location raw Gingr icon fallback read failed.", locationIconError.message || locationIconError);
             } else {
               assignmentRows = derivePlaygroupAssignmentsFromIcons(locationIcons || [], mappingsError ? [] : (mappings || []));
             }
@@ -2401,7 +2401,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             status: "critical",
             lastErrorAt: new Date().toISOString(),
             nextRunAt: new Date(Date.now() + PLAYGROUP_REFRESH_INTERVAL_MS).toISOString(),
-            error: "Unable to read canonical playgroups or refresh GINGR icons.",
+            error: "Unable to read canonical playgroups or refresh Gingr icons.",
           });
           return;
         }

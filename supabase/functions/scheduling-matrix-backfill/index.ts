@@ -235,7 +235,7 @@ async function resolveBackfillRange(client: any, locationId: string, body: Recor
     rangeEnd = rangeEnd || origin.last_historical_date;
     if (!rangeStart) {
       throw Object.assign(
-        new Error("No operational GINGR reservation history was found for this location. Configure or sync GINGR history before starting an all-history Scheduling Demand Matrix backfill."),
+        new Error("No operational Gingr reservation history was found for this location. Configure or sync Gingr history before starting an all-history Scheduling Demand Matrix backfill."),
         { status: 404 },
       );
     }

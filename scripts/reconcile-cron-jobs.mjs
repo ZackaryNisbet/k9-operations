@@ -11,7 +11,7 @@ const LEGACY_SCHEDULING_JOBS = [
   "compute-scheduling-matrix-cherry-hill-week-4",
 ];
 
-const LEGACY_GINGR_JOBS = [
+const legacyGingrJobs = [
   "gingr-tv-poll",
   "gingr-boh-poll-a",
   "gingr-boh-poll-b",
@@ -143,7 +143,7 @@ const jobsToUnschedule = liveJobs
   .filter((jobname) => (
     targetJobNames.has(jobname) ||
     LEGACY_SCHEDULING_JOBS.includes(jobname) ||
-    LEGACY_GINGR_JOBS.includes(jobname)
+    legacyGingrJobs.includes(jobname)
   ));
 
 if (!apply) {

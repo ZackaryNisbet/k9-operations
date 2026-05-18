@@ -16,14 +16,14 @@ export default function GingrIconsPage({ locationId }) {
         }}
       >
         <div>
-          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: 0, marginBottom: 8 }}>
-            GINGR configuration control plane
+          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, letterSpacing: 0, marginBottom: 8 }}>
+            Gingr configuration
           </div>
           <h1 style={{ margin: 0, fontSize: 34, lineHeight: "40px", fontWeight: 900, color: C.text, letterSpacing: 0 }}>
-            Gingr Icons
+            Gingr Configuration
           </h1>
           <p style={{ margin: "8px 0 0", maxWidth: 780, fontSize: 14, lineHeight: "22px", color: C.textSec }}>
-            Location-scoped mappings for icons, services, reservation types, and report workflow rules.
+            Location-scoped pairing for icons, services, add-ons, reservation types, and workflow rules.
           </p>
         </div>
         <div
@@ -38,9 +38,9 @@ export default function GingrIconsPage({ locationId }) {
           }}
         >
           <span style={{ fontSize: 11, fontWeight: 850, color: C.textMut, textTransform: "uppercase", letterSpacing: 0 }}>
-            Runtime rule source
+            Configuration scope
           </span>
-          <strong style={{ fontSize: 15, lineHeight: "20px", color: C.text }}>Supabase workflow mappings</strong>
+          <strong style={{ fontSize: 15, lineHeight: "20px", color: C.text }}>This resort only</strong>
         </div>
       </section>
 

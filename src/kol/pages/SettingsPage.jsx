@@ -381,7 +381,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
       label: "Integrations",
       cards: [
         { id: "gingr", label: "Gingr Integration", desc: "Connect and configure Gingr POS" },
-        { id: "gingr-icons", label: "Gingr Icons", desc: "Review synced icon inventory and map icons to canonical operational capabilities" },
+        { id: "gingr-icons", label: "Gingr Configuration", desc: "Pair Gingr icons, services, add-ons, and reservation types to operational workflows" },
         { id: "api-overview", label: "API Overview", desc: "View all Gingr API call types, frequencies, projected daily usage, and sync state" },
         { id: "api-dashboard", label: "API Dashboard", desc: "All Gingr API endpoints, frequencies, configurable polling, and daily call projections" },
       ],

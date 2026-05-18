@@ -5,7 +5,7 @@
       "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "dynamic GINGR workflow configuration rollout",
+      "note": "dynamic Gingr workflow configuration rollout",
       "updatedAt": "2026-05-18T12:15:11.691Z"
     },
     "compute-scheduling-matrix": {
@@ -26,7 +26,7 @@
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "note": "prevent Gingr icon template id collisions in dynamic mappings",
       "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "scheduling-audit": {
@@ -82,7 +82,7 @@
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "note": "prevent Gingr icon template id collisions in dynamic mappings",
       "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "compute-rotation-schedule": {
@@ -124,7 +124,7 @@
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "note": "prevent Gingr icon template id collisions in dynamic mappings",
       "updatedAt": "2026-05-18T12:41:17.534Z"
     }
   }
