@@ -31,6 +31,7 @@ import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
 import GingrIconsTab from "../settings/GingrIconsTab";
+import SchedulingCapacitySettingsTab from "../settings/SchedulingCapacitySettingsTab";
 import RoleLayoutPage from "./RoleLayoutPage";
 
 // ── Subscription Management Tab ────────────────────────────────────────────
@@ -352,6 +353,7 @@ const SETTINGS_CARD_PERMISSIONS = {
   team: ["User Management"],
   permissions: ["Permissions Management"],
   "room-cleaning": ["Checklist Templates"],
+  "scheduling-capacity": ["Checklist Templates"],
   "roll-call": ["Checklist Templates"],
   "emergency-contacts": ["Checklist Templates"],
   "role-layout": ["Checklist Templates"],
@@ -405,6 +407,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
+        { id: "scheduling-capacity", label: "Scheduling Capacity", desc: "Set play-yard and Gingr icon-derived capacity caps for the demand matrix" },
         { id: "roll-call", label: "Operational Area Order", desc: "Canonical area order for roll call, feeding, and medication workflows" },
         { id: "emergency-contacts", label: "Emergency Contacts", desc: "Configure repeat-verification thresholds for emergency contact prompts" },
         { id: "role-layout", label: "Role Layout", desc: "Matrix view: configure tasks and workflows across PCT, CSR, and MOD for all time-of-day sections" },
@@ -502,6 +505,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
         return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "room-cleaning":
         return <RoomCleaningSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
+      case "scheduling-capacity":
+        return <SchedulingCapacitySettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "roll-call":
       case "operational-area-order":
         return <OperationalAreaOrderSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
