@@ -5,6 +5,7 @@ const LEGACY_SCHEDULING_JOBS = [
   "compute-scheduling-matrix-cherry-hill-next-week",
   "compute-scheduling-matrix-cherry-hill-two-weeks",
   "compute-scheduling-matrix-cherry-hill-three-weeks",
+  "compute-scheduling-matrix-cherry-hill-current-week",
   "compute-scheduling-matrix-cherry-hill-week-1",
   "compute-scheduling-matrix-cherry-hill-week-2",
   "compute-scheduling-matrix-cherry-hill-week-3",
