@@ -2,11 +2,11 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "f4e8229bca57a5734590721e0800bc30e066e7ed",
+      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Cherry Hill QA 23 scheduling horizon and projection freshness",
-      "updatedAt": "2026-05-11T16:28:08.361Z"
+      "note": "dynamic GINGR workflow configuration rollout",
+      "updatedAt": "2026-05-18T12:15:11.691Z"
     },
     "compute-scheduling-matrix": {
       "commit": "1780ab5d8ffe0bd2b867271e9451d980781fc1d7",
@@ -16,18 +16,18 @@
       "updatedAt": "2026-05-17T01:31:32.649Z"
     },
     "ops-compute": {
-      "commit": "90e05d1bd80c70d025fd9c9e6230f660be577df7",
+      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "centralized feeding and medication reports production main",
-      "updatedAt": "2026-05-17T15:48:41.386Z"
+      "note": "dynamic GINGR workflow configuration rollout",
+      "updatedAt": "2026-05-18T12:15:11.691Z"
     },
     "ops-compute-ondemand": {
-      "commit": "90e05d1bd80c70d025fd9c9e6230f660be577df7",
+      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "centralized feeding and medication reports production main",
-      "updatedAt": "2026-05-17T15:48:41.386Z"
+      "note": "dynamic GINGR workflow configuration rollout",
+      "updatedAt": "2026-05-18T12:15:11.691Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
