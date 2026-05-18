@@ -102,6 +102,29 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function summarizeChunkHydration(results: any[], modeWhenSkipped: string) {
+  if (!results.length) {
+    return { hydrated: 0, skipped: true, mode: modeWhenSkipped, chunks: [] };
+  }
+  return {
+    hydrated: results.reduce((sum, result) => sum + Number(result?.hydrated || 0), 0),
+    skipped: results.every((result) => result?.skipped),
+    chunks: results,
+  };
+}
+
+function summarizeChunkIconSync(results: any[], modeWhenSkipped: string) {
+  if (!results.length) {
+    return { synced: 0, animals: 0, skipped: true, mode: modeWhenSkipped, chunks: [] };
+  }
+  return {
+    synced: results.reduce((sum, result) => sum + Number(result?.synced || 0), 0),
+    animals: results.reduce((sum, result) => sum + Number(result?.animals || 0), 0),
+    skipped: results.every((result) => result?.skipped),
+    chunks: results,
+  };
+}
+
 async function gingrFetch(
   subdomain: string,
   endpoint: string,
@@ -472,46 +495,53 @@ Deno.serve(async (req: Request) => {
     }
     const gingrConfig = await getGingrConfigForLocation(serviceClient, locationId);
 
-    const reservationHydration = shouldLiveHydrate
-      ? await hydrateSchedulingReservationsFromGingr(
-        serviceClient,
-        locationId,
-        gingrConfig,
-        dateFrom,
-        dateTo,
-      )
-      : { hydrated: 0, skipped: true, mode: "synced_reservations_only" };
-
-    const widgetHydration = await hydrateSchedulingWidgetSourceFromGingr(
-      serviceClient,
-      locationId,
-      gingrConfig,
-      dateFrom,
-      dateTo,
-    );
-
-    // Icon refreshes are expensive and are handled by gingr-sync. Keep this
-    // compute path focused on reservation/widget hydration plus matrix upserts.
-    const iconSync = shouldLiveHydrate && iconSyncRequested
-      ? await syncSchedulingIconsForRange(
-        serviceClient,
-        locationId,
-        gingrConfig,
-        dateFrom,
-        dateTo,
-      )
-      : {
-        synced: 0,
-        animals: 0,
-        skipped: true,
-        mode: shouldLiveHydrate ? "gingr_sync_owned" : "synced_icons_only",
-      };
-
     let rowsUpserted = 0;
     const chunkFailures: Array<{ from: string; to: string; error: string }> = [];
+    const reservationHydrationChunks: any[] = [];
+    const widgetHydrationChunks: any[] = [];
+    const iconSyncChunks: any[] = [];
     const chunks = chunkDateRange(dateFrom, dateTo);
     for (const chunk of chunks) {
       try {
+        const chunkLiveHydrate = chunk.from <= liveHydrationThrough;
+        const reservationHydration = chunkLiveHydrate
+          ? await hydrateSchedulingReservationsFromGingr(
+            serviceClient,
+            locationId,
+            gingrConfig,
+            chunk.from,
+            chunk.to,
+          )
+          : { hydrated: 0, skipped: true, mode: "synced_reservations_only" };
+        reservationHydrationChunks.push({ from: chunk.from, to: chunk.to, ...reservationHydration });
+
+        const widgetHydration = await hydrateSchedulingWidgetSourceFromGingr(
+          serviceClient,
+          locationId,
+          gingrConfig,
+          chunk.from,
+          chunk.to,
+        );
+        widgetHydrationChunks.push({ from: chunk.from, to: chunk.to, ...widgetHydration });
+
+        // Icon refreshes are expensive and are handled by gingr-sync. Keep this
+        // compute path focused on reservation/widget hydration plus matrix upserts.
+        const iconSync = chunkLiveHydrate && iconSyncRequested
+          ? await syncSchedulingIconsForRange(
+            serviceClient,
+            locationId,
+            gingrConfig,
+            chunk.from,
+            chunk.to,
+          )
+          : {
+            synced: 0,
+            animals: 0,
+            skipped: true,
+            mode: chunkLiveHydrate ? "gingr_sync_owned" : "synced_icons_only",
+          };
+        iconSyncChunks.push({ from: chunk.from, to: chunk.to, ...iconSync });
+
         // Keep each Edge worker invocation bounded. The caller may request a
         // week/range projection scope, but the shared compute path builds
         // multi-year comparison and booking-curve context for every date in
@@ -551,9 +581,9 @@ Deno.serve(async (req: Request) => {
       rows_upserted: rowsUpserted,
       chunks_processed: chunks.length,
       chunk_failures: chunkFailures,
-      reservation_hydration: reservationHydration,
-      widget_hydration: widgetHydration,
-      icon_sync: iconSync,
+      reservation_hydration: summarizeChunkHydration(reservationHydrationChunks, shouldLiveHydrate ? "gingr_hydration" : "synced_reservations_only"),
+      widget_hydration: summarizeChunkHydration(widgetHydrationChunks, "synced_widget_source_only"),
+      icon_sync: summarizeChunkIconSync(iconSyncChunks, shouldLiveHydrate ? "gingr_sync_owned" : "synced_icons_only"),
       source: "canonical_supabase",
     }, responseStatus);
   } catch (error: any) {
