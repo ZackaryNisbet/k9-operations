@@ -136,6 +136,28 @@ describe('playgroupAssignments', () => {
     ]);
   });
 
+  it('does not derive playgroups from reused template ids with different identities', () => {
+    const rows = derivePlaygroupAssignmentsFromIcons([
+      {
+        animal_gingr_id: '579',
+        icon_template_id: '13',
+        icon_identity_key: '13::special::immunizations',
+        icon_title: 'Immunizations',
+        icon_group: 'Special',
+      },
+    ], [
+      {
+        capability_key: 'play.private_play',
+        icon_template_id: '13',
+        icon_identity_key: '13::play::private play',
+        icon_group: 'Play',
+        is_active: true,
+      },
+    ]);
+
+    expect(rows).toEqual([]);
+  });
+
   it('labels large and small icons as Both Daycares for TV display', () => {
     const map = buildPlaygroupAssignmentMap(derivePlaygroupAssignmentsFromIcons([
       { animal_gingr_id: '135', icon_identity_key: 'large-play', icon_title: 'Large Dog Playgroup', icon_group: 'Play' },
