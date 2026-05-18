@@ -3124,17 +3124,18 @@ Deno.serve(async (req: Request) => {
 
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
-    const futureReports: Array<{
+    const futureSummaries: Array<{
       date: string;
-      roomOccupancy: any;
+      room_occupancy: any;
       bathing: any;
-      privatePlay: any;
+      private_play: any;
       pamper: any;
       enrichment: any;
       belongings: any;
       collars: any;
-      careReports: any;
+      care_reports: any;
     }> = [];
+    const futureUpsertErrors: string[] = [];
 
     for (let offset = 1; offset <= 14; offset++) {
       const futureDate = addDays(today, offset);
@@ -3249,16 +3250,37 @@ Deno.serve(async (req: Request) => {
         futureRoomOccupancyLookup,
       );
 
-      futureReports.push({
+      const futureRoomOccupancyComputed = buildRoomOccupancyComputedItems(futureRoomOccupancySnapshot);
+      const futureUpserts = [
+        upsertComputedItems(supabase, `ops_room_occupancy_${futureDate}`, locationId, "room_occupancy", "room_occupancy", futureDate, futureRoomOccupancyComputed),
+        upsertComputedItems(supabase, `ops_bathing_${futureDate}`, locationId, "bathing", "bathing", futureDate, bathingFuture),
+        upsertComputedItems(supabase, `ops_pp_${futureDate}`, locationId, "pp", "pp", futureDate, privatePlayFuture),
+        upsertComputedItems(supabase, `ops_pamper_${futureDate}`, locationId, "pamper", "pamper", futureDate, pamperFuture),
+        upsertComputedItems(supabase, `ops_svc_${futureDate}`, locationId, "svc", "svc", futureDate, enrichmentFuture),
+        upsertComputedItems(supabase, `ops_belongings_${futureDate}`, locationId, "belongings", "belongings", futureDate, belongingsFuture),
+        upsertComputedItems(supabase, `ops_collars_${futureDate}`, locationId, "collars", "collars", futureDate, collarsFuture),
+        ...careReportsFuture.entries.map((entry: any) =>
+          upsertComputedItems(supabase, entry.id, locationId, entry.type, entry.typeSub, entry.date, entry.computedItems)
+        ),
+      ];
+      const futureResults = await Promise.allSettled(futureUpserts);
+      futureUpsertErrors.push(
+        ...futureResults
+          .filter((r) => r.status === "rejected")
+          .map((r) => (r as PromiseRejectedResult).reason?.message || "unknown"),
+      );
+      futureSummaries.push({
         date: futureDate,
-        roomOccupancy: buildRoomOccupancyComputedItems(futureRoomOccupancySnapshot),
-        bathing: bathingFuture,
-        privatePlay: privatePlayFuture,
-        pamper: pamperFuture,
-        enrichment: enrichmentFuture,
-        belongings: belongingsFuture,
-        collars: collarsFuture,
-        careReports: careReportsFuture,
+        room_occupancy: futureRoomOccupancyComputed.summary,
+        bathing: { dogs: bathingFuture.dogs.length },
+        private_play: privatePlayFuture.summary,
+        pamper: { dogs: pamperFuture.dogs.length },
+        enrichment: { dogs: enrichmentFuture.dogs.length },
+        belongings: { dogs: belongingsFuture.dogs.length },
+        collars: { dogs: collarsFuture.dogs.length, summary: collarsFuture.summary },
+        care_reports: Object.fromEntries(
+          Object.entries(careReportsFuture.byKey).map(([key, value]: [string, any]) => [key, value?.summary || {}]),
+        ),
       });
     }
 
@@ -3416,26 +3438,16 @@ Deno.serve(async (req: Request) => {
         "closing",
         { createIfMissing: true, forceRefresh: true },
       ),
-      // ─── Future days upserts (14 days) ────────────────────────────
-      ...futureReports.flatMap(fr => [
-        upsertComputedItems(supabase, `ops_room_occupancy_${fr.date}`, locationId, "room_occupancy", "room_occupancy", fr.date, fr.roomOccupancy),
-        upsertComputedItems(supabase, `ops_bathing_${fr.date}`, locationId, "bathing", "bathing", fr.date, fr.bathing),
-        upsertComputedItems(supabase, `ops_pp_${fr.date}`, locationId, "pp", "pp", fr.date, fr.privatePlay),
-        upsertComputedItems(supabase, `ops_pamper_${fr.date}`, locationId, "pamper", "pamper", fr.date, fr.pamper),
-        upsertComputedItems(supabase, `ops_svc_${fr.date}`, locationId, "svc", "svc", fr.date, fr.enrichment),
-        upsertComputedItems(supabase, `ops_belongings_${fr.date}`, locationId, "belongings", "belongings", fr.date, fr.belongings),
-        upsertComputedItems(supabase, `ops_collars_${fr.date}`, locationId, "collars", "collars", fr.date, fr.collars),
-        ...fr.careReports.entries.map((entry: any) =>
-          upsertComputedItems(supabase, entry.id, locationId, entry.type, entry.typeSub, entry.date, entry.computedItems)
-        ),
-      ]),
     ];
 
     const results = await Promise.allSettled(upserts);
 
-    const errors = results
-      .filter((r) => r.status === "rejected")
-      .map((r) => (r as PromiseRejectedResult).reason?.message || "unknown");
+    const errors = [
+      ...futureUpsertErrors,
+      ...results
+        .filter((r) => r.status === "rejected")
+        .map((r) => (r as PromiseRejectedResult).reason?.message || "unknown"),
+    ];
 
     const duration = Date.now() - startTime;
 
@@ -3464,19 +3476,7 @@ Deno.serve(async (req: Request) => {
             Object.entries(careReports.byKey).map(([key, value]: [string, any]) => [key, value?.summary || {}]),
           ),
         },
-        computed_future: futureReports.map(fr => ({
-          date: fr.date,
-          room_occupancy: fr.roomOccupancy.summary,
-          bathing: { dogs: fr.bathing.dogs.length },
-          private_play: fr.privatePlay.summary,
-          pamper: { dogs: fr.pamper.dogs.length },
-          enrichment: { dogs: fr.enrichment.dogs.length },
-          belongings: { dogs: fr.belongings.dogs.length },
-          collars: { dogs: fr.collars.dogs.length, summary: fr.collars.summary },
-          care_reports: Object.fromEntries(
-            Object.entries(fr.careReports.byKey).map(([key, value]: [string, any]) => [key, value?.summary || {}]),
-          ),
-        })),
+        computed_future: futureSummaries,
         errors: errors.length > 0 ? errors : undefined,
       }),
       {
