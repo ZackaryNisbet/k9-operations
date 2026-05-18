@@ -1268,7 +1268,7 @@ function DashboardContent({
   const pm = prevMetrics || {};
   const showSkeleton = !metrics && metricsLoading;
 
-  /* ─── GINGR LIVE CACHE — background 60s poll, shared by accrual + receipt ─── */
+  /* ─── Gingr LIVE CACHE — background 60s poll, shared by accrual + receipt ─── */
   const { liveRows: gingrLiveRows } = useGingrLiveCache(locationId);
 
   /* ─── CASH BASIS LIVE — 60s poll for today's cash revenue from Gingr API ─── */
@@ -1606,7 +1606,7 @@ function DashboardContent({
 
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
 
-      // Compatibility hook for older live rows. Browser GINGR reads are disabled;
+      // Compatibility hook for older live rows. Browser Gingr reads are disabled;
       // same-day freshness comes from the server sync pipeline.
       const todayD = new Date().toISOString().split("T")[0];
       let rawRes = supabaseRes;

@@ -157,7 +157,7 @@ const LEAN_PERMISSION_CATEGORIES = [
   { key: "settings", label: "Settings & Admin", permissions: [
     { key: "User Management", label: "User Management", desc: "Manage team members and invites" },
     { key: "Permissions Management", label: "Permissions", desc: "View and edit role permissions" },
-    { key: "Gingr Integration", label: "GINGR Integration", desc: "Configure GINGR API connection and operational mappings" },
+    { key: "Gingr Integration", label: "Gingr Integration", desc: "Configure Gingr API connection and operational mappings" },
     { key: "Enterprise View", label: "Enterprise View", desc: "Access cross-location enterprise dashboards" },
   ]},
 ];

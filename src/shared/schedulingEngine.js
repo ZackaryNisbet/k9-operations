@@ -358,7 +358,7 @@ export function getMatrixTrust(matrix) {
   if (matrix.detail_json?.trust) {
     const trust = matrix.detail_json.trust;
     const sourceMissing = requiresGingrSourceCounts(matrix) && !hasGingrSourceCounts(matrix);
-    const sourceBlocker = "GINGR Calendar Details source totals are missing for this date.";
+    const sourceBlocker = "Gingr Calendar Details source totals are missing for this date.";
     const rawBlockers = Array.isArray(trust.blockers) ? trust.blockers : [];
     const rawBlockerDetails = Array.isArray(trust.blocker_details) ? trust.blocker_details : [];
     const blockingLabels = rawBlockers.filter((label) => !isKnownDemandLimitationLabel(label));

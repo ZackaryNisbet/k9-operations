@@ -36,7 +36,7 @@ const REPORT_CHECKS = [
     key: "room_occupancy",
     idPrefix: "ops_room_occupancy",
     label: "Room Occupancy",
-    description: "Canonical lodging-room occupancy output generated from today's GINGR reservations and room assignments.",
+    description: "Canonical lodging-room occupancy output generated from today's Gingr reservations and room assignments.",
     usedFor: ["Room Occupancy", "Facility status"],
     warnMinutes: 5,
     failMinutes: 10,
@@ -57,7 +57,7 @@ const CRON_CHECKS = [
   },
   {
     jobname: "gingr-presence-sync",
-    label: "GINGR Presence Worker",
+    label: "Gingr Presence Worker",
     functionName: "gingr-sync",
     syncType: "presence-worker",
     cadenceMinutes: 1,
@@ -69,24 +69,24 @@ const CRON_CHECKS = [
   },
   {
     jobname: "gingr-today-sync",
-    label: "GINGR Today Sync",
+    label: "Gingr Today Sync",
     functionName: "gingr-sync",
     syncType: "today-sync",
     cadenceMinutes: 5,
     failMinutes: 12,
     criticality: "critical",
-    description: "Pulls today's GINGR reservations, animals, owners, services, and room context needed by the daily reports.",
+    description: "Pulls today's Gingr reservations, animals, owners, services, and room context needed by the daily reports.",
     usedFor: ["Today reservations", "Bathing Report", "Room Cleaning + Setups", "Room Occupancy"],
     affects: ["Today reservations", "Runs", "Occupancy"],
   },
   {
     jobname: "gingr-today-notes-refresh",
-    label: "GINGR Notes Refresh",
+    label: "Gingr Notes Refresh",
     functionName: "gingr-today-notes",
     cadenceMinutes: 5,
     failMinutes: 12,
     criticality: "warning",
-    description: "Refreshes same-day GINGR notes so checkout and care-note surfaces show current notes.",
+    description: "Refreshes same-day Gingr notes so checkout and care-note surfaces show current notes.",
     usedFor: ["Checkout notes", "Daily notes visibility"],
     affects: ["Checkout notes"],
   },
@@ -103,13 +103,13 @@ const CRON_CHECKS = [
   },
   {
     jobname: "gingr-incremental-sync",
-    label: "GINGR Incremental Sync",
+    label: "Gingr Incremental Sync",
     functionName: "gingr-sync",
     syncType: "incremental",
     cadenceMinutes: 15,
     failMinutes: 45,
     criticality: "warning",
-    description: "Backfills changed GINGR source records outside the live same-day polling path.",
+    description: "Backfills changed Gingr source records outside the live same-day polling path.",
     usedFor: ["Source-data backfill", "Historical correction", "Drift recovery"],
     affects: ["Source data backfill"],
   },
@@ -978,10 +978,10 @@ function buildHealthFactors({
     },
     {
       key: "source_sync_state",
-      label: "GINGR Source Sync State",
+      label: "Gingr Source Sync State",
       status: sourceSyncStatus,
       summary: erroredSync.length ? `${erroredSync.length} sync errors` : "No critical source sync errors",
-      description: "Checks GINGR sync-state rows that feed same-day reservations, services, notes, and operational reports.",
+      description: "Checks Gingr sync-state rows that feed same-day reservations, services, notes, and operational reports.",
       healthy_criteria: "Required sync entities are not in error and have a recent last_sync_at timestamp.",
     },
     {
@@ -1247,7 +1247,7 @@ Deno.serve(async (req: Request) => {
         last_success_at: presenceHealth.latest_run?.completed_at || null,
         age_minutes: presenceHealth.latest_completed_age_seconds == null ? null : Math.round(presenceHealth.latest_completed_age_seconds / 60),
         message: `Facility presence is ${presenceHealth.status}: ${presenceHealth.message}`,
-        action: "Verify the GINGR Presence Worker cron, the sync lock state, and the latest facility_presence_sync_runs rows before trusting live dog counts.",
+        action: "Verify the Gingr Presence Worker cron, the sync lock state, and the latest facility_presence_sync_runs rows before trusting live dog counts.",
       });
     }
     for (const row of syncState) {
@@ -1257,7 +1257,7 @@ Deno.serve(async (req: Request) => {
           kind: "sync_state",
           label: row.entity_type,
           key: row.entity_type,
-          affects: SYNC_ENTITY_AFFECTS[row.entity_type] || ["GINGR-backed reports"],
+          affects: SYNC_ENTITY_AFFECTS[row.entity_type] || ["Gingr-backed reports"],
           last_run_at: row.last_sync_at || null,
           age_minutes: row.age_minutes ?? null,
           message: `${row.entity_type} sync is in error: ${row.error_message || "No error text returned."}`,
@@ -1306,7 +1306,7 @@ Deno.serve(async (req: Request) => {
         key: "roll_call_matrix_counts",
         affects: ["Opening Roll Call", "Closing Roll Call", "Scheduling matrix"],
         message: countReconciliation.summary || "Roll-call and scheduling-matrix counts could not be reconciled.",
-        action: "Audit GINGR reservation check-in/check-out state, room assignment coverage, and recompute roll call plus scheduling matrix before trusting staffing counts.",
+        action: "Audit Gingr reservation check-in/check-out state, room assignment coverage, and recompute roll call plus scheduling matrix before trusting staffing counts.",
       });
     }
 
@@ -1327,14 +1327,14 @@ Deno.serve(async (req: Request) => {
       alerts.push({
         severity: "warning",
         kind: "report_freshness",
-        label: "GINGR Notes",
+        label: "Gingr Notes",
         key: "gingr_notes_today",
         report_id: freshness.gingr_notes_today.id,
         affects: ["Checkout notes"],
         age_minutes: freshness.gingr_notes_today.age_minutes,
         computed_at: freshness.gingr_notes_today.computed_at,
         updated_at: freshness.gingr_notes_today.updated_at,
-        message: `Today's GINGR notes have not refreshed recently for ${date}.`,
+        message: `Today's Gingr notes have not refreshed recently for ${date}.`,
         action: "Checkout notes may be stale until the notes refresh succeeds.",
       });
     }

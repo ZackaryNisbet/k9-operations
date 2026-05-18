@@ -72,7 +72,7 @@ function assertBaseWorkflowConfig(
   }
   if (missing.length > 0) {
     throw new Error(
-      `GINGR workflow configuration incomplete for location ${locationId}: ${missing.join(", ")}. Run reference sync and complete Gingr Icons workflow mappings before computing operational reports.`,
+      `Gingr workflow configuration incomplete for location ${locationId}: ${missing.join(", ")}. Run reference sync and complete Gingr Icons workflow mappings before computing operational reports.`,
     );
   }
 }
@@ -117,7 +117,7 @@ async function assertActiveReservationTypesConfigured({
     const labels = [...missing.values()].slice(0, 12).join(", ");
     const extra = missing.size > 12 ? `, plus ${missing.size - 12} more` : "";
     throw new Error(
-      `GINGR workflow configuration incomplete for location ${locationId}: unmapped active reservation types through ${windowEnd}: ${labels}${extra}. Complete reservation category mappings before computing dependent reports.`,
+      `Gingr workflow configuration incomplete for location ${locationId}: unmapped active reservation types through ${windowEnd}: ${labels}${extra}. Complete reservation category mappings before computing dependent reports.`,
     );
   }
 }
@@ -491,6 +491,50 @@ function isConfiguredBoardingReservation(
   source: any,
 ): boolean {
   return getReservationCategoryFromConfig(workflowConfig, source) === "boarding";
+}
+
+function workflowIconMatchesMapping(mapping: any, icon: GingrAnimalIconRow): boolean {
+  const sourceIdentity = String(mapping?.source_identity_key || "").trim();
+  const sourceId = String(mapping?.source_id || "").trim();
+  const iconIdentity = String(icon?.icon_identity_key || "").trim();
+  const iconTemplateId = String(icon?.icon_template_id || "").trim();
+  const iconTitleKey = String(icon?.icon_title || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const possibleKeys = new Set([
+    iconIdentity,
+    iconIdentity ? `icon:${iconIdentity}` : "",
+    iconTemplateId,
+    iconTemplateId ? `icon:${iconTemplateId}` : "",
+    iconTitleKey ? `icon_name:${iconTitleKey}` : "",
+  ].filter(Boolean));
+
+  if (sourceIdentity && possibleKeys.has(sourceIdentity)) return true;
+  if (sourceId && (sourceId === iconTemplateId || sourceId === iconIdentity)) return true;
+  return false;
+}
+
+function getWorkflowDisplayIcons(
+  workflowConfig: GingrWorkflowConfig | null,
+  workflowKey: string,
+  iconRows: GingrAnimalIconRow[],
+): Array<{ label: string; note: string; group: string }> {
+  const selectedMappings = (workflowConfig?.mappings || []).filter((mapping) =>
+    String(mapping.workflow_key || "").trim() === workflowKey
+    && String(mapping.source_type || "").trim() === "icon"
+    && String(mapping.capability_key || "").trim() === `${workflowKey}.display_icon`
+    && mapping.is_active !== false
+  );
+  if (selectedMappings.length === 0 || iconRows.length === 0) return [];
+
+  const byKey = new Map<string, { label: string; note: string; group: string }>();
+  for (const icon of iconRows) {
+    if (!selectedMappings.some((mapping) => workflowIconMatchesMapping(mapping, icon))) continue;
+    const label = String(icon.icon_title || "").trim();
+    if (!label) continue;
+    const note = String(icon.icon_comment || "").trim();
+    const group = String(icon.icon_group || "").trim();
+    byKey.set(`${label}|${note}|${group}`, { label, note, group });
+  }
+  return [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 // ─── Average checkout time helpers ───────────────────────────────────────
@@ -1126,7 +1170,8 @@ async function computeBathingReport(
   // ─── Build final dog objects ───────────────────────────────────────────
   function buildDogOutput(d: any): any {
     const icons = iconMap[d.animalGingrId] || [];
-    const iconComments = icons.map(i => i.icon_comment).filter(Boolean);
+    const displayIcons = getWorkflowDisplayIcons(workflowConfig || null, "bathing", icons);
+    const displayIconNotes = displayIcons.map((icon) => icon.note).filter(Boolean);
     const normalizedBath = resolveBathDisplayFromIconRows({
       iconRows: icons,
       mappings: iconMappings,
@@ -1179,7 +1224,8 @@ async function computeBathingReport(
       bathType: normalizedBath.bathType,
       bathIcons: normalizedBath.bathIcons,
       bathModifiers: normalizedBath.bathModifiers,
-      bathNotes: iconComments.join(" | "),
+      displayIcons,
+      bathNotes: [...new Set(displayIconNotes)].join(" | "),
       reservationNotes: d.reservationNotes || "",
       serviceNotes: d.status === "manual" ? (d.manualNote || "") : "",
       weight,

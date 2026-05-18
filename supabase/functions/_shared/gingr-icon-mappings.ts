@@ -64,12 +64,12 @@ export const BATHING_ICON_CAPABILITIES = [
   "bathing.modifier.see_account_notes",
 ] as const;
 
-export const GINGR_ICON_CAPABILITIES = [
+export const gingrIconCapabilities = [
   ...PLAY_ICON_CAPABILITIES,
   ...BATHING_ICON_CAPABILITIES,
 ] as const;
 
-export const GINGR_ICON_CAPABILITY_META: Record<string, { label: string; group: string }> = {
+export const gingrIconCapabilityMeta: Record<string, { label: string; group: string }> = {
   "play.private_play": { label: "Private Play", group: "Play" },
   "play.large_daycare": { label: "Large Daycare", group: "Play" },
   "play.small_daycare": { label: "Small Daycare", group: "Play" },

@@ -370,7 +370,7 @@ function CareReportsPage({ kind = "feeding-report", initialSession = "am", initi
               opacity: refreshing || isLocked ? 0.6 : 1,
             }}
           >
-            {isLocked ? "Locked Snapshot" : refreshing ? "Refreshing..." : "Refresh from GINGR"}
+            {isLocked ? "Locked Snapshot" : refreshing ? "Refreshing..." : "Refresh from Gingr"}
           </button>
         </div>
 

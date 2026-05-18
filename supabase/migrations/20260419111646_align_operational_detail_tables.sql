@@ -1,5 +1,5 @@
 -- Align live operational detail tables with the DE-004 canonical parser shape.
--- The incremental GINGR sync inserts these columns from
+-- The incremental Gingr sync inserts these columns from
 -- supabase/functions/_shared/gingr-operational-details.ts.
 
 ALTER TABLE public.gingr_feeding_schedules

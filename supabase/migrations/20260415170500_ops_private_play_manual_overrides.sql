@@ -1,5 +1,5 @@
 -- Manual private play overrides.
--- Lets staff add or remove dogs from the private play report without mutating GINGR.
+-- Lets staff add or remove dogs from the private play report without mutating Gingr.
 
 create table if not exists public.ops_private_play_manual_overrides (
   id uuid primary key default gen_random_uuid(),
@@ -25,7 +25,7 @@ comment on table public.ops_private_play_manual_overrides is
 comment on column public.ops_private_play_manual_overrides.override_date is
   'The report date the override applies to.';
 comment on column public.ops_private_play_manual_overrides.gingr_reservation_id is
-  'GINGR reservation id for the dog being manually added to private play.';
+  'Gingr reservation id for the dog being manually added to private play.';
 comment on column public.ops_private_play_manual_overrides.room_label_override is
   'Optional room label supplied by staff when the reservation has no synced room assignment yet.';
 comment on column public.ops_private_play_manual_overrides.note is

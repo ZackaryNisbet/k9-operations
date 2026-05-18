@@ -1,5 +1,5 @@
 -- ============================================================================
--- Dynamic GINGR workflow configuration
+-- Dynamic Gingr workflow configuration
 --
 -- This migration adds the location-scoped configuration layer used to move
 -- operational reports off runtime Cherry Hill string matching. Legacy text

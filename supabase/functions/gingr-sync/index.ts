@@ -3415,7 +3415,7 @@ async function startReferenceSyncRun(
         current_entity: toSync[0] || null,
         current_label: syncEntityLabel(toSync[0] || ""),
         entity_progress: {},
-        last_message: `Starting ${mode === "initial_bootstrap" ? "initial GINGR sync" : "GINGR reference refresh"}`,
+        last_message: `Starting ${mode === "initial_bootstrap" ? "initial Gingr sync" : "Gingr reference refresh"}`,
         started_at: nowIso,
       })
       .select("id")
@@ -3526,7 +3526,7 @@ Deno.serve(async (req: Request) => {
     // ── Checkout TV playgroup assignments ────────────────────────────────
     // Reads the canonical assignment view with the service client. If the
     // synced icon rows are empty or incomplete for the requested dogs, refresh
-    // only those GINGR icon assignments, then read the canonical view again.
+    // only those Gingr icon assignments, then read the canonical view again.
     if (sync_type === "playgroup-assignments") {
       const startTime = Date.now();
       const animalIds = normalizeAnimalIds(animal_ids);
@@ -4126,8 +4126,8 @@ Deno.serve(async (req: Request) => {
       current_label: null,
       entity_progress: referenceProgress,
       last_message: referenceFailedUnits > 0
-        ? `GINGR sync finished with ${referenceFailedUnits} failed step${referenceFailedUnits === 1 ? "" : "s"}`
-        : "GINGR sync complete",
+        ? `Gingr sync finished with ${referenceFailedUnits} failed step${referenceFailedUnits === 1 ? "" : "s"}`
+        : "Gingr sync complete",
       completed_at: new Date().toISOString(),
     });
 

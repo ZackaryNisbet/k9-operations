@@ -3,7 +3,7 @@ BEGIN;
 -- ============================================================================
 -- Platform settings slice for finish-plan backend support
 -- - typed helpers over lite_settings for inventory cadence / incident routing
--- - lightweight placeholding tables for grassroots, resources, and Ginger notes
+-- - lightweight placeholding tables for grassroots, resources, and Gingr notes
 -- - intentionally no provider secret wiring
 -- ============================================================================
 
@@ -192,7 +192,7 @@ CREATE TRIGGER trg_resource_library_items_updated_at
   FOR EACH ROW EXECUTE FUNCTION public.update_platform_settings_updated_at();
 
 -- ────────────────────────────────────────────────────────────────────────────
--- Ginger note placeholders: near-real-time sync target for Today's Ginger Notes.
+-- Gingr note placeholders: near-real-time sync target for today's Gingr notes.
 -- Keep the contract thin so consumers can render without crashing if empty.
 -- ────────────────────────────────────────────────────────────────────────────
 

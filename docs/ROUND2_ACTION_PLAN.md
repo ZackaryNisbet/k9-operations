@@ -348,7 +348,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Supabase project ref: xuzvqcpthqikyroqhypw
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 8ea382b0-63f7-44ac-b6f8-83243c03d946
-- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED GINGR API KEY]
+- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
@@ -503,7 +503,7 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - Supabase project ref: xuzvqcpthqikyroqhypw
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 8ea382b0-63f7-44ac-b6f8-83243c03d946
-- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED GINGR API KEY]
+- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files

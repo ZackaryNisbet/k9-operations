@@ -5,8 +5,8 @@ export type GingrConfig = {
   apiKey: string;
 };
 
-const GINGR_ICON_BATCH_SIZE = 200;
-const GINGR_ICON_RETRY_DELAYS_MS = [250, 750, 1500];
+const gingrIconBatchSize = 200;
+const gingrIconRetryDelaysMs = [250, 750, 1500];
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,7 +59,7 @@ async function fetchLiveIconsForAnimalBatch(
 ) {
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt <= GINGR_ICON_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt <= gingrIconRetryDelaysMs.length; attempt += 1) {
     try {
       const params = new URLSearchParams();
       params.append("key", apiKey);
@@ -84,8 +84,8 @@ async function fetchLiveIconsForAnimalBatch(
       return result?.data?.animals || {};
     } catch (error: any) {
       lastError = error instanceof Error ? error : new Error(String(error || "Unknown get_icons error"));
-      if (attempt >= GINGR_ICON_RETRY_DELAYS_MS.length) break;
-      await sleep(GINGR_ICON_RETRY_DELAYS_MS[attempt]);
+      if (attempt >= gingrIconRetryDelaysMs.length) break;
+      await sleep(gingrIconRetryDelaysMs[attempt]);
     }
   }
 
@@ -121,8 +121,8 @@ export async function upsertAnimalIconsFromGingr({
   const seenAnimalIds = new Set<string>();
   const now = new Date().toISOString();
 
-  for (let i = 0; i < normalizedAnimalIds.length; i += GINGR_ICON_BATCH_SIZE) {
-    const batch = normalizedAnimalIds.slice(i, i + GINGR_ICON_BATCH_SIZE);
+  for (let i = 0; i < normalizedAnimalIds.length; i += gingrIconBatchSize) {
+    const batch = normalizedAnimalIds.slice(i, i + gingrIconBatchSize);
     const animalsData = await fetchLiveIconsForAnimalBatch(
       gingrConfig.subdomain,
       gingrConfig.apiKey,

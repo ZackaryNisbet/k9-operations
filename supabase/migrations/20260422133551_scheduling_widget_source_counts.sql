@@ -1,5 +1,5 @@
 -- ============================================================================
--- Scheduling GINGR widget source counts
+-- Scheduling Gingr widget source counts
 -- Stores the raw daily Calendar Details/widget totals used as the count
 -- authority for the scheduling demand matrix.
 -- ============================================================================
