@@ -140,13 +140,13 @@ describe("scheduling projection explanation copy", () => {
       "• Total opening boarding dogs: 41 current → 52 projected",
       "• Total departure baths: 14 current → 18 projected",
       "• Total closing boarding dogs: 28 current → 35 projected",
-      "• Total daycare dogs: 16 current → 20 projected",
+      "• Total daytime dogs: 16 current → 20 projected",
       "",
       "Tuesday, 5/12",
       "• Total opening boarding dogs: 28 current → 42 projected",
       "• Total departure baths: 5 current → 8 projected",
       "• Total closing boarding dogs: 33 current → 50 projected",
-      "• Total daycare dogs: 16 current → 24 projected",
+      "• Total daytime dogs: 16 current → 24 projected",
     ].join("\n"));
   });
 
@@ -227,7 +227,7 @@ describe("scheduling projection explanation copy", () => {
     expect(withLegacyHistoricalTotal).toMatchObject({ hasValue: true, value: 76 });
     expect(withoutHistory).toMatchObject({
       hasValue: false,
-      unavailableLabel: "No history",
+      unavailableLabel: "Not populated",
     });
   });
 

@@ -33,6 +33,7 @@ type ReservationRow = {
   created_date?: string | null;
   confirmed_date?: string | null;
   created_at?: string | null;
+  raw_data?: any | null;
   services?: any[] | null;
 };
 
@@ -75,7 +76,7 @@ type GingrWidgetSourceCounts = {
 };
 
 const ANIMAL_HISTORY_BATCH_SIZE = 200;
-const PROJECTION_MODEL_VERSION = "booking_curve_v2_dow_yoy_capacity";
+const PROJECTION_MODEL_VERSION = "booking_curve_v3_default_volume_multiyear_history";
 const PROJECTION_CALIBRATION_LOOKBACK_DAYS = 28;
 const PROJECTION_CALIBRATION_MIN_SAMPLES = 3;
 const PROJECTION_YOY_ADJUSTMENT_MIN = 0.75;
@@ -95,6 +96,7 @@ const OPENING_BOARDING_DISPLAY_KEYS = [
   "unclassified_boarding",
 ];
 const CLOSING_BOARDING_DISPLAY_KEYS = [...OPENING_BOARDING_DISPLAY_KEYS];
+const DEPARTING_BOARDING_DISPLAY_KEYS = [...OPENING_BOARDING_DISPLAY_KEYS];
 const DAYCARE_DISPLAY_KEYS = [
   "evaluations",
   "private_play_dayboarding",
@@ -103,6 +105,7 @@ const DAYCARE_DISPLAY_KEYS = [
   "small_daycare",
   "unclassified_daycare",
 ];
+const HISTORICAL_COMPARISON_MAX_YEAR_OFFSET = 10;
 
 function getDateKey(value?: string | null): string {
   return String(value || "").slice(0, 10);
@@ -419,7 +422,10 @@ function buildDateOverlapOrFilter(dateKeys: string[]) {
   const uniqueDates = [...new Set((dateKeys || []).filter(Boolean))].sort();
   if (!uniqueDates.length) return null;
   return uniqueDates
-    .map((dateKey) => `and(start_date.lt.${addDaysStr(dateKey, 1)}T00:00:00,end_date.gte.${dateKey}T00:00:00)`)
+    .flatMap((dateKey) => [
+      `and(start_date.lt.${addDaysStr(dateKey, 1)}T00:00:00,end_date.gte.${dateKey}T00:00:00)`,
+      `and(check_out_date.gte.${dateKey}T00:00:00,check_out_date.lt.${addDaysStr(dateKey, 1)}T00:00:00)`,
+    ])
     .join(",");
 }
 
@@ -460,9 +466,11 @@ function buildDateRangeOverlapQuery(
   dateTo: string | null,
 ) {
   if (!dateFrom || !dateTo) return query;
-  return query
-    .lt("start_date", `${addDaysStr(dateTo, 1)}T00:00:00`)
-    .gte("end_date", `${dateFrom}T00:00:00`);
+  const nextDate = addDaysStr(dateTo, 1);
+  return query.or([
+    `and(start_date.lt.${nextDate}T00:00:00,end_date.gte.${dateFrom}T00:00:00)`,
+    `and(check_out_date.gte.${dateFrom}T00:00:00,check_out_date.lt.${nextDate}T00:00:00)`,
+  ].join(","));
 }
 
 function normalizePositiveNumber(value: unknown): number | null {
@@ -665,6 +673,7 @@ function recomputeCapacityConstrainedDisplay(display: any) {
   display.support.morning_feeding_dogs = display.opening.total_boarding;
   display.support.evening_feeding_dogs = display.closing.total_boarding;
   display.support.total_dog_volume = display.closing.total_boarding + display.daycare.total_daycare;
+  display.support.total_daily_dog_volume = display.support.total_dog_volume + Number(display.departing?.total_boarding || 0);
   display.play_yard.large_play_dogs = Math.max(display.opening.large_boarding || 0, display.closing.large_boarding || 0) + Number(display.daycare.large_daycare || 0);
   display.play_yard.small_play_dogs = Math.max(display.opening.small_boarding || 0, display.closing.small_boarding || 0) + Number(display.daycare.small_daycare || 0);
   display.play_yard.private_play_dogs = Math.max(display.opening.private_play_boarding || 0, display.closing.private_play_boarding || 0) + Number(display.daycare.private_play_dayboarding || 0);
@@ -735,6 +744,7 @@ function buildCapacityConstrainedDisplay(demandDisplay: any, capacityEnvelope: a
     display.support.morning_feeding_dogs = display.opening.total_boarding;
     display.support.evening_feeding_dogs = display.closing.total_boarding;
     display.support.total_dog_volume = display.closing.total_boarding + display.daycare.total_daycare;
+    display.support.total_daily_dog_volume = display.support.total_dog_volume + Number(display.departing?.total_boarding || 0);
   }
 
   changed = reduceDaycarePlayDemand(display, "large_daycare", largePlayCapacity) || changed;
@@ -1059,9 +1069,19 @@ function isCheckedOutByDate(row: { check_out_date?: string | null }, targetDate:
   return !!checkedOutKey && checkedOutKey <= targetDate;
 }
 
+function isCheckedOutOnDate(row: { check_out_date?: string | null }, targetDate: string): boolean {
+  return getDateKey(row.check_out_date) === targetDate;
+}
+
 function wasCheckedInBeforeDate(row: { check_in_date?: string | null }, targetDate: string): boolean {
   const checkedInKey = getDateKey(row.check_in_date);
   return !!checkedInKey && checkedInKey < targetDate;
+}
+
+function isBoardingDepartureForDate(row: { cls?: string; endKey?: string | null; check_out_date?: string | null }, targetDate: string): boolean {
+  if (row.cls !== "boarding") return false;
+  if (isCheckedOutOnDate(row, targetDate)) return true;
+  return row.endKey === targetDate && !isCheckedOutBeforeDate(row, targetDate);
 }
 
 export function buildReservationRecord(
@@ -1069,20 +1089,34 @@ export function buildReservationRecord(
   resTypeMaps: { byName: Map<string, ReservationTypeRow>; byId: Map<string, ReservationTypeRow> },
   playgroupMap: Map<string, PlaygroupAssignment>,
 ) {
-  const services = Array.isArray(row.services) ? row.services : [];
-  const typeName = String(row.reservation_type_name || "");
-  const typeId = String(row.reservation_type_id || "");
+  const rawData = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {};
+  const rawServices = Array.isArray(rawData.services) ? rawData.services : [];
+  const topServices = Array.isArray(row.services) ? row.services : [];
+  const services = [...rawServices, ...topServices];
+  const rawReservationType = rawData.reservation_type && typeof rawData.reservation_type === "object"
+    ? rawData.reservation_type
+    : {};
+  const typeName = String(row.reservation_type_name || rawReservationType.type || "");
+  const typeId = String(row.reservation_type_id || rawReservationType.id || "");
   const typeRow = resTypeMaps.byId.get(typeId) || resTypeMaps.byName.get(typeName) || null;
   const cls = classifySchedulingReservationType(typeName, typeRow);
-  const startKey = getDateKey(row.start_date);
-  const endKey = getDateKey(row.end_date);
-  const animalId = String(row.animal_gingr_id || "");
+  const startDate = row.start_date || rawData.start_date || null;
+  const endDate = row.end_date || rawData.end_date || null;
+  const checkInDate = row.check_in_date || rawData.check_in_date || null;
+  const checkOutDate = row.check_out_date || rawData.check_out_date || null;
+  const startKey = getDateKey(startDate);
+  const endKey = getDateKey(endDate);
+  const animalId = String(row.animal_gingr_id || rawData.animal?.id || "");
   const playgroupAssignment = playgroupMap.get(animalId) || null;
   const playgroup = normalizePlaygroup(playgroupAssignment?.schedulingPlaygroup);
   const bookedDateKey = getBookedDateKey(row);
 
   return {
     ...row,
+    start_date: startDate,
+    end_date: endDate,
+    check_in_date: checkInDate,
+    check_out_date: checkOutDate,
     services,
     cls,
     typeId,
@@ -1090,6 +1124,7 @@ export function buildReservationRecord(
     endKey,
     bookedDateKey,
     playgroup,
+    primaryDisplayPlaygroup: playgroupAssignment?.primaryDisplayPlaygroup || null,
     animalId,
     playgroupAssignment,
     isHalfAndHalf: !!playgroupAssignment?.isHalfAndHalf,
@@ -1097,7 +1132,7 @@ export function buildReservationRecord(
   };
 }
 
-function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean; unresolvedPlaygroupReason?: string | null; cls?: string; startKey?: string }>, targetDate: string) {
+function splitCounts(rows: Array<{ playgroup: string; primaryDisplayPlaygroup?: string | null; isHalfAndHalf?: boolean; unresolvedPlaygroupReason?: string | null; cls?: string; startKey?: string }>, targetDate: string) {
   let large = 0;
   let small = 0;
   let privatePlay = 0;
@@ -1110,7 +1145,7 @@ function splitCounts(rows: Array<{ playgroup: string; isHalfAndHalf?: boolean; u
       evaluationBoarding += 1;
       continue;
     }
-    if (row.isHalfAndHalf) {
+    if (row.isHalfAndHalf || row.primaryDisplayPlaygroup === "both_daycares") {
       halfAndHalf += 1;
       continue;
     }
@@ -1362,6 +1397,7 @@ function buildAssignmentSnapshot(row: any, targetDate: string) {
 function buildDisplayShape({
   openingCounts,
   closingCounts,
+  departingCounts,
   daycareCounts,
   dayboardingCounts,
   evaluationsCount,
@@ -1371,6 +1407,7 @@ function buildDisplayShape({
 }: {
   openingCounts: ReturnType<typeof splitCounts>;
   closingCounts: ReturnType<typeof splitCounts>;
+  departingCounts?: ReturnType<typeof splitCounts>;
   daycareCounts: ReturnType<typeof splitCounts>;
   dayboardingCounts: ReturnType<typeof splitCounts>;
   evaluationsCount: number;
@@ -1399,6 +1436,22 @@ function buildDisplayShape({
     evaluation_boarding: closingCounts.evaluationBoarding,
     unclassified_boarding: closingCounts.unknown,
   };
+  const departingSource = departingCounts || {
+    large: 0,
+    small: 0,
+    privatePlay: 0,
+    halfAndHalf: 0,
+    evaluationBoarding: 0,
+    unknown: 0,
+  };
+  const departing = {
+    large_boarding: departingSource.large,
+    small_boarding: departingSource.small,
+    private_play_boarding: departingSource.privatePlay,
+    half_and_half_boarding: departingSource.halfAndHalf,
+    evaluation_boarding: departingSource.evaluationBoarding,
+    unclassified_boarding: departingSource.unknown,
+  };
   const daycare = {
     evaluations: evaluationsCount,
     private_play_dayboarding: daytimePrivatePlay,
@@ -1422,6 +1475,13 @@ function buildDisplayShape({
     + closing.half_and_half_boarding
     + closing.evaluation_boarding
     + closing.unclassified_boarding;
+  const departingTotal =
+    departing.large_boarding
+    + departing.small_boarding
+    + departing.private_play_boarding
+    + departing.half_and_half_boarding
+    + departing.evaluation_boarding
+    + departing.unclassified_boarding;
   const daycareTotal =
     daycare.evaluations
     + daycare.private_play_dayboarding
@@ -1445,6 +1505,10 @@ function buildDisplayShape({
       ...closing,
       total_boarding: closingTotal,
     },
+    departing: {
+      ...departing,
+      total_boarding: departingTotal,
+    },
     daycare: {
       ...daycare,
       total_daycare: daycareTotal,
@@ -1456,6 +1520,7 @@ function buildDisplayShape({
       medication_dogs: medicationDogs,
       tours: toursCount,
       total_dog_volume: closingTotal + daycareTotal,
+      total_daily_dog_volume: closingTotal + daycareTotal + departingTotal,
     },
     play_yard: playYard,
   };
@@ -1469,6 +1534,7 @@ function cloneDisplay(display: any) {
   return {
     opening: { ...(display?.opening || {}) },
     closing: { ...(display?.closing || {}) },
+    departing: { ...(display?.departing || {}) },
     daycare: { ...(display?.daycare || {}) },
     support: { ...(display?.support || {}) },
     play_yard: { ...(display?.play_yard || {}) },
@@ -1476,11 +1542,35 @@ function cloneDisplay(display: any) {
   };
 }
 
+function buildEmptyDisplayShape() {
+  const emptyCounts = { large: 0, small: 0, privatePlay: 0, halfAndHalf: 0, evaluationBoarding: 0, unknown: 0 };
+  return buildDisplayShape({
+    openingCounts: emptyCounts,
+    closingCounts: emptyCounts,
+    departingCounts: emptyCounts,
+    daycareCounts: emptyCounts,
+    dayboardingCounts: emptyCounts,
+    evaluationsCount: 0,
+    departureBaths: 0,
+    medicationDogs: 0,
+    toursCount: 0,
+  });
+}
+
 export function applyGingrWidgetSourceCountsToDisplay(
   display: any,
   sourceCounts?: GingrWidgetSourceCounts | null,
 ) {
   const nextDisplay = cloneDisplay(display);
+  nextDisplay.departing = {
+    large_boarding: Number(nextDisplay.departing?.large_boarding || 0),
+    small_boarding: Number(nextDisplay.departing?.small_boarding || 0),
+    private_play_boarding: Number(nextDisplay.departing?.private_play_boarding || 0),
+    half_and_half_boarding: Number(nextDisplay.departing?.half_and_half_boarding || 0),
+    evaluation_boarding: Number(nextDisplay.departing?.evaluation_boarding || 0),
+    unclassified_boarding: Number(nextDisplay.departing?.unclassified_boarding || 0),
+    total_boarding: Number(nextDisplay.departing?.total_boarding || 0),
+  };
   if (!sourceCounts) {
     return {
       display: nextDisplay,
@@ -1498,6 +1588,14 @@ export function applyGingrWidgetSourceCountsToDisplay(
       "unclassified_boarding",
     ]),
     closing_boarding: sumDisplaySection(nextDisplay.closing, [
+      "large_boarding",
+      "small_boarding",
+      "private_play_boarding",
+      "half_and_half_boarding",
+      "evaluation_boarding",
+      "unclassified_boarding",
+    ]),
+    departing_boarding: sumDisplaySection(nextDisplay.departing, [
       "large_boarding",
       "small_boarding",
       "private_play_boarding",
@@ -1525,24 +1623,29 @@ export function applyGingrWidgetSourceCountsToDisplay(
     boarding_closing: sourceCounts.boarding.overnight,
     boarding_check_ins: sourceCounts.boarding.check_ins,
     boarding_check_outs: sourceCounts.boarding.check_outs,
+    boarding_departing: sourceCounts.boarding.check_outs,
     daytime_total: sourceCounts.daytime.total,
+    default_dog_volume: sourceCounts.boarding.overnight + sourceCounts.daytime.total,
   };
 
   const deltas = {
     opening_boarding: source.boarding_opening - derived.opening_boarding,
     closing_boarding: source.boarding_closing - derived.closing_boarding,
+    departing_boarding: source.boarding_departing - derived.departing_boarding,
     daytime_total: source.daytime_total - derived.daytime_total,
-    total_dog_volume: source.total - derived.total_dog_volume,
+    total_dog_volume: source.default_dog_volume - derived.total_dog_volume,
   };
   const sourceAdjustments = {
     opening_boarding: Math.max(0, deltas.opening_boarding),
     closing_boarding: Math.max(0, deltas.closing_boarding),
+    departing_boarding: Math.max(0, deltas.departing_boarding),
     daytime_total: Math.max(0, deltas.daytime_total),
     total_dog_volume: Math.max(0, deltas.total_dog_volume),
   };
   const remainingDeltas = {
     opening_boarding: Math.min(0, deltas.opening_boarding),
     closing_boarding: Math.min(0, deltas.closing_boarding),
+    departing_boarding: Math.min(0, deltas.departing_boarding),
     daytime_total: Math.min(0, deltas.daytime_total),
     total_dog_volume: Math.min(0, deltas.total_dog_volume),
   };
@@ -1553,16 +1656,21 @@ export function applyGingrWidgetSourceCountsToDisplay(
   if (deltas.closing_boarding > 0) {
     nextDisplay.closing.unclassified_boarding = Number(nextDisplay.closing.unclassified_boarding || 0) + deltas.closing_boarding;
   }
+  if (deltas.departing_boarding > 0) {
+    nextDisplay.departing.unclassified_boarding = Number(nextDisplay.departing.unclassified_boarding || 0) + deltas.departing_boarding;
+  }
   if (deltas.daytime_total > 0) {
     nextDisplay.daycare.unclassified_daycare = Number(nextDisplay.daycare.unclassified_daycare || 0) + deltas.daytime_total;
   }
 
   nextDisplay.opening.total_boarding = source.boarding_opening;
   nextDisplay.closing.total_boarding = source.boarding_closing;
+  nextDisplay.departing.total_boarding = source.boarding_departing;
   nextDisplay.daycare.total_daycare = source.daytime_total;
   nextDisplay.support.morning_feeding_dogs = source.boarding_opening;
   nextDisplay.support.evening_feeding_dogs = source.boarding_closing;
-  nextDisplay.support.total_dog_volume = source.total;
+  nextDisplay.support.total_dog_volume = source.default_dog_volume;
+  nextDisplay.support.total_daily_dog_volume = source.default_dog_volume + source.boarding_departing;
   nextDisplay.source = source;
 
   return {
@@ -1597,6 +1705,13 @@ function flattenDisplay(display: any) {
     closing_evaluation_boarding: Number(display?.closing?.evaluation_boarding || 0),
     closing_unclassified_boarding: Number(display?.closing?.unclassified_boarding || 0),
     closing_total_boarding: Number(display?.closing?.total_boarding || 0),
+    departing_large_boarding: Number(display?.departing?.large_boarding || 0),
+    departing_small_boarding: Number(display?.departing?.small_boarding || 0),
+    departing_private_play_boarding: Number(display?.departing?.private_play_boarding || 0),
+    departing_half_and_half_boarding: Number(display?.departing?.half_and_half_boarding || 0),
+    departing_evaluation_boarding: Number(display?.departing?.evaluation_boarding || 0),
+    departing_unclassified_boarding: Number(display?.departing?.unclassified_boarding || 0),
+    departing_total_boarding: Number(display?.departing?.total_boarding || 0),
     daycare_evaluations: Number(display?.daycare?.evaluations || 0),
     daycare_private_play_dayboarding: Number(display?.daycare?.private_play_dayboarding || 0),
     daycare_half_and_half_daytime: Number(display?.daycare?.half_and_half_daytime || 0),
@@ -1609,6 +1724,9 @@ function flattenDisplay(display: any) {
     support_evening_feeding_dogs: Number(display?.support?.evening_feeding_dogs || 0),
     support_medication_dogs: Number(display?.support?.medication_dogs || 0),
     support_total_dog_volume: Number(display?.support?.total_dog_volume || 0),
+    support_total_daily_dog_volume: Number(display?.support?.total_daily_dog_volume || (
+      Number(display?.support?.total_dog_volume || 0) + Number(display?.departing?.total_boarding || 0)
+    )),
     support_tours: Number(display?.support?.tours || 0),
     play_yard_large_play_dogs: Number(display?.play_yard?.large_play_dogs || 0),
     play_yard_small_play_dogs: Number(display?.play_yard?.small_play_dogs || 0),
@@ -1624,12 +1742,27 @@ function toHistoricalMetric(value: unknown): number | null {
 
 function getCanonicalSourceMetrics(display: any) {
   const source = display?.source || null;
+  const overnight = toHistoricalMetric(source?.overnight ?? display?.closing?.total_boarding);
+  const daytime = toHistoricalMetric(source?.daytime_total ?? display?.daycare?.total_daycare);
+  const defaultTotal = overnight !== null && daytime !== null
+    ? overnight + daytime
+    : toHistoricalMetric(display?.support?.total_dog_volume);
+  const boardingDeparting = toHistoricalMetric(source?.boarding_departing ?? source?.boarding_check_outs ?? display?.departing?.total_boarding);
+  const totalDailyVolume = toHistoricalMetric(display?.support?.total_daily_dog_volume)
+    ?? (
+      defaultTotal !== null && boardingDeparting !== null
+        ? defaultTotal + boardingDeparting
+        : null
+    );
   return {
-    overnight: toHistoricalMetric(source?.overnight),
-    daytime: toHistoricalMetric(source?.daytime_total),
-    total: toHistoricalMetric(source?.total),
-    source_available: !!source,
+    overnight,
+    daytime,
+    total: defaultTotal,
+    boarding_departing: boardingDeparting,
+    total_daily_volume: totalDailyVolume,
+    source_available: !!source || defaultTotal !== null,
     source_endpoint: source ? "gingr_reservation_widget_daily" : null,
+    raw_gingr_total: toHistoricalMetric(source?.total),
   };
 }
 
@@ -1652,19 +1785,80 @@ function applyHistoricalWidgetSource(display: any, sourceCounts: GingrWidgetSour
   return applyGingrWidgetSourceCountsToDisplay(display, sourceCounts).display;
 }
 
+function buildHistoricalDisplayFromSourceOnly(sourceCounts: GingrWidgetSourceCounts | null) {
+  if (!sourceCounts) return null;
+  return applyGingrWidgetSourceCountsToDisplay(buildEmptyDisplayShape(), sourceCounts).display;
+}
+
+function buildHistoricalComparisonDisplaysByOffset({
+  currentDate,
+  historicalReservations,
+  historicalWidgetSourceByDate,
+  roomByDate,
+  totalRooms,
+}: {
+  currentDate: string;
+  historicalReservations: any[];
+  historicalWidgetSourceByDate?: Map<string, GingrWidgetSourceCounts> | Record<string, GingrWidgetSourceCounts> | null;
+  roomByDate: Record<string, { occupied: number; available: number; total: number }>;
+  totalRooms: number;
+}) {
+  const displaysByOffset: Record<number, any> = {};
+  for (let yearOffset = 1; yearOffset <= HISTORICAL_COMPARISON_MAX_YEAR_OFFSET; yearOffset += 1) {
+    const sampleDate = shiftYearsStr(currentDate, -yearOffset);
+    const source = getWidgetSourceForDate(historicalWidgetSourceByDate, sampleDate);
+    const activeRows = historicalReservations.filter((row) => row.startKey <= sampleDate && row.endKey >= sampleDate);
+    if (!activeRows.length && !source) continue;
+
+    const snapshotDisplay = activeRows.length
+      ? computeDemandSnapshotForDate({
+        targetDate: sampleDate,
+        reservations: historicalReservations,
+        roomByDate,
+        totalRooms,
+      }).display
+      : buildHistoricalDisplayFromSourceOnly(source);
+    const display = applyHistoricalWidgetSource(snapshotDisplay, source);
+    if (display) displaysByOffset[yearOffset] = display;
+  }
+  return displaysByOffset;
+}
+
 function buildHistoricalComparisonPayload({
   currentDate,
   lastYearDate,
   currentDisplay,
   lastYearDisplay,
+  priorYearDisplaysByOffset = {},
 }: {
   currentDate: string;
   lastYearDate: string;
   currentDisplay: any;
   lastYearDisplay: any;
+  priorYearDisplaysByOffset?: Record<number, any>;
 }) {
   const current = getCanonicalSourceMetrics(currentDisplay);
-  const lastYear = getCanonicalSourceMetrics(lastYearDisplay);
+  const priorYearEntries = Object.entries({
+    ...priorYearDisplaysByOffset,
+    ...(lastYearDisplay ? { 1: lastYearDisplay } : {}),
+  })
+    .map(([yearOffset, display]) => {
+      const offset = Number(yearOffset);
+      const metrics = getCanonicalSourceMetrics(display);
+      if (!Number.isFinite(offset) || metrics.total === null) return null;
+      return {
+        year_offset: offset,
+        comparison_date: shiftYearsStr(currentDate, -offset),
+        label: offset === 1 ? "YOY" : `YO${offset}Y`,
+        metrics,
+        total_pct_vs_current_year: percentageOfCurrentYear(metrics.total, current.total),
+        total_daily_volume_pct_vs_current_year: percentageOfCurrentYear(metrics.total_daily_volume, current.total_daily_volume),
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => a.year_offset - b.year_offset) as any[];
+  const lastYear = priorYearEntries.find((entry) => entry.year_offset === 1)?.metrics
+    || getCanonicalSourceMetrics(lastYearDisplay);
   const legacyLastYearTotal = lastYear.total
     ?? toHistoricalMetric(lastYearDisplay?.support?.total_dog_volume);
 
@@ -1674,10 +1868,14 @@ function buildHistoricalComparisonPayload({
     last_year_date: lastYearDate,
     current_year: current,
     last_year: lastYear,
+    prior_years: priorYearEntries,
     yoy_overnight: lastYear.overnight,
     yoy_daytime: lastYear.daytime,
     yoy_total: lastYear.total,
     yoy_total_pct_vs_current_year: percentageOfCurrentYear(lastYear.total, current.total),
+    yoy_boarding_departing: lastYear.boarding_departing,
+    yoy_total_daily_volume: lastYear.total_daily_volume,
+    yoy_total_daily_volume_pct_vs_current_year: percentageOfCurrentYear(lastYear.total_daily_volume, current.total_daily_volume),
     last_year_total_dog_volume: legacyLastYearTotal,
     source_available: current.source_available && lastYear.source_available,
   };
@@ -1686,6 +1884,8 @@ function buildHistoricalComparisonPayload({
 const DERIVED_PROJECTION_METRIC_KEYS = new Set([
   "support_morning_feeding_dogs",
   "support_evening_feeding_dogs",
+  "support_total_dog_volume",
+  "support_total_daily_dog_volume",
   "play_yard_large_play_dogs",
   "play_yard_small_play_dogs",
   "play_yard_private_play_dogs",
@@ -1715,6 +1915,14 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
       evaluationBoarding: Number(flat.closing_evaluation_boarding || 0),
       unknown: Number(flat.closing_unclassified_boarding || 0),
     },
+    departingCounts: {
+      large: Number(flat.departing_large_boarding || 0),
+      small: Number(flat.departing_small_boarding || 0),
+      privatePlay: Number(flat.departing_private_play_boarding || 0),
+      halfAndHalf: Number(flat.departing_half_and_half_boarding || 0),
+      evaluationBoarding: Number(flat.departing_evaluation_boarding || 0),
+      unknown: Number(flat.departing_unclassified_boarding || 0),
+    },
     daycareCounts: {
       large: Number(flat.daycare_large_daycare || 0),
       small: Number(flat.daycare_small_daycare || 0),
@@ -1739,17 +1947,17 @@ function buildDisplayFromFlat(flat: Record<string, number>) {
 
   const openingTotal = getFiniteFlatNumber(flat, "opening_total_boarding");
   const closingTotal = getFiniteFlatNumber(flat, "closing_total_boarding");
+  const departingTotal = getFiniteFlatNumber(flat, "departing_total_boarding");
   const daycareTotal = getFiniteFlatNumber(flat, "daycare_total_daycare");
-  const supportTotal = getFiniteFlatNumber(flat, "support_total_dog_volume");
 
   if (openingTotal !== null) display.opening.total_boarding = openingTotal;
   if (closingTotal !== null) display.closing.total_boarding = closingTotal;
+  if (departingTotal !== null) display.departing.total_boarding = departingTotal;
   if (daycareTotal !== null) display.daycare.total_daycare = daycareTotal;
   display.support.morning_feeding_dogs = display.opening.total_boarding;
   display.support.evening_feeding_dogs = display.closing.total_boarding;
-  if (supportTotal !== null) {
-    display.support.total_dog_volume = supportTotal;
-  }
+  display.support.total_dog_volume = display.closing.total_boarding + display.daycare.total_daycare;
+  display.support.total_daily_dog_volume = display.support.total_dog_volume + display.departing.total_boarding;
 
   return display;
 }
@@ -1781,6 +1989,9 @@ export function computeDemandSnapshotForDate({
     row.endKey > targetDate &&
     !isCheckedOutByDate(row, targetDate)
   );
+  const departingBoarding = reservations.filter((row) =>
+    isBoardingDepartureForDate(row, targetDate)
+  );
   const activeBoardingForPeak = activeToday.filter((row) => row.cls === "boarding" && !isEvaluationBoardingToday(row, targetDate));
   const evaluations = activeToday.filter((row) => row.cls === "evaluation" || row.isFirstEverDaycareVisit);
   const activeDaycare = activeToday.filter((row) => row.cls === "daycare" && !row.isFirstEverDaycareVisit);
@@ -1789,6 +2000,7 @@ export function computeDemandSnapshotForDate({
 
   const openingCounts = splitCounts(openingBoarding, targetDate);
   const closingCounts = splitCounts(closingBoarding, targetDate);
+  const departingCounts = splitCounts(departingBoarding, targetDate);
   const daycareCounts = splitCounts(activeDaycare, targetDate);
   const dayboardingCounts = splitCounts(activeDayboarding, targetDate);
   const peakCounts = splitCounts([...activeBoardingForPeak, ...activeDaycare, ...activeDayboarding], targetDate);
@@ -1797,10 +2009,14 @@ export function computeDemandSnapshotForDate({
     activeToday.filter((row) => row.startKey === targetDate && row.cls !== "tour" && row.cls !== "grooming"),
   );
   const dogsDeparting = countDistinctAnimals(
-    activeToday.filter((row) => row.endKey === targetDate && row.cls !== "tour" && row.cls !== "grooming"),
+    reservations.filter((row) =>
+      row.cls !== "tour" &&
+      row.cls !== "grooming" &&
+      ((row.endKey === targetDate && !isCheckedOutBeforeDate(row, targetDate)) || isCheckedOutOnDate(row, targetDate))
+    ),
   );
   const departureBaths = countDepartureBaths(
-    activeToday.filter((row) => row.cls === "boarding" && row.endKey === targetDate),
+    departingBoarding,
     targetDate,
   );
   const medicationDogs = uniqueMedicationDogs(activeToday, targetDate);
@@ -1808,6 +2024,7 @@ export function computeDemandSnapshotForDate({
   const display = buildDisplayShape({
     openingCounts,
     closingCounts,
+    departingCounts,
     daycareCounts,
     dayboardingCounts,
     evaluationsCount: evaluations.length,
@@ -1820,12 +2037,14 @@ export function computeDemandSnapshotForDate({
   return {
     openingBoarding,
     closingBoarding,
+    departingBoarding,
     activeDaycare,
     activeDayboarding,
     evaluations,
     tours,
     openingCounts,
     closingCounts,
+    departingCounts,
     daycareCounts,
     dayboardingCounts,
     peakCounts,
@@ -1927,7 +2146,15 @@ export function buildProjectionForDate({
       totalRooms,
     })
     : null;
-  const exactLastYearDisplay = applyHistoricalWidgetSource(exactLastYearSnapshot?.display || null, exactLastYearSource);
+  const historicalComparisonDisplaysByOffset = buildHistoricalComparisonDisplaysByOffset({
+    currentDate: targetDate,
+    historicalReservations,
+    historicalWidgetSourceByDate,
+    roomByDate,
+    totalRooms,
+  });
+  const exactLastYearDisplay = historicalComparisonDisplaysByOffset[1]
+    || applyHistoricalWidgetSource(exactLastYearSnapshot?.display || null, exactLastYearSource);
 
   if (leadDays <= 0) {
     const actualCapacity = buildProjectionCapacityEnvelope({
@@ -1954,6 +2181,7 @@ export function buildProjectionForDate({
         lastYearDate: exactLastYear,
         currentDisplay: currentSnapshot.display,
         lastYearDisplay: exactLastYearDisplay,
+        priorYearDisplaysByOffset: historicalComparisonDisplaysByOffset,
       }),
       explanations: {},
       sample_count: 0,
@@ -1998,6 +2226,7 @@ export function buildProjectionForDate({
     const weight = projectionWeight(candidate, targetDate);
     if (sampleDate === exactLastYear) {
       exactLastYearDisplayProjected = applyHistoricalWidgetSource(finalSnapshot.display, exactLastYearSource);
+      historicalComparisonDisplaysByOffset[1] = exactLastYearDisplayProjected;
     }
     return {
       ...candidate,
@@ -2349,6 +2578,7 @@ export function buildProjectionForDate({
       lastYearDate: exactLastYear,
       currentDisplay: currentSnapshot.display,
       lastYearDisplay: exactLastYearDisplayProjected,
+      priorYearDisplaysByOffset: historicalComparisonDisplaysByOffset,
     }),
     explanations,
     calibration: {
@@ -2570,7 +2800,9 @@ export async function computeSchedulingMatrixRows({
   const currentDate = dateStrET();
   const historicalWindow = buildHistoricalWindow(contextDates);
   const exactHistoricalReferenceRanges = buildContiguousDateRanges(historicalWindow?.referenceDates || []);
-  const historicalComparisonDates = contextDates.map((dateKey) => shiftYearsStr(dateKey, -1));
+  const historicalComparisonDates = [...new Set(contextDates.flatMap((dateKey) =>
+    Array.from({ length: HISTORICAL_COMPARISON_MAX_YEAR_OFFSET }, (_, index) => shiftYearsStr(dateKey, -(index + 1))),
+  ))].sort();
   const historicalComparisonDateFrom = historicalComparisonDates[0] || null;
   const historicalComparisonDateTo = historicalComparisonDates[historicalComparisonDates.length - 1] || null;
   const calibrationDates = buildProjectionCalibrationDates(currentDate);
@@ -2582,7 +2814,7 @@ export async function computeSchedulingMatrixRows({
 
   const buildReservationRowsQuery = () => supabase
     .from("gingr_reservations")
-    .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+    .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, raw_data, services")
     .eq("location_id", locationId)
     .is("cancelled_date", null);
 
@@ -2690,7 +2922,7 @@ export async function computeSchedulingMatrixRows({
 
     const { data, error } = await supabase
       .from("gingr_reservations")
-      .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, services")
+      .select("gingr_id, animal_gingr_id, animal_name, reservation_type_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, created_date, confirmed_date, created_at, raw_data, services")
       .eq("location_id", locationId)
       .is("cancelled_date", null)
       .or(overlapFilter);
