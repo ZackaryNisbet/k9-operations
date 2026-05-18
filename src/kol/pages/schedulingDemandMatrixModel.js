@@ -408,10 +408,12 @@ export function buildDemandMatrixRowGroups(days) {
   }));
 }
 
-const DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS = new Set(["Gingr Source Counts", "Historical Comparison"]);
+const DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS = new Set(["Gingr Source Counts"]);
 
 export function buildDemandMatrixExportRowGroups(days) {
-  return buildDemandMatrixRowGroups(days).filter((group) => !DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS.has(group.section));
+  return buildDemandMatrixRowGroups(days)
+    .filter((group) => !DEMAND_MATRIX_EXPORT_EXCLUDED_SECTIONS.has(group.section))
+    .filter((group) => group.rows.length > 0);
 }
 
 export function formatDemandMatrixValue(value, format) {
@@ -773,6 +775,16 @@ export function buildDemandMatrixExportModel({
           missingValue,
         };
       }),
+      aggregate: (() => {
+        const aggregate = summarizeAggregateMatrixCell(sortedDays, row, "current");
+        return {
+          value: aggregate.hasValue ? Number(aggregate.value) : null,
+          displayValue: aggregate.hasValue
+            ? formatDemandMatrixValue(aggregate.value, row.format)
+            : aggregate.unavailableLabel,
+          missingValue: !aggregate.hasValue,
+        };
+      })(),
     })),
   ]);
 
@@ -790,6 +802,7 @@ export function buildDemandMatrixExportModel({
       dayName: day.dayName || getDayColumnLabel(day.date),
       computedAt: day?.matrix?.computed_at || null,
     })),
+    aggregateLabel: "Range Total",
     expectedDates: expected,
     readiness,
     rows,

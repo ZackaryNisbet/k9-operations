@@ -2120,6 +2120,7 @@ export function buildProjectionForDate({
   totalRooms,
   capacityConfig,
   historicalWidgetSourceByDate = null,
+  includeHistoricalComparisons = true,
 }: {
   targetDate: string;
   currentDate: string;
@@ -2132,29 +2133,38 @@ export function buildProjectionForDate({
   totalRooms: number;
   capacityConfig?: ReturnType<typeof normalizeProjectionCapacityConfig> | null;
   historicalWidgetSourceByDate?: Map<string, GingrWidgetSourceCounts> | Record<string, GingrWidgetSourceCounts> | null;
+  includeHistoricalComparisons?: boolean;
 }) {
   const leadDays = Math.max(0, diffDays(currentDate, targetDate));
   const currentFlat = flattenDisplay(currentSnapshot.display);
   const exactLastYear = shiftYearsStr(targetDate, -1);
-  const exactLastYearReservations = historicalReservations.filter((row) => row.startKey <= exactLastYear && row.endKey >= exactLastYear);
-  const exactLastYearSource = getWidgetSourceForDate(historicalWidgetSourceByDate, exactLastYear);
-  const exactLastYearSnapshot = exactLastYearReservations.length > 0 || exactLastYearSource
-    ? computeDemandSnapshotForDate({
-      targetDate: exactLastYear,
-      reservations: historicalReservations,
+  const exactLastYearSource = includeHistoricalComparisons
+    ? getWidgetSourceForDate(historicalWidgetSourceByDate, exactLastYear)
+    : null;
+  const historicalComparisonDisplaysByOffset = includeHistoricalComparisons
+    ? buildHistoricalComparisonDisplaysByOffset({
+      currentDate: targetDate,
+      historicalReservations,
+      historicalWidgetSourceByDate,
       roomByDate,
       totalRooms,
     })
+    : {};
+  const exactLastYearDisplay = includeHistoricalComparisons
+    ? (() => {
+      if (historicalComparisonDisplaysByOffset[1]) return historicalComparisonDisplaysByOffset[1];
+      const exactLastYearReservations = historicalReservations.filter((row) => row.startKey <= exactLastYear && row.endKey >= exactLastYear);
+      const exactLastYearSnapshot = exactLastYearReservations.length > 0 || exactLastYearSource
+        ? computeDemandSnapshotForDate({
+          targetDate: exactLastYear,
+          reservations: historicalReservations,
+          roomByDate,
+          totalRooms,
+        })
+        : null;
+      return applyHistoricalWidgetSource(exactLastYearSnapshot?.display || null, exactLastYearSource);
+    })()
     : null;
-  const historicalComparisonDisplaysByOffset = buildHistoricalComparisonDisplaysByOffset({
-    currentDate: targetDate,
-    historicalReservations,
-    historicalWidgetSourceByDate,
-    roomByDate,
-    totalRooms,
-  });
-  const exactLastYearDisplay = historicalComparisonDisplaysByOffset[1]
-    || applyHistoricalWidgetSource(exactLastYearSnapshot?.display || null, exactLastYearSource);
 
   if (leadDays <= 0) {
     const actualCapacity = buildProjectionCapacityEnvelope({
@@ -2224,7 +2234,7 @@ export function buildProjectionForDate({
     const asOfDate = addDaysStr(sampleDate, -leadDays);
     const asOfSnapshot = getHistoricalSnapshot(sampleDate, asOfDate);
     const weight = projectionWeight(candidate, targetDate);
-    if (sampleDate === exactLastYear) {
+    if (includeHistoricalComparisons && sampleDate === exactLastYear) {
       exactLastYearDisplayProjected = applyHistoricalWidgetSource(finalSnapshot.display, exactLastYearSource);
       historicalComparisonDisplaysByOffset[1] = exactLastYearDisplayProjected;
     }
@@ -2800,7 +2810,7 @@ export async function computeSchedulingMatrixRows({
   const currentDate = dateStrET();
   const historicalWindow = buildHistoricalWindow(contextDates);
   const exactHistoricalReferenceRanges = buildContiguousDateRanges(historicalWindow?.referenceDates || []);
-  const historicalComparisonDates = [...new Set(contextDates.flatMap((dateKey) =>
+  const historicalComparisonDates = [...new Set(targetDates.flatMap((dateKey) =>
     Array.from({ length: HISTORICAL_COMPARISON_MAX_YEAR_OFFSET }, (_, index) => shiftYearsStr(dateKey, -(index + 1))),
   ))].sort();
   const historicalComparisonDateFrom = historicalComparisonDates[0] || null;
@@ -3038,6 +3048,7 @@ export async function computeSchedulingMatrixRows({
       roomByDate,
       totalRooms,
       capacityConfig,
+      includeHistoricalComparisons: false,
     });
   }
 
