@@ -17,7 +17,7 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 import { updateLiteClient } from "../../hooks/useGingrData";
 
 // ─── CLM-004 Gingr field definitions (used by Push to Gingr) ──────────────
-const GINGR_CLIENT_FIELDS = [
+const gingrClientFields = [
   { id: "g_first_name", gingrField: "first_name", label: "First Name", required: true },
   { id: "g_last_name", gingrField: "last_name", label: "Last Name", required: true },
   { id: "g_email", gingrField: "email", label: "Email", required: true },
@@ -31,7 +31,7 @@ const GINGR_CLIENT_FIELDS = [
   { id: "g_referral", gingrField: "referral_source", label: "Referral Source" },
 ];
 
-const GINGR_DOG_FIELDS = [
+const gingrDogFields = [
   { id: "g_dog_name", gingrField: "name", label: "Pet Name", required: true },
   { id: "g_breed", gingrField: "breed", label: "Breed", required: true },
   { id: "g_weight", gingrField: "weight", label: "Weight" },
@@ -555,7 +555,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const clientPayload = {};
     const missingRequired = [];
 
-    GINGR_CLIENT_FIELDS.forEach(gf => {
+    gingrClientFields.forEach(gf => {
       const mapped = mappings[gf.id];
       const k9FieldId = mapped || gf.gingrField;
       const val = client.fields[k9FieldId] || client.fields[gf.gingrField] || "";
@@ -566,7 +566,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const dogPayloads = dogs.map(dog => {
       const dp = {};
       const dogMissing = [];
-      GINGR_DOG_FIELDS.forEach(gf => {
+      gingrDogFields.forEach(gf => {
         const mapped = mappings[gf.id];
         const k9FieldId = mapped || gf.gingrField;
         const val = dog.fields?.[k9FieldId] || dog.fields?.[gf.gingrField] || "";
@@ -1824,7 +1824,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Client Data</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: "12px 14px", background: C.bg, borderRadius: 8 }}>
-                  {GINGR_CLIENT_FIELDS.filter(gf => gingrPayload.client[gf.gingrField]).map(gf => (
+                  {gingrClientFields.filter(gf => gingrPayload.client[gf.gingrField]).map(gf => (
                     <div key={gf.id}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase" }}>{gf.label}</div>
                       <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{gf.gingrField === "phone" ? fmtPhone(gingrPayload.client[gf.gingrField]) : gingrPayload.client[gf.gingrField]}</div>

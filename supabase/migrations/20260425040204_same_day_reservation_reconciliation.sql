@@ -1,4 +1,4 @@
--- Same-day GINGR reservation snapshots are authoritative for whether a dog is
+-- Same-day Gingr reservation snapshots are authoritative for whether a dog is
 -- still expected today. Keep disappeared reservations for audit, but remove
 -- them from operational counts instead of letting stale rows linger.
 

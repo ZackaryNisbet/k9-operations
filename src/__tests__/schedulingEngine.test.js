@@ -531,7 +531,7 @@ describe('Matrix trust gating', () => {
           can_generate: false,
           blockers: [
             '1 dog missing actionable play icon in closing boarding',
-            'Operational splits do not reconcile to GINGR source totals: total dog volume source delta +16.',
+            'Operational splits do not reconcile to Gingr source totals: total dog volume source delta +16.',
           ],
           blocker_details: [
             { kind: 'missing_actionable_play_icon', label: '1 dog missing actionable play icon in closing boarding' },

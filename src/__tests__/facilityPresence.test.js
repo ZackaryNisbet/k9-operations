@@ -109,7 +109,7 @@ describe("facility presence mapping", () => {
     });
   });
 
-  it("ages check-in notices from the actual GINGR check-in timestamp", () => {
+  it("ages check-in notices from the actual Gingr check-in timestamp", () => {
     const nowMs = Date.UTC(2026, 3, 23, 10, 41, 0);
     const checkInMs = nowMs - 28_000;
     const event = {

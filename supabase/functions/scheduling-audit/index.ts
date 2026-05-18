@@ -19,7 +19,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const GINGR_ICON_BATCH_SIZE = 200;
+const gingrIconBatchSize = 200;
 const RESERVATION_RETRY_DELAYS_MS = [250, 750, 1500];
 
 const METRIC_DEFINITIONS = [
@@ -285,8 +285,8 @@ async function fetchLivePlaygroupAssignments({
   }
 
   const iconRows: any[] = [];
-  for (let i = 0; i < animalIds.length; i += GINGR_ICON_BATCH_SIZE) {
-    const chunk = animalIds.slice(i, i + GINGR_ICON_BATCH_SIZE);
+  for (let i = 0; i < animalIds.length; i += gingrIconBatchSize) {
+    const chunk = animalIds.slice(i, i + gingrIconBatchSize);
     const params = new URLSearchParams();
     params.append("key", apiKey);
     params.append("animal_ids", JSON.stringify(chunk.map(Number)));

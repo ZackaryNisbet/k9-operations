@@ -1271,7 +1271,7 @@ export function buildTrustPayload({
   }
 
   if (sourceReconciliation) {
-    notes.push("GINGR Calendar Details source totals imported from reservation_widget_data.");
+    notes.push("Gingr Calendar Details source totals imported from reservation_widget_data.");
     const deltas = sourceReconciliation.remaining_deltas || sourceReconciliation.deltas || {};
     const sourceAdjustments = sourceReconciliation.source_adjustments || {};
     const adjustmentLabels = [
@@ -1286,7 +1286,7 @@ export function buildTrustPayload({
       })
       .filter(Boolean);
     if (adjustmentLabels.length) {
-      limitations.push(`GINGR source totals were carried into unclassified demand buckets: ${adjustmentLabels.join(", ")}.`);
+      limitations.push(`Gingr source totals were carried into unclassified demand buckets: ${adjustmentLabels.join(", ")}.`);
     }
     const mismatchLabels = [
       ["opening_boarding", "opening boarding"],
@@ -1300,10 +1300,10 @@ export function buildTrustPayload({
       })
       .filter(Boolean);
     if (mismatchLabels.length) {
-      blockers.push(`Operational splits do not reconcile to GINGR source totals: ${mismatchLabels.join(", ")}.`);
+      blockers.push(`Operational splits do not reconcile to Gingr source totals: ${mismatchLabels.join(", ")}.`);
     }
   } else if (sourceRequired) {
-    blockers.push("GINGR Calendar Details source totals are missing for this date.");
+    blockers.push("Gingr Calendar Details source totals are missing for this date.");
   }
 
   return {

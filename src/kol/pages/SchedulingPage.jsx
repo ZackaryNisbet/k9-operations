@@ -63,7 +63,7 @@ export {
 // ─── Utility Components ───────────────────────────────────────────────────
 
 function formatVisibleSchedulingCopy(value) {
-  return String(value ?? "").replace(/\bGINGR\b/g, "Gingr");
+  return String(value ?? "").replace(/\bGingr\b/g, "Gingr");
 }
 
 const KNOWN_LOCATION_DISPLAY_NAMES = new Map([
@@ -2364,7 +2364,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
 
     setMatrixHistoryOrigin({
       status: "checking",
-      message: "Finding earliest operational GINGR reservation day for this location...",
+      message: "Finding earliest operational Gingr reservation day for this location...",
       firstDate: null,
       lastDate: null,
       source: null,
@@ -2385,7 +2385,7 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
       const firstDate = origin.first_operational_date;
       const lastDate = origin.last_historical_date;
       if (!firstDate || !lastDate) {
-        throw new Error("No operational GINGR reservation history was found for this location.");
+        throw new Error("No operational Gingr reservation history was found for this location.");
       }
 
       setMatrixRangeMode("custom");

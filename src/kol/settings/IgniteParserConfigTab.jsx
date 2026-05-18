@@ -85,7 +85,7 @@ const LEAD_TYPE_OPTIONS = [
 ];
 
 // ─── Gingr field mapping defaults ────────────────────────────────────────────
-const DEFAULT_GINGR_MAPPING = {
+const defaultGingrMapping = {
   firstName: "first_name",
   lastName: "last_name",
   email: "email",
@@ -114,7 +114,7 @@ function IgniteParserConfigTab() {
   // Parser rules state
   const [rules, setRules] = useState([]);
   const [editingRule, setEditingRule] = useState(null); // null = list view, object = editing
-  const [gingrMapping, setGingrMapping] = useState({ ...DEFAULT_GINGR_MAPPING });
+  const [gingrMapping, setGingrMapping] = useState({ ...defaultGingrMapping });
   const [tagInput, setTagInput] = useState("");
 
   // UI state
@@ -130,7 +130,7 @@ function IgniteParserConfigTab() {
       if (rows && rows.length > 0 && rows[0].setting_value) {
         const val = rows[0].setting_value;
         if (val.rules) setRules(val.rules);
-        if (val.gingrMapping) setGingrMapping({ ...DEFAULT_GINGR_MAPPING, ...val.gingrMapping });
+        if (val.gingrMapping) setGingrMapping({ ...defaultGingrMapping, ...val.gingrMapping });
       }
       setLoaded(true);
     });

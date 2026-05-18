@@ -310,7 +310,6 @@ const MANAGER_NAV_ITEMS = [
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
-  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -327,7 +326,6 @@ const LEAN_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
-  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -348,7 +346,6 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
-  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -543,10 +540,10 @@ function InitialGingrSyncDock({ locationId }) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 900, color: isFailed ? "#991B1B" : C.text, letterSpacing: 0 }}>
-            GINGR initial sync {isFailed ? "needs attention" : "running"}
+            Gingr initial sync {isFailed ? "needs attention" : "running"}
           </div>
           <div style={{ fontSize: 11, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
-            {status.error_message || status.last_message || status.current_label || status.current_entity || "Pulling historical GINGR data"}
+            {status.error_message || status.last_message || status.current_label || status.current_entity || "Pulling historical Gingr data"}
           </div>
         </div>
         <div style={{ fontSize: 11, fontWeight: 900, color: isFailed ? "#991B1B" : C.pri, whiteSpace: "nowrap" }}>
@@ -1072,7 +1069,7 @@ function LeanAppInner() {
       case "refunds": return "Refunds";
       case "photos": return "Photos";
       case "settings": return "Settings";
-      case "gingr-icons": return "Gingr Icons";
+      case "gingr-icons": return "Gingr Configuration";
       case "enterprise-directory": return "Company Directory";
       case "enterprise-org-chart": return "Org Chart";
       case "enterprise-ops": return "Volume";

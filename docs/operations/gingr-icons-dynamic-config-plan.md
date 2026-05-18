@@ -1,14 +1,14 @@
-# GINGR Icons Dynamic Configuration Plan
+# Gingr Icons Dynamic Configuration Plan
 
 Last updated: 2026-05-18
 
 ## Objective
 
-Make K9 Operations repeatable for Adair Forsythe, every future K9 Resorts location, and non-K9 customers by removing hard-coded GINGR pairings from daily workflow computation.
+Make K9 Operations repeatable for Adair Forsythe, every future K9 Resorts location, and non-K9 customers by removing hard-coded Gingr pairings from daily workflow computation.
 
-The product outcome is a location setup flow that connects GINGR, discovers the location's reference data, guides a user through workflow mappings, starts the historical sync, and lets web/mobile render trusted server-computed outputs while the long bootstrap continues in the background.
+The product outcome is a location setup flow that connects Gingr, discovers the location's reference data, guides a user through workflow mappings, starts the historical sync, and lets web/mobile render trusted server-computed outputs while the long bootstrap continues in the background.
 
-This is not only an icon picker. It is the configuration layer for GINGR-derived operational truth.
+This is not only an icon picker. It is the configuration layer for Gingr-derived operational truth.
 
 ## Current State
 
@@ -30,7 +30,7 @@ Not yet solved:
 - Full system/template icon catalog is not verified or wired.
 - Room/run catalog persistence is still only partially covered by existing room occupancy and `gingr_runs` data.
 - Onboarding writes credentials to a path that does not match what `gingr-sync` reads.
-- Onboarding tests GINGR directly from the browser with the API key.
+- Onboarding tests Gingr directly from the browser with the API key.
 - Runtime compute still has hard-coded category/string logic outside the first migrated daily-op reports, especially scheduling, feeding/medication classification, generic web helpers, mobile fallbacks, service report keyword parsing, and Adair Forsythe-specific cron payloads.
 
 ## Hard-Coded Runtime Surface
@@ -47,7 +47,7 @@ These are the high-risk places that still need to be moved onto dynamic configur
 | Service reports | `bath`, `pamper`, `enrichment`, `ice cream`, `gourmet`, `Luxury Suite`, service exclusions | `OperationsHub.jsx`, `DailyOpsPage.jsx`, mobile `OperationsHub.tsx`, mobile `ServicesPage.tsx` |
 | Workflow progress | fixed report IDs, setting keys, `lite_daily_ops` IDs, role/card mappings | `workflow_progress_snapshot` migrations, `useWorkflowProgressSnapshot.js`, mobile `workflow-progress.ts`, role layout files |
 | Scheduling | static display buckets, static reservation categories, Adair Forsythe scheduling cron jobs | `scheduling-matrix.ts`, `supabase/ops/cron-jobs.json` |
-| Mobile fallbacks | local recompute from raw GINGR services/icons, fixed room order, missing location filters in some canonical reads | `k9-operations-mobile/client/src/pages/*`, `workflow-reports.ts`, `room-occupancy.ts` |
+| Mobile fallbacks | local recompute from raw Gingr services/icons, fixed room order, missing location filters in some canonical reads | `k9-operations-mobile/client/src/pages/*`, `workflow-reports.ts`, `room-occupancy.ts` |
 
 ## Dynamic Configuration Contract
 
@@ -58,11 +58,11 @@ The following arrays/catalogs should become location-scoped data, not source-cod
 | `gingr_reference_sync_runs` | Track onboarding/bootstrap and reference discovery progress | reservations, animals, icons, rooms, services, historical backfill percent |
 | `gingr_icon_inventory` | Store observed or discovered icon identities per location | template id, identity key, group, title, image/color metadata, first/last seen |
 | `gingr_client_icon_inventory` | Store owner/client icons if verified | owner id, icon identity, group/title metadata |
-| `gingr_service_catalog` | Persist services/add-ons from GINGR | service id, add-on id, name, type, active flag, raw payload |
-| `gingr_reservation_type_catalog` | Persist reservation types from GINGR | type id, name, active flag, raw payload |
+| `gingr_service_catalog` | Persist services/add-ons from Gingr | service id, add-on id, name, type, active flag, raw payload |
+| `gingr_reservation_type_catalog` | Persist reservation types from Gingr | type id, name, active flag, raw payload |
 | `gingr_run_catalog` | Persist runs/rooms/areas | run id, name, area, run type, room label, active flag |
 | `workflow_capability_catalog` | Define normalized capabilities the app understands | play.private_play, bathing.type.medicated, service.enrichment |
-| `location_workflow_mappings` | Map GINGR reference values to capabilities/workflows | icon -> play.private_play, service -> private_play, reservation type -> daycare |
+| `location_workflow_mappings` | Map Gingr reference values to capabilities/workflows | icon -> play.private_play, service -> private_play, reservation type -> daycare |
 | `location_workflow_catalog` | Enable/label/configure workflows per location | bathing, private play, room cleaning, enrichment, care reports |
 | `workflow_progress_sources` | Normalize progress rows/setting keys/type_sub | `lite_daily_ops` id pattern, completion setting key, session count |
 | `cron_location_manifest` | Generate/reconcile cron payloads by active location | sync cadence, compute cadence, scheduling windows |
@@ -71,7 +71,7 @@ The existing `gingr_icon_mappings` table can remain as the first concrete mappin
 
 ## Target Onboarding Flow
 
-1. Connect GINGR
+1. Connect Gingr
    - User enters subdomain and API key.
    - Browser sends credentials only to a Supabase Edge Function.
    - Function validates access, stores server-owned config, and returns connection status.
@@ -91,7 +91,7 @@ The existing `gingr_icon_mappings` table can remain as the first concrete mappin
 4. Configure workflows
    - Show a workflow grid with rows for operational domains and columns for downstream surfaces.
    - Minimum domains: Playgroups/Private Play, Bathing, Room Cleaning/Setup, Service Reports, Scheduling Capacity, Care Reports, Checkout TV.
-   - Let the user map icons, services, reservation types, runs/rooms, and workflow settings from discovered GINGR data.
+   - Let the user map icons, services, reservation types, runs/rooms, and workflow settings from discovered Gingr data.
 
 5. Validate impact
    - Show sample dogs/reservations affected by each mapping.
@@ -120,7 +120,7 @@ The existing `gingr_icon_mappings` table can remain as the first concrete mappin
 ### Phase 1: Reference discovery
 
 - Persist `get_services_by_type` results into a service/add-on catalog.
-- Persist reservation type catalog from GINGR.
+- Persist reservation type catalog from Gingr.
 - Normalize `get_runs_and_reservations` room/run/area data into a durable run catalog.
 - Keep animal icon assignment sync as-is, but split "observed icon inventory" from "current dog assignments."
 - Investigate client icons and full system icons separately; document verified endpoints before shipping them as product claims.
@@ -147,7 +147,7 @@ The existing `gingr_icon_mappings` table can remain as the first concrete mappin
 
 - Create a route-level `Gingr Icons` workspace instead of keeping the feature buried in Settings.
 - Settings should deep-link to the workspace.
-- Enterprise location rows should link to location-specific GINGR setup/config.
+- Enterprise location rows should link to location-specific Gingr setup/config.
 - Page structure:
   - connection health
   - reference discovery status
@@ -161,7 +161,7 @@ The existing `gingr_icon_mappings` table can remain as the first concrete mappin
 ### Phase 5: Mobile cleanup
 
 - Mobile should consume canonical computed rows, workflow progress, and normalized capabilities only.
-- Remove local parsing of raw GINGR service strings/icons from Operations Hub, Services, Collars, Photos, Private Play, and Room Cleaning.
+- Remove local parsing of raw Gingr service strings/icons from Operations Hub, Services, Collars, Photos, Private Play, and Room Cleaning.
 - Fix location scoping in canonical mobile reads called out by the audit.
 - Render required private-play sessions from server config instead of fixed `[1,2,3]`.
 
@@ -183,7 +183,7 @@ Minimum validation before shipping:
   - Fresh N Clean still works
   - private-play session count is configurable
 - SQL/RPC tests for required mapping status.
-- Mobile checks that no employee-facing report recomputes GINGR categories from raw strings.
+- Mobile checks that no employee-facing report recomputes Gingr categories from raw strings.
 - Browser verification of the new Gingr Icons workspace at desktop and mobile widths.
 - Historical bootstrap dry run against a non-production or controlled location before any broad rollout.
 
@@ -199,7 +199,7 @@ Minimum validation before shipping:
 
 The smallest meaningful slice is:
 
-1. Server-side GINGR credential validation and unified credential storage.
+1. Server-side Gingr credential validation and unified credential storage.
 2. Durable reference sync/status table.
 3. Service/add-on and reservation-type catalogs.
 4. Dynamic mapping table/status for services and reservation types.

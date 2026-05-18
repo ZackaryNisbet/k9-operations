@@ -67,7 +67,7 @@ function fromSupabaseMock(from: any) {
 }
 
 describe("scheduling matrix logic", () => {
-  it("normalizes GINGR Calendar Details widget totals and derives opening boarding from source counts", () => {
+  it("normalizes Gingr Calendar Details widget totals and derives opening boarding from source counts", () => {
     const widgetRow = normalizeGingrReservationWidgetPayload({
       locationId: "ch",
       widgetDate: "2026-04-27",
@@ -106,7 +106,7 @@ describe("scheduling matrix logic", () => {
     expect(source?.daytime.total).toBe(19);
   });
 
-  it("uses GINGR widget source totals for displayed top-line matrix counts", () => {
+  it("uses Gingr widget source totals for displayed top-line matrix counts", () => {
     const widgetRow = normalizeGingrReservationWidgetPayload({
       locationId: "ch",
       widgetDate: "2026-04-27",
@@ -179,7 +179,7 @@ describe("scheduling matrix logic", () => {
     expect(adjustment.reconciliation?.deltas.total_dog_volume).toBe(16);
   });
 
-  it("treats positive GINGR source deltas as source-aligned unclassified demand, not unreconciled blockers", () => {
+  it("treats positive Gingr source deltas as source-aligned unclassified demand, not unreconciled blockers", () => {
     const adjustment = applyGingrWidgetSourceCountsToDisplay({
       opening: {
         large_boarding: 10,

@@ -1,5 +1,5 @@
 -- Align canonical Checkout TV playgroup display with the documented rule:
--- large + small GINGR Play icons are "Both Daycares", not unresolved.
+-- large + small Gingr Play icons are "Both Daycares", not unresolved.
 
 create or replace view public.v_dog_playgroup_assignments_current
 with (security_invoker = true) as

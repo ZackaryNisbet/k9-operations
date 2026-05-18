@@ -1,6 +1,6 @@
 -- Enterprise Checkout TV presence sync
 -- - Server-side cadence config
--- - Pre-GINGR sync claim lock
+-- - Pre-Gingr sync claim lock
 -- - Location-scoped all-staff read policies for canonical presence
 
 CREATE TABLE IF NOT EXISTS public.facility_presence_sync_locks (

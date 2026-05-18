@@ -59,7 +59,7 @@ describe("scheduling matrix backfill policy", () => {
     expect(source).toContain('action === "origin"');
     expect(source).toContain("first_operational_date");
     expect(source).toContain("all_history === true");
-    expect(source).toContain("No operational GINGR reservation history was found");
+    expect(source).toContain("No operational Gingr reservation history was found");
   });
 
   it("does not trust unsigned service-role claims for background processing", () => {

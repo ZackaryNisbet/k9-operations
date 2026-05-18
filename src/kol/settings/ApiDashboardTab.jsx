@@ -1,5 +1,5 @@
 // K9 Operations -- API Dashboard Settings Tab
-// Server-owned control plane for GINGR API usage and presence sync cadence.
+// Server-owned control plane for Gingr API usage and presence sync cadence.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../supabaseClient";
@@ -123,7 +123,7 @@ const ENDPOINTS = [
     method: "GET",
     path: "/api/v1/get_locations",
     params: "key",
-    purpose: "Validates API credentials. Only called when testing the GINGR connection in Settings.",
+    purpose: "Validates API credentials. Only called when testing the Gingr connection in Settings.",
     consumer: "Settings",
     category: "onDemand",
     responseSize: "~1 KB",
@@ -355,7 +355,7 @@ function ApiDashboardTab() {
         API Dashboard
       </h3>
       <p style={{ margin: "0 0 24px", fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-        Server-side GINGR usage, cadence controls, and projected daily calls. Checkout TV reads canonical Supabase presence; browsers do not initiate live GINGR polling.
+        Server-side Gingr usage, cadence controls, and projected daily calls. Checkout TV reads canonical Supabase presence; browsers do not initiate live Gingr polling.
       </p>
 
       {dirty && (
@@ -382,7 +382,7 @@ function ApiDashboardTab() {
 
       <Card style={{ padding: "20px 24px", marginBottom: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 16 }}>
-          Projected Daily GINGR API Usage
+          Projected Daily Gingr API Usage
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 12 }}>
           {[
@@ -492,7 +492,7 @@ function ApiDashboardTab() {
           Endpoint Catalog
         </div>
         <div style={{ fontSize: 12, color: C.textSec, marginBottom: 16, lineHeight: 1.5 }}>
-          GINGR endpoints are called from server functions. Checkout TV, Home, and Dashboard read Supabase results.
+          Gingr endpoints are called from server functions. Checkout TV, Home, and Dashboard read Supabase results.
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
           {Object.entries(CATEGORY_LABELS).map(([key, cat]) => (
@@ -586,7 +586,7 @@ function ApiDashboardTab() {
         </div>
         <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
           <div>1. Supabase cron starts the server presence worker once per minute; the worker loops for the minute with a bounded cadence.</div>
-          <div style={{ marginTop: 4 }}>2. The worker claims a per-location lock, reads GINGR, and reconciles `facility_presence_current`, `facility_presence_events`, and `facility_presence_sync_runs`.</div>
+          <div style={{ marginTop: 4 }}>2. The worker claims a per-location lock, reads Gingr, and reconciles `facility_presence_current`, `facility_presence_events`, and `facility_presence_sync_runs`.</div>
           <div style={{ marginTop: 4 }}>3. Checkout TV, Home, and Dashboard read the canonical Supabase snapshot and realtime event ledger only.</div>
           <div style={{ marginTop: 4 }}>4. Cadence settings live under `presence_sync_config_v1`; `tv_poll_config` is no longer the active control plane.</div>
         </div>
