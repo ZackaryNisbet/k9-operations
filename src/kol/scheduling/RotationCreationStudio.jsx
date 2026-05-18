@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn } from "../../shared/ui";
@@ -62,6 +62,138 @@ function formatDayLabel(day) {
     month: "short",
     day: "numeric",
   });
+}
+
+function parseScheduleDate(date) {
+  const parsed = new Date(`${date || ""}T12:00:00`);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function dateToIso(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function addScheduleDays(date, offset) {
+  const parsed = parseScheduleDate(date);
+  if (!parsed) return date;
+  parsed.setDate(parsed.getDate() + offset);
+  return dateToIso(parsed);
+}
+
+function getScheduleMonthStart(date) {
+  const parsed = parseScheduleDate(date) || new Date();
+  parsed.setDate(1);
+  return dateToIso(parsed);
+}
+
+function shiftScheduleMonth(date, offset) {
+  const parsed = parseScheduleDate(getScheduleMonthStart(date)) || new Date();
+  parsed.setMonth(parsed.getMonth() + offset);
+  parsed.setDate(1);
+  return dateToIso(parsed);
+}
+
+function getScheduleWeekStart(date) {
+  const parsed = parseScheduleDate(date);
+  if (!parsed) return date;
+  const day = parsed.getDay();
+  parsed.setDate(parsed.getDate() + (day === 0 ? -6 : 1 - day));
+  return dateToIso(parsed);
+}
+
+function getScheduleCalendarDates(monthDate) {
+  const start = getScheduleWeekStart(getScheduleMonthStart(monthDate));
+  return Array.from({ length: 42 }, (_, index) => addScheduleDays(start, index));
+}
+
+function getCalendarMonthLabel(date) {
+  const parsed = parseScheduleDate(date);
+  if (!parsed) return "Calendar";
+  return parsed.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function getFullScheduleDateLabel(date) {
+  const parsed = parseScheduleDate(date);
+  if (!parsed) return "Select a date";
+  return parsed.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function getCompactScheduleDateLabel(date) {
+  const parsed = parseScheduleDate(date);
+  if (!parsed) return date || "";
+  return parsed.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function getRelativeScheduleDateLabel(date, today) {
+  if (!date || !today) return "";
+  const selected = parseScheduleDate(date);
+  const current = parseScheduleDate(today);
+  if (!selected || !current) return "";
+  const diff = Math.round((selected.getTime() - current.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return selected.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function getNextSaturday(today) {
+  const parsed = parseScheduleDate(today);
+  if (!parsed) return today;
+  const day = parsed.getDay();
+  const offset = ((6 - day + 7) % 7) || 7;
+  return addScheduleDays(today, offset);
+}
+
+function getDateScheduleState({ date, today, visibleDay, summary }) {
+  if (summary?.published > 0) {
+    return {
+      tone: "published",
+      label: "Published",
+      detail: `${summary.published} published schedule${summary.published === 1 ? "" : "s"}${summary.draft ? `, ${summary.draft} draft${summary.draft === 1 ? "" : "s"}` : ""}`,
+    };
+  }
+  if (summary?.draft > 0) {
+    return {
+      tone: "draft",
+      label: "Draft",
+      detail: `${summary.draft} draft version${summary.draft === 1 ? "" : "s"} ready to review`,
+    };
+  }
+  if (visibleDay?.staffPlan) {
+    return {
+      tone: "staffed",
+      label: "Staffed",
+      detail: "Actual staffing has been saved for this day",
+    };
+  }
+  if (visibleDay?.canGenerate) {
+    return {
+      tone: "ready",
+      label: "Ready",
+      detail: "Demand matrix is ready for schedule generation",
+    };
+  }
+  if (visibleDay?.hasNoData || visibleDay?.matrixTrustState === "missing") {
+    return {
+      tone: "missing",
+      label: date < today ? "No matrix" : "Pending",
+      detail: date < today ? "No computed Demand Matrix row for this historical day" : "Demand Matrix compute has not returned for this day yet",
+    };
+  }
+  return {
+    tone: date < today ? "past" : "open",
+    label: date < today ? "No submission" : "Open",
+    detail: date < today ? "No saved rotation schedule found for this day" : "Future rotation schedule can be started here",
+  };
 }
 
 function formatTimeLabel(time) {
@@ -404,6 +536,210 @@ function CellInspector({ cell, laneLabel, onApplyTask, onClose }) {
   );
 }
 
+const CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function RotationDateSelector({
+  selectedDay,
+  today,
+  visibleDays,
+  monthDate,
+  onMonthChange,
+  onSelectDate,
+  onClose,
+  onFetchScheduleSummaries,
+}) {
+  const selectedDate = selectedDay?.date || today || dateToIso(new Date());
+  const calendarDates = useMemo(() => getScheduleCalendarDates(monthDate || selectedDate), [monthDate, selectedDate]);
+  const [versionSummaries, setVersionSummaries] = useState({});
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const visibleByDate = useMemo(() => (
+    new Map((visibleDays || []).filter((entry) => entry?.date).map((entry) => [entry.date, entry]))
+  ), [visibleDays]);
+  const selectedVisibleDay = visibleByDate.get(selectedDate) || selectedDay;
+  const selectedSummary = versionSummaries[selectedDate] || null;
+  const selectedState = getDateScheduleState({
+    date: selectedDate,
+    today,
+    visibleDay: selectedVisibleDay,
+    summary: selectedSummary,
+  });
+  const quickDates = useMemo(() => {
+    const weekStart = getScheduleWeekStart(today || selectedDate);
+    return [
+      { label: "Today", date: today || selectedDate },
+      { label: "Tomorrow", date: addScheduleDays(today || selectedDate, 1) },
+      { label: "Next weekend", date: getNextSaturday(today || selectedDate) },
+      { label: "Next week", date: addScheduleDays(weekStart, 7) },
+      { label: "Last week", date: addScheduleDays(weekStart, -7) },
+    ];
+  }, [selectedDate, today]);
+  const submittedDates = useMemo(() => (
+    Object.entries(versionSummaries)
+      .filter(([date, summary]) => date.slice(0, 7) === (monthDate || selectedDate).slice(0, 7) && summary?.total > 0)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .slice(0, 7)
+  ), [monthDate, selectedDate, versionSummaries]);
+
+  useEffect(() => {
+    if (!onFetchScheduleSummaries || calendarDates.length === 0) return undefined;
+    let cancelled = false;
+    setSummaryLoading(true);
+    onFetchScheduleSummaries({
+      startDate: calendarDates[0],
+      endDate: calendarDates[calendarDates.length - 1],
+    })
+      .then((summaries) => {
+        if (!cancelled) setVersionSummaries(summaries || {});
+      })
+      .catch(() => {
+        if (!cancelled) setVersionSummaries({});
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [calendarDates, onFetchScheduleSummaries]);
+
+  const chooseDate = useCallback((date) => {
+    onSelectDate?.(date);
+    onClose?.();
+  }, [onClose, onSelectDate]);
+
+  return (
+    <div className="rotation-date-panel" role="dialog" aria-label="Select rotation schedule date">
+      <div className="rotation-date-panel-header">
+        <div className="rotation-date-heading">
+          <span className="rotation-date-kicker">Schedule date</span>
+          <strong>{getFullScheduleDateLabel(selectedDate)}</strong>
+          <span>{selectedState.detail}</span>
+        </div>
+        <div className="rotation-date-month-controls">
+          <button type="button" onClick={() => onMonthChange(shiftScheduleMonth(monthDate, -1))} aria-label="Previous month">
+            <I.Back />
+          </button>
+          <span>{getCalendarMonthLabel(monthDate || selectedDate)}</span>
+          <button type="button" onClick={() => onMonthChange(shiftScheduleMonth(monthDate, 1))} aria-label="Next month">
+            <I.ChevronRight />
+          </button>
+          <button type="button" className="rotation-date-close" onClick={onClose} aria-label="Close date selector">
+            <I.X />
+          </button>
+        </div>
+      </div>
+
+      <div className="rotation-date-layout">
+        <div className="rotation-calendar-pane">
+          <div className="rotation-date-quick-row">
+            {quickDates.map((quick) => (
+              <button
+                key={quick.label}
+                type="button"
+                className={quick.date === selectedDate ? "is-active" : ""}
+                onClick={() => chooseDate(quick.date)}
+              >
+                {quick.label}
+              </button>
+            ))}
+          </div>
+          <div className="rotation-calendar-weekdays">
+            {CALENDAR_WEEKDAYS.map((label) => <span key={label}>{label}</span>)}
+          </div>
+          <div className="rotation-calendar-grid">
+            {calendarDates.map((date) => {
+              const parsed = parseScheduleDate(date);
+              const visibleDay = visibleByDate.get(date);
+              const summary = versionSummaries[date] || null;
+              const state = getDateScheduleState({ date, today, visibleDay, summary });
+              const inMonth = date.slice(0, 7) === (monthDate || selectedDate).slice(0, 7);
+              const selected = date === selectedDate;
+              const current = date === today;
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  className={`rotation-calendar-day is-${state.tone}${inMonth ? "" : " is-outside"}${selected ? " is-selected" : ""}${current ? " is-today" : ""}`}
+                  onClick={() => chooseDate(date)}
+                  aria-label={`${getFullScheduleDateLabel(date)}. ${state.label}`}
+                  title={`${getFullScheduleDateLabel(date)}\n${state.detail}`}
+                >
+                  <span className="rotation-calendar-day-top">
+                    <span>{parsed ? parsed.getDate() : ""}</span>
+                    {current && <small>Today</small>}
+                  </span>
+                  <span className="rotation-calendar-day-status">{state.label}</span>
+                  <span className="rotation-calendar-day-dots" aria-hidden="true">
+                    {summary?.published > 0 && <i className="is-published" />}
+                    {summary?.draft > 0 && <i className="is-draft" />}
+                    {visibleDay?.staffPlan && <i className="is-staffed" />}
+                    {visibleDay?.canGenerate && <i className="is-ready" />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <aside className="rotation-date-summary-panel">
+          <div className={`rotation-date-selected-card is-${selectedState.tone}`}>
+            <span className="rotation-date-selected-icon"><I.Calendar /></span>
+            <div>
+              <span>{getRelativeScheduleDateLabel(selectedDate, today) || "Selected"}</span>
+              <strong>{getCompactScheduleDateLabel(selectedDate)}</strong>
+            </div>
+            <span className="rotation-date-state-pill">{selectedState.label}</span>
+          </div>
+
+          <div className="rotation-date-signal-grid">
+            <div>
+              <span>Versions</span>
+              <strong>{selectedSummary?.total || 0}</strong>
+            </div>
+            <div>
+              <span>Matrix</span>
+              <strong>{selectedVisibleDay?.canGenerate ? "Ready" : selectedVisibleDay?.hasNoData ? "Missing" : "Open"}</strong>
+            </div>
+            <div>
+              <span>Staff</span>
+              <strong>{selectedVisibleDay?.staffPlan ? "Saved" : "None"}</strong>
+            </div>
+          </div>
+
+          <div className="rotation-date-submissions">
+            <div className="rotation-date-submissions-title">
+              <span>Submitted schedules</span>
+              {summaryLoading && <small>Loading</small>}
+            </div>
+            {submittedDates.length ? (
+              submittedDates.map(([date, summary]) => {
+                const state = getDateScheduleState({
+                  date,
+                  today,
+                  visibleDay: visibleByDate.get(date),
+                  summary,
+                });
+                return (
+                  <button key={date} type="button" onClick={() => chooseDate(date)}>
+                    <span>{getCompactScheduleDateLabel(date)}</span>
+                    <strong>{state.label}</strong>
+                    <small>v{summary.latestVersion || 1}</small>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="rotation-date-empty-state">
+                No saved rotations in {getCalendarMonthLabel(monthDate || selectedDate)}.
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 export default function RotationCreationStudio({
   day,
   rotation,
@@ -418,6 +754,10 @@ export default function RotationCreationStudio({
   saveDisabledReason,
   disabled = false,
   templateCatalogSummary,
+  visibleDays = [],
+  today,
+  onSelectDate,
+  onFetchScheduleSummaries,
 }) {
   const defaultMatrix = useMemo(() => buildDefaultStaffingMatrix(day, rotation), [day?.date, rotation?.shift_recommendations]);
   const [staffingMatrix, setStaffingMatrix] = useState(defaultMatrix);
@@ -429,6 +769,9 @@ export default function RotationCreationStudio({
   const [appliedTemplateIds, setAppliedTemplateIds] = useState({ opening: "", closing: "" });
   const [selectedCell, setSelectedCell] = useState(null);
   const [customizeMode, setCustomizeMode] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(getScheduleMonthStart(day?.date || today));
+  const datePickerRef = useRef(null);
 
   useEffect(() => {
     setStaffingMatrix(defaultMatrix);
@@ -438,7 +781,25 @@ export default function RotationCreationStudio({
     setAppliedTemplateIds({ opening: "", closing: "" });
     setSelectedCell(null);
     setCustomizeMode(false);
-  }, [day?.date, defaultMatrix, config]);
+    setCalendarMonth(getScheduleMonthStart(day?.date || today));
+  }, [day?.date, defaultMatrix, config, today]);
+
+  useEffect(() => {
+    if (!datePickerOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (datePickerRef.current?.contains(event.target)) return;
+      setDatePickerOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setDatePickerOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [datePickerOpen]);
 
   const demandDisplay = matrixMode === "projected" ? day?.projectedDisplay : day?.currentDisplay;
   const candidates = useMemo(() => ({
@@ -590,6 +951,11 @@ export default function RotationCreationStudio({
           display: grid;
           gap: 12px;
         }
+        .rotation-date-picker-frame {
+          position: relative;
+          display: grid;
+          gap: 10px;
+        }
         .rotation-config-bar {
           display: grid;
           grid-template-columns: minmax(160px, 0.9fr) minmax(190px, 1.1fr) repeat(4, minmax(116px, 1fr)) minmax(132px, 0.75fr);
@@ -612,6 +978,434 @@ export default function RotationCreationStudio({
           gap: 6px;
           min-width: 0;
           padding: 15px 18px;
+        }
+        .rotation-config-segment.rotation-date-trigger {
+          border: 0;
+          background:
+            linear-gradient(135deg, rgba(219, 234, 254, 0.94), rgba(240, 253, 244, 0.96));
+          cursor: pointer;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+        .rotation-config-segment.rotation-date-trigger:hover,
+        .rotation-config-segment.rotation-date-trigger:focus-visible,
+        .rotation-config-segment.rotation-date-trigger.is-open {
+          outline: none;
+          box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.35), inset 0 0 0 999px rgba(255, 255, 255, 0.18);
+        }
+        .rotation-config-segment.rotation-date-trigger:hover {
+          transform: translateY(-1px);
+        }
+        .rotation-date-trigger-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-width: 0;
+        }
+        .rotation-date-trigger-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.80);
+          color: #1D4ED8;
+          box-shadow: 0 8px 18px rgba(29, 78, 216, 0.13);
+          flex: 0 0 auto;
+        }
+        .rotation-date-panel {
+          position: absolute;
+          top: calc(100% + 10px);
+          left: 0;
+          right: 0;
+          z-index: 18;
+          display: grid;
+          gap: 14px;
+          padding: 16px;
+          border: 1px solid rgba(148, 163, 184, 0.34);
+          border-radius: 24px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.98));
+          box-shadow: 0 28px 70px rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+          animation: rotationStudioSettle 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+        .rotation-date-panel-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 14px;
+        }
+        .rotation-date-heading {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+        }
+        .rotation-date-kicker {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-date-heading strong {
+          color: var(--studio-ink);
+          font-size: 20px;
+          font-weight: 950;
+          line-height: 1.1;
+        }
+        .rotation-date-heading span:last-child {
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.35;
+        }
+        .rotation-date-month-controls {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          border-radius: 999px;
+          background: #F8FAFC;
+          flex: 0 0 auto;
+        }
+        .rotation-date-month-controls span {
+          min-width: 128px;
+          color: var(--studio-ink);
+          font-size: 12px;
+          font-weight: 950;
+          text-align: center;
+          white-space: nowrap;
+        }
+        .rotation-date-month-controls button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          border: 0;
+          border-radius: 999px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+          transition: transform 140ms ease, box-shadow 140ms ease;
+        }
+        .rotation-date-month-controls button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-date-month-controls .rotation-date-close {
+          color: var(--studio-muted);
+          box-shadow: none;
+        }
+        .rotation-date-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.5fr) minmax(290px, 0.7fr);
+          gap: 14px;
+          align-items: stretch;
+        }
+        .rotation-calendar-pane {
+          display: grid;
+          gap: 10px;
+          min-width: 0;
+        }
+        .rotation-date-quick-row {
+          display: flex;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
+        .rotation-date-quick-row button {
+          min-height: 30px;
+          padding: 0 11px;
+          border: 1px solid rgba(148, 163, 184, 0.30);
+          border-radius: 999px;
+          background: #FFFFFF;
+          color: var(--studio-muted);
+          cursor: pointer;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+        }
+        .rotation-date-quick-row button:hover,
+        .rotation-date-quick-row button.is-active {
+          transform: translateY(-1px);
+          border-color: rgba(29, 78, 216, 0.30);
+          background: #EFF6FF;
+          color: #1D4ED8;
+        }
+        .rotation-calendar-weekdays,
+        .rotation-calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .rotation-calendar-weekdays span {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+          text-align: center;
+          text-transform: uppercase;
+        }
+        .rotation-calendar-day {
+          position: relative;
+          display: grid;
+          grid-template-rows: auto 1fr auto;
+          gap: 5px;
+          min-height: 74px;
+          padding: 8px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 14px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          text-align: left;
+          overflow: hidden;
+          transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .rotation-calendar-day:hover,
+        .rotation-calendar-day:focus-visible {
+          outline: none;
+          transform: translateY(-2px);
+          border-color: rgba(29, 78, 216, 0.34);
+          box-shadow: 0 14px 24px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-calendar-day.is-outside {
+          opacity: 0.44;
+          background: #F8FAFC;
+        }
+        .rotation-calendar-day.is-selected {
+          border-color: #1D4ED8;
+          background: linear-gradient(180deg, #EFF6FF, #FFFFFF);
+          box-shadow: inset 0 0 0 2px rgba(29, 78, 216, 0.18), 0 16px 30px rgba(29, 78, 216, 0.12);
+        }
+        .rotation-calendar-day.is-today:not(.is-selected) {
+          border-color: rgba(132, 204, 22, 0.60);
+          background: #F7FEE7;
+        }
+        .rotation-calendar-day.is-published {
+          border-color: rgba(22, 163, 74, 0.42);
+        }
+        .rotation-calendar-day.is-draft {
+          border-color: rgba(245, 158, 11, 0.42);
+        }
+        .rotation-calendar-day-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 4px;
+        }
+        .rotation-calendar-day-top > span {
+          color: var(--studio-ink);
+          font-size: 15px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .rotation-calendar-day-top small {
+          color: #65A30D;
+          font-size: 8.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-calendar-day-status {
+          align-self: end;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          line-height: 1.15;
+          overflow-wrap: anywhere;
+        }
+        .rotation-calendar-day.is-published .rotation-calendar-day-status,
+        .rotation-calendar-day.is-ready .rotation-calendar-day-status {
+          color: #15803D;
+        }
+        .rotation-calendar-day.is-draft .rotation-calendar-day-status {
+          color: #B45309;
+        }
+        .rotation-calendar-day.is-missing .rotation-calendar-day-status {
+          color: #991B1B;
+        }
+        .rotation-calendar-day-dots {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-height: 7px;
+        }
+        .rotation-calendar-day-dots i {
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+        .rotation-calendar-day-dots .is-published { background: #16A34A; }
+        .rotation-calendar-day-dots .is-draft { background: #F59E0B; }
+        .rotation-calendar-day-dots .is-staffed { background: #2563EB; }
+        .rotation-calendar-day-dots .is-ready { background: #84CC16; }
+        .rotation-date-summary-panel {
+          display: grid;
+          gap: 10px;
+          min-width: 0;
+        }
+        .rotation-date-selected-card {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.30);
+          border-radius: 16px;
+          background: #FFFFFF;
+        }
+        .rotation-date-selected-card.is-published {
+          border-color: rgba(22, 163, 74, 0.38);
+          background: #F0FDF4;
+        }
+        .rotation-date-selected-card.is-draft {
+          border-color: rgba(245, 158, 11, 0.38);
+          background: #FFFBEB;
+        }
+        .rotation-date-selected-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 38px;
+          height: 38px;
+          border-radius: 12px;
+          background: #111827;
+          color: #FFFFFF;
+          box-shadow: 0 12px 24px rgba(17, 24, 39, 0.18);
+        }
+        .rotation-date-selected-card div {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+        }
+        .rotation-date-selected-card div span {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .rotation-date-selected-card div strong {
+          color: var(--studio-ink);
+          font-size: 14px;
+          font-weight: 950;
+          line-height: 1.2;
+        }
+        .rotation-date-state-pill {
+          justify-self: end;
+          padding: 5px 9px;
+          border-radius: 999px;
+          background: #F1F5F9;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+        .rotation-date-selected-card.is-published .rotation-date-state-pill {
+          background: #DCFCE7;
+          color: #15803D;
+        }
+        .rotation-date-selected-card.is-draft .rotation-date-state-pill {
+          background: #FEF3C7;
+          color: #B45309;
+        }
+        .rotation-date-signal-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .rotation-date-signal-grid div {
+          display: grid;
+          gap: 4px;
+          padding: 10px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 14px;
+          background: #FFFFFF;
+        }
+        .rotation-date-signal-grid span,
+        .rotation-date-submissions-title span {
+          color: var(--studio-muted);
+          font-size: 9.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-date-signal-grid strong {
+          color: var(--studio-ink);
+          font-size: 13px;
+          font-weight: 950;
+          line-height: 1.1;
+          overflow-wrap: anywhere;
+        }
+        .rotation-date-submissions {
+          display: grid;
+          gap: 7px;
+          padding: 12px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 16px;
+          background: #F8FAFC;
+        }
+        .rotation-date-submissions-title {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .rotation-date-submissions-title small {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 900;
+        }
+        .rotation-date-submissions button {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 9px;
+          border: 1px solid rgba(148, 163, 184, 0.24);
+          border-radius: 12px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          text-align: left;
+          transition: transform 130ms ease, box-shadow 130ms ease;
+        }
+        .rotation-date-submissions button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 18px rgba(15, 23, 42, 0.10);
+        }
+        .rotation-date-submissions button span {
+          font-size: 11px;
+          font-weight: 950;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .rotation-date-submissions button strong {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+        }
+        .rotation-date-submissions button small {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 950;
+        }
+        .rotation-date-empty-state {
+          padding: 12px;
+          border: 1px dashed rgba(148, 163, 184, 0.42);
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.72);
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.4;
         }
         .rotation-config-segment + .rotation-config-segment {
           border-left: 1px solid rgba(148, 163, 184, 0.22);
@@ -1177,8 +1971,65 @@ export default function RotationCreationStudio({
           .rotation-config-segment {
             border-bottom: 1px solid rgba(148, 163, 184, 0.18);
           }
+          .rotation-date-layout {
+            grid-template-columns: 1fr;
+          }
         }
         @media (max-width: 720px) {
+          .rotation-date-panel {
+            position: absolute;
+            top: 86px;
+            left: -60px;
+            right: auto;
+            width: min(330px, calc(100vw - 86px));
+            box-sizing: border-box;
+            border-radius: 18px;
+            padding: 12px;
+            max-height: calc(100vh - 130px);
+            overflow-y: auto;
+          }
+          .rotation-date-panel-header,
+          .rotation-date-month-controls {
+            align-items: stretch;
+          }
+          .rotation-date-panel-header {
+            display: grid;
+          }
+          .rotation-date-month-controls {
+            justify-content: space-between;
+            width: 100%;
+            box-sizing: border-box;
+          }
+          .rotation-date-month-controls span {
+            min-width: 0;
+            flex: 1;
+          }
+          .rotation-calendar-weekdays,
+          .rotation-calendar-grid {
+            gap: 4px;
+          }
+          .rotation-calendar-day {
+            min-height: 46px;
+            border-radius: 11px;
+            padding: 6px;
+            grid-template-rows: auto auto;
+          }
+          .rotation-calendar-day-status {
+            display: none;
+          }
+          .rotation-calendar-day-top small {
+            display: none;
+          }
+          .rotation-date-signal-grid {
+            grid-template-columns: 1fr;
+          }
+          .rotation-date-selected-card {
+            grid-template-columns: auto minmax(0, 1fr);
+          }
+          .rotation-date-state-pill {
+            grid-column: 1 / -1;
+            justify-self: start;
+          }
           .rotation-config-bar {
             grid-template-columns: 1fr;
             border-radius: 22px;
@@ -1203,46 +2054,75 @@ export default function RotationCreationStudio({
         }
       `}</style>
 
-      <div className="rotation-config-bar" aria-label="Rotation staffing configuration">
-        <div className="rotation-config-segment">
-          <span className="rotation-config-kicker">Day</span>
-          <span className="rotation-config-title">{formatDayLabel(day)}</span>
-        </div>
-        <div className="rotation-config-segment">
-          <span className="rotation-config-kicker">Shift</span>
-          <div className="rotation-shift-toggle">
-            {SHIFT_CONFIG.map((shift) => (
-              <button
-                key={shift.key}
-                type="button"
-                className={activeShift === shift.key ? "is-active" : ""}
-                onClick={() => {
-                  setActiveShift(shift.key);
-                  setHoveredTemplateId("");
-                  setSelectedCell(null);
-                }}
-              >
-                {shift.label}
-              </button>
-            ))}
+      <div className="rotation-date-picker-frame" ref={datePickerRef}>
+        <div className="rotation-config-bar" aria-label="Rotation staffing configuration">
+          <button
+            type="button"
+            className={`rotation-config-segment rotation-date-trigger${datePickerOpen ? " is-open" : ""}`}
+            onClick={() => {
+              setCalendarMonth(getScheduleMonthStart(day?.date || today));
+              setDatePickerOpen((value) => !value);
+            }}
+            aria-expanded={datePickerOpen}
+            aria-haspopup="dialog"
+          >
+            <span className="rotation-config-kicker">Day</span>
+            <span className="rotation-date-trigger-row">
+              <span className="rotation-config-title">{formatDayLabel(day)}</span>
+              <span className="rotation-date-trigger-icon" aria-hidden="true">
+                <I.ChevronDown />
+              </span>
+            </span>
+          </button>
+          <div className="rotation-config-segment">
+            <span className="rotation-config-kicker">Shift</span>
+            <div className="rotation-shift-toggle">
+              {SHIFT_CONFIG.map((shift) => (
+                <button
+                  key={shift.key}
+                  type="button"
+                  className={activeShift === shift.key ? "is-active" : ""}
+                  onClick={() => {
+                    setActiveShift(shift.key);
+                    setHoveredTemplateId("");
+                    setSelectedCell(null);
+                  }}
+                >
+                  {shift.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {ROLE_CONFIG.map((role) => (
+            <div key={role.key} className="rotation-config-segment">
+              <CountStepper
+                label={role.label}
+                value={activeCounts[role.key]}
+                disabled={disabled}
+                onChange={(value) => updateCount(activeShift, role.key, value)}
+              />
+            </div>
+          ))}
+          <div className="rotation-config-segment">
+            <span className="rotation-total-pill">
+              <I.Users />
+              {countShiftTotal(activeCounts)} total
+            </span>
           </div>
         </div>
-        {ROLE_CONFIG.map((role) => (
-          <div key={role.key} className="rotation-config-segment">
-            <CountStepper
-              label={role.label}
-              value={activeCounts[role.key]}
-              disabled={disabled}
-              onChange={(value) => updateCount(activeShift, role.key, value)}
-            />
-          </div>
-        ))}
-        <div className="rotation-config-segment">
-          <span className="rotation-total-pill">
-            <I.Users />
-            {countShiftTotal(activeCounts)} total
-          </span>
-        </div>
+
+        {datePickerOpen && (
+          <RotationDateSelector
+            selectedDay={day}
+            today={today}
+            visibleDays={visibleDays}
+            monthDate={calendarMonth}
+            onMonthChange={setCalendarMonth}
+            onSelectDate={onSelectDate}
+            onClose={() => setDatePickerOpen(false)}
+            onFetchScheduleSummaries={onFetchScheduleSummaries}
+          />
+        )}
       </div>
 
       <div className="rotation-studio-toolbar">
