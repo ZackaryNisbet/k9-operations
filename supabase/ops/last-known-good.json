@@ -16,18 +16,18 @@
       "updatedAt": "2026-05-17T01:31:32.649Z"
     },
     "ops-compute": {
-      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
+      "commit": "e37a1d545f67567112b3a66e77784221f1eb1977",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "dynamic GINGR workflow configuration rollout",
-      "updatedAt": "2026-05-18T12:15:11.691Z"
+      "note": "make future ops compute explicit to avoid minute-cron resource limits",
+      "updatedAt": "2026-05-18T12:44:34.040Z"
     },
     "ops-compute-ondemand": {
-      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
+      "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "dynamic GINGR workflow configuration rollout",
-      "updatedAt": "2026-05-18T12:15:11.691Z"
+      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "scheduling-audit": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
@@ -79,11 +79,11 @@
       "updatedAt": "2026-04-22T15:36:22.171Z"
     },
     "ops-bathing-manual": {
-      "commit": "3568033bf063a73762e771a8eb371dfb319d6174",
+      "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Fix bathing Fresh N Clean classification, ES256 health auth, and on-demand bathing parity",
-      "updatedAt": "2026-04-19T13:06:50.411Z"
+      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "compute-rotation-schedule": {
       "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
@@ -119,6 +119,13 @@
       "action": "deploy",
       "note": "Scheduling matrix XLSX export and historical backfill",
       "updatedAt": "2026-05-17T01:31:32.649Z"
+    },
+    "ops-audit": {
+      "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
+      "sourceRef": "HEAD",
+      "action": "deploy",
+      "note": "prevent GINGR icon template id collisions in dynamic mappings",
+      "updatedAt": "2026-05-18T12:41:17.534Z"
     }
   }
 }
