@@ -2,18 +2,18 @@
   "projectRef": "xuzvqcpthqikyroqhypw",
   "functions": {
     "gingr-sync": {
-      "commit": "4f7c33ddfbd950fa55b36157166fd589c8ba4dfa",
+      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "dynamic Gingr workflow configuration rollout",
-      "updatedAt": "2026-05-18T12:15:11.691Z"
+      "note": "Demand matrix reorg and departing play splits",
+      "updatedAt": "2026-05-18T19:46:41.107Z"
     },
     "compute-scheduling-matrix": {
-      "commit": "1780ab5d8ffe0bd2b867271e9451d980781fc1d7",
+      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Scheduling matrix XLSX export and historical backfill",
-      "updatedAt": "2026-05-17T01:31:32.649Z"
+      "note": "Demand matrix reorg and departing play splits",
+      "updatedAt": "2026-05-18T19:46:41.107Z"
     },
     "ops-compute": {
       "commit": "e37a1d545f67567112b3a66e77784221f1eb1977",
@@ -30,11 +30,11 @@
       "updatedAt": "2026-05-18T12:41:17.534Z"
     },
     "scheduling-audit": {
-      "commit": "d49498ecfa4a04c5b84a8e5112e8a8d5742202de",
+      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "scheduling projection integrity and health",
-      "updatedAt": "2026-04-22T12:32:05.741Z"
+      "note": "Demand matrix reorg and departing play splits",
+      "updatedAt": "2026-05-18T19:46:41.107Z"
     },
     "gingr-boh-poll": {
       "commit": "8f83744280f2f3cb70e8fc5c2d211e6350fb2590",
@@ -114,11 +114,11 @@
       "updatedAt": "2026-05-04T03:50:38.116Z"
     },
     "scheduling-matrix-backfill": {
-      "commit": "1780ab5d8ffe0bd2b867271e9451d980781fc1d7",
+      "commit": "229c163cc518d4aa47960ab5734565600f3040fa",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Scheduling matrix XLSX export and historical backfill",
-      "updatedAt": "2026-05-17T01:31:32.649Z"
+      "note": "Demand matrix reorg and departing play splits",
+      "updatedAt": "2026-05-18T19:46:41.107Z"
     },
     "ops-audit": {
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
