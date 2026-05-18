@@ -14,13 +14,6 @@ const PLAY_ICON_CAPABILITY_TO_TAG = {
   "play.evaluation": "evaluation",
 };
 
-const PLAY_TITLE_FALLBACK_CAPABILITIES = {
-  "private play": "play.private_play",
-  "large dog playgroup": "play.large_daycare",
-  "small dog playgroup": "play.small_daycare",
-  "evaluation": "play.evaluation",
-};
-
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -40,10 +33,6 @@ function normalizeSchedulingPlaygroup(value) {
 
 function normalizeString(value) {
   return String(value || "").trim();
-}
-
-function normalizeKey(value) {
-  return normalizeString(value).toLowerCase();
 }
 
 function uniqueStrings(values) {
@@ -66,36 +55,6 @@ function mappingMatchesIcon(mapping, icon) {
   return false;
 }
 
-function getFallbackCapabilities(icon) {
-  const titleKey = normalizeKey(icon?.icon_title);
-  const groupKey = normalizeKey(icon?.icon_group);
-  if (groupKey !== "play") return [];
-
-  const exact = PLAY_TITLE_FALLBACK_CAPABILITIES[titleKey];
-  if (exact) return [exact];
-
-  if (titleKey.includes("private") && titleKey.includes("play")) {
-    return ["play.private_play"];
-  }
-  if (
-    titleKey.includes("large")
-    && (titleKey.includes("playgroup") || titleKey.includes("play group") || titleKey.includes("daycare"))
-  ) {
-    return ["play.large_daycare"];
-  }
-  if (
-    titleKey.includes("small")
-    && (titleKey.includes("playgroup") || titleKey.includes("play group") || titleKey.includes("daycare"))
-  ) {
-    return ["play.small_daycare"];
-  }
-  if (titleKey === "eval" || titleKey.includes("evaluation")) {
-    return ["play.evaluation"];
-  }
-
-  return [];
-}
-
 export function getCapabilitiesForIcon(icon, mappings = []) {
   const explicitMatches = mappings
     .filter((mapping) => mapping?.is_active !== false && normalizeString(mapping?.capability_key))
@@ -106,7 +65,7 @@ export function getCapabilitiesForIcon(icon, mappings = []) {
     return uniqueStrings(explicitMatches);
   }
 
-  return getFallbackCapabilities(icon);
+  return [];
 }
 
 function normalizePlaygroupTagFromIcon(icon, mappings = []) {

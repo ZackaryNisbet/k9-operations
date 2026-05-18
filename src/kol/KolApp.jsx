@@ -61,6 +61,7 @@ import ResourcesPage from "./pages/ResourcesPage";
 import GrassrootsPage from "./pages/GrassrootsPage";
 import ResortUpkeepPage from "./pages/ResortUpkeepPage";
 import EnrichmentsPage from "./pages/EnrichmentsPage";
+import GingrIconsPage from "./pages/GingrIconsPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 import { BrandedErrorBoundary } from "../shared/AppCrashScreen";
@@ -111,6 +112,7 @@ const LITE_PAGE_SLUGS = {
   "checkout-notes": "checkout-notes",
   "checkout-tv": "checkout-tv",
   "settings": "settings",
+  "gingr-icons": "gingr-icons",
   "inventory": "inventory",
   "inventory-report": "inventory/report",
   "enterprise-directory": "enterprise/directory",
@@ -308,6 +310,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
+  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -324,6 +327,7 @@ const LEAN_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -344,6 +348,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "gingr-icons", label: "Gingr Icons", icon: "Layers" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -397,6 +402,7 @@ const PAGE_PERMISSION_MAP = {
   "reports": null,
   "photos": "Photos Module",
   "settings": null,
+  "gingr-icons": "Gingr Integration",
   "client-management": "Customer Lifecycle",
   "enrichments": null,
   "resources": null,
@@ -438,6 +444,7 @@ const PAGE_OWNED_DATA_PAGES = new Set([
   "resort-upkeep",
   "resources",
   "settings",
+  "gingr-icons",
   "role-layout",
   "enterprise-directory",
   "enterprise-org-chart",
@@ -474,6 +481,84 @@ const STATIC_LOCATIONS = [
   { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/dashboard?mode=analytics" },
   { id: "demo-pos", name: "K9 Operations POS", slug: "pos-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
+
+function formatSyncRemaining(status) {
+  const percent = Number(status?.percent || 0);
+  const startedAt = status?.started_at ? new Date(status.started_at).getTime() : 0;
+  if (!startedAt || percent <= 0 || percent >= 100) return "Estimating";
+  const elapsedMs = Date.now() - startedAt;
+  const remainingMs = Math.max(0, (elapsedMs / percent) * (100 - percent));
+  const remainingMinutes = Math.ceil(remainingMs / 60000);
+  if (remainingMinutes < 60) return `${remainingMinutes}m remaining`;
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  return minutes ? `${hours}h ${minutes}m remaining` : `${hours}h remaining`;
+}
+
+function InitialGingrSyncDock({ locationId }) {
+  const [status, setStatus] = useState(null);
+
+  const loadStatus = useCallback(async () => {
+    if (!locationId || locationId === "enterprise") {
+      setStatus(null);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("v_gingr_initial_sync_status")
+      .select("*")
+      .eq("location_id", locationId)
+      .limit(1);
+    if (error) {
+      setStatus(null);
+      return;
+    }
+    const next = data?.[0] || null;
+    setStatus(next && next.status !== "complete" ? next : null);
+  }, [locationId]);
+
+  useEffect(() => {
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 12000);
+    return () => window.clearInterval(timer);
+  }, [loadStatus]);
+
+  if (!status) return null;
+  const percent = Math.max(0, Math.min(100, Number(status.percent || 0)));
+  const isFailed = status.status === "failed";
+  return (
+    <div style={{
+      position: "fixed",
+      left: "50%",
+      bottom: 18,
+      transform: "translateX(-50%)",
+      zIndex: 9800,
+      width: "min(560px, calc(100vw - 32px))",
+      borderRadius: 12,
+      border: `1px solid ${isFailed ? "#EF444466" : `${C.pri}33`}`,
+      background: "rgba(255,255,255,0.96)",
+      boxShadow: "0 18px 44px rgba(15,23,42,0.18)",
+      padding: "12px 14px",
+      backdropFilter: "blur(12px)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 900, color: isFailed ? "#991B1B" : C.text, letterSpacing: 0 }}>
+            GINGR initial sync {isFailed ? "needs attention" : "running"}
+          </div>
+          <div style={{ fontSize: 11, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+            {status.error_message || status.last_message || status.current_label || status.current_entity || "Pulling historical GINGR data"}
+          </div>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 900, color: isFailed ? "#991B1B" : C.pri, whiteSpace: "nowrap" }}>
+          {percent.toFixed(1)}% | {formatSyncRemaining(status)}
+        </div>
+      </div>
+      <div style={{ height: 7, borderRadius: 999, background: isFailed ? "#FEE2E2" : `${C.pri}14`, overflow: "hidden" }}>
+        <div style={{ width: `${percent}%`, height: "100%", background: isFailed ? "#EF4444" : C.pri, transition: "width 0.25s ease" }} />
+      </div>
+    </div>
+  );
+}
 
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
@@ -929,7 +1014,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "gingr-icons", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -987,6 +1072,7 @@ function LeanAppInner() {
       case "refunds": return "Refunds";
       case "photos": return "Photos";
       case "settings": return "Settings";
+      case "gingr-icons": return "Gingr Icons";
       case "enterprise-directory": return "Company Directory";
       case "enterprise-org-chart": return "Org Chart";
       case "enterprise-ops": return "Volume";
@@ -1091,8 +1177,7 @@ function LeanAppInner() {
 
   // Main content area
   const renderPage = () => {
-    const requiredPerms = getPagePermissionRequirements(page, params);
-    if (requiredPerms.length > 0 && !hasEveryLeanPermission(profile, requiredPerms)) {
+    if (!canAccessLitePage(profile, page, params)) {
       return <div style={{ padding: 40, textAlign: "center", color: C.dan }}><h2 style={{ margin: 0, color: C.dan }}>Access Denied</h2><p style={{ marginTop: 12, color: C.textSec }}>You don't have permission to access this area.</p></div>;
     }
 
@@ -1279,6 +1364,8 @@ function LeanAppInner() {
         return <TestHealthPage />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} analyticsMode={IS_ANALYTICS_MODE} />;
+      case "gingr-icons":
+        return <GingrIconsPage profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "onboarding":
         return <OnboardingPage nav={nav} />;
       case "pricing":
@@ -1458,6 +1545,8 @@ function LeanAppInner() {
           )}
         </div>
       </div>}
+
+      {!isFullscreenPage && <InitialGingrSyncDock locationId={currentLocation} />}
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (

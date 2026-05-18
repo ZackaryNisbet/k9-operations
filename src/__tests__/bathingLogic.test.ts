@@ -52,8 +52,12 @@ describe('bathing logic', () => {
   it('suppresses Standard when a specific bath type is present', () => {
     const normalized = resolveBathDisplayFromIconRows({
       iconRows: [
-        { icon_title: 'Standard', icon_group: 'Bath' },
-        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath' },
+        { icon_title: 'Standard', icon_group: 'Bath', icon_identity_key: 'standard' },
+        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath', icon_identity_key: 'hypo-no-spray' },
+      ],
+      mappings: [
+        { capability_key: 'bathing.type.standard', icon_identity_key: 'standard' },
+        { capability_key: 'bathing.type.hypoallergenic_no_spray', icon_identity_key: 'hypo-no-spray' },
       ],
       defaultType: 'Standard',
     });
@@ -65,7 +69,10 @@ describe('bathing logic', () => {
   it('keeps Fresh N Clean as the primary one-night boarding classification', () => {
     const normalized = resolveBathDisplayFromIconRows({
       iconRows: [
-        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath' },
+        { icon_title: 'Hypo - NO Spray', icon_group: 'Bath', icon_identity_key: 'hypo-no-spray' },
+      ],
+      mappings: [
+        { capability_key: 'bathing.type.hypoallergenic_no_spray', icon_identity_key: 'hypo-no-spray' },
       ],
       defaultType: 'Fresh N Clean',
     });
