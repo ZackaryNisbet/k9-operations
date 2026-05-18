@@ -114,11 +114,11 @@
       "updatedAt": "2026-05-04T03:50:38.116Z"
     },
     "scheduling-matrix-backfill": {
-      "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",
+      "commit": "54f8c5f2a6493f46ed07e541943befb5751daab5",
       "sourceRef": "HEAD",
       "action": "deploy",
-      "note": "Demand matrix export and historical compute load refinement",
-      "updatedAt": "2026-05-18T20:19:31.139Z"
+      "note": "Limit scheduling backfill to one matrix day per worker pass",
+      "updatedAt": "2026-05-18T20:36:25.664Z"
     },
     "ops-audit": {
       "commit": "eb31b8fb7607bf80fb2c21e1821ab1294011e1e7",
