@@ -6,6 +6,12 @@ import {
   getMatrixComparison,
   getMatrixTrust,
 } from "../../shared/schedulingEngine";
+import {
+  WEATHER_MATRIX_ROWS,
+  formatWeatherMatrixValue,
+  getWeatherMatrixValue,
+  isWeatherAvailable,
+} from "../../shared/weather";
 
 export const MATRIX_PAGE_SIZE = 14;
 export const DEMAND_MATRIX_EXPORT_MODE = "actual_current";
@@ -129,6 +135,18 @@ export const MATRIX_GROUP_TEMPLATES = [
       { key: "source.default_dog_volume", label: "Gingr Daytime + Overnight", total: true, source: true },
       { key: "source.total", label: "Gingr Raw Check-Outs + Overnight", source: true },
     ],
+  },
+  {
+    section: "Weather Data",
+    summaryKey: "weather.compact",
+    summaryLabel: "Weather Data",
+    summaryTitle: "Daily OpenWeather summary. Expand for every cached daily weather field and export-ready weather context.",
+    rows: WEATHER_MATRIX_ROWS.map((row) => ({
+      ...row,
+      weather: true,
+      total: row.key === "weather.compact",
+      alwaysVisible: row.key === "weather.compact",
+    })),
   },
 ];
 
@@ -320,6 +338,10 @@ function getDerivedMatrixValue(display, key) {
 }
 
 export function getDayMatrixValue(day, row, mode = "current") {
+  if (row.weather) {
+    return getWeatherMatrixValue(day?.weather, row.key);
+  }
+
   if (row.comparison) {
     return getComparisonMatrixValue(getDayComparison(day), row.key);
   }
@@ -417,6 +439,9 @@ export function buildDemandMatrixExportRowGroups(days) {
 }
 
 export function formatDemandMatrixValue(value, format) {
+  if (String(format || "").startsWith("weather_") || ["text", "temperature", "percent_number", "inches", "mph", "miles", "millibars", "time", "number"].includes(format)) {
+    return formatWeatherMatrixValue(value, format);
+  }
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
   if (format === "percent") return `${numeric.toFixed(Number.isInteger(numeric) ? 0 : 1)}%`;
@@ -485,6 +510,51 @@ function totalHistoricalPct(days, row) {
 }
 
 export function summarizeAggregateMatrixCell(days, row, mode = "current") {
+  if (row.weather) {
+    const availableDays = (days || []).filter((day) => isWeatherAvailable(day?.weather));
+    if (!availableDays.length) {
+      return {
+        value: null,
+        hasValue: false,
+        unavailableLabel: "No data",
+        unavailableTitle: "No cached weather is available for this range.",
+      };
+    }
+    if (row.aggregate === "text") {
+      return {
+        value: `${availableDays.length}/${(days || []).length} days cached`,
+        hasValue: true,
+        unavailableLabel: "No data",
+        unavailableTitle: "",
+      };
+    }
+    const values = availableDays
+      .map((day) => getWeatherMatrixValue(day.weather, row.key))
+      .map(Number)
+      .filter(Number.isFinite);
+    if (!values.length) {
+      return {
+        value: null,
+        hasValue: false,
+        unavailableLabel: "No data",
+        unavailableTitle: "No numeric weather values are cached for this range.",
+      };
+    }
+    const aggregate = row.aggregate === "min"
+      ? Math.min(...values)
+      : row.aggregate === "max"
+        ? Math.max(...values)
+        : row.aggregate === "sum"
+          ? values.reduce((sum, value) => sum + value, 0)
+          : values.reduce((sum, value) => sum + value, 0) / values.length;
+    return {
+      value: aggregate,
+      hasValue: true,
+      unavailableLabel: "No data",
+      unavailableTitle: "",
+    };
+  }
+
   if (row.format === "percent") {
     const value = totalHistoricalPct(days || [], row);
     return {
@@ -766,9 +836,10 @@ export function buildDemandMatrixExportModel({
       cells: sortedDays.map((day) => {
         const value = getDayMatrixValue(day, row, "current");
         const missingValue = value === null || value === undefined;
+        const storeAsText = row.weather || row.format === "text" || row.format === "time";
         return {
           date: day.date,
-          value: missingValue ? null : Number(value),
+          value: missingValue ? null : (storeAsText ? String(value) : Number(value)),
           displayValue: missingValue
             ? (row.comparison ? "Not populated" : "No data")
             : formatDemandMatrixValue(value, row.format),
@@ -777,8 +848,9 @@ export function buildDemandMatrixExportModel({
       }),
       aggregate: (() => {
         const aggregate = summarizeAggregateMatrixCell(sortedDays, row, "current");
+        const storeAsText = row.weather || row.format === "text" || row.format === "time";
         return {
-          value: aggregate.hasValue ? Number(aggregate.value) : null,
+          value: aggregate.hasValue ? (storeAsText ? String(aggregate.value) : Number(aggregate.value)) : null,
           displayValue: aggregate.hasValue
             ? formatDemandMatrixValue(aggregate.value, row.format)
             : aggregate.unavailableLabel,

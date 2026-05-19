@@ -53,6 +53,11 @@ verify_jwt = false
 # continuation calls use the Supabase service key.
 verify_jwt = false
 
+[functions.weather-daily]
+# Weather reads are authorized in-function so browser clients, scheduled cache
+# refreshes, and service-role calls all use the same cache path.
+verify_jwt = false
+
 [functions.ops-compute]
 # Scheduled pg_net calls use the vault service key. The function validates that
 # service key in-function so the gateway can accept non-JWT Supabase secret keys.

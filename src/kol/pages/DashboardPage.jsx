@@ -11,17 +11,31 @@ import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
+import WeatherHourlyGraph from "../../shared/WeatherHourlyGraph";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
 import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
+import { useWeatherData } from "../../hooks/useWeatherData";
 import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
 import { mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 import { getRoomCleaningBreakdown, getWeeklyMaintenanceStats } from "../../shared/opsHelpers";
+import {
+  buildWeatherDetailMetrics,
+  formatFetchedAt,
+  formatTemperature,
+  formatTemperatureRange,
+  formatWeatherSource,
+  formatWeatherSummary,
+  getWeatherIconUrl,
+  getWeatherOperationalNote,
+  getWeatherTone,
+  isWeatherAvailable,
+} from "../../shared/weather";
 import { getInventoryWorkflow } from "./inventoryStatus";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 
@@ -1052,7 +1066,19 @@ function DashboardContent({
   const cashReceiptTriggerRef = useRef(null);
   const [platformHealth, setPlatformHealth] = useState(null);
   const [showPlatformHealthModal, setShowPlatformHealthModal] = useState(false);
+  const [showWeatherModal, setShowWeatherModal] = useState(false);
   const today = todayStr();
+  const dashboardLocationId = locationId || profile?.location_id || "cherry-hill";
+  const {
+    getWeatherForDate: getDashboardWeatherForDate,
+    loading: dashboardWeatherLoading,
+    error: dashboardWeatherError,
+    limitations: dashboardWeatherLimitations,
+    refresh: refreshDashboardWeather,
+  } = useWeatherData(dashboardLocationId, today, today, {
+    enabled: Boolean(dashboardLocationId),
+  });
+  const dashboardWeather = getDashboardWeatherForDate(today);
   const { events: enrichmentEvents, loading: enrichmentLoading } = useEnrichmentEvents(locationId || profile?.location_id || "demo", today);
 
   /* ─── Stable nav callbacks ─── */
@@ -1823,6 +1849,16 @@ function DashboardContent({
           onClose={() => setShowPlatformHealthModal(false)}
         />
       )}
+      {showWeatherModal && (
+        <DashboardWeatherModal
+          weather={dashboardWeather}
+          loading={dashboardWeatherLoading}
+          error={dashboardWeatherError}
+          limitations={dashboardWeatherLimitations}
+          onClose={() => setShowWeatherModal(false)}
+          onRefresh={refreshDashboardWeather}
+        />
+      )}
 
       {/* ═══ HEADER BAR ═══ */}
       <div style={{
@@ -1856,6 +1892,12 @@ function DashboardContent({
               onClick={() => setShowPlatformHealthModal(true)}
             />
           )}
+          <DashboardWeatherStatusButton
+            weather={dashboardWeather}
+            loading={dashboardWeatherLoading}
+            error={dashboardWeatherError}
+            onClick={() => setShowWeatherModal(true)}
+          />
           <button
             onClick={refresh}
             disabled={metricsLoading}
@@ -1899,6 +1941,13 @@ function DashboardContent({
           </div>
         )}
       </div>
+
+      <DashboardWeatherStrip
+        weather={dashboardWeather}
+        loading={dashboardWeatherLoading}
+        error={dashboardWeatherError}
+        onOpen={() => setShowWeatherModal(true)}
+      />
 
       {/* ═══ MAIN CONTENT ═══ */}
       {analyticsMode ? (
@@ -2288,6 +2337,354 @@ function DashboardContent({
         dateLabel={receiptDateLabel}
         originRef={cashReceiptTriggerRef}
       />
+    </div>
+  );
+}
+
+function DashboardWeatherIcon({ weather, size = 42 }) {
+  const iconUrl = getWeatherIconUrl(weather);
+  if (iconUrl) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        aria-hidden="true"
+        style={{ width: size, height: size, objectFit: "contain", flex: `0 0 ${size}px` }}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#E0F2FE",
+        color: C.info,
+        fontSize: Math.max(14, size * 0.44),
+        fontWeight: 900,
+        flex: `0 0 ${size}px`,
+      }}
+    >
+      °
+    </span>
+  );
+}
+
+function DashboardWeatherStatusButton({ weather, loading, error, onClick }) {
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const label = loading
+    ? "Weather Loading"
+    : available
+      ? `${formatTemperature(weather.current_temp_f || weather.high_temp_f)} · ${tone.label}`
+      : error
+        ? "Weather Error"
+        : "Weather Pending";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "3px 8px",
+        borderRadius: 999,
+        border: `1px solid ${tone.border}`,
+        background: tone.bg,
+        color: tone.color,
+        fontSize: 8,
+        fontWeight: 800,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        whiteSpace: "nowrap",
+      }}
+      title={error || formatWeatherSummary(weather)}
+    >
+      <DashboardWeatherIcon weather={weather} size={14} />
+      {label}
+    </button>
+  );
+}
+
+function DashboardWeatherStrip({ weather, loading, error, onOpen }) {
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const details = buildWeatherDetailMetrics(weather);
+  const compactMetrics = details.slice(0, 4);
+  const fetchedLabel = formatFetchedAt(weather);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      style={{
+        margin: "0 14px 10px",
+        flexShrink: 0,
+        border: `1px solid ${tone.border}`,
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "linear-gradient(135deg, oklch(99% 0.005 152) 0%, oklch(98% 0.01 232) 48%, oklch(96% 0.025 235) 100%)",
+        boxShadow: "0 8px 22px rgba(15,23,42,0.06)",
+        cursor: "pointer",
+        padding: 0,
+        fontFamily: "inherit",
+        textAlign: "left",
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "stretch", minHeight: 74 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", minWidth: 0 }}>
+          <DashboardWeatherIcon weather={weather} size={48} />
+          <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 900, color: C.text }}>
+                Today&apos;s Weather
+              </span>
+              <span style={{ padding: "2px 7px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 10, fontWeight: 850 }}>
+                {loading ? "Loading" : tone.label}
+              </span>
+              {fetchedLabel && (
+                <span style={{ fontSize: 10, color: C.textMut, fontWeight: 750 }}>Updated {fetchedLabel}</span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+              <span style={{ fontSize: 30, lineHeight: 1, fontWeight: 950, color: available ? C.pri : C.textMut }}>
+                {available ? formatTemperature(weather.current_temp_f || weather.high_temp_f) : "--"}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 900, color: available ? C.text : C.textMut }}>
+                {available ? formatTemperatureRange(weather) : "Weather not cached"}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 750, color: error ? C.dan : C.textSec, minWidth: 0 }}>
+                {error || getWeatherOperationalNote(weather)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(68px, 1fr))",
+          minWidth: 320,
+          borderLeft: `1px solid ${C.borderLight}`,
+          background: "linear-gradient(180deg, rgba(255,255,255,0.84), rgba(241,245,249,0.88))",
+        }}>
+          {(compactMetrics.length ? compactMetrics : [
+            { label: "Source", value: loading ? "Loading" : formatWeatherSource(weather) },
+            { label: "High/Low", value: available ? formatTemperatureRange(weather) : "--" },
+            { label: "Risk", value: tone.label },
+            { label: "Detail", value: "Open" },
+          ]).map((metric) => (
+            <div key={metric.label} style={{ padding: "11px 10px", borderLeft: `1px solid ${C.borderLight}`, display: "grid", alignContent: "center", gap: 3, minWidth: 0 }}>
+              <span style={{ fontSize: 9, color: C.textMut, fontWeight: 850 }}>{metric.label}</span>
+              <span style={{ fontSize: 13, color: metric.tone === "caution" ? C.warn : C.text, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {metric.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ padding: "0 14px 14px" }}>
+        <WeatherHourlyGraph weather={weather} loading={loading} compact />
+      </div>
+    </button>
+  );
+}
+
+function DashboardWeatherModal({ weather, loading, error, limitations, onClose, onRefresh }) {
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const details = buildWeatherDetailMetrics(weather);
+  const fetchedLabel = formatFetchedAt(weather);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Dashboard weather details"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        background: "rgba(15,23,42,0.34)",
+        backdropFilter: "blur(8px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        animation: "healthBackdropIn 0.16s ease-out both",
+      }}
+    >
+      <div style={{
+        width: "min(860px, 96vw)",
+        maxHeight: "88vh",
+        overflow: "hidden",
+        borderRadius: 14,
+        background: "#FFFFFF",
+        border: "1px solid rgba(15,23,42,0.10)",
+        boxShadow: "0 24px 80px rgba(15,23,42,0.22)",
+        animation: "healthModalIn 0.2s cubic-bezier(0.22,1,0.36,1) both",
+        display: "flex",
+        flexDirection: "column",
+      }}>
+        <div style={{
+          padding: "20px 22px",
+          borderBottom: "1px solid rgba(15,23,42,0.08)",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 18,
+          alignItems: "flex-start",
+          background: `linear-gradient(135deg, ${tone.bg}, #FFFFFF 58%, #EEF6FF 100%)`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+            <DashboardWeatherIcon weather={weather} size={64} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: C.text, lineHeight: 1 }}>
+                  Today&apos;s Weather
+                </div>
+                <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 11, fontWeight: 900 }}>
+                  {loading ? "Loading" : tone.label}
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 11, marginTop: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 38, fontWeight: 950, color: available ? C.pri : C.textMut, lineHeight: 1 }}>
+                  {available ? formatTemperature(weather.current_temp_f || weather.high_temp_f) : "--"}
+                </span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.text }}>
+                  {available ? formatTemperatureRange(weather) : "No cached weather"}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 750, color: C.textSec }}>
+                  {formatWeatherSummary(weather)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close weather details"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "1px solid rgba(15,23,42,0.10)",
+              background: "rgba(255,255,255,0.84)",
+              color: C.text,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <I.X />
+          </button>
+        </div>
+
+        <div style={{ overflowY: "auto", padding: 22, display: "grid", gap: 16 }}>
+          {error && (
+            <div style={{ border: `1px solid ${C.dan}`, borderRadius: 10, background: C.danLt, padding: 12, color: C.dan, fontSize: 12, fontWeight: 800 }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(260px, 0.85fr)", gap: 14 }}>
+            <div style={{ border: `1px solid ${tone.border}`, borderRadius: 10, padding: 14, background: tone.bg }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 7 }}>Operational Read</div>
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, fontWeight: 700 }}>
+                {getWeatherOperationalNote(weather)}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 14, background: "#FFFFFF" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 9 }}>Source</div>
+              <div style={{ display: "grid", gap: 6, fontSize: 12, color: C.textSec, fontWeight: 700, lineHeight: 1.45 }}>
+                <span>{formatWeatherSource(weather)}</span>
+                {fetchedLabel && <span>Updated {fetchedLabel}</span>}
+                {limitations?.daily_forecast_horizon_days && <span>Forecast horizon: {limitations.daily_forecast_horizon_days} days</span>}
+                {limitations?.historical_coverage && <span>{limitations.historical_coverage}</span>}
+                {limitations?.future_note && <span>{limitations.future_note}</span>}
+              </div>
+            </div>
+          </div>
+
+          {details.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 10 }}>
+              {details.map((metric) => (
+                <DashboardWeatherMetric key={metric.label} metric={metric} />
+              ))}
+            </div>
+          )}
+
+          <WeatherHourlyGraph weather={weather} loading={loading} />
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderTop: `1px solid ${C.borderLight}`, paddingTop: 14 }}>
+            <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45, fontWeight: 700 }}>
+              Weather is cached in Supabase so old dates stay available after they enter the cache.
+            </div>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "8px 11px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#FFFFFF",
+                color: C.text,
+                cursor: loading ? "default" : "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+                fontWeight: 850,
+                opacity: loading ? 0.55 : 1,
+              }}
+            >
+              <span style={{ display: "flex" }}><I.RefreshCw /></span>
+              Refresh Weather
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardWeatherMetric({ metric }) {
+  const caution = metric.tone === "caution";
+  return (
+    <div style={{
+      border: `1px solid ${caution ? "#FDE68A" : C.borderLight}`,
+      borderRadius: 10,
+      background: caution ? C.warnLt : "#F8FAFC",
+      padding: 12,
+      minHeight: 76,
+      display: "grid",
+      alignContent: "center",
+      gap: 5,
+    }}>
+      <div style={{ fontSize: 10, color: C.textMut, fontWeight: 850 }}>{metric.label}</div>
+      <div style={{ fontSize: 18, color: caution ? C.warn : C.text, fontWeight: 950, lineHeight: 1 }}>
+        {metric.value}
+      </div>
     </div>
   );
 }
