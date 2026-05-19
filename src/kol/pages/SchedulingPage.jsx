@@ -10,18 +10,6 @@ import { supabase } from "../../supabaseClient";
 import { buildSchedulingDateRange, useSchedulingData } from "../../hooks/useSchedulingData";
 import { useWeatherData } from "../../hooks/useWeatherData";
 import {
-  buildWeatherDetailMetrics,
-  formatFetchedAt,
-  formatTemperatureRange,
-  formatWeatherSource,
-  formatWeatherSummary,
-  getWeatherIconUrl,
-  getWeatherOperationalNote,
-  getWeatherTone,
-  isWeatherAvailable,
-  summarizeWeatherRows,
-} from "../../shared/weather";
-import {
   TASK_COLORS,
   SHIFT_POSITION_OPTIONS,
   applyOverride,
@@ -463,228 +451,6 @@ function CapacityWatchPanel({ selectedDay, visibleDays, config, matrixMode, onOp
       ) : (
         <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.5 }}>
           No play capacity caps are configured yet. Set caps for large play, small play, private play, half-and-half, or mapped Gingr icon categories in Scheduling Capacity settings.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WeatherIcon({ row, size = 30, dark = false }) {
-  const iconUrl = getWeatherIconUrl(row, { dark });
-  if (iconUrl) {
-    return (
-      <img
-        src={iconUrl}
-        alt=""
-        aria-hidden="true"
-        style={{ width: size, height: size, objectFit: "contain", flex: `0 0 ${size}px` }}
-      />
-    );
-  }
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#E0F2FE",
-        color: C.info,
-        fontSize: Math.max(12, size * 0.48),
-        fontWeight: 900,
-      }}
-    >
-      °
-    </span>
-  );
-}
-
-function WeatherMetricPill({ metric }) {
-  const tone = metric.tone === "caution"
-    ? { bg: C.warnLt, border: "#FDE68A", color: C.warn }
-    : { bg: "#F8FAFC", border: C.borderLight, color: C.textSec };
-  return (
-    <div style={{ border: `1px solid ${tone.border}`, borderRadius: 8, background: tone.bg, padding: "7px 8px", minWidth: 74 }}>
-      <div style={{ fontSize: 9, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>{metric.label}</div>
-      <div style={{ fontSize: 13, color: tone.color, fontWeight: 900, marginTop: 2 }}>{metric.value}</div>
-    </div>
-  );
-}
-
-function WeatherColumnBadge({ column, getWeatherForDate, loading }) {
-  if (loading) {
-    return (
-      <div style={{ marginTop: 7, fontSize: 10, color: C.textMut, fontWeight: 800 }}>
-        Weather...
-      </div>
-    );
-  }
-
-  if (column.type === "segment") {
-    const rows = (column.days || []).map((day) => getWeatherForDate(day.date)).filter(Boolean);
-    const summary = summarizeWeatherRows(rows);
-    if (!summary) {
-      return (
-        <div title="No cached weather for this segment yet" style={{ marginTop: 7, fontSize: 10, color: C.textMut, fontWeight: 800 }}>
-          Weather pending
-        </div>
-      );
-    }
-    return (
-      <div title={`${summary.availableDays}/${summary.totalDays} days have weather`} style={{ marginTop: 7, display: "grid", gap: 2 }}>
-        <div style={{ fontSize: 10, color: C.pri, fontWeight: 900 }}>
-          {summary.high != null && summary.low != null ? `${Math.round(summary.high)}° / ${Math.round(summary.low)}°` : "Weather"}
-        </div>
-        <div style={{ fontSize: 9, color: C.textMut, fontWeight: 800 }}>
-          {summary.maxPrecip != null ? `${Math.round(summary.maxPrecip)}% rain max` : `${summary.availableDays}/${summary.totalDays} days`}
-        </div>
-      </div>
-    );
-  }
-
-  const row = getWeatherForDate(column.day?.date);
-  const available = isWeatherAvailable(row);
-  const tone = getWeatherTone(row);
-  return (
-    <div
-      title={formatWeatherSummary(row)}
-      style={{
-        margin: "7px auto 0",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 4,
-        maxWidth: "100%",
-        padding: "3px 6px",
-        borderRadius: 999,
-        border: `1px solid ${tone.border}`,
-        background: tone.bg,
-        color: tone.color,
-        fontSize: 10,
-        fontWeight: 900,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {available && <WeatherIcon row={row} size={16} />}
-      <span>{available ? formatTemperatureRange(row) : "No weather"}</span>
-    </div>
-  );
-}
-
-function WeatherContextPanel({
-  selectedDay,
-  weather,
-  loading,
-  error,
-  expanded,
-  onToggle,
-  onRefresh,
-  limitations,
-}) {
-  const available = isWeatherAvailable(weather);
-  const tone = getWeatherTone(weather);
-  const details = buildWeatherDetailMetrics(weather);
-  const fetchedLabel = formatFetchedAt(weather);
-
-  return (
-    <div style={{ marginBottom: 14, border: `1px solid ${tone.border}`, borderRadius: 10, background: available ? "#FFFFFF" : "#F8FAFC", overflow: "hidden" }}>
-      <button
-        type="button"
-        onClick={onToggle}
-        style={{
-          width: "100%",
-          display: "grid",
-          gridTemplateColumns: "auto minmax(0, 1fr) auto",
-          alignItems: "center",
-          gap: 12,
-          padding: "11px 12px",
-          border: 0,
-          background: "transparent",
-          cursor: "pointer",
-          textAlign: "left",
-          fontFamily: "inherit",
-        }}
-      >
-        <WeatherIcon row={weather} size={36} />
-        <span style={{ minWidth: 0, display: "grid", gap: 3 }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, fontWeight: 950, color: C.text }}>
-              Weather for {selectedDay?.dayName || "selected day"} {formatMatrixDate(selectedDay?.date || todayStr())}
-            </span>
-            <span style={{ padding: "2px 7px", borderRadius: 999, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}`, fontSize: 10, fontWeight: 900 }}>
-              {tone.label}
-            </span>
-            {fetchedLabel && (
-              <span style={{ fontSize: 10, color: C.textMut, fontWeight: 800 }}>
-                Updated {fetchedLabel}
-              </span>
-            )}
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-            <span style={{ fontSize: 20, fontWeight: 950, color: available ? C.pri : C.textMut, lineHeight: 1 }}>
-              {available ? formatTemperatureRange(weather) : "No cached weather"}
-            </span>
-            <span style={{ fontSize: 12, color: C.textSec, fontWeight: 800, minWidth: 0 }}>
-              {formatWeatherSummary(weather)}
-            </span>
-          </span>
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {loading && <span style={{ fontSize: 10, color: C.textMut, fontWeight: 800 }}>Loading</span>}
-          <span style={{ display: "flex", color: C.textMut, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><I.ChevronDown /></span>
-        </span>
-      </button>
-      {expanded && (
-        <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "12px", display: "grid", gap: 12 }}>
-          {error && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dan, fontSize: 12, fontWeight: 800 }}>
-              <I.AlertTriangle /> {error}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5, fontWeight: 700 }}>
-              {getWeatherOperationalNote(weather)}
-            </div>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRefresh?.();
-              }}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 9px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: C.surface,
-                color: C.text,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontSize: 11,
-                fontWeight: 850,
-              }}
-            >
-              <span style={{ display: "flex" }}><I.RefreshCw /></span>
-              Refresh Weather
-            </button>
-          </div>
-          {details.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {details.map((metric) => <WeatherMetricPill key={metric.label} metric={metric} />)}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, color: C.textMut, fontWeight: 800 }}>
-            <span>{formatWeatherSource(weather)}</span>
-            {limitations?.daily_forecast_horizon_days && (
-              <span>Forecast horizon: {limitations.daily_forecast_horizon_days} days</span>
-            )}
-            {limitations?.future_note && <span>{limitations.future_note}</span>}
-          </div>
         </div>
       )}
     </div>
@@ -2031,7 +1797,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const [expandedMonthSegments, setExpandedMonthSegments] = useState(new Set());
   const [activeSchedulingTab, setActiveSchedulingTab] = useState(getInitialSchedulingTab);
   const [forecastDetailsExpanded, setForecastDetailsExpanded] = useState(false);
-  const [weatherDetailsExpanded, setWeatherDetailsExpanded] = useState(false);
   const [headcountExpanded, setHeadcountExpanded] = useState(false);
   const demandRange = useMemo(
     () => getDemandRange(matrixRangeMode, viewStartDate, customStartDate, customEndDate),
@@ -2338,11 +2103,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   }, [visibleMatrixDays]);
   const {
     rows: weatherRows,
-    getWeatherForDate,
-    loading: weatherLoading,
-    error: weatherError,
-    limitations: weatherLimitations,
-    refresh: refreshWeather,
   } = useWeatherData(
     locationId,
     demandRangeDates.length <= 370 ? demandRange.startDate : visibleWeatherRange.startDate,
@@ -2361,10 +2121,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const visibleMatrixDaysWithWeather = useMemo(() => (visibleMatrixDays || []).map(attachWeatherToDay), [attachWeatherToDay, visibleMatrixDays]);
   const workbookDaysWithWeather = useMemo(() => (workbookDays || []).map(attachWeatherToDay), [attachWeatherToDay, workbookDays]);
   const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
-  const selectedDayWithWeather = selectedDay ? attachWeatherToDay(selectedDay) : selectedDay;
-  const weatherLookup = useCallback((date) => {
-    return weatherRowsByDate.get(String(date || "").slice(0, 10)) || getWeatherForDate(date);
-  }, [getWeatherForDate, weatherRowsByDate]);
   const visibleMatrixColumnsWithWeather = useMemo(() => (visibleMatrixColumns || []).map((column) => ({
     ...column,
     day: column.day ? attachWeatherToDay(column.day) : column.day,
@@ -2403,7 +2159,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const toggleAllMatrixGroups = useCallback(() => {
     setExpandedMatrixGroups(allMatrixGroupsExpanded ? new Set() : new Set(matrixRowGroups.map((group) => group.section)));
   }, [allMatrixGroupsExpanded, matrixRowGroups]);
-  const selectedWeather = selectedDayWithWeather?.weather || weatherLookup(selectedDay?.date);
   const selectedShiftEntries = useMemo(() => getShiftEntries(selectedDay?.staffPlan), [selectedDay?.staffPlan]);
   const visibleRotation = scheduleView === "actual_staffing" && actualRotation ? actualRotation : optimalRotation;
   const hasAdjustedSchedule = !!actualRotation;
@@ -3180,16 +2935,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
           matrixMode={matrixMode}
           onOpenSettings={openCapacitySettings}
         />
-        <WeatherContextPanel
-          selectedDay={selectedDay}
-          weather={selectedWeather}
-          loading={weatherLoading}
-          error={weatherError}
-          expanded={weatherDetailsExpanded}
-          onToggle={() => setWeatherDetailsExpanded((value) => !value)}
-          onRefresh={refreshWeather}
-          limitations={weatherLimitations}
-        />
         <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#F8FAFC", display: "grid", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -3295,7 +3040,6 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
                         {column.label}
                       </div>
                       <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{column.dateLabel}</div>
-                      <WeatherColumnBadge column={column} getWeatherForDate={weatherLookup} loading={weatherLoading} />
                       <div style={{ marginTop: 8 }}>
                         <TrustBadge state={trustState} blocked={blocked} />
                       </div>

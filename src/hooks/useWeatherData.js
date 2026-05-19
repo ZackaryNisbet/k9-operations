@@ -23,6 +23,19 @@ function normalizeDateRange(startDate, endDate) {
   return { startDate, endDate: normalizedEnd, dates };
 }
 
+async function fetchCachedWeatherRows(locationId, startDate, endDate) {
+  const { data, error } = await supabase
+    .from("weather_daily_cache")
+    .select("*")
+    .eq("location_id", locationId)
+    .gte("weather_date", startDate)
+    .lte("weather_date", endDate)
+    .order("weather_date", { ascending: true });
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
 export function useWeatherData(locationId, startDate, endDate, options = {}) {
   const refreshToken = options?.refreshToken || 0;
   const enabled = options?.enabled !== false;
@@ -70,10 +83,24 @@ export function useWeatherData(locationId, startDate, endDate, options = {}) {
         throw new Error(data?.error || invokeError?.message || "Weather request failed.");
       }
       setRows(Array.isArray(data?.rows) ? data.rows : []);
-      setLimitations(data?.limitations || null);
+      setLimitations({
+        ...(data?.limitations || {}),
+        ...(Array.isArray(data?.warnings) && data.warnings.length ? { warnings: data.warnings } : {}),
+      });
       setLastFetchedAt(new Date());
     } catch (weatherError) {
       if (fetchId !== fetchIdRef.current) return;
+      try {
+        const cachedRows = await fetchCachedWeatherRows(locationId, normalizedStart, normalizedEnd);
+        if (fetchId !== fetchIdRef.current) return;
+        if (cachedRows.length > 0) {
+          setRows(cachedRows);
+          setLimitations({ cache_fallback: "Showing cached weather because the live refresh failed." });
+          setError("");
+          setLastFetchedAt(new Date());
+          return;
+        }
+      } catch {}
       setRows([]);
       setLimitations(null);
       setError(weatherError?.message || "Weather request failed.");

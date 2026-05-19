@@ -1,20 +1,25 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useId, useMemo, useRef, useState } from "react";
 import { C } from "./theme";
 import {
   formatTemperature,
-  getWeatherHourlyPoints,
+  getWeatherDisplayHourlyPoints,
   getWeatherMinutelyPoints,
   isWeatherAvailable,
 } from "./weather";
 
 const WIDTH = 1000;
 const HEIGHT = 330;
-const PLOT = { left: 46, right: 22, top: 34, bottom: 72 };
-const GRAPH_SURFACE = "oklch(99% 0.006 152)";
-const GRAPH_INK = "oklch(20% 0.035 250)";
-const TEMP_LINE = "oklch(62% 0.16 42)";
-const RAIN_BLUE = "oklch(58% 0.16 244)";
-const HUMID_GREEN = "oklch(56% 0.12 154)";
+const PLOT = { left: 48, right: 28, top: 38, bottom: 74 };
+const COMPACT_PLOT = { left: 0, right: 0, top: 48, bottom: 44 };
+const GRAPH_SURFACE = "#FFFFFF";
+const GRAPH_PANEL = "#F8FAFC";
+const GRAPH_INK = "#0F172A";
+const TEMP_LINE = "#14532D";
+const FEELS_LINE = "#84CC16";
+const RAIN_BLUE = "#3B82F6";
+const GRID = "#F1F5F9";
+const AXIS = "#475569";
+const DISPLAY_HOURS = 24;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -31,34 +36,43 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-function yScale(value, min, max) {
-  if (!Number.isFinite(value)) return HEIGHT - PLOT.bottom;
+function yScale(value, min, max, plot = PLOT) {
+  if (!Number.isFinite(value)) return HEIGHT - plot.bottom;
   const span = max - min || 1;
   const pct = (value - min) / span;
-  return (HEIGHT - PLOT.bottom) - pct * ((HEIGHT - PLOT.bottom) - PLOT.top);
+  return (HEIGHT - plot.bottom) - pct * ((HEIGHT - plot.bottom) - plot.top);
 }
 
-function xScale(index, count) {
-  if (count <= 1) return PLOT.left;
-  return PLOT.left + (index / (count - 1)) * (WIDTH - PLOT.left - PLOT.right);
+function xScale(index, count, plot = PLOT) {
+  if (count <= 1) return plot.left;
+  return plot.left + (index / (count - 1)) * (WIDTH - plot.left - plot.right);
 }
 
-function buildPath(points, minTemp, maxTemp) {
+function tempValue(point) {
+  return Number(point?.tempF);
+}
+
+function feelsValue(point) {
+  const feels = Number(point?.feelsLikeF);
+  return Number.isFinite(feels) ? feels : tempValue(point);
+}
+
+function buildPath(points, minTemp, maxTemp, valueAccessor = tempValue, plot = PLOT) {
   return points
     .map((point, index) => {
-      const x = xScale(index, points.length);
-      const y = yScale(point.tempF, minTemp, maxTemp);
+      const x = xScale(index, points.length, plot);
+      const y = yScale(valueAccessor(point), minTemp, maxTemp, plot);
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
 }
 
-function buildAreaPath(points, minTemp, maxTemp) {
+function buildAreaPath(points, minTemp, maxTemp, plot = PLOT) {
   if (!points.length) return "";
-  const baseY = HEIGHT - PLOT.bottom;
-  const line = buildPath(points, minTemp, maxTemp);
-  const lastX = xScale(points.length - 1, points.length);
-  return `${line} L ${lastX.toFixed(2)} ${baseY} L ${PLOT.left} ${baseY} Z`;
+  const baseY = HEIGHT - plot.bottom;
+  const line = buildPath(points, minTemp, maxTemp, tempValue, plot);
+  const lastX = xScale(points.length - 1, points.length, plot);
+  return `${line} L ${lastX.toFixed(2)} ${baseY} L ${plot.left} ${baseY} Z`;
 }
 
 function formatHourLabel(point) {
@@ -68,47 +82,81 @@ function formatHourLabel(point) {
   return dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
-function formatDayLabel(point) {
-  if (!point?.iso) return "";
-  const dt = new Date(point.iso);
+function formatSelectedTime(iso) {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatDayLabel(pointOrIso) {
+  const iso = typeof pointOrIso === "string" ? pointOrIso : pointOrIso?.iso;
+  if (!iso) return "";
+  const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return "";
   return dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
-function interpolateAt(points, plotX, minTemp, maxTemp) {
+function isSameCalendarDay(a, b) {
+  if (!a || !b) return true;
+  const aDate = new Date(a);
+  const bDate = new Date(b);
+  if (Number.isNaN(aDate.getTime()) || Number.isNaN(bDate.getTime())) return true;
+  return aDate.toDateString() === bDate.toDateString();
+}
+
+function formatAxisLabel(point, index, points) {
+  if (index === 0) return "Now";
+  const hour = formatHourLabel(point).replace(":00", "");
+  if (!points[0]?.iso || isSameCalendarDay(point?.iso, points[0]?.iso)) return hour;
+  const dt = new Date(point.iso);
+  const day = Number.isNaN(dt.getTime()) ? "" : dt.toLocaleDateString("en-US", { weekday: "short" });
+  return `${day} ${hour}`;
+}
+
+function getTickIndexes(count) {
+  if (count <= 6) return Array.from({ length: count }, (_, index) => index);
+  return [0, 6, 12, 18, count - 1].filter((index, position, values) => index < count && values.indexOf(index) === position);
+}
+
+function interpolateAt(points, plotX, minTemp, maxTemp, plot = PLOT) {
   if (!points.length) return null;
-  const minX = PLOT.left;
-  const maxX = WIDTH - PLOT.right;
-  const pct = clamp((plotX - minX) / (maxX - minX), 0, 1);
+  const minX = plot.left;
+  const maxX = WIDTH - plot.right;
+  const selectedX = clamp(plotX, minX, maxX);
+  const pct = clamp((selectedX - minX) / (maxX - minX), 0, 1);
   const rawIndex = pct * (points.length - 1);
   const leftIndex = Math.floor(rawIndex);
   const rightIndex = Math.min(points.length - 1, leftIndex + 1);
   const fraction = rawIndex - leftIndex;
   const left = points[leftIndex];
   const right = points[rightIndex];
-  const tempF = lerp(left.tempF, right.tempF, fraction);
-  const selectedY = yScale(tempF, minTemp, maxTemp);
-  const isoMs = lerp(new Date(left.iso || 0).getTime(), new Date(right.iso || left.iso || 0).getTime(), fraction);
+  const tempF = lerp(tempValue(left), tempValue(right), fraction);
+  const feelsLikeF = lerp(feelsValue(left), feelsValue(right), fraction);
+  const selectedY = yScale(tempF, minTemp, maxTemp, plot);
+  const leftTime = new Date(left.iso || 0).getTime();
+  const rightTime = new Date(right.iso || left.iso || 0).getTime();
+  const isoMs = lerp(leftTime, rightTime, fraction);
+  const closer = fraction < 0.5 ? left : right;
+  const iso = Number.isFinite(isoMs) ? new Date(isoMs).toISOString() : closer.iso;
+
   return {
-    x: plotX,
+    x: selectedX,
     y: selectedY,
     pct,
-    leftIndex,
-    rightIndex,
-    fraction,
-    iso: Number.isFinite(isoMs) ? new Date(isoMs).toISOString() : left.iso,
-    label: fraction < 0.5 ? formatHourLabel(left) : formatHourLabel(right),
-    dayLabel: fraction < 0.5 ? formatDayLabel(left) : formatDayLabel(right),
-    description: fraction < 0.5 ? left.description : right.description,
-    iconUrl: fraction < 0.5 ? left.iconUrl : right.iconUrl,
+    iso,
+    label: formatSelectedTime(iso) || formatHourLabel(closer),
+    dayLabel: formatDayLabel(iso || closer.iso),
+    description: closer.description,
+    iconUrl: closer.iconUrl,
     tempF,
-    feelsLikeF: lerp(left.feelsLikeF, right.feelsLikeF, fraction),
-    rainPct: lerp(left.rainPct, right.rainPct, fraction),
-    windMph: lerp(left.windMph, right.windMph, fraction),
-    gustMph: lerp(left.gustMph, right.gustMph, fraction),
-    humidityPct: lerp(left.humidityPct, right.humidityPct, fraction),
-    cloudCoverPct: lerp(left.cloudCoverPct, right.cloudCoverPct, fraction),
-    uvIndex: lerp(left.uvIndex, right.uvIndex, fraction),
+    feelsLikeF,
+    rainPct: lerp(Number(left.rainPct), Number(right.rainPct), fraction),
+    windMph: lerp(Number(left.windMph), Number(right.windMph), fraction),
+    gustMph: lerp(Number(left.gustMph), Number(right.gustMph), fraction),
+    humidityPct: lerp(Number(left.humidityPct), Number(right.humidityPct), fraction),
+    cloudCoverPct: lerp(Number(left.cloudCoverPct), Number(right.cloudCoverPct), fraction),
+    uvIndex: lerp(Number(left.uvIndex), Number(right.uvIndex), fraction),
   };
 }
 
@@ -117,26 +165,49 @@ function valueLabel(value, suffix = "", digits = 0) {
   return `${Number(value).toFixed(digits)}${suffix}`;
 }
 
+function WeatherLegendSwatch({ type, color }) {
+  if (type === "bar") {
+    return <span style={{ width: 12, height: 12, borderRadius: 3, background: color, display: "inline-block", opacity: 0.82 }} />;
+  }
+  return (
+    <span
+      style={{
+        width: 18,
+        height: 0,
+        borderTop: type === "dash" ? `2px dashed ${color}` : `2px solid ${color}`,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
 export default function WeatherHourlyGraph({ weather, loading = false, compact = false }) {
-  const wrapRef = useRef(null);
+  const svgRef = useRef(null);
+  const reactId = useId().replace(/:/g, "");
   const [hover, setHover] = useState(null);
-  const points = useMemo(() => getWeatherHourlyPoints(weather), [weather]);
+  const plot = compact ? COMPACT_PLOT : PLOT;
+  const points = useMemo(() => getWeatherDisplayHourlyPoints(weather, DISPLAY_HOURS), [weather]);
   const minutely = useMemo(() => getWeatherMinutelyPoints(weather), [weather]);
-  const temps = finiteNumbers(points.map((point) => point.tempF));
+  const derivedMode = points.length > 1 && points.every((point) => point.derived);
+  const temps = finiteNumbers(points.flatMap((point) => [tempValue(point), feelsValue(point)]));
   const minTemp = temps.length ? Math.floor(Math.min(...temps) - 4) : 0;
   const maxTemp = temps.length ? Math.ceil(Math.max(...temps) + 4) : 100;
-  const path = useMemo(() => buildPath(points, minTemp, maxTemp), [points, minTemp, maxTemp]);
-  const areaPath = useMemo(() => buildAreaPath(points, minTemp, maxTemp), [points, minTemp, maxTemp]);
-  const selected = hover || interpolateAt(points, PLOT.left, minTemp, maxTemp);
+  const path = useMemo(() => buildPath(points, minTemp, maxTemp, tempValue, plot), [points, minTemp, maxTemp, plot]);
+  const feelsPath = useMemo(() => buildPath(points, minTemp, maxTemp, feelsValue, plot), [points, minTemp, maxTemp, plot]);
+  const areaPath = useMemo(() => buildAreaPath(points, minTemp, maxTemp, plot), [points, minTemp, maxTemp, plot]);
+  const selected = hover || interpolateAt(points, plot.left, minTemp, maxTemp, plot);
   const maxRain = Math.max(10, ...finiteNumbers(points.map((point) => point.rainPct)));
   const hasData = isWeatherAvailable(weather) && points.length > 1;
+  const tickIndexes = getTickIndexes(points.length);
+  const tempFillId = `weatherTempFill${reactId}`;
+  const rainFillId = `weatherRainFill${reactId}`;
 
   function handlePointerMove(event) {
-    if (!wrapRef.current || points.length < 2) return;
-    const bounds = wrapRef.current.getBoundingClientRect();
+    if (!svgRef.current || points.length < 2) return;
+    const bounds = svgRef.current.getBoundingClientRect();
     const relativeX = clamp(event.clientX - bounds.left, 0, bounds.width);
     const svgX = (relativeX / bounds.width) * WIDTH;
-    setHover(interpolateAt(points, clamp(svgX, PLOT.left, WIDTH - PLOT.right), minTemp, maxTemp));
+    setHover(interpolateAt(points, svgX, minTemp, maxTemp, plot));
   }
 
   function handlePointerLeave() {
@@ -146,10 +217,10 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
   if (loading && !points.length) {
     return (
       <div style={{
-        borderRadius: 12,
+        borderRadius: 8,
         border: `1px solid ${C.borderLight}`,
-        background: GRAPH_SURFACE,
-        minHeight: compact ? 132 : 248,
+        background: GRAPH_PANEL,
+        minHeight: compact ? 76 : 248,
         display: "grid",
         placeItems: "center",
         color: C.textMut,
@@ -164,10 +235,10 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
   if (!hasData) {
     return (
       <div style={{
-        borderRadius: 12,
+        borderRadius: 8,
         border: `1px solid ${C.borderLight}`,
-        background: GRAPH_SURFACE,
-        minHeight: compact ? 132 : 248,
+        background: GRAPH_PANEL,
+        minHeight: compact ? 76 : 248,
         display: "grid",
         alignContent: "center",
         justifyItems: "center",
@@ -178,164 +249,167 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
         textAlign: "center",
         padding: 18,
       }}>
-        <span style={{ color: C.text, fontWeight: 950 }}>Hourly graph pending</span>
-        <span>OpenWeather hourly points appear after the current forecast cache refreshes.</span>
+        <span style={{ color: C.text, fontWeight: 950 }}>Weather graph unavailable</span>
+        <span>No cached temperature fields are available for this date.</span>
       </div>
     );
   }
 
-  const selectedLeft = selected?.x || PLOT.left;
+  const selectedLeft = selected?.x || plot.left;
   const selectedLabel = selected?.label || "";
   const selectedDay = selected?.dayLabel || "";
-  const selectedXLabel = Math.min(Math.max(selectedLeft, 94), WIDTH - 116);
+  const selectedXLabel = Math.min(Math.max(selectedLeft, 98), WIDTH - 130);
+  const rainPoints = points.filter((point) => Number(point.rainPct) > 0);
   const cardMetrics = [
     { label: "Temp", value: formatTemperature(selected?.tempF) },
     { label: "Feels", value: formatTemperature(selected?.feelsLikeF) },
-    { label: "Rain", value: valueLabel(selected?.rainPct, "%") },
+    { label: "Rain chance", value: valueLabel(selected?.rainPct, "%") },
     { label: "Wind", value: valueLabel(selected?.windMph, " mph") },
     { label: "Humidity", value: valueLabel(selected?.humidityPct, "%") },
   ];
 
   return (
     <div
-      ref={wrapRef}
-      onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
+      data-weather-graph
+      data-weather-hour-count={points.length}
+      data-weather-graph-mode={derivedMode ? "daily-curve" : "hourly"}
       style={{
-        borderRadius: 12,
+        borderRadius: 8,
         border: `1px solid ${C.borderLight}`,
-        background: `linear-gradient(180deg, ${GRAPH_SURFACE}, oklch(96.5% 0.018 232))`,
+        background: GRAPH_SURFACE,
         overflow: "hidden",
         cursor: "crosshair",
         userSelect: "none",
         touchAction: "none",
+        boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
       }}
     >
       {!compact && (
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "14px 16px 2px", alignItems: "flex-start" }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-              Hour-by-hour forecast
+              {derivedMode ? "Cached 24-hour curve" : "Next 24 hours"}
             </div>
             <div style={{ fontSize: 18, color: GRAPH_INK, fontWeight: 950, marginTop: 3 }}>
               {selectedDay} {selectedLabel}
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {cardMetrics.slice(0, 4).map((metric) => (
-              <div key={metric.label} style={{ minWidth: 72, borderRadius: 8, border: "1px solid oklch(88% 0.018 232)", background: "oklch(99% 0.004 152 / 0.82)", padding: "7px 8px" }}>
-                <div style={{ fontSize: 9, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>{metric.label}</div>
-                <div style={{ fontSize: 15, color: C.text, fontWeight: 950, marginTop: 2 }}>{metric.value}</div>
+            {selected?.description ? (
+              <div style={{ marginTop: 4, fontSize: 12, color: C.textSec, fontWeight: 750, lineHeight: 1.35 }}>
+                {selected.description}
               </div>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
+            {[
+              { label: "Temp", type: "line", color: TEMP_LINE },
+              { label: "Feels like", type: "dash", color: FEELS_LINE },
+              { label: "Rain chance", type: "bar", color: RAIN_BLUE },
+            ].map((item) => (
+              <span key={item.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: C.textMut, fontWeight: 850 }}>
+                <WeatherLegendSwatch type={item.type} color={item.color} />
+                {item.label}
+              </span>
             ))}
           </div>
         </div>
       )}
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Interactive hourly weather graph" style={{ display: "block", width: "100%", height: compact ? 148 : 270 }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        role="img"
+        aria-label="Interactive next 24 hour weather graph"
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
+        preserveAspectRatio="none"
+        style={{ display: "block", width: "100%", height: compact ? 78 : 270 }}
+      >
         <defs>
-          <linearGradient id="weatherTempFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="oklch(72% 0.18 48 / 0.35)" />
-            <stop offset="72%" stopColor="oklch(72% 0.18 48 / 0.07)" />
-            <stop offset="100%" stopColor="oklch(72% 0.18 48 / 0)" />
+          <linearGradient id={tempFillId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#14532D" stopOpacity="0.18" />
+            <stop offset="78%" stopColor="#14532D" stopOpacity="0.05" />
+            <stop offset="100%" stopColor="#14532D" stopOpacity="0" />
           </linearGradient>
-          <linearGradient id="weatherRainFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="oklch(72% 0.14 240 / 0.58)" />
-            <stop offset="100%" stopColor="oklch(72% 0.14 240 / 0.12)" />
+          <linearGradient id={rainFillId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={RAIN_BLUE} stopOpacity="0.62" />
+            <stop offset="100%" stopColor={RAIN_BLUE} stopOpacity="0.18" />
           </linearGradient>
-          <filter id="weatherLineGlow" x="-20%" y="-80%" width="140%" height="260%">
-            <feGaussianBlur stdDeviation="7" result="blur" />
-            <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.96 0 0.48 0 0 0.3 0 0 0.18 0 0.05 0 0 0 0.36 0" />
-            <feMerge>
-              <feMergeNode />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
+        <rect x="0" y="0" width={WIDTH} height={HEIGHT} fill={GRAPH_SURFACE} />
+
         {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
-          const y = PLOT.top + tick * (HEIGHT - PLOT.top - PLOT.bottom);
+          const y = plot.top + tick * (HEIGHT - plot.top - plot.bottom);
           const temp = maxTemp - tick * (maxTemp - minTemp);
           return (
             <g key={tick}>
-              <line x1={PLOT.left} x2={WIDTH - PLOT.right} y1={y} y2={y} stroke="oklch(88% 0.014 232)" strokeWidth="1" />
-              <text x={PLOT.left - 14} y={y + 4} textAnchor="end" fontSize="20" fontWeight="800" fill="oklch(45% 0.035 250)">
-                {Math.round(temp)}°
-              </text>
+              <line x1={plot.left} x2={WIDTH - plot.right} y1={y} y2={y} stroke={GRID} strokeWidth="1" opacity={compact ? 0.48 : 1} />
+              {!compact && (
+                <text x={plot.left - 14} y={y + 4} textAnchor="end" fontSize="18" fontWeight="800" fill={AXIS}>
+                  {Math.round(temp)}°
+                </text>
+              )}
             </g>
           );
         })}
 
-        {points.map((point, index) => {
-          const barX = xScale(index, points.length);
-          const barWidth = Math.max(5, (WIDTH - PLOT.left - PLOT.right) / points.length - 5);
+        {rainPoints.map((point) => {
+          const index = points.indexOf(point);
+          const barX = xScale(index, points.length, plot);
+          const barWidth = Math.max(5, (WIDTH - plot.left - plot.right) / points.length - 6);
           const pct = Number.isFinite(point.rainPct) ? point.rainPct : 0;
-          const barHeight = (pct / maxRain) * 54;
+          const barHeight = Math.max(2, (pct / maxRain) * 46);
           return (
             <rect
               key={`${point.iso}-rain`}
               x={barX - barWidth / 2}
-              y={HEIGHT - PLOT.bottom - barHeight + 54}
+              y={HEIGHT - plot.bottom - barHeight}
               width={barWidth}
               height={barHeight}
               rx="3"
-              fill="url(#weatherRainFill)"
-              opacity={pct > 0 ? 1 : 0.16}
+              fill={`url(#${rainFillId})`}
             />
           );
         })}
 
-        <path d={areaPath} fill="url(#weatherTempFill)" />
-        <path d={path} fill="none" stroke={TEMP_LINE} strokeWidth="5.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#weatherLineGlow)" />
-        <path
-          d={points.map((point, index) => {
-            const x = xScale(index, points.length);
-            const y = yScale(point.humidityPct, 0, 100);
-            return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-          }).join(" ")}
-          fill="none"
-          stroke={HUMID_GREEN}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeDasharray="5 8"
-          opacity="0.58"
-        />
+        <path d={areaPath} fill={`url(#${tempFillId})`} />
+        <path d={feelsPath} fill="none" stroke={FEELS_LINE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 9" opacity="0.82" />
+        <path d={path} fill="none" stroke={TEMP_LINE} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
 
-        {points.map((point, index) => index % 6 === 0 ? (
-          <text key={`${point.iso}-label`} x={xScale(index, points.length)} y={HEIGHT - 26} textAnchor="middle" fontSize="20" fontWeight="850" fill="oklch(42% 0.035 250)">
-            {formatHourLabel(point).replace(":00", "")}
-          </text>
-        ) : null)}
+        {!compact && tickIndexes.map((index) => {
+          const point = points[index];
+          return (
+            <text key={`${point.iso}-label`} x={xScale(index, points.length, plot)} y={HEIGHT - 28} textAnchor="middle" fontSize="18" fontWeight="850" fill={AXIS}>
+              {formatAxisLabel(point, index, points)}
+            </text>
+          );
+        })}
 
         {selected && (
           <g>
-            <line x1={selectedLeft} x2={selectedLeft} y1={PLOT.top - 8} y2={HEIGHT - PLOT.bottom + 62} stroke="oklch(22% 0.05 250)" strokeWidth="2" strokeDasharray="7 8" opacity="0.72" />
-            <circle cx={selectedLeft} cy={selected.y} r="9" fill={GRAPH_SURFACE} stroke={TEMP_LINE} strokeWidth="5" />
-            <g transform={`translate(${selectedXLabel - 83} 10)`}>
-              <rect width="166" height="56" rx="10" fill="oklch(18% 0.04 250 / 0.92)" />
-              <text x="16" y="23" fontSize="18" fontWeight="900" fill="oklch(98% 0.005 152)">{selectedLabel}</text>
-              <text x="16" y="43" fontSize="20" fontWeight="950" fill="oklch(86% 0.16 78)">{formatTemperature(selected.tempF)}</text>
-              <text x="72" y="43" fontSize="15" fontWeight="850" fill="oklch(90% 0.035 232)">{valueLabel(selected.rainPct, "%")} rain</text>
+            <line data-weather-crosshair x1={selectedLeft} x2={selectedLeft} y1={plot.top - 8} y2={HEIGHT - plot.bottom + (compact ? 12 : 60)} stroke="#1E293B" strokeWidth={compact ? "2" : "1.5"} strokeDasharray="6 8" opacity="0.72" />
+            <circle cx={selectedLeft} cy={selected.y} r="8" fill={GRAPH_SURFACE} stroke={TEMP_LINE} strokeWidth="4" />
+            <g transform={`translate(${selectedXLabel - 96} 10)`}>
+              <rect width="192" height="58" rx="8" fill="#0F172A" opacity="0.94" />
+              <text x="14" y="22" fontSize="16" fontWeight="900" fill="#FFFFFF">{selectedLabel}</text>
+              <text x="14" y="44" fontSize="20" fontWeight="950" fill="#D9F99D">{formatTemperature(selected.tempF)}</text>
+              <text x="72" y="44" fontSize="14" fontWeight="850" fill="#E2E8F0">{formatTemperature(selected.feelsLikeF)} feels</text>
+              <text x="143" y="44" fontSize="14" fontWeight="850" fill="#BFDBFE">{valueLabel(selected.rainPct, "%")}</text>
             </g>
           </g>
         )}
 
-        {compact && selected && (
-          <text x={PLOT.left} y="30" fontSize="22" fontWeight="950" fill={GRAPH_INK}>
-            {formatTemperature(selected.tempF)} at {selectedLabel}
-          </text>
-        )}
+        {compact && selected ? <title>{formatTemperature(selected.tempF)} at {selectedLabel}</title> : null}
       </svg>
 
       {!compact && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 8, padding: "0 16px 16px" }}>
           {cardMetrics.map((metric) => (
-            <div key={metric.label} style={{ borderRadius: 8, border: "1px solid oklch(88% 0.018 232)", background: "oklch(99% 0.004 152 / 0.8)", padding: "8px 9px" }}>
+            <div key={metric.label} style={{ borderRadius: 8, border: `1px solid ${C.borderLight}`, background: GRAPH_PANEL, padding: "8px 9px" }}>
               <div style={{ fontSize: 9, color: C.textMut, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase" }}>{metric.label}</div>
               <div style={{ fontSize: 15, color: C.text, fontWeight: 950, marginTop: 2 }}>{metric.value}</div>
             </div>
           ))}
-          <div style={{ borderRadius: 8, border: "1px solid oklch(88% 0.018 232)", background: "oklch(99% 0.004 152 / 0.8)", padding: "8px 9px" }}>
+          <div style={{ borderRadius: 8, border: `1px solid ${C.borderLight}`, background: GRAPH_PANEL, padding: "8px 9px" }}>
             <div style={{ fontSize: 9, color: C.textMut, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase" }}>Minute Rain</div>
             <div style={{ fontSize: 15, color: C.text, fontWeight: 950, marginTop: 2 }}>{minutely.length ? `${minutely.length} pts` : "None"}</div>
           </div>
