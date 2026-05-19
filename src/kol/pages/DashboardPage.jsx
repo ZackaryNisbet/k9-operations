@@ -32,11 +32,13 @@ import {
   formatWeatherBrief,
   formatWeatherDateLabel,
   formatWeatherFreshnessLabel,
+  getWeatherRefreshIssueLabel,
   formatWeatherSource,
   formatWeatherSummary,
   getWeatherIconUrl,
   getWeatherOperationalNote,
   getWeatherTone,
+  isWeatherCurrentRead,
   isWeatherAvailable,
 } from "../../shared/weather";
 import { getInventoryWorkflow } from "./inventoryStatus";
@@ -2522,6 +2524,8 @@ function DashboardWeatherModal({ weather, loading, error, limitations, onClose, 
   const dataFields = buildWeatherDataFields(weather);
   const weatherDateLabel = formatWeatherDateLabel(weather, todayStr());
   const freshnessLabel = formatWeatherFreshnessLabel(weather, limitations);
+  const refreshIssueLabel = getWeatherRefreshIssueLabel(limitations);
+  const currentRead = isWeatherCurrentRead(weather);
   const brief = formatWeatherBrief(weather);
 
   return (
@@ -2623,11 +2627,16 @@ function DashboardWeatherModal({ weather, loading, error, limitations, onClose, 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
             <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 16, background: "#FFFFFF" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 9, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>AI Weather Read</div>
+                <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>{currentRead ? "AI Weather Read" : "Cached Forecast Read"}</div>
                 <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   {tone.label}
                 </span>
               </div>
+              {refreshIssueLabel ? (
+                <div style={{ marginBottom: 8, fontSize: 12, color: C.warn, lineHeight: 1.45, fontWeight: 800 }}>
+                  {refreshIssueLabel}. Showing the latest cached forecast until OpenWeather accepts new requests.
+                </div>
+              ) : null}
               <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.65, fontWeight: 650 }}>
                 {getWeatherOperationalNote(weather)}
               </div>
