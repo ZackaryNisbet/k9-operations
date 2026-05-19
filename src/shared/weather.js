@@ -46,6 +46,43 @@ export function formatWeatherSummary(row) {
   return details.overview || row.summary || "Weather available";
 }
 
+function titleCase(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getRawWeather(row) {
+  const details = getWeatherDetails(row);
+  const rawDailyWeather = Array.isArray(details.raw_daily?.weather) ? details.raw_daily.weather[0] : null;
+  const rawCurrentWeather = Array.isArray(details.raw_current?.weather) ? details.raw_current.weather[0] : null;
+  return rawCurrentWeather || rawDailyWeather || null;
+}
+
+export function formatWeatherConditionLabel(row) {
+  if (!isWeatherAvailable(row)) return "No weather";
+  const rawWeather = getRawWeather(row);
+  const description = rawWeather?.description || rawWeather?.main || row?.condition_type;
+  if (description) return titleCase(description);
+  const summary = String(row?.summary || "").trim();
+  if (summary && summary.length <= 36) return titleCase(summary);
+  return getWeatherTone(row).label;
+}
+
+export function formatWeatherBrief(row) {
+  if (!isWeatherAvailable(row)) return formatWeatherSummary(row);
+  const parts = [formatWeatherConditionLabel(row), formatTemperatureRange(row)].filter(Boolean);
+  const rain = Number(row.precipitation_probability_pct);
+  const wind = Number(row.wind_speed_mph);
+  const humidity = Number(row.humidity_pct);
+  if (Number.isFinite(rain)) parts.push(`${Math.round(rain)}% rain`);
+  if (Number.isFinite(wind)) parts.push(`${Math.round(wind)} mph wind`);
+  if (Number.isFinite(humidity)) parts.push(`${Math.round(humidity)}% humidity`);
+  return parts.join(" · ");
+}
+
 export function getWeatherRiskLevel(row) {
   if (!isWeatherAvailable(row)) return "missing";
   const high = Number(row.high_temp_f);
@@ -70,10 +107,10 @@ export function getWeatherTone(row) {
   const tones = {
     clear: { bg: "#F0FDF4", border: "#BBF7D0", color: C.suc, label: "Good" },
     caution: { bg: "#FFFBEB", border: "#FDE68A", color: C.warn, label: "Watch" },
-    heat: { bg: "#FFF7ED", border: "#FDBA74", color: "#C2410C", label: "Heat" },
+    heat: { bg: "#FFFBEB", border: "#FDE68A", color: C.warn, label: "Heat" },
     cold: { bg: "#EFF6FF", border: "#BFDBFE", color: C.info, label: "Cold" },
-    watch: { bg: "#FEF2F2", border: "#FECACA", color: C.dan, label: "Risk" },
-    severe: { bg: "#450A0A", border: "#991B1B", color: "#FEE2E2", label: "Storm" },
+    watch: { bg: "#FFFBEB", border: "#FDE68A", color: C.warn, label: "Risk" },
+    severe: { bg: "#FFFBEB", border: "#FDE68A", color: C.warn, label: "Storm" },
     missing: { bg: "#F8FAFC", border: C.border, color: C.textMut, label: "No data" },
   };
   return tones[level] || tones.missing;
@@ -101,6 +138,45 @@ export function formatFetchedAt(row) {
   const dt = new Date(row.fetched_at);
   if (Number.isNaN(dt.getTime())) return "";
   return dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+export function formatWeatherDateLabel(row, fallbackDate = "") {
+  const value = String(row?.weather_date || fallbackDate || "").slice(0, 10);
+  if (!value) return "date unknown";
+  const dt = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function hasWeatherRefreshWarning(limitations) {
+  return Boolean(
+    limitations?.cache_fallback ||
+    (Array.isArray(limitations?.warnings) && limitations.warnings.length > 0),
+  );
+}
+
+export function formatWeatherFreshnessLabel(row, limitations = null) {
+  let fetchedLabel = formatFetchedAt(row);
+  if (row?.fetched_at && row?.weather_date) {
+    const dt = new Date(row.fetched_at);
+    if (!Number.isNaN(dt.getTime())) {
+      const fetchedDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      const weatherDate = String(row.weather_date).slice(0, 10);
+      if (fetchedDate && weatherDate && fetchedDate !== weatherDate) {
+        const dateLabel = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+        fetchedLabel = `${dateLabel}, ${fetchedLabel}`;
+      }
+    }
+  }
+  const staleSuffix = hasWeatherRefreshWarning(limitations) ? " · refresh blocked" : "";
+  if (fetchedLabel) return `Cached ${fetchedLabel}${staleSuffix}`;
+  if (hasWeatherRefreshWarning(limitations)) return "Cached row · refresh blocked";
+  return "";
 }
 
 function metric(label, value, tone = "neutral") {
@@ -166,6 +242,111 @@ export function getWeatherHourlyPoints(row) {
       iconUrl: point.icon_url || "",
     }))
     .filter((point) => Number.isFinite(point.tempF));
+}
+
+function smoothStep(t) {
+  const clamped = Math.max(0, Math.min(1, Number(t) || 0));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+function interpolateDailyTemp(hour, low, high, current, currentHour) {
+  const morningLowHour = 6;
+  const afternoonHighHour = 15;
+  const nightLow = Number.isFinite(low) ? low + Math.min(4, Math.max(1, (high - low) * 0.16)) : low;
+  const anchors = [
+    { hour: 0, temp: Number.isFinite(nightLow) ? nightLow : low },
+    { hour: morningLowHour, temp: low },
+    { hour: afternoonHighHour, temp: high },
+    { hour: 23, temp: Number.isFinite(nightLow) ? nightLow : low },
+  ];
+
+  if (Number.isFinite(current) && Number.isFinite(currentHour) && currentHour >= 0 && currentHour <= 23) {
+    const existingAnchor = anchors.find((anchor) => anchor.hour === currentHour);
+    if (existingAnchor) existingAnchor.temp = current;
+    else anchors.push({ hour: currentHour, temp: current });
+  }
+
+  anchors.sort((a, b) => a.hour - b.hour);
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const left = anchors[index];
+    const right = anchors[index + 1];
+    if (hour >= left.hour && hour <= right.hour) {
+      const t = (hour - left.hour) / Math.max(1, right.hour - left.hour);
+      return left.temp + (right.temp - left.temp) * smoothStep(t);
+    }
+  }
+  return anchors.at(-1)?.temp ?? high ?? low ?? current;
+}
+
+export function getWeatherDerivedHourlyPoints(row, limit = 24) {
+  if (!isWeatherAvailable(row)) return [];
+  const high = Number(row.high_temp_f);
+  const low = Number(row.low_temp_f);
+  const current = Number(row.current_temp_f);
+  const usableTemps = [high, low, current].filter(Number.isFinite);
+  if (!usableTemps.length) return [];
+
+  const safeHigh = Number.isFinite(high) ? high : Math.max(...usableTemps);
+  const safeLow = Number.isFinite(low) ? low : Math.min(...usableTemps);
+  const currentDate = row?.fetched_at ? new Date(row.fetched_at) : null;
+  const dateValue = String(row?.weather_date || "").slice(0, 10);
+  let currentHour = null;
+  if (currentDate && !Number.isNaN(currentDate.getTime())) {
+    const fetchedDate = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
+    currentHour = !dateValue || fetchedDate === dateValue ? currentDate.getHours() : null;
+  }
+  const base = dateValue ? new Date(`${dateValue}T00:00:00`) : new Date();
+  if (Number.isNaN(base.getTime())) return [];
+
+  const details = getWeatherDetails(row);
+  const description = row.summary || details.overview || row.condition_type || "Cached daily weather";
+  const feelsDelta = Number.isFinite(Number(row.feels_like_temp_f)) && Number.isFinite(current)
+    ? Number(row.feels_like_temp_f) - current
+    : 0;
+  const count = Math.max(2, Math.min(24, Math.floor(Number(limit) || 24)));
+
+  return Array.from({ length: count }, (_, index) => {
+    const hour = index;
+    const dt = new Date(base);
+    dt.setHours(hour, 0, 0, 0);
+    const tempF = interpolateDailyTemp(hour, safeLow, safeHigh, current, currentHour);
+    return {
+      index,
+      dt: Math.floor(dt.getTime() / 1000),
+      iso: dt.toISOString(),
+      label: dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+      tempF,
+      feelsLikeF: tempF + feelsDelta,
+      rainPct: Number(row.precipitation_probability_pct),
+      rainIn: Number(row.precipitation_quantity_in || 0),
+      snowIn: 0,
+      windMph: Number(row.wind_speed_mph),
+      gustMph: Number(row.wind_gust_mph),
+      humidityPct: Number(row.humidity_pct),
+      cloudCoverPct: Number(row.cloud_cover_pct),
+      uvIndex: Number(row.uv_index),
+      pressureMillibars: Number(row.pressure_millibars),
+      visibilityMiles: Number(row.visibility_miles),
+      condition: row.condition_type || row.summary || "",
+      description,
+      iconUrl: getWeatherIconUrl(row),
+      derived: true,
+    };
+  });
+}
+
+export function getWeatherDisplayHourlyPoints(row, limit = 24) {
+  const safeLimit = Math.max(0, Math.floor(Number(limit) || 24));
+  const hourly = getWeatherHourlyPoints(row)
+    .slice()
+    .sort((a, b) => {
+      const aTime = Number.isFinite(new Date(a.iso || 0).getTime()) ? new Date(a.iso || 0).getTime() : a.index;
+      const bTime = Number.isFinite(new Date(b.iso || 0).getTime()) ? new Date(b.iso || 0).getTime() : b.index;
+      return aTime - bTime;
+    })
+    .slice(0, safeLimit);
+  if (hourly.length > 1) return hourly;
+  return getWeatherDerivedHourlyPoints(row, safeLimit);
 }
 
 export function getWeatherMinutelyPoints(row) {
@@ -259,6 +440,22 @@ export function formatWeatherMatrixValue(value, format) {
   if (format === "time") return formatTimeValue(value);
   if (format === "number") return formatNumber(value);
   return formatNumber(value);
+}
+
+export function buildWeatherDataFields(row) {
+  if (!isWeatherAvailable(row)) return [];
+  const excluded = new Set(["weather.compact", "weather.provider_raw"]);
+  return WEATHER_MATRIX_ROWS
+    .filter((field) => !excluded.has(field.key))
+    .map((field) => {
+      const rawValue = getWeatherMatrixValue(row, field.key);
+      return {
+        key: field.key,
+        label: field.label.replace(/^Weather\s+/, ""),
+        value: formatWeatherMatrixValue(rawValue, field.format),
+      };
+    })
+    .filter((field) => field.value && field.value !== "No data");
 }
 
 export function summarizeWeatherRows(rows = []) {
