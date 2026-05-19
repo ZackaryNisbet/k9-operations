@@ -252,8 +252,16 @@ function expiresAtFor(sourceKind: string, status = "available") {
   return null;
 }
 
-function isCacheFresh(row: WeatherCacheRow | null | undefined, refresh: boolean) {
+function hasUsableHourlyForecast(row: WeatherCacheRow | null | undefined) {
+  const details = row?.details_json as Record<string, unknown> | undefined;
+  return Array.isArray(details?.hourly_forecast) && details.hourly_forecast.length >= 2;
+}
+
+function isCacheFresh(row: WeatherCacheRow | null | undefined, refresh: boolean, weatherDate?: string, today?: string) {
   if (!row || refresh) return false;
+  if (weatherDate && today && weatherDate === today && row.status === "available") {
+    if (row.source_kind !== "current_conditions" || !hasUsableHourlyForecast(row)) return false;
+  }
   if (!row.expires_at) return true;
   const expiresAt = new Date(String(row.expires_at));
   return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > Date.now();
@@ -666,19 +674,24 @@ async function handleWeatherRequest(client: any, body: Record<string, unknown>) 
 
   let cachedRows = await loadCachedRows(client, locationId, dateFrom, dateTo);
   let rowsByDate = chooseRowsByDate(cachedRows);
-  const neededDates = dates.filter((date) => !isCacheFresh(rowsByDate.get(date), refresh));
+  const neededDates = dates.filter((date) => !isCacheFresh(rowsByDate.get(date), refresh, date, today));
   const requestedBackfillLimit = Math.max(1, Math.min(Number(body.max_days || MAX_BACKFILL_DAYS_PER_CALL), MAX_BACKFILL_DAYS_PER_CALL));
   const targetDates = mode === "backfill_daily" ? neededDates.slice(0, requestedBackfillLimit) : neededDates;
   const warnings: string[] = [];
   let processedDaySummaryDates: string[] = [];
 
   if (targetDates.length) {
-    const fetched = await fetchOpenWeatherRows(settings, targetDates, today, requestedBackfillLimit);
-    warnings.push(...fetched.warnings);
-    processedDaySummaryDates = fetched.processedDaySummaryDates;
-    await upsertWeatherRows(client, fetched.rows);
-    cachedRows = await loadCachedRows(client, locationId, dateFrom, dateTo);
-    rowsByDate = chooseRowsByDate(cachedRows);
+    try {
+      const fetched = await fetchOpenWeatherRows(settings, targetDates, today, requestedBackfillLimit);
+      warnings.push(...fetched.warnings);
+      processedDaySummaryDates = fetched.processedDaySummaryDates;
+      await upsertWeatherRows(client, fetched.rows);
+      cachedRows = await loadCachedRows(client, locationId, dateFrom, dateTo);
+      rowsByDate = chooseRowsByDate(cachedRows);
+    } catch (providerError) {
+      if (!cachedRows.length) throw providerError;
+      warnings.push(providerError instanceof Error ? providerError.message : "OpenWeather refresh failed; returning cached rows.");
+    }
   }
 
   const responseDates = mode === "backfill_daily" ? targetDates : dates;

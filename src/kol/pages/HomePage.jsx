@@ -14,9 +14,12 @@ import WeatherHourlyGraph from "../../shared/WeatherHourlyGraph";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import {
   buildWeatherDetailMetrics,
-  formatFetchedAt,
+  buildWeatherDataFields,
   formatTemperature,
   formatTemperatureRange,
+  formatWeatherBrief,
+  formatWeatherDateLabel,
+  formatWeatherFreshnessLabel,
   formatWeatherSource,
   formatWeatherSummary,
   getWeatherIconUrl,
@@ -526,12 +529,14 @@ function HomeWeatherButton({ weather, loading, error, onClick }) {
   );
 }
 
-function HomeWeatherCard({ weather, loading, error, onOpen }) {
+function HomeWeatherCard({ weather, loading, error, limitations, targetDate, onOpen }) {
   const available = isWeatherAvailable(weather);
   const tone = getWeatherTone(weather);
   const details = buildWeatherDetailMetrics(weather);
   const compactMetrics = details.slice(0, 3);
-  const fetchedLabel = formatFetchedAt(weather);
+  const weatherDateLabel = formatWeatherDateLabel(weather, targetDate);
+  const freshnessLabel = formatWeatherFreshnessLabel(weather, limitations);
+  const brief = formatWeatherBrief(weather);
   const visibleMetrics = compactMetrics.length ? compactMetrics : [
     { label: "Source", value: loading ? "Loading" : formatWeatherSource(weather) },
     { label: "High/Low", value: available ? formatTemperatureRange(weather) : "--" },
@@ -545,10 +550,10 @@ function HomeWeatherCard({ weather, loading, error, onOpen }) {
       style={{
         width: "100%",
         marginBottom: 24,
-        borderRadius: 14,
-        border: `1.5px solid ${tone.border}`,
-        background: "linear-gradient(135deg, oklch(99% 0.005 152) 0%, oklch(98% 0.01 232) 48%, oklch(96% 0.025 235) 100%)",
-        boxShadow: "0 12px 28px rgba(15,23,42,0.07)",
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
+        background: "linear-gradient(135deg, #FFFFFF 0%, #FFFFFF 52%, #F7FEE7 100%)",
+        boxShadow: "0 4px 6px rgba(15,23,42,0.05)",
         padding: 0,
         overflow: "hidden",
         cursor: "pointer",
@@ -556,57 +561,56 @@ function HomeWeatherCard({ weather, loading, error, onOpen }) {
         textAlign: "left",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, minHeight: 106, padding: "13px 20px 8px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-          <HomeWeatherIcon weather={weather} size={46} />
-          <div style={{ minWidth: 0, display: "grid", gap: 5 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 300px)", alignItems: "center", gap: 16, minHeight: 118, padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          <HomeWeatherIcon weather={weather} size={40} />
+          <div style={{ minWidth: 0, display: "grid", gap: 4 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: C.text, fontWeight: 900 }}>Today&apos;s Weather</span>
+              <span style={{ fontSize: 13, color: C.text, fontWeight: 900 }}>Weather for {weatherDateLabel}</span>
               <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 11, fontWeight: 900 }}>
                 {loading ? "Loading" : tone.label}
               </span>
-              {fetchedLabel ? <span style={{ fontSize: 11, color: C.textMut, fontWeight: 750 }}>Updated {fetchedLabel}</span> : null}
+              {freshnessLabel ? <span style={{ fontSize: 11, color: C.textMut, fontWeight: 750 }}>{freshnessLabel}</span> : null}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
-              <span style={{ fontSize: 32, lineHeight: 1, color: available ? C.pri : C.textMut, fontWeight: 950 }}>
+              <span style={{ fontSize: 30, lineHeight: 1, color: available ? C.pri : C.textMut, fontWeight: 950 }}>
                 {available ? formatTemperature(weather.current_temp_f || weather.high_temp_f) : "--"}
               </span>
               <span style={{ fontSize: 14, color: available ? C.text : C.textMut, fontWeight: 900 }}>
                 {available ? formatTemperatureRange(weather) : "Weather not cached"}
               </span>
-              <span style={{ fontSize: 12, color: error ? C.dan : C.textSec, fontWeight: 750, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                {error || getWeatherOperationalNote(weather)}
+              <span style={{ fontSize: 12, color: error ? C.dan : C.textSec, fontWeight: 750, lineHeight: 1.35, whiteSpace: "normal", maxWidth: 680 }}>
+                {error || brief}
               </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+              {visibleMetrics.slice(0, 3).map((metric) => (
+                <span
+                  key={metric.label}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "baseline",
+                    gap: 5,
+                    padding: "5px 8px",
+                    borderRadius: 999,
+                    border: `1px solid ${metric.tone === "caution" ? "#FDE68A" : C.borderLight}`,
+                    background: metric.tone === "caution" ? C.warnLt : "rgba(255,255,255,0.78)",
+                    color: metric.tone === "caution" ? C.warn : C.text,
+                    minWidth: 0,
+                  }}
+                >
+                  <span style={{ fontSize: 9, color: C.textMut, fontWeight: 850, whiteSpace: "nowrap" }}>{metric.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {metric.value}
+                  </span>
+                </span>
+              ))}
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", maxWidth: 410, flexShrink: 0 }}>
-          {visibleMetrics.map((metric) => (
-            <span
-              key={metric.label}
-              style={{
-                display: "inline-flex",
-                alignItems: "baseline",
-                gap: 6,
-                padding: "7px 10px",
-                borderRadius: 999,
-                border: `1px solid ${metric.tone === "caution" ? "#FDE68A" : C.borderLight}`,
-                background: metric.tone === "caution" ? C.warnLt : "rgba(255,255,255,0.78)",
-                color: metric.tone === "caution" ? C.warn : C.text,
-                maxWidth: 170,
-                minWidth: 0,
-              }}
-            >
-              <span style={{ fontSize: 9, color: C.textMut, fontWeight: 850, whiteSpace: "nowrap" }}>{metric.label}</span>
-              <span style={{ fontSize: 12, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {metric.value}
-              </span>
-            </span>
-          ))}
+        <div style={{ minWidth: 0 }}>
+          <WeatherHourlyGraph weather={weather} loading={loading} compact />
         </div>
-      </div>
-      <div style={{ padding: "0 14px 14px" }}>
-        <WeatherHourlyGraph weather={weather} loading={loading} compact />
       </div>
     </button>
   );
@@ -631,7 +635,24 @@ function HomeWeatherMetric({ metric }) {
   );
 }
 
-function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRefresh }) {
+function HomeWeatherDataFields({ fields }) {
+  if (!fields.length) return null;
+  return (
+    <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#FFFFFF", padding: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 10 }}>Cached Fields</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(138px, 1fr))", gap: 8 }}>
+        {fields.map((field) => (
+          <div key={field.key} style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#F8FAFC", padding: "8px 9px", minWidth: 0 }}>
+            <div style={{ fontSize: 9, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>{field.label}</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.text, fontWeight: 850, lineHeight: 1.4, overflowWrap: "anywhere" }}>{field.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HomeWeatherModal({ weather, loading, error, limitations, targetDate, onClose, onRefresh }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") onClose();
@@ -643,7 +664,10 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
   const available = isWeatherAvailable(weather);
   const tone = getWeatherTone(weather);
   const details = buildWeatherDetailMetrics(weather);
-  const fetchedLabel = formatFetchedAt(weather);
+  const dataFields = buildWeatherDataFields(weather);
+  const weatherDateLabel = formatWeatherDateLabel(weather, targetDate);
+  const freshnessLabel = formatWeatherFreshnessLabel(weather, limitations);
+  const brief = formatWeatherBrief(weather);
 
   return (
     <div
@@ -666,30 +690,31 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
       }}
     >
       <div style={{
-        width: "min(860px, 96vw)",
-        maxHeight: "88vh",
+        width: "min(980px, 96vw)",
+        maxHeight: "calc(100vh - 48px)",
+        minHeight: 0,
         overflow: "hidden",
-        borderRadius: 14,
+        borderRadius: 8,
         background: "#FFFFFF",
-        border: "1px solid rgba(15,23,42,0.10)",
-        boxShadow: "0 24px 80px rgba(15,23,42,0.22)",
+        border: `1px solid ${C.border}`,
+        boxShadow: "0 20px 25px rgba(15,23,42,0.16)",
         display: "flex",
         flexDirection: "column",
       }}>
         <div style={{
           padding: "20px 22px",
-          borderBottom: "1px solid rgba(15,23,42,0.08)",
+          borderBottom: `1px solid ${C.borderLight}`,
           display: "flex",
           justifyContent: "space-between",
           gap: 18,
           alignItems: "flex-start",
-          background: `linear-gradient(135deg, ${tone.bg}, #FFFFFF 58%, #EEF6FF 100%)`,
+          background: "#FFFFFF",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
             <HomeWeatherIcon weather={weather} size={64} />
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: C.text, lineHeight: 1 }}>Today&apos;s Weather</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: C.text, lineHeight: 1 }}>Weather for {weatherDateLabel}</div>
                 <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 11, fontWeight: 900 }}>
                   {loading ? "Loading" : tone.label}
                 </span>
@@ -701,7 +726,7 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
                 <span style={{ fontSize: 16, fontWeight: 900, color: C.text }}>
                   {available ? formatTemperatureRange(weather) : "No cached weather"}
                 </span>
-                <span style={{ fontSize: 13, fontWeight: 750, color: C.textSec }}>{formatWeatherSummary(weather)}</span>
+                <span style={{ fontSize: 13, fontWeight: 750, color: C.textSec }}>{brief}</span>
               </div>
             </div>
           </div>
@@ -710,11 +735,11 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
             onClick={onClose}
             aria-label="Close weather details"
             style={{
-              width: 34,
-              height: 34,
+              width: 44,
+              height: 44,
               borderRadius: 8,
-              border: "1px solid rgba(15,23,42,0.10)",
-              background: "rgba(255,255,255,0.84)",
+              border: `1px solid ${C.border}`,
+              background: "#FFFFFF",
               color: C.text,
               display: "flex",
               alignItems: "center",
@@ -726,22 +751,27 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
             <I.X />
           </button>
         </div>
-        <div style={{ overflowY: "auto", padding: 22, display: "grid", gap: 16 }}>
+        <div style={{ overflowY: "auto", minHeight: 0, overscrollBehavior: "contain", padding: 22, display: "grid", gap: 16 }}>
           {error ? (
             <div style={{ border: `1px solid ${C.dan}`, borderRadius: 10, background: C.danLt, padding: 12, color: C.dan, fontSize: 12, fontWeight: 800 }}>
               {error}
             </div>
           ) : null}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
-            <div style={{ border: `1px solid ${tone.border}`, borderRadius: 10, padding: 14, background: tone.bg }}>
-              <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 7 }}>Operational Read</div>
-              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, fontWeight: 700 }}>{getWeatherOperationalNote(weather)}</div>
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 16, background: "#FFFFFF" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 9, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: C.text }}>AI Weather Read</div>
+                <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  {tone.label}
+                </span>
+              </div>
+              <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.65, fontWeight: 650 }}>{getWeatherOperationalNote(weather)}</div>
             </div>
-            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 14, background: "#FFFFFF" }}>
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: 14, background: "#F8FAFC" }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 9 }}>Source</div>
               <div style={{ display: "grid", gap: 6, fontSize: 12, color: C.textSec, fontWeight: 700, lineHeight: 1.45 }}>
                 <span>{formatWeatherSource(weather)}</span>
-                {fetchedLabel ? <span>Updated {fetchedLabel}</span> : null}
+                {freshnessLabel ? <span>{freshnessLabel}</span> : null}
                 {limitations?.daily_forecast_horizon_days ? <span>Forecast horizon: {limitations.daily_forecast_horizon_days} days</span> : null}
                 {limitations?.historical_coverage ? <span>{limitations.historical_coverage}</span> : null}
                 {limitations?.future_note ? <span>{limitations.future_note}</span> : null}
@@ -754,6 +784,7 @@ function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRef
             </div>
           ) : null}
           <WeatherHourlyGraph weather={weather} loading={loading} />
+          <HomeWeatherDataFields fields={dataFields} />
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderTop: `1px solid ${C.borderLight}`, paddingTop: 14 }}>
             <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45, fontWeight: 700 }}>
               Weather is cached in Supabase so closed dates stay available after they enter the cache.
@@ -1622,6 +1653,8 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
       weather={weather}
       loading={weatherLoading}
       error={weatherError}
+      limitations={weatherLimitations}
+      targetDate={today}
       onOpen={() => setShowWeather(true)}
     />
   );
@@ -1692,6 +1725,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
           loading={weatherLoading}
           error={weatherError}
           limitations={weatherLimitations}
+          targetDate={today}
           onClose={() => setShowWeather(false)}
           onRefresh={refreshWeather}
         />

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWeatherDetailMetrics,
+  buildWeatherDataFields,
+  formatWeatherBrief,
+  formatWeatherDateLabel,
+  formatWeatherFreshnessLabel,
   formatTemperatureRange,
   formatWeatherSource,
   formatWeatherSummary,
   formatWeatherMatrixValue,
+  getWeatherDisplayHourlyPoints,
   getWeatherHourlyPoints,
   getWeatherIconUrl,
   getWeatherMatrixValue,
@@ -64,9 +69,12 @@ describe("weather shared helpers", () => {
 
   it("turns detail fields into expandable operational metrics", () => {
     const labels = buildWeatherDetailMetrics(availableRow).map((metric) => metric.label);
+    const fieldLabels = buildWeatherDataFields(availableRow).map((field) => field.label);
 
     expect(labels).toEqual(["Feels", "Rain", "QPF", "Wind", "Gust", "Humidity", "UV", "Clouds", "Vis"]);
+    expect(fieldLabels).toContain("Hourly Points Cached");
     expect(getWeatherOperationalNote({ ...availableRow, thunderstorm_probability_pct: 40 })).toContain("Storm risk");
+    expect(formatWeatherBrief(availableRow)).toBe("Light Rain · 81° / 62° · 42% rain · 12 mph wind · 71% humidity");
   });
 
   it("exposes hourly points and exportable weather matrix values", () => {
@@ -74,6 +82,53 @@ describe("weather shared helpers", () => {
     expect(getWeatherMatrixValue(availableRow, "weather.hourly_count")).toBe(2);
     expect(getWeatherMatrixValue(availableRow, "weather.provider_raw")).toBe("precipitation, temperature");
     expect(formatWeatherMatrixValue(availableRow.high_temp_f, "temperature")).toBe("81°");
+  });
+
+  it("limits graph display points to the next 24 sorted hourly readings", () => {
+    const row = {
+      ...availableRow,
+      details_json: {
+        hourly_forecast: Array.from({ length: 30 }, (_, index) => ({
+          dt: 1779062400 + (29 - index) * 3600,
+          temp_f: 65 + index,
+          precipitation_probability_pct: index,
+        })),
+      },
+    };
+
+    const points = getWeatherDisplayHourlyPoints(row);
+
+    expect(points).toHaveLength(24);
+    expect(points[0].dt).toBe(1779062400);
+    expect(points.at(-1).dt).toBe(1779062400 + 23 * 3600);
+  });
+
+  it("labels cached weather by the actual row date and freshness", () => {
+    const row = {
+      ...availableRow,
+      weather_date: "2026-05-19",
+      fetched_at: "2026-05-19T03:40:00.000Z",
+    };
+
+    expect(formatWeatherDateLabel(row)).toBe("Tue, May 19, 2026");
+    expect(formatWeatherFreshnessLabel(row)).toContain("Cached");
+    expect(formatWeatherFreshnessLabel(row)).toContain(":40");
+    expect(formatWeatherFreshnessLabel(row, { warnings: ["refresh failed"] })).toContain("refresh blocked");
+  });
+
+  it("builds a 24-hour display curve from daily cache fields when hourly points are missing", () => {
+    const row = {
+      ...availableRow,
+      weather_date: "2026-05-19",
+      details_json: {},
+    };
+
+    const points = getWeatherDisplayHourlyPoints(row);
+
+    expect(points).toHaveLength(24);
+    expect(points.every((point) => point.derived)).toBe(true);
+    expect(points[0].label).toContain(":00");
+    expect(Math.round(Math.max(...points.map((point) => point.tempF)))).toBe(81);
   });
 
   it("summarizes multi-day weather segments without inventing unavailable data", () => {
