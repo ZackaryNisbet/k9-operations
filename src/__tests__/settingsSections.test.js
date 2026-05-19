@@ -14,6 +14,7 @@ describe("buildSettingsSections", () => {
     expect(ids).not.toContain("checklist-templates");
     expect(ids).not.toContain("required-fields");
     expect(ids).not.toContain("lapsed-thresholds");
+    expect(ids).toContain("weather-location");
   });
 
   it("keeps analytics-only settings available in analytics mode", () => {

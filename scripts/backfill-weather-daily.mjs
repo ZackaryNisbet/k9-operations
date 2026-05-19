@@ -6,7 +6,8 @@ const locationId = String(args["location-id"] || "").trim();
 const dateFrom = String(args["date-from"] || "").slice(0, 10);
 const dateTo = String(args["date-to"] || "").slice(0, 10);
 const maxDays = Math.max(1, Math.min(Number(args["max-days"] || 45), 45));
-const pauseMs = Math.max(0, Number(args["pause-ms"] || 250));
+const pauseMs = Math.max(0, Number(args["pause-ms"] || 1000));
+const maxProviderCalls = Math.max(1, Number(args["max-provider-calls"] || 750));
 const refresh = Boolean(args.refresh);
 
 if (!locationId) throw new Error("Pass --location-id.");
@@ -24,9 +25,17 @@ const endpoint = `https://${projectRef}.supabase.co/functions/v1/weather-daily`;
 let cursor = dateFrom;
 let batch = 0;
 let totalProcessed = 0;
+let stoppedReason = null;
 
 while (cursor && cursor <= dateTo) {
+  const remainingBudget = maxProviderCalls - totalProcessed;
+  if (remainingBudget <= 0) {
+    stoppedReason = "provider_call_budget_reached";
+    break;
+  }
+
   batch += 1;
+  const batchMaxDays = Math.min(maxDays, remainingBudget);
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -39,7 +48,7 @@ while (cursor && cursor <= dateTo) {
       location_id: locationId,
       date_from: cursor,
       date_to: dateTo,
-      max_days: maxDays,
+      max_days: batchMaxDays,
       refresh,
     }),
   });
@@ -56,6 +65,8 @@ while (cursor && cursor <= dateTo) {
   console.log(JSON.stringify({
     batch,
     cursor,
+    maxProviderCalls,
+    batchMaxDays,
     processed,
     totalProcessed,
     firstRow: rows[0]?.weather_date || null,
@@ -65,9 +76,18 @@ while (cursor && cursor <= dateTo) {
     warnings: payload.warnings || [],
   }));
 
-  if (!payload.backfill?.next_cursor || processed === 0) break;
+  if (!payload.backfill?.next_cursor || processed === 0) {
+    stoppedReason = processed === 0 && remaining > 0 ? "no_rows_processed" : null;
+    break;
+  }
   cursor = payload.backfill.next_cursor;
   await sleep(pauseMs);
 }
 
-console.log(JSON.stringify({ complete: true, totalProcessed, through: cursor }));
+console.log(JSON.stringify({
+  complete: stoppedReason === null,
+  stoppedReason,
+  totalProcessed,
+  maxProviderCalls,
+  through: cursor,
+}));
