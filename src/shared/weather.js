@@ -170,6 +170,19 @@ export function formatFetchedAt(row) {
   return dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+function formatWeatherTimestamp(value, weatherDate = "") {
+  if (!value) return "";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  let label = dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  if (weatherDate && dateKey !== weatherDate) {
+    const dateLabel = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    label = `${dateLabel}, ${label}`;
+  }
+  return label;
+}
+
 export function formatWeatherDateLabel(row, fallbackDate = "") {
   const value = String(row?.weather_date || fallbackDate || "").slice(0, 10);
   if (!value) return "date unknown";
@@ -202,19 +215,17 @@ export function getWeatherRefreshIssueLabel(limitations = null) {
 }
 
 export function formatWeatherFreshnessLabel(row, limitations = null) {
-  let fetchedLabel = formatFetchedAt(row);
-  if (row?.fetched_at && row?.weather_date) {
-    const dt = new Date(row.fetched_at);
-    if (!Number.isNaN(dt.getTime())) {
-      const fetchedDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-      const weatherDate = String(row.weather_date).slice(0, 10);
-      if (fetchedDate && weatherDate && fetchedDate !== weatherDate) {
-        const dateLabel = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-        fetchedLabel = `${dateLabel}, ${fetchedLabel}`;
-      }
+  const weatherDate = String(row?.weather_date || "").slice(0, 10);
+  const fetchedLabel = formatWeatherTimestamp(row?.fetched_at, weatherDate);
+  const issueLabel = getWeatherRefreshIssueLabel(limitations);
+  if (issueLabel && row?.updated_at) {
+    const updatedAt = new Date(row.updated_at);
+    const fetchedAt = row?.fetched_at ? new Date(row.fetched_at) : null;
+    if (!Number.isNaN(updatedAt.getTime()) && (!fetchedAt || Number.isNaN(fetchedAt.getTime()) || updatedAt > fetchedAt)) {
+      const checkedLabel = formatWeatherTimestamp(row.updated_at, weatherDate);
+      if (checkedLabel) return `Checked ${checkedLabel} · ${issueLabel}`;
     }
   }
-  const issueLabel = getWeatherRefreshIssueLabel(limitations);
   const staleSuffix = issueLabel ? ` · ${issueLabel}` : "";
   if (fetchedLabel) return `Cached ${fetchedLabel}${staleSuffix}`;
   if (issueLabel) return `Cached row · ${issueLabel}`;

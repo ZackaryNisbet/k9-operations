@@ -118,6 +118,10 @@ describe("weather shared helpers", () => {
     expect(formatWeatherFreshnessLabel(row, { warnings: ["refresh failed"] })).toContain("Refresh unavailable");
     expect(getWeatherRefreshIssueLabel({ warnings: ["OpenWeather request failed with HTTP 429: temporary blocked"] })).toBe("OpenWeather limit hit");
     expect(formatWeatherFreshnessLabel(row, { warnings: ["OpenWeather request failed with HTTP 429: temporary blocked"] })).toContain("OpenWeather limit hit");
+    expect(formatWeatherFreshnessLabel({
+      ...row,
+      updated_at: "2026-05-19T14:36:00.000Z",
+    }, { warnings: ["OpenWeather request failed with HTTP 429: temporary blocked"] })).toContain("Checked");
   });
 
   it("does not treat stale provider overview text as a current AI read", () => {
