@@ -301,8 +301,9 @@ describe("Scheduling Demand Matrix export model", () => {
       "Ancillary",
       "Historical Comparison",
       "Gingr Source Counts",
+      "Weather Data",
     ]);
-    expect(groups.at(-1).rows.map((row) => row.label)).toEqual([
+    expect(groups.find((group) => group.section === "Gingr Source Counts").rows.map((row) => row.label)).toEqual([
       "Gingr Check-Ins",
       "Gingr Check-Outs",
       "Gingr Overnight",
@@ -323,7 +324,9 @@ describe("Scheduling Demand Matrix export model", () => {
       "Play Yard Demand",
       "Ancillary",
       "Historical Comparison",
+      "Weather Data",
     ]);
+    expect(groups.at(-1).rows[0].label).toBe("Weather Data");
     expect(groups[0].rows.at(-1).label).toBe("Total Boarding Dogs Opening");
     expect(groups[3].rows.map((row) => row.label)).toContain("Daily Dog Volume");
     expect(groups[4].rows.map((row) => row.label)).toEqual(["Total Boarding Dogs Departing Today"]);

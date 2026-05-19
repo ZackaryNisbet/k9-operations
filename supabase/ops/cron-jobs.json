@@ -60,6 +60,17 @@
       }
     },
     {
+      "jobname": "weather-openweather-cherry-hill-current",
+      "schedule": "*/10 * * * *",
+      "auth": "vault",
+      "function": "weather-daily",
+      "payload": {
+        "mode": "current_forecast",
+        "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+        "refresh": true
+      }
+    },
+    {
       "jobname": "compute-scheduling-matrix-cherry-hill-day-0",
       "schedule": "*/5 * * * *",
       "auth": "vault",
