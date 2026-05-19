@@ -12,7 +12,7 @@ const OPENWEATHER_FORECAST_DAYS = 8;
 const OPENWEATHER_LONG_RANGE_DAYS = 548;
 const OPENWEATHER_PROVIDER = "openweather";
 const OPENWEATHER_BASE = "https://api.openweathermap.org/data/3.0";
-const OPENWEATHER_RATE_LIMIT_BACKOFF_MINUTES = 30;
+const OPENWEATHER_RATE_LIMIT_BACKOFF_MINUTES = 10;
 
 type WeatherLocationSettings = {
   location_id: string;
