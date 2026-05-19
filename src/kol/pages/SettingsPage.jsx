@@ -30,6 +30,7 @@ import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
+import WeatherLocationSettingsTab from "../settings/WeatherLocationSettingsTab";
 import GingrIconsTab from "../settings/GingrIconsTab";
 import SchedulingCapacitySettingsTab from "../settings/SchedulingCapacitySettingsTab";
 import RoleLayoutPage from "./RoleLayoutPage";
@@ -348,6 +349,7 @@ const SETTINGS_CARD_PERMISSIONS = {
   "gingr-icons": ["Gingr Integration"],
   "api-overview": ["Gingr Integration"],
   "api-dashboard": ["Gingr Integration"],
+  "weather-location": ["Gingr Integration"],
   "ignite-settings": ["Gingr Integration"],
   "ignite-parser": ["Gingr Integration"],
   team: ["User Management"],
@@ -384,6 +386,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
         { id: "gingr-icons", label: "Gingr Configuration", desc: "Pair Gingr icons, services, add-ons, and reservation types to operational workflows" },
         { id: "api-overview", label: "API Overview", desc: "View all Gingr API call types, frequencies, projected daily usage, and sync state" },
         { id: "api-dashboard", label: "API Dashboard", desc: "All Gingr API endpoints, frequencies, configurable polling, and daily call projections" },
+        { id: "weather-location", label: "Weather Location", desc: "Verify weather address, coordinates, timezone, and provider per location" },
       ],
     },
     {
@@ -499,6 +502,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
         return <ApiOverviewTab />;
       case "api-dashboard":
         return <ApiDashboardTab />;
+      case "weather-location":
+        return <WeatherLocationSettingsTab />;
       case "role-layout":
         return <RoleLayoutPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "subscription":
