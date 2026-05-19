@@ -10,7 +10,7 @@ import {
 const WIDTH = 1000;
 const HEIGHT = 330;
 const PLOT = { left: 48, right: 28, top: 38, bottom: 74 };
-const COMPACT_PLOT = { left: 0, right: 0, top: 48, bottom: 44 };
+const COMPACT_PLOT = { left: 54, right: 18, top: 82, bottom: 68 };
 const GRAPH_SURFACE = "#FFFFFF";
 const GRAPH_PANEL = "#F8FAFC";
 const GRAPH_INK = "#0F172A";
@@ -181,6 +181,74 @@ function WeatherLegendSwatch({ type, color }) {
   );
 }
 
+function CompactGraphOverlay({ selected, points, minTemp, maxTemp }) {
+  const first = points[0];
+  const middle = points[Math.floor(points.length / 2)];
+  const last = points[points.length - 1];
+  const xLabels = [
+    formatAxisLabel(first, 0, points),
+    middle ? formatAxisLabel(middle, Math.floor(points.length / 2), points) : "",
+    last ? formatAxisLabel(last, points.length - 1, points) : "",
+  ].filter(Boolean);
+
+  return (
+    <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+      <div style={{
+        position: "absolute",
+        top: 6,
+        left: 8,
+        right: 8,
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 8,
+        color: GRAPH_INK,
+      }}>
+        <span style={{ fontSize: 15, lineHeight: 1, fontWeight: 950, whiteSpace: "nowrap" }}>
+          {formatTemperature(selected?.tempF)}
+        </span>
+        <span style={{ fontSize: 13, lineHeight: 1, color: C.textSec, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected?.label || ""}
+        </span>
+        <span style={{ fontSize: 13, lineHeight: 1, color: C.textMut, fontWeight: 850, whiteSpace: "nowrap" }}>
+          {valueLabel(selected?.rainPct, "%")} rain
+        </span>
+      </div>
+      <div style={{
+        position: "absolute",
+        top: 30,
+        left: 8,
+        width: 38,
+        display: "grid",
+        gap: 31,
+        color: AXIS,
+        fontSize: 12,
+        lineHeight: 1,
+        fontWeight: 850,
+        textAlign: "right",
+      }}>
+        <span>{Math.round(maxTemp)}°</span>
+        <span>{Math.round(minTemp)}°</span>
+      </div>
+      <div style={{
+        position: "absolute",
+        left: 54,
+        right: 12,
+        bottom: 6,
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 8,
+        color: AXIS,
+        fontSize: 12,
+        lineHeight: 1,
+        fontWeight: 850,
+      }}>
+        {xLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}
+      </div>
+    </div>
+  );
+}
+
 export default function WeatherHourlyGraph({ weather, loading = false, compact = false }) {
   const svgRef = useRef(null);
   const reactId = useId().replace(/:/g, "");
@@ -258,7 +326,7 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
   const selectedLeft = selected?.x || plot.left;
   const selectedLabel = selected?.label || "";
   const selectedDay = selected?.dayLabel || "";
-  const selectedXLabel = Math.min(Math.max(selectedLeft, 98), WIDTH - 130);
+  const selectedXLabel = Math.min(Math.max(selectedLeft, 112), WIDTH - 112);
   const rainPoints = points.filter((point) => Number(point.rainPct) > 0);
   const cardMetrics = [
     { label: "Temp", value: formatTemperature(selected?.tempF) },
@@ -277,11 +345,13 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
         borderRadius: 8,
         border: `1px solid ${C.borderLight}`,
         background: GRAPH_SURFACE,
+        minHeight: compact ? 104 : 410,
         overflow: "hidden",
         cursor: "crosshair",
         userSelect: "none",
         touchAction: "none",
         boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+        position: "relative",
       }}
     >
       {!compact && (
@@ -321,7 +391,7 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         preserveAspectRatio="none"
-        style={{ display: "block", width: "100%", height: compact ? 78 : 270 }}
+        style={{ display: "block", width: "100%", height: compact ? 104 : 270 }}
       >
         <defs>
           <linearGradient id={tempFillId} x1="0" x2="0" y1="0" y2="1">
@@ -336,6 +406,8 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
         </defs>
 
         <rect x="0" y="0" width={WIDTH} height={HEIGHT} fill={GRAPH_SURFACE} />
+        <line x1={plot.left} x2={plot.left} y1={plot.top - (compact ? 8 : 0)} y2={HEIGHT - plot.bottom} stroke={AXIS} strokeWidth={compact ? "2" : "1.6"} opacity={compact ? "0.56" : "0.44"} />
+        <line x1={plot.left} x2={WIDTH - plot.right} y1={HEIGHT - plot.bottom} y2={HEIGHT - plot.bottom} stroke={AXIS} strokeWidth={compact ? "2" : "1.6"} opacity={compact ? "0.56" : "0.44"} />
 
         {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
           const y = plot.top + tick * (HEIGHT - plot.top - plot.bottom);
@@ -344,7 +416,7 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
             <g key={tick}>
               <line x1={plot.left} x2={WIDTH - plot.right} y1={y} y2={y} stroke={GRID} strokeWidth="1" opacity={compact ? 0.48 : 1} />
               {!compact && (
-                <text x={plot.left - 14} y={y + 4} textAnchor="end" fontSize="18" fontWeight="800" fill={AXIS}>
+                <text x={plot.left - 14} y={y + 5} textAnchor="end" fontSize="22" fontWeight="850" fill={AXIS}>
                   {Math.round(temp)}°
                 </text>
               )}
@@ -378,7 +450,7 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
         {!compact && tickIndexes.map((index) => {
           const point = points[index];
           return (
-            <text key={`${point.iso}-label`} x={xScale(index, points.length, plot)} y={HEIGHT - 28} textAnchor="middle" fontSize="18" fontWeight="850" fill={AXIS}>
+            <text key={`${point.iso}-label`} x={xScale(index, points.length, plot)} y={HEIGHT - 28} textAnchor="middle" fontSize="21" fontWeight="850" fill={AXIS}>
               {formatAxisLabel(point, index, points)}
             </text>
           );
@@ -388,18 +460,22 @@ export default function WeatherHourlyGraph({ weather, loading = false, compact =
           <g>
             <line data-weather-crosshair x1={selectedLeft} x2={selectedLeft} y1={plot.top - 8} y2={HEIGHT - plot.bottom + (compact ? 12 : 60)} stroke="#1E293B" strokeWidth={compact ? "2" : "1.5"} strokeDasharray="6 8" opacity="0.72" />
             <circle cx={selectedLeft} cy={selected.y} r="8" fill={GRAPH_SURFACE} stroke={TEMP_LINE} strokeWidth="4" />
-            <g transform={`translate(${selectedXLabel - 96} 10)`}>
-              <rect width="192" height="58" rx="8" fill="#0F172A" opacity="0.94" />
-              <text x="14" y="22" fontSize="16" fontWeight="900" fill="#FFFFFF">{selectedLabel}</text>
-              <text x="14" y="44" fontSize="20" fontWeight="950" fill="#D9F99D">{formatTemperature(selected.tempF)}</text>
-              <text x="72" y="44" fontSize="14" fontWeight="850" fill="#E2E8F0">{formatTemperature(selected.feelsLikeF)} feels</text>
-              <text x="143" y="44" fontSize="14" fontWeight="850" fill="#BFDBFE">{valueLabel(selected.rainPct, "%")}</text>
-            </g>
+            {!compact && (
+              <g transform={`translate(${selectedXLabel - 108} 8)`}>
+                <rect width="216" height="64" rx="8" fill="#0F172A" opacity="0.94" />
+                <text x="14" y="24" fontSize="18" fontWeight="900" fill="#FFFFFF">{selectedLabel}</text>
+                <text x="14" y="49" fontSize="23" fontWeight="950" fill="#D9F99D">{formatTemperature(selected.tempF)}</text>
+                <text x="82" y="49" fontSize="16" fontWeight="850" fill="#E2E8F0">{formatTemperature(selected.feelsLikeF)} feels</text>
+                <text x="164" y="49" fontSize="16" fontWeight="850" fill="#BFDBFE">{valueLabel(selected.rainPct, "%")}</text>
+              </g>
+            )}
           </g>
         )}
 
         {compact && selected ? <title>{formatTemperature(selected.tempF)} at {selectedLabel}</title> : null}
       </svg>
+
+      {compact ? <CompactGraphOverlay selected={selected} points={points} minTemp={minTemp} maxTemp={maxTemp} /> : null}
 
       {!compact && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 8, padding: "0 16px 16px" }}>

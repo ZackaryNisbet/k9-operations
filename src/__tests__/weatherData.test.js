@@ -6,6 +6,7 @@ import {
   formatWeatherDateLabel,
   formatWeatherFreshnessLabel,
   formatTemperatureRange,
+  getWeatherRefreshIssueLabel,
   formatWeatherSource,
   formatWeatherSummary,
   formatWeatherMatrixValue,
@@ -15,6 +16,7 @@ import {
   getWeatherMatrixValue,
   getWeatherOperationalNote,
   getWeatherRiskLevel,
+  isWeatherCurrentRead,
   summarizeWeatherRows,
 } from "../shared/weather";
 
@@ -113,7 +115,39 @@ describe("weather shared helpers", () => {
     expect(formatWeatherDateLabel(row)).toBe("Tue, May 19, 2026");
     expect(formatWeatherFreshnessLabel(row)).toContain("Cached");
     expect(formatWeatherFreshnessLabel(row)).toContain(":40");
-    expect(formatWeatherFreshnessLabel(row, { warnings: ["refresh failed"] })).toContain("refresh blocked");
+    expect(formatWeatherFreshnessLabel(row, { warnings: ["refresh failed"] })).toContain("Refresh unavailable");
+    expect(getWeatherRefreshIssueLabel({ warnings: ["OpenWeather request failed with HTTP 429: temporary blocked"] })).toBe("OpenWeather limit hit");
+    expect(formatWeatherFreshnessLabel(row, { warnings: ["OpenWeather request failed with HTTP 429: temporary blocked"] })).toContain("OpenWeather limit hit");
+  });
+
+  it("does not treat stale provider overview text as a current AI read", () => {
+    const staleOverviewRow = {
+      ...availableRow,
+      weather_date: "2026-05-19",
+      fetched_at: "2026-05-19T03:40:00.000Z",
+      timezone_id: "America/New_York",
+      source_kind: "daily_forecast",
+      details_json: {
+        overview: "Currently, the weather is stale.",
+        raw_current: { temp: 78 },
+      },
+    };
+    const currentOverviewRow = {
+      ...staleOverviewRow,
+      fetched_at: "2026-05-19T14:40:00.000Z",
+      source_kind: "current_conditions",
+      details_json: {
+        overview: "Currently, the weather is live.",
+        raw_current: { temp: 78 },
+      },
+    };
+
+    expect(isWeatherCurrentRead(staleOverviewRow)).toBe(false);
+    expect(formatWeatherSummary(staleOverviewRow)).toBe("Light rain");
+    expect(getWeatherOperationalNote(staleOverviewRow)).not.toContain("stale");
+    expect(getWeatherMatrixValue(staleOverviewRow, "weather.ai_overview")).toBe(null);
+    expect(isWeatherCurrentRead(currentOverviewRow)).toBe(true);
+    expect(formatWeatherSummary(currentOverviewRow)).toBe("Currently, the weather is live.");
   });
 
   it("builds a 24-hour display curve from daily cache fields when hourly points are missing", () => {

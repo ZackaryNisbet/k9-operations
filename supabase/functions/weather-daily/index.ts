@@ -12,6 +12,7 @@ const OPENWEATHER_FORECAST_DAYS = 8;
 const OPENWEATHER_LONG_RANGE_DAYS = 548;
 const OPENWEATHER_PROVIDER = "openweather";
 const OPENWEATHER_BASE = "https://api.openweathermap.org/data/3.0";
+const OPENWEATHER_RATE_LIMIT_BACKOFF_MINUTES = 30;
 
 type WeatherLocationSettings = {
   location_id: string;
@@ -257,14 +258,57 @@ function hasUsableHourlyForecast(row: WeatherCacheRow | null | undefined) {
   return Array.isArray(details?.hourly_forecast) && details.hourly_forecast.length >= 2;
 }
 
+function providerRefreshBlockedUntil(row: WeatherCacheRow | null | undefined) {
+  const details = row?.details_json as Record<string, unknown> | undefined;
+  const value = String(details?.provider_refresh_blocked_until || "");
+  if (!value) return null;
+  const dt = new Date(value);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function hasActiveProviderBackoff(row: WeatherCacheRow | null | undefined) {
+  const blockedUntil = providerRefreshBlockedUntil(row);
+  return Boolean(blockedUntil && blockedUntil.getTime() > Date.now());
+}
+
 function isCacheFresh(row: WeatherCacheRow | null | undefined, refresh: boolean, weatherDate?: string, today?: string) {
-  if (!row || refresh) return false;
+  if (!row) return false;
+  if (hasActiveProviderBackoff(row)) return true;
+  if (refresh) return false;
   if (weatherDate && today && weatherDate === today && row.status === "available") {
     if (row.source_kind !== "current_conditions" || !hasUsableHourlyForecast(row)) return false;
   }
   if (!row.expires_at) return true;
   const expiresAt = new Date(String(row.expires_at));
   return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > Date.now();
+}
+
+function isOpenWeatherRateLimitError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("HTTP 429") ||
+    message.toLowerCase().includes("temporary blocked") ||
+    message.toLowerCase().includes("requests limitation") ||
+    message.toLowerCase().includes("rate limit");
+}
+
+function rateLimitWarning(error: unknown) {
+  const until = new Date(Date.now() + OPENWEATHER_RATE_LIMIT_BACKOFF_MINUTES * 60 * 1000).toISOString();
+  const message = error instanceof Error ? error.message : String(error || "OpenWeather request limit hit.");
+  return {
+    until,
+    warning: `OpenWeather request limit hit; live weather refresh paused until ${until}. ${message}`,
+  };
+}
+
+function storedRefreshWarnings(rows: WeatherCacheRow[]) {
+  const warnings = new Set<string>();
+  for (const row of rows) {
+    if (!hasActiveProviderBackoff(row)) continue;
+    const details = row.details_json as Record<string, unknown> | undefined;
+    const warning = String(details?.provider_refresh_warning || "").trim();
+    if (warning) warnings.add(warning);
+  }
+  return Array.from(warnings);
 }
 
 function providerPriority(row: WeatherCacheRow) {
@@ -404,7 +448,8 @@ function mapOneCallDay(
   const temp = day.temp as Record<string, unknown> | undefined;
   const feels = day.feels_like as Record<string, unknown> | undefined;
   const weather = weatherMain(day);
-  const summary = String(day.summary || overview?.weather_overview || weather?.description || weather?.main || "Weather available").trim();
+  const liveOverview = isToday ? overview : null;
+  const summary = String(day.summary || liveOverview?.weather_overview || weather?.description || weather?.main || "Weather available").trim();
   const hourly = Array.isArray(payload.hourly) ? payload.hourly as Record<string, unknown>[] : [];
   const minutely = Array.isArray(payload.minutely) ? payload.minutely as Record<string, unknown>[] : [];
   const alerts = Array.isArray(payload.alerts) ? payload.alerts as Record<string, unknown>[] : [];
@@ -450,8 +495,8 @@ function mapOneCallDay(
       hourly_forecast: isToday ? hourly.map((hour) => normalizeHourlyPoint(hour, timezoneId)) : [],
       minutely_forecast: isToday ? minutely.map(normalizeMinutelyPoint) : [],
       alerts,
-      overview: overview?.weather_overview || null,
-      raw_overview: overview,
+      overview: liveOverview?.weather_overview || null,
+      raw_overview: liveOverview,
       moon_phase: day.moon_phase ?? null,
       temperature: temp || null,
       feels_like: feels || null,
@@ -646,6 +691,34 @@ async function upsertWeatherRows(client: any, rows: Record<string, unknown>[]) {
   if (error) throw error;
 }
 
+async function markProviderRefreshBackoff(
+  client: any,
+  rowsByDate: Map<string, WeatherCacheRow>,
+  targetDates: string[],
+  warning: string,
+  blockedUntil: string,
+) {
+  const updates = targetDates
+    .map((date) => rowsByDate.get(date))
+    .filter((row): row is WeatherCacheRow => Boolean(row && row.status === "available"))
+    .map(async (row) => {
+      const details_json = {
+        ...((row.details_json as Record<string, unknown> | undefined) || {}),
+        provider_refresh_warning: warning,
+        provider_refresh_blocked_until: blockedUntil,
+      };
+      const { error } = await client
+        .from("weather_daily_cache")
+        .update({ details_json })
+        .eq("location_id", row.location_id)
+        .eq("weather_date", row.weather_date)
+        .eq("provider", row.provider);
+      if (error) throw error;
+    });
+
+  await Promise.all(updates);
+}
+
 async function handleWeatherRequest(client: any, body: Record<string, unknown>) {
   const locationId = normalizeLocationId(body.location_id);
   const refresh = body.refresh === true;
@@ -690,7 +763,15 @@ async function handleWeatherRequest(client: any, body: Record<string, unknown>) 
       rowsByDate = chooseRowsByDate(cachedRows);
     } catch (providerError) {
       if (!cachedRows.length) throw providerError;
-      warnings.push(providerError instanceof Error ? providerError.message : "OpenWeather refresh failed; returning cached rows.");
+      if (isOpenWeatherRateLimitError(providerError)) {
+        const { warning, until } = rateLimitWarning(providerError);
+        warnings.push(warning);
+        await markProviderRefreshBackoff(client, rowsByDate, targetDates, warning, until);
+        cachedRows = await loadCachedRows(client, locationId, dateFrom, dateTo);
+        rowsByDate = chooseRowsByDate(cachedRows);
+      } else {
+        warnings.push(providerError instanceof Error ? providerError.message : "OpenWeather refresh failed; returning cached rows.");
+      }
     }
   }
 
@@ -701,13 +782,14 @@ async function handleWeatherRequest(client: any, body: Record<string, unknown>) 
     "Weather is not cached for this date yet.",
   ));
   const remainingDates = neededDates.filter((date) => !targetDates.includes(date));
+  const responseWarnings = Array.from(new Set([...warnings, ...storedRefreshWarnings(rows as WeatherCacheRow[])]));
 
   return {
     ok: true,
     location_id: locationId,
     provider: OPENWEATHER_PROVIDER,
     rows,
-    warnings,
+    warnings: responseWarnings,
     backfill: mode === "backfill_daily"
       ? {
         requested: neededDates.length,

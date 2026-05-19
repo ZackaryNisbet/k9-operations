@@ -43,7 +43,37 @@ export function formatWeatherSummary(row) {
   if (row.status !== "available") {
     return details.reason || "Weather unavailable";
   }
-  return details.overview || row.summary || "Weather available";
+  return getWeatherCurrentOverview(row) || row.summary || "Weather available";
+}
+
+function formatLocalDateKey(value, timezoneId = "America/New_York") {
+  if (!value) return "";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezoneId,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(dt);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+export function isWeatherCurrentRead(row) {
+  if (!isWeatherAvailable(row)) return false;
+  const details = getWeatherDetails(row);
+  const timezoneId = row?.timezone_id || details.timezone_id || "America/New_York";
+  const fetchedDate = formatLocalDateKey(row?.fetched_at, timezoneId);
+  const weatherDate = String(row?.weather_date || "").slice(0, 10);
+  return row?.source_kind === "current_conditions" && Boolean(details.raw_current) && fetchedDate === weatherDate;
+}
+
+export function getWeatherCurrentOverview(row) {
+  const details = getWeatherDetails(row);
+  return isWeatherCurrentRead(row) ? details.overview || "" : "";
 }
 
 function titleCase(value) {
@@ -160,6 +190,17 @@ export function hasWeatherRefreshWarning(limitations) {
   );
 }
 
+export function getWeatherRefreshIssueLabel(limitations = null) {
+  const messages = [
+    limitations?.cache_fallback,
+    ...(Array.isArray(limitations?.warnings) ? limitations.warnings : []),
+  ].filter(Boolean).map((message) => String(message).toLowerCase());
+  if (messages.some((message) => message.includes("429") || message.includes("temporary blocked") || message.includes("requests limitation") || message.includes("rate limit"))) {
+    return "OpenWeather limit hit";
+  }
+  return hasWeatherRefreshWarning(limitations) ? "Refresh unavailable" : "";
+}
+
 export function formatWeatherFreshnessLabel(row, limitations = null) {
   let fetchedLabel = formatFetchedAt(row);
   if (row?.fetched_at && row?.weather_date) {
@@ -173,9 +214,10 @@ export function formatWeatherFreshnessLabel(row, limitations = null) {
       }
     }
   }
-  const staleSuffix = hasWeatherRefreshWarning(limitations) ? " · refresh blocked" : "";
+  const issueLabel = getWeatherRefreshIssueLabel(limitations);
+  const staleSuffix = issueLabel ? ` · ${issueLabel}` : "";
   if (fetchedLabel) return `Cached ${fetchedLabel}${staleSuffix}`;
-  if (hasWeatherRefreshWarning(limitations)) return "Cached row · refresh blocked";
+  if (issueLabel) return `Cached row · ${issueLabel}`;
   return "";
 }
 
@@ -202,8 +244,8 @@ export function buildWeatherDetailMetrics(row) {
 
 export function getWeatherOperationalNote(row) {
   if (!isWeatherAvailable(row)) return formatWeatherSummary(row);
-  const details = getWeatherDetails(row);
-  if (details.overview) return details.overview;
+  const currentOverview = getWeatherCurrentOverview(row);
+  if (currentOverview) return currentOverview;
   if (row?.source_kind === "statistical_forecast") {
     return "Long-range weather is useful for planning pressure, not exact day-of operations.";
   }
@@ -298,8 +340,7 @@ export function getWeatherDerivedHourlyPoints(row, limit = 24) {
   const base = dateValue ? new Date(`${dateValue}T00:00:00`) : new Date();
   if (Number.isNaN(base.getTime())) return [];
 
-  const details = getWeatherDetails(row);
-  const description = row.summary || details.overview || row.condition_type || "Cached daily weather";
+  const description = row.summary || getWeatherCurrentOverview(row) || row.condition_type || "Cached daily weather";
   const feelsDelta = Number.isFinite(Number(row.feels_like_temp_f)) && Number.isFinite(current)
     ? Number(row.feels_like_temp_f) - current
     : 0;
@@ -418,7 +459,7 @@ export function getWeatherMatrixValue(row, key) {
     case "weather.hourly_count":
       return getWeatherHourlyPoints(row).length;
     case "weather.ai_overview":
-      return details.overview || null;
+      return getWeatherCurrentOverview(row) || null;
     case "weather.provider_raw":
       return Object.keys(rawDay).length ? Object.keys(rawDay).sort().join(", ") : null;
     default: {
