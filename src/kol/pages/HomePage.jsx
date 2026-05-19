@@ -8,7 +8,22 @@ import { supabase } from "../../supabaseClient";
 import { C, todayStr } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
+import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
+import { useWeatherData } from "../../hooks/useWeatherData";
+import WeatherHourlyGraph from "../../shared/WeatherHourlyGraph";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
+import {
+  buildWeatherDetailMetrics,
+  formatFetchedAt,
+  formatTemperature,
+  formatTemperatureRange,
+  formatWeatherSource,
+  formatWeatherSummary,
+  getWeatherIconUrl,
+  getWeatherOperationalNote,
+  getWeatherTone,
+  isWeatherAvailable,
+} from "../../shared/weather";
 import { DEFAULT_INVENTORY_SCHEDULE, getInventoryCycleStart, getInventoryOverdueInfo, normalizeInventorySchedule } from "./inventorySchedule";
 
 const STAFF_ROLES = new Set(["pct", "csr"]);
@@ -165,6 +180,41 @@ function MetricCard({ label, value, subtext, color, live }) {
       {subtext ? <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>{subtext}</div> : null}
     </div>
   );
+}
+
+function toDashboardCount(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round(parsed));
+}
+
+function formatBoardingDaycareSubtext({ boarding, daycare, total, fallbackLabel }) {
+  const boardingCount = toDashboardCount(boarding);
+  const daycareCount = toDashboardCount(daycare);
+  if (boardingCount !== null || daycareCount !== null) {
+    return `${boardingCount ?? 0}B · ${daycareCount ?? 0}D`;
+  }
+
+  const totalCount = toDashboardCount(total);
+  if (totalCount !== null) return `${totalCount} ${totalCount === 1 ? "dog" : "dogs"}`;
+  return fallbackLabel;
+}
+
+function formatRoomsOccupiedSubtext({ occupied, total, occupancyPct }) {
+  const totalCount = toDashboardCount(total);
+  let occupiedCount = toDashboardCount(occupied);
+  if (occupiedCount === null && totalCount !== null) {
+    const pct = Number(occupancyPct);
+    if (Number.isFinite(pct)) {
+      occupiedCount = Math.max(0, Math.round((pct / 100) * totalCount));
+    }
+  }
+
+  if (occupiedCount !== null && totalCount !== null) return `${occupiedCount}/${totalCount} rooms occupied`;
+  if (occupiedCount !== null) return `${occupiedCount} rooms occupied`;
+  if (totalCount !== null) return `0/${totalCount} rooms occupied`;
+  return "Rooms occupied";
 }
 
 function getWorkflowNavTarget(workflowId, title) {
@@ -400,6 +450,341 @@ function HomePlatformHealthButton({ health, loading, onClick }) {
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: tone.color, boxShadow: `0 0 0 4px ${tone.glow}` }} />
       {label}
     </button>
+  );
+}
+
+function HomeWeatherIcon({ weather, size = 42 }) {
+  const iconUrl = getWeatherIconUrl(weather);
+  if (iconUrl) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        aria-hidden="true"
+        style={{ width: size, height: size, objectFit: "contain", flex: `0 0 ${size}px` }}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#E0F2FE",
+        color: C.info,
+        fontSize: Math.max(14, size * 0.44),
+        fontWeight: 900,
+        flex: `0 0 ${size}px`,
+      }}
+    >
+      °
+    </span>
+  );
+}
+
+function HomeWeatherButton({ weather, loading, error, onClick }) {
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const label = loading
+    ? "Weather"
+    : available
+      ? `${formatTemperature(weather.current_temp_f || weather.high_temp_f)} · ${tone.label}`
+      : error
+        ? "Weather Error"
+        : "Weather";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={error || formatWeatherSummary(weather)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        borderRadius: 999,
+        border: `1px solid ${tone.border}`,
+        background: tone.bg,
+        color: tone.color,
+        padding: "7px 11px",
+        fontSize: 11,
+        fontWeight: 850,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <HomeWeatherIcon weather={weather} size={18} />
+      {label}
+    </button>
+  );
+}
+
+function HomeWeatherCard({ weather, loading, error, onOpen }) {
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const details = buildWeatherDetailMetrics(weather);
+  const compactMetrics = details.slice(0, 3);
+  const fetchedLabel = formatFetchedAt(weather);
+  const visibleMetrics = compactMetrics.length ? compactMetrics : [
+    { label: "Source", value: loading ? "Loading" : formatWeatherSource(weather) },
+    { label: "High/Low", value: available ? formatTemperatureRange(weather) : "--" },
+    { label: "Risk", value: tone.label },
+  ];
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      style={{
+        width: "100%",
+        marginBottom: 24,
+        borderRadius: 14,
+        border: `1.5px solid ${tone.border}`,
+        background: "linear-gradient(135deg, oklch(99% 0.005 152) 0%, oklch(98% 0.01 232) 48%, oklch(96% 0.025 235) 100%)",
+        boxShadow: "0 12px 28px rgba(15,23,42,0.07)",
+        padding: 0,
+        overflow: "hidden",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        textAlign: "left",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, minHeight: 106, padding: "13px 20px 8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+          <HomeWeatherIcon weather={weather} size={46} />
+          <div style={{ minWidth: 0, display: "grid", gap: 5 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: C.text, fontWeight: 900 }}>Today&apos;s Weather</span>
+              <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 11, fontWeight: 900 }}>
+                {loading ? "Loading" : tone.label}
+              </span>
+              {fetchedLabel ? <span style={{ fontSize: 11, color: C.textMut, fontWeight: 750 }}>Updated {fetchedLabel}</span> : null}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
+              <span style={{ fontSize: 32, lineHeight: 1, color: available ? C.pri : C.textMut, fontWeight: 950 }}>
+                {available ? formatTemperature(weather.current_temp_f || weather.high_temp_f) : "--"}
+              </span>
+              <span style={{ fontSize: 14, color: available ? C.text : C.textMut, fontWeight: 900 }}>
+                {available ? formatTemperatureRange(weather) : "Weather not cached"}
+              </span>
+              <span style={{ fontSize: 12, color: error ? C.dan : C.textSec, fontWeight: 750, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                {error || getWeatherOperationalNote(weather)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", maxWidth: 410, flexShrink: 0 }}>
+          {visibleMetrics.map((metric) => (
+            <span
+              key={metric.label}
+              style={{
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: 6,
+                padding: "7px 10px",
+                borderRadius: 999,
+                border: `1px solid ${metric.tone === "caution" ? "#FDE68A" : C.borderLight}`,
+                background: metric.tone === "caution" ? C.warnLt : "rgba(255,255,255,0.78)",
+                color: metric.tone === "caution" ? C.warn : C.text,
+                maxWidth: 170,
+                minWidth: 0,
+              }}
+            >
+              <span style={{ fontSize: 9, color: C.textMut, fontWeight: 850, whiteSpace: "nowrap" }}>{metric.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {metric.value}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div style={{ padding: "0 14px 14px" }}>
+        <WeatherHourlyGraph weather={weather} loading={loading} compact />
+      </div>
+    </button>
+  );
+}
+
+function HomeWeatherMetric({ metric }) {
+  const caution = metric.tone === "caution";
+  return (
+    <div style={{
+      border: `1px solid ${caution ? "#FDE68A" : C.borderLight}`,
+      borderRadius: 10,
+      background: caution ? C.warnLt : "#F8FAFC",
+      padding: 12,
+      minHeight: 76,
+      display: "grid",
+      alignContent: "center",
+      gap: 5,
+    }}>
+      <div style={{ fontSize: 10, color: C.textMut, fontWeight: 850 }}>{metric.label}</div>
+      <div style={{ fontSize: 18, color: caution ? C.warn : C.text, fontWeight: 950, lineHeight: 1 }}>{metric.value}</div>
+    </div>
+  );
+}
+
+function HomeWeatherModal({ weather, loading, error, limitations, onClose, onRefresh }) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const available = isWeatherAvailable(weather);
+  const tone = getWeatherTone(weather);
+  const details = buildWeatherDetailMetrics(weather);
+  const fetchedLabel = formatFetchedAt(weather);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Weather details"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        background: "rgba(15,23,42,0.34)",
+        backdropFilter: "blur(8px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div style={{
+        width: "min(860px, 96vw)",
+        maxHeight: "88vh",
+        overflow: "hidden",
+        borderRadius: 14,
+        background: "#FFFFFF",
+        border: "1px solid rgba(15,23,42,0.10)",
+        boxShadow: "0 24px 80px rgba(15,23,42,0.22)",
+        display: "flex",
+        flexDirection: "column",
+      }}>
+        <div style={{
+          padding: "20px 22px",
+          borderBottom: "1px solid rgba(15,23,42,0.08)",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 18,
+          alignItems: "flex-start",
+          background: `linear-gradient(135deg, ${tone.bg}, #FFFFFF 58%, #EEF6FF 100%)`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+            <HomeWeatherIcon weather={weather} size={64} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: C.text, lineHeight: 1 }}>Today&apos;s Weather</div>
+                <span style={{ padding: "3px 9px", borderRadius: 999, border: `1px solid ${tone.border}`, background: tone.bg, color: tone.color, fontSize: 11, fontWeight: 900 }}>
+                  {loading ? "Loading" : tone.label}
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 11, marginTop: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 38, fontWeight: 950, color: available ? C.pri : C.textMut, lineHeight: 1 }}>
+                  {available ? formatTemperature(weather.current_temp_f || weather.high_temp_f) : "--"}
+                </span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.text }}>
+                  {available ? formatTemperatureRange(weather) : "No cached weather"}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 750, color: C.textSec }}>{formatWeatherSummary(weather)}</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close weather details"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "1px solid rgba(15,23,42,0.10)",
+              background: "rgba(255,255,255,0.84)",
+              color: C.text,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <I.X />
+          </button>
+        </div>
+        <div style={{ overflowY: "auto", padding: 22, display: "grid", gap: 16 }}>
+          {error ? (
+            <div style={{ border: `1px solid ${C.dan}`, borderRadius: 10, background: C.danLt, padding: 12, color: C.dan, fontSize: 12, fontWeight: 800 }}>
+              {error}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+            <div style={{ border: `1px solid ${tone.border}`, borderRadius: 10, padding: 14, background: tone.bg }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 7 }}>Operational Read</div>
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, fontWeight: 700 }}>{getWeatherOperationalNote(weather)}</div>
+            </div>
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 14, background: "#FFFFFF" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 9 }}>Source</div>
+              <div style={{ display: "grid", gap: 6, fontSize: 12, color: C.textSec, fontWeight: 700, lineHeight: 1.45 }}>
+                <span>{formatWeatherSource(weather)}</span>
+                {fetchedLabel ? <span>Updated {fetchedLabel}</span> : null}
+                {limitations?.daily_forecast_horizon_days ? <span>Forecast horizon: {limitations.daily_forecast_horizon_days} days</span> : null}
+                {limitations?.historical_coverage ? <span>{limitations.historical_coverage}</span> : null}
+                {limitations?.future_note ? <span>{limitations.future_note}</span> : null}
+              </div>
+            </div>
+          </div>
+          {details.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 10 }}>
+              {details.map((metric) => <HomeWeatherMetric key={metric.label} metric={metric} />)}
+            </div>
+          ) : null}
+          <WeatherHourlyGraph weather={weather} loading={loading} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderTop: `1px solid ${C.borderLight}`, paddingTop: 14 }}>
+            <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45, fontWeight: 700 }}>
+              Weather is cached in Supabase so closed dates stay available after they enter the cache.
+            </div>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "8px 11px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#FFFFFF",
+                color: C.text,
+                cursor: loading ? "default" : "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+                fontWeight: 850,
+                opacity: loading ? 0.55 : 1,
+              }}
+            >
+              <span style={{ display: "flex" }}><I.RefreshCw /></span>
+              Refresh Weather
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -791,7 +1176,19 @@ function useHomeDashboardSnapshot(locationId, userRole) {
   return snapshot;
 }
 
-function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healthButton, enrichmentEvents, enrichmentLoading }) {
+function StaffHome({
+  nav,
+  profile,
+  roleCode,
+  locationId,
+  workflowProgress,
+  healthButton,
+  weatherCard,
+  enrichmentEvents,
+  enrichmentLoading,
+  enrichmentWorkflow,
+  enrichmentWorkflowLoading,
+}) {
   const td = todayStr();
   const now = new Date();
   const hour = now.getHours();
@@ -913,8 +1310,17 @@ function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healt
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+        <TodayEnrichmentCard
+          events={enrichmentEvents}
+          nav={nav}
+          loading={enrichmentLoading}
+          enrichmentWorkflow={enrichmentWorkflow}
+          workflowLoading={enrichmentWorkflowLoading}
+          dashboardPreview
+        />
       </div>
+
+      {weatherCard}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
         <QuickCard label="My Work" desc="View and complete today's tasks" icon="Clipboard" onClick={() => nav("role-page")} accent={C.pri} />
@@ -928,10 +1334,39 @@ function StaffHome({ nav, profile, roleCode, locationId, workflowProgress, healt
   );
 }
 
-function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, healthButton, enrichmentEvents, enrichmentLoading }) {
+function ManagerHome({
+  nav,
+  profile,
+  inventorySummary,
+  locationId,
+  snapshot,
+  healthButton,
+  weatherCard,
+  enrichmentEvents,
+  enrichmentLoading,
+  enrichmentWorkflow,
+  enrichmentWorkflowLoading,
+}) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Manager";
   const live = snapshot.liveSnapshot || {};
   const metrics = snapshot.metrics || {};
+  const arrivalsSubtext = formatBoardingDaycareSubtext({
+    boarding: live.expected_boarding ?? live.arrivals_boarding ?? metrics.expected_boarding ?? metrics.arrivals_boarding,
+    daycare: live.expected_daycare ?? live.arrivals_daycare ?? metrics.expected_daycare ?? metrics.arrivals_daycare,
+    total: live.expected ?? metrics.dogs_expected,
+    fallbackLabel: "expected today",
+  });
+  const departuresSubtext = formatBoardingDaycareSubtext({
+    boarding: live.going_home_boarding ?? live.departures_boarding ?? metrics.going_home_boarding ?? metrics.departures_boarding,
+    daycare: live.going_home_daycare ?? live.departures_daycare ?? metrics.going_home_daycare ?? metrics.departures_daycare,
+    total: live.going_home ?? metrics.dogs_going_home,
+    fallbackLabel: "going home today",
+  });
+  const roomsSubtext = formatRoomsOccupiedSubtext({
+    occupied: live.rooms_occupied ?? metrics.accrual_rooms_occupied,
+    total: live.total_rooms ?? live.total_room_count ?? metrics.total_room_count,
+    occupancyPct: live.occupancy_pct ?? metrics.occupancy_pct,
+  });
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto" }}>
@@ -949,20 +1384,29 @@ function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, hea
           color={C.pri}
           live={!!snapshot.liveSnapshot}
         />
-        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext="expected today" color="#3B82F6" live={!!snapshot.liveSnapshot} />
-        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext="going home today" color="#8B5CF6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext={arrivalsSubtext} color="#3B82F6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext={departuresSubtext} color="#8B5CF6" live={!!snapshot.liveSnapshot} />
         <MetricCard
           label="Occupancy"
           value={`${live.occupancy_pct ?? metrics.occupancy_pct ?? 0}%`}
-          subtext={`${metrics.total_room_count || 0} rooms in inventory`}
+          subtext={roomsSubtext}
           color={C.warn}
           live={!!snapshot.liveSnapshot}
         />
       </div>
 
       <div style={{ marginBottom: 28 }}>
-        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+        <TodayEnrichmentCard
+          events={enrichmentEvents}
+          nav={nav}
+          loading={enrichmentLoading}
+          enrichmentWorkflow={enrichmentWorkflow}
+          workflowLoading={enrichmentWorkflowLoading}
+          dashboardPreview
+        />
       </div>
+
+      {weatherCard}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14, marginBottom: 28 }}>
         <QuickCard label="My Work" desc="Your personal task list" icon="Clipboard" onClick={() => nav("role-page")} accent="#3B82F6" />
@@ -982,10 +1426,39 @@ function ManagerHome({ nav, profile, inventorySummary, locationId, snapshot, hea
   );
 }
 
-function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, healthButton, enrichmentEvents, enrichmentLoading }) {
+function AdminHome({
+  nav,
+  profile,
+  analyticsMode,
+  inventorySummary,
+  snapshot,
+  healthButton,
+  weatherCard,
+  enrichmentEvents,
+  enrichmentLoading,
+  enrichmentWorkflow,
+  enrichmentWorkflowLoading,
+}) {
   const name = (profile?.full_name || profile?.name || "").split(" ")[0] || "Admin";
   const live = snapshot.liveSnapshot || {};
   const metrics = snapshot.metrics || {};
+  const arrivalsSubtext = formatBoardingDaycareSubtext({
+    boarding: live.expected_boarding ?? live.arrivals_boarding ?? metrics.expected_boarding ?? metrics.arrivals_boarding,
+    daycare: live.expected_daycare ?? live.arrivals_daycare ?? metrics.expected_daycare ?? metrics.arrivals_daycare,
+    total: live.expected ?? metrics.dogs_expected,
+    fallbackLabel: "expected today",
+  });
+  const departuresSubtext = formatBoardingDaycareSubtext({
+    boarding: live.going_home_boarding ?? live.departures_boarding ?? metrics.going_home_boarding ?? metrics.departures_boarding,
+    daycare: live.going_home_daycare ?? live.departures_daycare ?? metrics.going_home_daycare ?? metrics.departures_daycare,
+    total: live.going_home ?? metrics.dogs_going_home,
+    fallbackLabel: "going home today",
+  });
+  const roomsSubtext = formatRoomsOccupiedSubtext({
+    occupied: live.rooms_occupied ?? metrics.accrual_rooms_occupied,
+    total: live.total_rooms ?? live.total_room_count ?? metrics.total_room_count,
+    occupancyPct: live.occupancy_pct ?? metrics.occupancy_pct,
+  });
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto" }}>
@@ -1003,20 +1476,29 @@ function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, he
           color={C.pri}
           live={!!snapshot.liveSnapshot}
         />
-        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext="expected today" color="#3B82F6" live={!!snapshot.liveSnapshot} />
-        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext="going home today" color="#8B5CF6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Arrivals" value={live.expected ?? metrics.dogs_expected ?? "—"} subtext={arrivalsSubtext} color="#3B82F6" live={!!snapshot.liveSnapshot} />
+        <MetricCard label="Departures" value={live.going_home ?? metrics.dogs_going_home ?? "—"} subtext={departuresSubtext} color="#8B5CF6" live={!!snapshot.liveSnapshot} />
         <MetricCard
           label="Occupancy"
           value={`${live.occupancy_pct ?? metrics.occupancy_pct ?? 0}%`}
-          subtext={`${metrics.total_room_count || 0} rooms in inventory`}
+          subtext={roomsSubtext}
           color={C.warn}
           live={!!snapshot.liveSnapshot}
         />
       </div>
 
       <div style={{ marginBottom: 28 }}>
-        <TodayEnrichmentCard events={enrichmentEvents} nav={nav} loading={enrichmentLoading} />
+        <TodayEnrichmentCard
+          events={enrichmentEvents}
+          nav={nav}
+          loading={enrichmentLoading}
+          enrichmentWorkflow={enrichmentWorkflow}
+          workflowLoading={enrichmentWorkflowLoading}
+          dashboardPreview
+        />
       </div>
+
+      {weatherCard}
 
       <div
         style={{
@@ -1040,7 +1522,6 @@ function AdminHome({ nav, profile, analyticsMode, inventorySummary, snapshot, he
         <QuickCard label="Incidents" desc="Incident cases and forms" icon="AlertTriangle" onClick={() => nav("client-management")} accent="#DC2626" />
         <QuickCard label="Resources" desc="SOPs, trackers, and shared docs" icon="Book" onClick={() => nav("resources")} accent="#7C3AED" />
         <QuickCard label="Grassroots" desc="Events, drops, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
-        <QuickCard label="Settings" desc="Configuration and integrations" icon="Settings" onClick={() => nav("settings")} accent="#6B7280" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 28 }}>
@@ -1063,8 +1544,23 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
   const locationId = profile?.location_id || currentLocation;
   const snapshot = useHomeDashboardSnapshot(locationId, roleCode);
   const { events: enrichmentEvents, loading: enrichmentLoading } = useEnrichmentEvents(locationId, today);
+  const enrichmentWorkflowState = useEnrichmentWorkflow(locationId, today, {
+    actorName: profile?.full_name || profile?.name || "Staff",
+    autoCompute: Boolean(locationId),
+  });
   const { health: platformHealth, loading: platformHealthLoading } = usePlatformHealth(locationId, today);
   const [showPlatformHealth, setShowPlatformHealth] = useState(false);
+  const [showWeather, setShowWeather] = useState(false);
+  const {
+    getWeatherForDate,
+    loading: weatherLoading,
+    error: weatherError,
+    limitations: weatherLimitations,
+    refresh: refreshWeather,
+  } = useWeatherData(locationId || "cherry-hill", today, today, {
+    enabled: Boolean(locationId || "cherry-hill"),
+  });
+  const weather = getWeatherForDate(today);
   const [inventorySummary, setInventorySummary] = useState({
     desc: "Current cycle in progress",
     badge: { label: "On track", bg: C.priLt, color: C.pri },
@@ -1107,10 +1603,26 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
   }, [locationId, today]);
 
   const healthButton = (
-    <HomePlatformHealthButton
-      health={platformHealth}
-      loading={platformHealthLoading}
-      onClick={() => setShowPlatformHealth(true)}
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+      <HomeWeatherButton
+        weather={weather}
+        loading={weatherLoading}
+        error={weatherError}
+        onClick={() => setShowWeather(true)}
+      />
+      <HomePlatformHealthButton
+        health={platformHealth}
+        loading={platformHealthLoading}
+        onClick={() => setShowPlatformHealth(true)}
+      />
+    </div>
+  );
+  const weatherCard = (
+    <HomeWeatherCard
+      weather={weather}
+      loading={weatherLoading}
+      error={weatherError}
+      onOpen={() => setShowWeather(true)}
     />
   );
 
@@ -1124,8 +1636,11 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         locationId={locationId}
         workflowProgress={snapshot.workflowProgress}
         healthButton={healthButton}
+        weatherCard={weatherCard}
         enrichmentEvents={enrichmentEvents}
         enrichmentLoading={enrichmentLoading}
+        enrichmentWorkflow={enrichmentWorkflowState.workflow}
+        enrichmentWorkflowLoading={enrichmentWorkflowState.loading || enrichmentWorkflowState.refreshing}
       />
     );
   } else if (tier === "manager") {
@@ -1137,8 +1652,11 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         locationId={locationId}
         snapshot={snapshot}
         healthButton={healthButton}
+        weatherCard={weatherCard}
         enrichmentEvents={enrichmentEvents}
         enrichmentLoading={enrichmentLoading}
+        enrichmentWorkflow={enrichmentWorkflowState.workflow}
+        enrichmentWorkflowLoading={enrichmentWorkflowState.loading || enrichmentWorkflowState.refreshing}
       />
     );
   } else {
@@ -1150,8 +1668,11 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
         inventorySummary={inventorySummary}
         snapshot={snapshot}
         healthButton={healthButton}
+        weatherCard={weatherCard}
         enrichmentEvents={enrichmentEvents}
         enrichmentLoading={enrichmentLoading}
+        enrichmentWorkflow={enrichmentWorkflowState.workflow}
+        enrichmentWorkflowLoading={enrichmentWorkflowState.loading || enrichmentWorkflowState.refreshing}
       />
     );
   }
@@ -1163,6 +1684,16 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
           health={platformHealth}
           loading={platformHealthLoading}
           onClose={() => setShowPlatformHealth(false)}
+        />
+      ) : null}
+      {showWeather ? (
+        <HomeWeatherModal
+          weather={weather}
+          loading={weatherLoading}
+          error={weatherError}
+          limitations={weatherLimitations}
+          onClose={() => setShowWeather(false)}
+          onRefresh={refreshWeather}
         />
       ) : null}
       {content}
