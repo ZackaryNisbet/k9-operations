@@ -2521,6 +2521,111 @@ export function toObjectRows(rows = []) {
   return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
 }
 
+function compareTemplateVersionRecency(left = {}, right = {}) {
+  const leftVersion = Number(left.version_no ?? 0);
+  const rightVersion = Number(right.version_no ?? 0);
+  if (rightVersion !== leftVersion) return rightVersion - leftVersion;
+  return String(right.created_at || right.updated_at || "").localeCompare(String(left.created_at || left.updated_at || ""));
+}
+
+export function getEditableTemplateDraftVersion(versions = [], templateId = "") {
+  const targetTemplateId = String(templateId || "").trim();
+  if (!targetTemplateId) return null;
+  return toObjectRows(versions)
+    .filter((version) => String(version.template_id || "") === targetTemplateId && String(version.status || "").toLowerCase() === "draft")
+    .sort(compareTemplateVersionRecency)[0] || null;
+}
+
+export function buildTemplatePreviewVersionStats({
+  kind = "training",
+  versionId = "",
+  sections = [],
+  items = [],
+  reviewSections = [],
+  reviewItems = [],
+} = {}) {
+  const targetVersionId = String(versionId || "").trim();
+  if (!targetVersionId) return { sectionCount: 0, itemCount: 0 };
+  if (kind === "review") {
+    return {
+      sectionCount: toObjectRows(reviewSections).filter((section) => section.template_version_id === targetVersionId).length,
+      itemCount: toObjectRows(reviewItems).filter((item) => item.template_version_id === targetVersionId).length,
+    };
+  }
+  return {
+    sectionCount: toObjectRows(sections).filter((section) => section.template_version_id === targetVersionId && !section.parent_section_id).length,
+    itemCount: toObjectRows(items).filter((item) => item.template_version_id === targetVersionId).length,
+  };
+}
+
+export function normalizeTemplateRequiredTextInput(value = "", currentValue = "", fieldLabel = "Field") {
+  const nextText = String(value || "").trim();
+  const currentText = String(currentValue || "").trim();
+  const label = String(fieldLabel || "Field").trim() || "Field";
+  if (!nextText) {
+    return {
+      valid: false,
+      changed: false,
+      value: currentText,
+      error: `${label} is required.`,
+    };
+  }
+  return {
+    valid: true,
+    changed: nextText !== currentText,
+    value: nextText,
+    error: "",
+  };
+}
+
+function flattenTrainingTemplatePreviewItems(section = {}) {
+  const directItems = toObjectRows(section.directItems);
+  const childItems = toObjectRows(section.children).flatMap((child) => toObjectRows(child.items));
+  return [...directItems, ...childItems];
+}
+
+export function validateTemplateVersionForPublish(template = {}) {
+  const errors = [];
+  const kind = template?.kind === "review" ? "review" : "training";
+  const name = String(template?.name || "").trim();
+  const version = isObjectRow(template?.version) ? template.version : null;
+  const sectionsForValidation = toObjectRows(template?.sections);
+  const addError = (message) => {
+    if (!errors.includes(message)) errors.push(message);
+  };
+
+  if (!name) addError("Template name is required.");
+  if (!version?.id) addError("Choose a draft version before publishing.");
+  if (version?.id && String(version.status || "").toLowerCase() !== "draft") {
+    addError("Only draft versions can be published.");
+  }
+
+  if (kind === "review") {
+    const reviewItemsForValidation = sectionsForValidation.flatMap((section) => toObjectRows(section.items));
+    if (reviewItemsForValidation.length === 0) addError("Add at least one review prompt before publishing.");
+    sectionsForValidation.forEach((section) => {
+      if (!String(section.title || "").trim()) addError("Every review section needs a title before publishing.");
+    });
+    reviewItemsForValidation.forEach((item) => {
+      if (!String(item.prompt || "").trim()) addError("Every review prompt needs text before publishing.");
+    });
+  } else {
+    const trainingItemsForValidation = sectionsForValidation.flatMap(flattenTrainingTemplatePreviewItems);
+    if (trainingItemsForValidation.length === 0) addError("Add at least one task before publishing.");
+    sectionsForValidation.forEach((section) => {
+      if (!String(section.title || "").trim()) addError("Every section needs a title before publishing.");
+      toObjectRows(section.children).forEach((child) => {
+        if (!String(child.title || "").trim()) addError("Every module needs a title before publishing.");
+      });
+    });
+    trainingItemsForValidation.forEach((item) => {
+      if (!String(item.label || "").trim()) addError("Every task needs a label before publishing.");
+    });
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
 function isMissingTeamReadinessRpcError(error) {
   const message = String(error?.message || error?.details || "").toLowerCase();
   return error?.code === "PGRST202"
@@ -6073,6 +6178,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const [previewTemplateVersionId, setPreviewTemplateVersionId] = useState(null);
   const [savingTemplateAction, setSavingTemplateAction] = useState("");
+  const [savingTemplateFieldCount, setSavingTemplateFieldCount] = useState(0);
   const [showCreateTemplateModal, setShowCreateTemplateModal] = useState(false);
   const [createTemplateKind, setCreateTemplateKind] = useState("training");
   const [createTemplateName, setCreateTemplateName] = useState("");
@@ -8070,28 +8176,42 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [allReviewTemplateVersions, reviewItems, reviewSections, reviewTemplates]);
 
   const combinedTemplateRows = useMemo(() => {
-    const trainingRows = toObjectRows(templates).map((template) => ({
-      id: template.id,
-      kind: "training",
-      slug: template.slug,
-      name: template.name,
-      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
-      template_class: template.template_class,
-      is_active: template.is_active !== false,
-      version: toObjectRows(allTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
-      stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
-    }));
-    const reviewRows = toObjectRows(reviewTemplates).map((template) => ({
-      id: template.id,
-      kind: "review",
-      slug: template.slug,
-      name: template.name,
-      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
-      template_class: "performance_review",
-      is_active: template.is_active !== false,
-      version: toObjectRows(allReviewTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
-      stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
-    }));
+    const trainingVersionRows = toObjectRows(allTemplateVersions);
+    const reviewVersionRows = toObjectRows(allReviewTemplateVersions);
+    const trainingRows = toObjectRows(templates).map((template) => {
+      const version = trainingVersionRows.find((row) => row.template_id === template.id && row.is_current) || null;
+      const draftVersion = getEditableTemplateDraftVersion(trainingVersionRows, template.id);
+      return ({
+        id: template.id,
+        kind: "training",
+        slug: template.slug,
+        name: template.name,
+        role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
+        template_class: template.template_class,
+        is_active: template.is_active !== false,
+        version,
+        draftVersion,
+        hasDraft: Boolean(draftVersion),
+        stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
+      });
+    });
+    const reviewRows = toObjectRows(reviewTemplates).map((template) => {
+      const version = reviewVersionRows.find((row) => row.template_id === template.id && row.is_current) || null;
+      const draftVersion = getEditableTemplateDraftVersion(reviewVersionRows, template.id);
+      return ({
+        id: template.id,
+        kind: "review",
+        slug: template.slug,
+        name: template.name,
+        role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
+        template_class: "performance_review",
+        is_active: template.is_active !== false,
+        version,
+        draftVersion,
+        hasDraft: Boolean(draftVersion),
+        stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
+      });
+    });
     return [...trainingRows, ...reviewRows];
   }, [allReviewTemplateVersions, allTemplateVersions, reviewTemplateStats, reviewTemplates, templateStats, templates]);
   const visibleTemplateRows = useMemo(() => {
@@ -8175,6 +8295,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     });
     return { ...template, kind: "training", version, sections: sectionData };
   }, [allReviewTemplateVersions, allTemplateVersions, items, previewTemplateId, previewTemplateKind, previewTemplateVersionId, reviewItems, reviewSections, reviewTemplates, sections, templates]);
+
+  const previewTemplateDraftVersion = useMemo(() => {
+    if (!previewTemplateId) return null;
+    const versionSource = previewTemplateKind === "review" ? allReviewTemplateVersions : allTemplateVersions;
+    return getEditableTemplateDraftVersion(versionSource, previewTemplateId);
+  }, [allReviewTemplateVersions, allTemplateVersions, previewTemplateId, previewTemplateKind]);
+
+  const previewTemplateStats = useMemo(() => buildTemplatePreviewVersionStats({
+    kind: previewTemplateKind,
+    versionId: previewTemplate?.version?.id,
+    sections,
+    items,
+    reviewSections,
+    reviewItems,
+  }), [items, previewTemplate, previewTemplateKind, reviewItems, reviewSections, sections]);
+
+  const templatePublishValidation = useMemo(() => (
+    previewTemplate?.version?.status === "draft" ? validateTemplateVersionForPublish(previewTemplate) : { valid: true, errors: [] }
+  ), [previewTemplate]);
+  const templateActionPending = Boolean(savingTemplateAction) || savingTemplateFieldCount > 0;
+  const templatePreviewEditButtonLabel = previewTemplateDraftVersion?.id ? "Resume Draft" : "Edit Template";
+
   const globalNotesFeed = useMemo(() => {
     const employeeNotesFeed = toObjectRows(laborEmployeeNotes)
       .filter((note) => !isLaborEmployeeNoteDeleted(note))
@@ -9219,7 +9361,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, []);
 
   const handleCreateTemplateDraft = useCallback(async () => {
-    if (!previewTemplateId) return;
+    if (!previewTemplateId || templateActionPending) return;
+    if (previewTemplate?.version?.status === "draft") {
+      setTemplateManageStructure(true);
+      addGlobalToast("Draft is ready to edit", "success");
+      return;
+    }
+    if (previewTemplateDraftVersion?.id) {
+      setPreviewTemplateVersionId(previewTemplateDraftVersion.id);
+      setTemplateManageStructure(true);
+      addGlobalToast("Existing draft opened", "success");
+      return;
+    }
     setSavingTemplateAction("draft");
     const sourceVersionId = previewTemplate?.version?.id || null;
     const rpcName = previewTemplateKind === "review" ? "create_review_template_draft" : "create_training_template_draft";
@@ -9239,10 +9392,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await refreshTemplateBundle();
     if (draftVersion?.id) {
       setPreviewTemplateVersionId(draftVersion.id);
+      setTemplateManageStructure(true);
     }
     addGlobalToast("Template draft created", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateDraftVersion, previewTemplateId, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const resetCreateTemplateModal = useCallback(() => {
     setShowCreateTemplateModal(false);
@@ -9356,7 +9510,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ]);
 
   const handlePublishTemplateVersion = useCallback(async () => {
-    if (!previewTemplate?.version?.id) return;
+    if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
+    if (templateActionPending) {
+      addGlobalToast("Finish pending template saves before publishing", "error");
+      return;
+    }
+    const validation = validateTemplateVersionForPublish(previewTemplate);
+    if (!validation.valid) {
+      addGlobalToast(validation.errors[0] || "Fix template validation before publishing", "error");
+      return;
+    }
     setSavingTemplateAction("publish");
     const rpcName = previewTemplateKind === "review" ? "publish_review_template_version" : "publish_training_template_version";
     const { data, error } = await supabase.rpc(rpcName, {
@@ -9377,10 +9540,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     addGlobalToast("Template version published", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const handleRestoreTemplateVersion = useCallback(async () => {
     if (!previewTemplateId || !previewTemplate?.version?.id) return;
+    if (templateActionPending) {
+      addGlobalToast("Finish pending template saves before restoring", "error");
+      return;
+    }
+    if (previewTemplateDraftVersion?.id && previewTemplate.version.status !== "draft") {
+      setPreviewTemplateVersionId(previewTemplateDraftVersion.id);
+      setTemplateManageStructure(true);
+      addGlobalToast("Existing draft opened", "success");
+      return;
+    }
     setSavingTemplateAction("restore");
     const rpcName = previewTemplateKind === "review" ? "restore_review_template_version" : "restore_training_template_version";
     const { data, error } = await supabase.rpc(rpcName, {
@@ -9401,7 +9574,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     addGlobalToast("Historical version restored into a new draft", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateDraftVersion, previewTemplateId, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const handleUpdateTemplateName = useCallback(async (value) => {
     if (!previewTemplateId) return;
@@ -9411,48 +9584,74 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const tableName = previewTemplateKind === "review" ? "review_templates" : "training_templates";
     const currentTemplate = toObjectRows(templateSource).find((template) => template.id === previewTemplateId);
     if (!currentTemplate || currentTemplate.name === nextName) return;
-    const { error } = await supabase
-      .from(tableName)
-      .update({
-        name: nextName,
-        updated_by_user_id: actorUserId,
-      })
-      .eq("id", previewTemplateId);
-    if (error) {
-      addGlobalToast("Failed to update template name", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update({
+          name: nextName,
+          updated_by_user_id: actorUserId,
+        })
+        .eq("id", previewTemplateId);
+      if (error) {
+        addGlobalToast("Failed to update template name", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast("Template name updated", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast("Template name updated", "success");
   }, [actorUserId, addGlobalToast, previewTemplateId, previewTemplateKind, reviewTemplates, templates, refreshTemplateBundle]);
 
   const handleUpdateTemplateSection = useCallback(async (sectionId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
-    const { error } = await supabase
-      .from(tableName)
-      .update(patch)
-      .eq("id", sectionId);
-    if (error) {
-      addGlobalToast("Failed to update section", "error");
-      return false;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update(patch)
+        .eq("id", sectionId);
+      if (error) {
+        addGlobalToast("Failed to update section", "error");
+        return false;
+      }
+      await refreshTemplateBundle();
+      return true;
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    return true;
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
 
   const handleUpdateTemplateItem = useCallback(async (itemId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
-    const { error } = await supabase
-      .from(tableName)
-      .update(patch)
-      .eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return false;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update(patch)
+        .eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return false;
+      }
+      await refreshTemplateBundle();
+      return true;
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    return true;
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
+
+  const commitRequiredTemplateTextInput = useCallback((event, currentValue, fieldLabel, onCommit) => {
+    const result = normalizeTemplateRequiredTextInput(event?.target?.value, currentValue, fieldLabel);
+    if (event?.target) event.target.value = result.value;
+    if (!result.valid) {
+      addGlobalToast(result.error, "error");
+      return;
+    }
+    if (!result.changed) return;
+    onCommit(result.value);
+  }, [addGlobalToast]);
 
   const handleAddTemplateSection = useCallback(async (parentSectionId = null) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -9483,15 +9682,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           instructions: null,
           completion_mode: "complete_only",
         };
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_sections" : "training_template_sections")
-      .insert(insertPayload);
-    if (error) {
-      addGlobalToast("Failed to add section", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_sections" : "training_template_sections")
+        .insert(insertPayload);
+      if (error) {
+        addGlobalToast("Failed to add section", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
   }, [addGlobalToast, previewTemplate, previewTemplateKind, reviewSections, sections, refreshTemplateBundle]);
 
   const handleAddTemplateItem = useCallback(async (sectionId) => {
@@ -9522,31 +9726,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           required: true,
           completion_mode: "complete_only",
         };
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
-      .insert(insertPayload);
-    if (error) {
-      addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
+        .insert(insertPayload);
+      if (error) {
+        addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
   }, [addGlobalToast, items, previewTemplate, previewTemplateKind, reviewItems, refreshTemplateBundle]);
 
   const handleDeleteTemplateItem = useCallback(async (itemId) => {
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
-      .delete()
-      .eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return;
+    const itemSource = previewTemplateKind === "review" ? toObjectRows(reviewItems) : toObjectRows(items);
+    const item = itemSource.find((row) => row.id === itemId);
+    const itemLabel = previewTemplateKind === "review" ? (item?.prompt || "this prompt") : (item?.label || "this task");
+    if (!window.confirm(`Delete ${previewTemplateKind === "review" ? "review prompt" : "task"} "${itemLabel}"? This cannot be undone.`)) return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
+        .delete()
+        .eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
-  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
 
   const handleDeleteTemplateSection = useCallback(async (sectionId) => {
+    const sectionSource = previewTemplateKind === "review" ? toObjectRows(reviewSections) : toObjectRows(sections);
+    const section = sectionSource.find((row) => row.id === sectionId);
+    const sectionKindLabel = previewTemplateKind === "review" ? "review section" : section?.parent_section_id ? "module" : "section";
+    const sectionTitle = section?.title || `this ${sectionKindLabel}`;
+    if (!window.confirm(`Delete ${sectionKindLabel} "${sectionTitle}" and all of its contents? This cannot be undone.`)) return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
     if (previewTemplateKind === "review") {
       const sectionItems = toObjectRows(reviewItems).filter((item) => item.review_section_id === sectionId);
       if (sectionItems.length > 0) {
@@ -9617,6 +9842,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     await refreshTemplateBundle();
     addGlobalToast("Section deleted", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
   }, [addGlobalToast, items, previewTemplateKind, reviewItems, sections, refreshTemplateBundle]);
 
   const handleToggleTemplateActive = useCallback(async () => {
@@ -9730,12 +9958,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const reordered = [...siblings];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const error = await resequenceRows(tableName, reordered);
-    if (error) {
-      addGlobalToast("Failed to reorder section", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const error = await resequenceRows(tableName, reordered);
+      if (error) {
+        addGlobalToast("Failed to reorder section", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewSections, sections]);
 
   const handleMoveTemplateItemOrder = useCallback(async (itemId, direction) => {
@@ -9752,12 +9985,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const reordered = [...siblings];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const error = await resequenceRows(tableName, reordered);
-    if (error) {
-      addGlobalToast(`Failed to reorder ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const error = await resequenceRows(tableName, reordered);
+      if (error) {
+        addGlobalToast(`Failed to reorder ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
   }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewItems]);
 
   const handleMoveTemplateItemSection = useCallback(async (itemId, sectionId) => {
@@ -9772,13 +10010,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const patch = previewTemplateKind === "review"
       ? { review_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 }
       : { template_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 };
-    const { error } = await supabase.from(tableName).update(patch).eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to move ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase.from(tableName).update(patch).eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to move ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
+
+  const getEditablePreviewTemplateItems = useCallback(() => {
+    if (!previewTemplate) return [];
+    if (previewTemplate.kind === "review") {
+      return toObjectRows(previewTemplate.sections).flatMap((section) => toObjectRows(section.items));
+    }
+    return toObjectRows(previewTemplate.sections).flatMap((section) => [
+      ...toObjectRows(section.directItems),
+      ...toObjectRows(section.children).flatMap((child) => toObjectRows(child.items)),
+    ]);
+  }, [previewTemplate]);
+
+  const handleBulkUpdateTemplateItems = useCallback(async (patch, successMessage) => {
+    if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
+    const targetItems = getEditablePreviewTemplateItems();
+    if (targetItems.length === 0) {
+      addGlobalToast(previewTemplateKind === "review" ? "Add a prompt before using bulk configuration" : "Add a task before using bulk configuration", "error");
       return;
     }
-    await refreshTemplateBundle();
-  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
+    const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const results = await Promise.all(targetItems.map((item) => supabase.from(tableName).update(patch).eq("id", item.id)));
+      const error = results.find((result) => result.error)?.error;
+      if (error) {
+        addGlobalToast("Failed to apply bulk configuration", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(successMessage || "Bulk configuration applied", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
+  }, [addGlobalToast, getEditablePreviewTemplateItems, previewTemplate, previewTemplateKind, refreshTemplateBundle]);
 
   const openLaborEmployeeProfile = useCallback((employeeId, seedRow = null, options = {}) => {
     const resolvedEmployeeId = employeeId || getLaborEmployeeRowId(seedRow);
@@ -13055,7 +13332,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const renderTemplatePreviewItem = useCallback((item, editable = false) => {
     if (!isObjectRow(item) || !item.id) return null;
     const isReviewItem = previewTemplateKind === "review";
-    const itemType = String(item.item_type || "").trim();
+    const itemType = String(item.item_type || (isReviewItem ? "long_text" : "checkbox")).trim();
     const primaryLabel = String(isReviewItem ? item.prompt : item.label || "").trim() || "Untitled";
     const secondaryText = isReviewItem
       ? (itemType === "rating" && Array.isArray(item.options) && item.options.length > 0
@@ -13063,6 +13340,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           : itemType.replace(/_/g, " "))
       : item.description;
     const linkUrl = isReviewItem ? null : item.policy_reference;
+    const itemTypeLabel = itemType.replace(/_/g, " ");
     const sectionOptions = isReviewItem
       ? (previewTemplate?.sections || []).filter(isObjectRow).map((section) => ({ value: section.id, label: section.title }))
       : (previewTemplate?.sections || []).filter(isObjectRow).flatMap((section) => [
@@ -13072,107 +13350,161 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const currentSectionId = isReviewItem ? item.review_section_id : item.template_section_id;
     if (!editable) {
       return (
-        <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.border, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: C.text }}>{primaryLabel}</div>
+        <div key={item.id} className="template-builder-item-preview">
+          <span className="template-builder-item-grip" />
+          <div className="template-builder-item-copy">
+            <div className="template-builder-item-title">{primaryLabel}</div>
             {(secondaryText || linkUrl) && (
-              <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}>
-                {secondaryText && <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45 }}>{secondaryText}</div>}
+              <div className="template-builder-item-secondary">
+                {secondaryText && <div>{secondaryText}</div>}
                 {linkUrl && (
-                  <a href={linkUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 600, textDecoration: "none" }}>
+                  <a href={linkUrl} target="_blank" rel="noreferrer">
                     Open linked resource
                   </a>
                 )}
               </div>
             )}
           </div>
-          <span style={{ fontSize: 10, color: C.textMut }}>{item.item_type}</span>
-          {!isReviewItem && !item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+          <span className="template-builder-pill is-muted">{itemTypeLabel}</span>
+          {!isReviewItem && !item.required && <span className="template-builder-pill is-muted">optional</span>}
         </div>
       );
     }
 
     return (
-      <Card key={item.id} style={{ padding: 12, marginTop: 8, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <input
-            defaultValue={primaryLabel}
-            onBlur={(event) => {
-              const value = event.target.value.trim();
-              if (value && value !== primaryLabel) {
-                handleUpdateTemplateItem(item.id, isReviewItem ? { prompt: value } : { label: value });
-              }
-            }}
-            placeholder={isReviewItem ? "Review prompt" : "Task label"}
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }}
-          />
-	          {isReviewItem ? (
-	            <>
-	              <CustomSelect
-                value={item.item_type}
-                onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
-                options={[
-                  { value: "long_text", label: "Long Text" },
-                  { value: "short_text", label: "Short Text" },
-                  { value: "rating", label: "Rating" },
-                ]}
-              />
-              {item.item_type === "rating" && (
-                <Inp
-                  label="Rating Options"
-                  value={Array.isArray(item.options) ? item.options.join(", ") : ""}
-                  onChange={(value) => {
-                    const nextOptions = String(value || "")
-                      .split(",")
-                      .map((entry) => entry.trim())
-                      .filter(Boolean);
-                    handleUpdateTemplateItem(item.id, { options: nextOptions.length ? nextOptions : null });
-                  }}
-                  placeholder="Meets Expectations, Needs Improvement, Exceeds Expectations"
-                />
-	              )}
-	            </>
-	          ) : (
+      <div key={item.id} className="template-builder-item-editor">
+        <div className="template-builder-item-editor-head">
+          <span className="template-builder-drag-handle">⋮⋮</span>
+          <div>
+            <div className="template-builder-micro-label">{isReviewItem ? "Question" : "Training task"}</div>
+            <div className="template-builder-item-editor-title">{primaryLabel}</div>
+          </div>
+          <span className="template-builder-pill">{itemTypeLabel}</span>
+        </div>
+        <div className="template-builder-field-grid">
+          <label className="template-builder-field is-wide">
+            <span>{isReviewItem ? "Question prompt" : "Task label"}</span>
+            <input
+              defaultValue={primaryLabel}
+              onBlur={(event) => commitRequiredTemplateTextInput(
+                event,
+                primaryLabel,
+                isReviewItem ? "Review prompt" : "Task label",
+                (value) => handleUpdateTemplateItem(item.id, isReviewItem ? { prompt: value } : { label: value })
+              )}
+              placeholder={isReviewItem ? "Review prompt" : "Task label"}
+            />
+          </label>
+          {isReviewItem ? (
             <>
-              <textarea
-                defaultValue={item.description || ""}
-                onBlur={(event) => {
-                  const value = event.target.value.trim();
-                  if (value !== (item.description || "")) {
-                    handleUpdateTemplateItem(item.id, { description: value || null });
-                  }
-                }}
-                placeholder="Task description"
-                rows={2}
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-              />
-              <input
-                defaultValue={item.policy_reference || ""}
-                onBlur={(event) => {
-                  const value = event.target.value.trim();
-                  if (value !== (item.policy_reference || "")) {
-                    handleUpdateTemplateItem(item.id, { policy_reference: value || null });
-                  }
-                }}
-                placeholder="Optional resource link"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit" }}
-              />
-	            </>
-	          )}
-            {sectionOptions.length > 1 && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, marginBottom: 6 }}>Move to section</div>
+              <label className="template-builder-field">
+                <span>Question type</span>
                 <CustomSelect
-                  value={currentSectionId || ""}
-                  onChange={(value) => handleMoveTemplateItemSection(item.id, value)}
-                  options={sectionOptions}
+                  value={item.item_type || "long_text"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
+                  options={[
+                    { value: "long_text", label: "Long Text" },
+                    { value: "short_text", label: "Short Text" },
+                    { value: "rating", label: "Rating" },
+                  ]}
                 />
-              </div>
-            )}
-	          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-	            {!isReviewItem ? (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textSec }}>
+              </label>
+              {item.item_type === "rating" && (
+                <label className="template-builder-field is-wide">
+                  <span>Rating options</span>
+                  <input
+                    value={Array.isArray(item.options) ? item.options.join(", ") : ""}
+                    onChange={(event) => {
+                      const nextOptions = String(event.target.value || "")
+                        .split(",")
+                        .map((entry) => entry.trim())
+                        .filter(Boolean);
+                      handleUpdateTemplateItem(item.id, { options: nextOptions.length ? nextOptions : null });
+                    }}
+                    placeholder="Meets Expectations, Needs Improvement, Exceeds Expectations"
+                  />
+                </label>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="template-builder-field">
+                <span>Task type</span>
+                <CustomSelect
+                  value={item.item_type || "checkbox"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
+                  options={[
+                    { value: "checkbox", label: "Checklist" },
+                    { value: "task", label: "Task" },
+                    { value: "question_single_choice", label: "Single Choice" },
+                    { value: "question_multi_select", label: "Multi Select" },
+                    { value: "free_text", label: "Free Text" },
+                    { value: "observation_check", label: "Observation Check" },
+                    { value: "signoff", label: "Signoff" },
+                    { value: "attachment", label: "Attachment" },
+                    { value: "scenario_prompt", label: "Scenario Prompt" },
+                    { value: "status_gate", label: "Status Gate" },
+                  ]}
+                />
+              </label>
+              <label className="template-builder-field">
+                <span>Completion mode</span>
+                <CustomSelect
+                  value={item.completion_mode || "complete_only"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { completion_mode: value || "complete_only" })}
+                  options={[
+                    { value: "complete_only", label: "Complete only" },
+                    { value: "pass_fail", label: "Pass / fail" },
+                    { value: "observe_participate_demonstrate", label: "Observe → Participate → Demonstrate" },
+                    { value: "score_based", label: "Score based" },
+                    { value: "dependency_rollup", label: "Dependency rollup" },
+                  ]}
+                />
+              </label>
+              <label className="template-builder-field is-wide">
+                <span>Task description</span>
+                <textarea
+                  defaultValue={item.description || ""}
+                  onBlur={(event) => {
+                    const value = event.target.value.trim();
+                    if (value !== (item.description || "")) {
+                      handleUpdateTemplateItem(item.id, { description: value || null });
+                    }
+                  }}
+                  placeholder="What should the trainer or trainee do?"
+                  rows={2}
+                />
+              </label>
+              <label className="template-builder-field is-wide">
+                <span>Optional resource link</span>
+                <input
+                  defaultValue={item.policy_reference || ""}
+                  onBlur={(event) => {
+                    const value = event.target.value.trim();
+                    if (value !== (item.policy_reference || "")) {
+                      handleUpdateTemplateItem(item.id, { policy_reference: value || null });
+                    }
+                  }}
+                  placeholder="https://docs, policy, video, checklist…"
+                />
+              </label>
+            </>
+          )}
+          {sectionOptions.length > 1 && (
+            <label className="template-builder-field">
+              <span>Move to section</span>
+              <CustomSelect
+                value={currentSectionId || ""}
+                onChange={(value) => handleMoveTemplateItemSection(item.id, value)}
+                options={sectionOptions}
+              />
+            </label>
+          )}
+        </div>
+        <div className="template-builder-item-footer">
+          {!isReviewItem ? (
+            <div className="template-builder-toggle-row">
+              <label>
                 <input
                   type="checkbox"
                   defaultChecked={item.required}
@@ -13180,17 +13512,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 />
                 Required task
               </label>
-            ) : <span />}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, -1)}>Move Up</Btn>
-                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, 1)}>Move Down</Btn>
-	              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete {isReviewItem ? "Prompt" : "Task"}</Btn>
-              </div>
-	          </div>
+              <label>
+                <input
+                  type="checkbox"
+                  defaultChecked={Boolean(item.safety_sensitive)}
+                  onChange={(event) => handleUpdateTemplateItem(item.id, { safety_sensitive: event.target.checked })}
+                />
+                Safety sensitive
+              </label>
+            </div>
+          ) : <span />}
+          <div className="template-builder-inline-actions">
+            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, -1)}>Move Up</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, 1)}>Move Down</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete {isReviewItem ? "Prompt" : "Task"}</Btn>
+          </div>
         </div>
-      </Card>
+      </div>
     );
-  }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
+  }, [commitRequiredTemplateTextInput, handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
   const laborEmployeeEditorModal = canEditRoster && showLaborEmployeeEditor && editingLaborEmployeeId ? (
     <Modal
@@ -15232,12 +15572,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     if (tab === "templates" && canManageTemplates) {
       if (previewTemplateId) {
+        const viewingDraft = previewTemplate?.version?.status === "draft";
+        const editButtonLabel = templatePreviewEditButtonLabel;
         return (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Btn variant="secondary" icon={<I.Back />} onClick={() => changeLaborTab("training")}>Training</Btn>
-            <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
-              {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-            </Btn>
+            {!viewingDraft && (
+              <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={templateActionPending}>
+                {savingTemplateAction === "draft" ? "Cloning..." : editButtonLabel}
+              </Btn>
+            )}
           </div>
         );
       }
@@ -15328,6 +15672,549 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         @keyframes laborControlSettle {
           0% { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.99); }
           100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+
+        @keyframes templateBuilderRise {
+          0% { opacity: 0; transform: translateY(16px) scale(0.985); filter: blur(6px); }
+          70% { opacity: 1; transform: translateY(-1px) scale(1.002); filter: blur(0); }
+          100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        @keyframes templateBuilderGlow {
+          0% { transform: translateX(-140%) skewX(-16deg); opacity: 0; }
+          28% { opacity: 0.46; }
+          100% { transform: translateX(180%) skewX(-16deg); opacity: 0; }
+        }
+        .template-builder-library-shell,
+        .template-builder-editor-shell {
+          animation: templateBuilderRise 360ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .template-builder-hero,
+        .template-builder-editor-hero {
+          position: relative;
+          overflow: hidden;
+          border: 1px solid rgba(20, 83, 45, 0.16);
+          border-radius: 24px;
+          background: radial-gradient(circle at top left, rgba(34, 197, 94, 0.17), transparent 34%), linear-gradient(135deg, #ffffff 0%, #f8fbff 48%, #f0fdf4 100%);
+          box-shadow: 0 24px 60px rgba(15, 23, 42, 0.10);
+        }
+        .template-builder-hero::after,
+        .template-builder-editor-hero::after {
+          content: "";
+          position: absolute;
+          inset: 0 auto 0 -30%;
+          width: 34%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.62), transparent);
+          animation: templateBuilderGlow 3.8s ease-in-out infinite;
+          pointer-events: none;
+        }
+        .template-builder-hero {
+          display: flex;
+          justify-content: space-between;
+          gap: 22px;
+          padding: 24px;
+          margin-bottom: 18px;
+        }
+        .template-builder-kicker,
+        .template-builder-micro-label {
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.11em;
+          text-transform: uppercase;
+          color: ${C.pri};
+        }
+        .template-builder-hero h2,
+        .template-builder-editor-title {
+          margin: 6px 0 8px;
+          font-size: 26px;
+          line-height: 1.06;
+          color: ${C.text};
+          font-weight: 950;
+          letter-spacing: -0.03em;
+        }
+        .template-builder-hero p,
+        .template-builder-editor-subtitle {
+          margin: 0;
+          color: ${C.textSec};
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.55;
+          max-width: 700px;
+        }
+        .template-builder-hero-stats,
+        .template-builder-metric-strip {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(92px, 1fr));
+          gap: 10px;
+          min-width: 320px;
+        }
+        .template-builder-hero-stats > div,
+        .template-builder-metric {
+          border: 1px solid rgba(20, 83, 45, 0.12);
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.78);
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+          padding: 14px;
+          backdrop-filter: blur(14px);
+        }
+        .template-builder-hero-stats strong,
+        .template-builder-metric strong {
+          display: block;
+          font-size: 24px;
+          color: ${C.text};
+          font-weight: 950;
+          line-height: 1;
+        }
+        .template-builder-hero-stats span,
+        .template-builder-metric span {
+          display: block;
+          margin-top: 5px;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .template-builder-toolbar,
+        .template-builder-canvas-toolbar,
+        .template-builder-panel-header,
+        .template-builder-section-summary,
+        .template-builder-item-editor-head,
+        .template-builder-item-footer,
+        .template-builder-version-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .template-builder-toolbar {
+          margin-bottom: 18px;
+          flex-wrap: wrap;
+        }
+        .template-builder-filter-row,
+        .template-builder-inline-actions,
+        .template-builder-chip-row,
+        .template-builder-toggle-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .template-builder-group {
+          margin-bottom: 24px;
+        }
+        .template-builder-group-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .template-builder-group-title {
+          font-size: 16px;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .template-builder-group-subtitle {
+          margin-top: 4px;
+          font-size: 12px;
+          color: ${C.textMut};
+          font-weight: 750;
+        }
+        .template-builder-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+          gap: 14px;
+        }
+        .template-builder-card {
+          position: relative;
+          min-height: 178px;
+          padding: 18px;
+          border: 1px solid #dfe8f2;
+          border-radius: 20px;
+          background: #fff;
+          box-shadow: 0 16px 42px rgba(15, 23, 42, 0.075);
+          cursor: pointer;
+          transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+        }
+        .template-builder-card:hover {
+          transform: translateY(-3px);
+          border-color: rgba(20, 83, 45, 0.28);
+          box-shadow: 0 24px 54px rgba(15, 23, 42, 0.12);
+        }
+        .template-builder-card-title {
+          margin-top: 12px;
+          font-size: 16px;
+          font-weight: 950;
+          color: ${C.text};
+          line-height: 1.24;
+        }
+        .template-builder-card-meta {
+          margin-top: 7px;
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 750;
+        }
+        .template-builder-card-footer {
+          position: absolute;
+          left: 18px;
+          right: 18px;
+          bottom: 16px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+        }
+        .template-builder-editor-hero {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 20px;
+          padding: 24px;
+          margin-bottom: 18px;
+        }
+        .template-builder-editor-hero.is-draft {
+          border-color: rgba(217, 119, 6, 0.28);
+          background: radial-gradient(circle at top left, rgba(251, 191, 36, 0.19), transparent 34%), linear-gradient(135deg, #fff 0%, #fffbeb 46%, #f8fbff 100%);
+        }
+        .template-builder-title-input {
+          width: min(100%, 560px);
+          border: 1px solid rgba(20, 83, 45, 0.22);
+          border-radius: 16px;
+          padding: 12px 14px;
+          background: rgba(255, 255, 255, 0.86);
+          color: ${C.text};
+          font: inherit;
+          font-size: 24px;
+          font-weight: 950;
+          letter-spacing: -0.03em;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84), 0 12px 30px rgba(15, 23, 42, 0.06);
+        }
+        .template-builder-actions {
+          display: flex;
+          align-items: flex-start;
+          justify-content: flex-end;
+          gap: 9px;
+          flex-wrap: wrap;
+          max-width: 420px;
+        }
+        .template-builder-back {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          margin-bottom: 14px;
+          border: 0;
+          background: transparent;
+          color: ${C.pri};
+          font: inherit;
+          font-size: 13px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .template-builder-layout {
+          display: grid;
+          grid-template-columns: minmax(210px, 250px) minmax(0, 1fr) minmax(250px, 310px);
+          gap: 16px;
+          align-items: start;
+        }
+        .template-builder-sidebar,
+        .template-builder-inspector {
+          position: sticky;
+          top: 16px;
+          display: grid;
+          gap: 14px;
+        }
+        .template-builder-panel,
+        .template-builder-canvas,
+        .template-builder-section-card,
+        .template-builder-config-card,
+        .template-builder-item-editor {
+          border: 1px solid #dfe8f2;
+          border-radius: 20px;
+          background: rgba(255, 255, 255, 0.94);
+          box-shadow: 0 16px 42px rgba(15, 23, 42, 0.075);
+        }
+        .template-builder-panel,
+        .template-builder-canvas {
+          padding: 16px;
+        }
+        .template-builder-panel-header {
+          margin-bottom: 12px;
+        }
+        .template-builder-panel-title {
+          font-size: 13px;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .template-builder-panel-copy {
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+        .template-builder-nav-list,
+        .template-builder-version-list {
+          display: grid;
+          gap: 8px;
+        }
+        .template-builder-nav-item,
+        .template-builder-version-button {
+          width: 100%;
+          border: 1px solid #e5edf5;
+          border-radius: 14px;
+          background: #fff;
+          padding: 10px 11px;
+          text-align: left;
+          font-family: inherit;
+          cursor: pointer;
+          transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+        }
+        .template-builder-nav-item:hover,
+        .template-builder-version-button:hover {
+          transform: translateY(-1px);
+          border-color: rgba(20, 83, 45, 0.24);
+          background: #f8fafc;
+        }
+        .template-builder-version-button.is-selected {
+          border-color: rgba(20, 83, 45, 0.55);
+          background: #f0fdf4;
+        }
+        .template-builder-canvas {
+          min-height: 520px;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        }
+        .template-builder-canvas-toolbar {
+          align-items: flex-start;
+          margin-bottom: 14px;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #e5edf5;
+        }
+        .template-builder-section-card {
+          overflow: hidden;
+          margin-bottom: 14px;
+        }
+        .template-builder-section-summary {
+          width: 100%;
+          border: 0;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+          padding: 16px;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+        .template-builder-section-summary.is-open {
+          background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%);
+        }
+        .template-builder-section-left {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          min-width: 0;
+        }
+        .template-builder-section-index {
+          width: 36px;
+          height: 36px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          flex: 0 0 auto;
+          background: ${C.pri};
+          color: #fff;
+          font-size: 12px;
+          font-weight: 950;
+          box-shadow: 0 12px 22px rgba(20, 83, 45, 0.18);
+        }
+        .template-builder-section-title {
+          color: ${C.text};
+          font-size: 15px;
+          font-weight: 950;
+          line-height: 1.24;
+        }
+        .template-builder-section-description {
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.45;
+        }
+        .template-builder-section-body {
+          padding: 0 16px 16px;
+        }
+        .template-builder-config-card,
+        .template-builder-item-editor {
+          padding: 14px;
+          margin-top: 12px;
+          background: #fff;
+        }
+        .template-builder-field-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 11px;
+        }
+        .template-builder-field {
+          display: block;
+          min-width: 0;
+        }
+        .template-builder-field.is-wide {
+          grid-column: 1 / -1;
+        }
+        .template-builder-field > span,
+        .template-builder-filter-label {
+          display: block;
+          margin-bottom: 6px;
+          color: ${C.textSec};
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.02em;
+        }
+        .template-builder-field input,
+        .template-builder-field textarea,
+        .template-builder-title-input {
+          box-sizing: border-box;
+        }
+        .template-builder-field input,
+        .template-builder-field textarea {
+          width: 100%;
+          border: 1px solid #dbe5ef;
+          border-radius: 12px;
+          background: #fff;
+          color: ${C.text};
+          padding: 10px 11px;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 750;
+          outline: none;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .template-builder-field textarea {
+          resize: vertical;
+          line-height: 1.45;
+        }
+        .template-builder-field input:focus,
+        .template-builder-field textarea:focus,
+        .template-builder-title-input:focus {
+          border-color: rgba(20, 83, 45, 0.52);
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.09);
+        }
+        .template-builder-item-preview {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 10px 0;
+          border-bottom: 1px solid #edf2f7;
+        }
+        .template-builder-item-grip {
+          width: 8px;
+          height: 8px;
+          margin-top: 5px;
+          border-radius: 999px;
+          background: #cbd5e1;
+          flex: 0 0 auto;
+        }
+        .template-builder-item-copy {
+          flex: 1;
+          min-width: 0;
+        }
+        .template-builder-item-title,
+        .template-builder-item-editor-title {
+          font-size: 13px;
+          font-weight: 850;
+          color: ${C.text};
+        }
+        .template-builder-item-secondary {
+          margin-top: 4px;
+          color: ${C.textSec};
+          font-size: 12px;
+          line-height: 1.45;
+        }
+        .template-builder-item-secondary a {
+          color: ${C.pri};
+          font-weight: 850;
+          text-decoration: none;
+        }
+        .template-builder-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          border-radius: 999px;
+          background: #ecfdf5;
+          color: ${C.pri};
+          padding: 5px 8px;
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }
+        .template-builder-pill.is-muted {
+          background: #f1f5f9;
+          color: ${C.textMut};
+        }
+        .template-builder-drag-handle {
+          color: #94a3b8;
+          font-weight: 950;
+          letter-spacing: -0.16em;
+        }
+        .template-builder-item-footer {
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid #edf2f7;
+        }
+        .template-builder-toggle-row label {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          color: ${C.textSec};
+          font-size: 12px;
+          font-weight: 850;
+        }
+        .template-builder-empty {
+          border: 1px dashed #cbd5e1;
+          border-radius: 20px;
+          padding: 28px;
+          text-align: center;
+          background: #fff;
+        }
+        .template-builder-empty-title {
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+        }
+        .template-builder-empty-copy {
+          margin: 6px auto 16px;
+          max-width: 420px;
+          color: ${C.textMut};
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+        .template-builder-readiness-card {
+          border-radius: 16px;
+          padding: 12px;
+          background: #f8fafc;
+          border: 1px solid #e5edf5;
+        }
+        .template-builder-readiness-card.is-ready {
+          background: #f0fdf4;
+          border-color: rgba(20, 83, 45, 0.18);
+        }
+        .template-builder-readiness-card.is-warning {
+          background: #fffbeb;
+          border-color: rgba(217, 119, 6, 0.22);
+        }
+        @media (max-width: 1180px) {
+          .template-builder-layout { grid-template-columns: 1fr; }
+          .template-builder-sidebar,
+          .template-builder-inspector { position: static; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+          .template-builder-editor-hero { grid-template-columns: 1fr; }
+          .template-builder-actions { justify-content: flex-start; max-width: none; }
+        }
+        @media (max-width: 760px) {
+          .template-builder-hero { flex-direction: column; }
+          .template-builder-hero-stats,
+          .template-builder-metric-strip { min-width: 0; grid-template-columns: 1fr; }
+          .template-builder-field-grid { grid-template-columns: 1fr; }
+          .template-builder-card-footer,
+          .template-builder-section-summary,
+          .template-builder-item-footer { align-items: flex-start; flex-direction: column; }
         }
 	        .labor-page-shell {
 	          max-width: 1340px;
@@ -22418,59 +23305,105 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {!loading && tab === "templates" && canUseLaborTab("templates") && !previewTemplateId && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                { id: "all", label: "All" },
-                { id: "active", label: "Active" },
-                { id: "inactive", label: "Inactive" },
-              ].map((option) => (
-                <Btn
-                  key={option.id}
-                  variant={templateStatusFilter === option.id ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setTemplateStatusFilter(option.id)}
-                >
-                  {option.label}
-                </Btn>
-              ))}
+        <div className="template-builder-library-shell">
+          <div className="template-builder-hero">
+            <div>
+              <div className="template-builder-kicker">Template Builder</div>
+              <h2>Design training plans, certifications, and 30 / 60 / 90 reviews</h2>
+              <p>Version-safe template management with draft resume, structure editing, publish readiness, and premium builder controls for sections, tasks, questions, and review prompts.</p>
+            </div>
+            <div className="template-builder-hero-stats">
+              <div><strong>{visibleTemplateRows.length}</strong><span>Shown</span></div>
+              <div><strong>{visibleTemplateRows.filter((row) => row.hasDraft).length}</strong><span>Drafts</span></div>
+              <div><strong>{visibleTemplateRows.filter((row) => row.is_active !== false).length}</strong><span>Active</span></div>
+            </div>
+          </div>
+
+          <div className="template-builder-toolbar">
+            <div>
+              <div className="template-builder-filter-label">Template status</div>
+              <div className="template-builder-filter-row">
+                {[
+                  { id: "all", label: "All" },
+                  { id: "active", label: "Active" },
+                  { id: "inactive", label: "Inactive" },
+                ].map((option) => (
+                  <Btn
+                    key={option.id}
+                    variant={templateStatusFilter === option.id ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setTemplateStatusFilter(option.id)}
+                  >
+                    {option.label}
+                  </Btn>
+                ))}
+              </div>
             </div>
             {canManageTemplates && (
               <Btn variant="primary" size="sm" onClick={() => setShowCreateTemplateModal(true)}>New Template</Btn>
             )}
           </div>
+
           {templateGroups.map((group) => (
-            <div key={group.key} style={{ marginBottom: 24 }}>
-              <SectionHeader title={group.label} count={group.rows.length} />
+            <div key={group.key} className="template-builder-group">
+              <div className="template-builder-group-header">
+                <div>
+                  <div className="template-builder-group-title">{group.label}</div>
+                  <div className="template-builder-group-subtitle">{group.rows.length} versioned builder template{group.rows.length === 1 ? "" : "s"}</div>
+                </div>
+                <Badge color="default">{group.rows.reduce((sum, row) => sum + (row.stats.itemCount || 0), 0)} items</Badge>
+              </div>
               {group.rows.length === 0 ? (
-                <EmptyState icon="FileText" title={`No ${group.label.toLowerCase()} yet`} subtitle="Templates will appear here." />
+                <div className="template-builder-empty">
+                  <div className="template-builder-empty-title">No {group.label.toLowerCase()} yet</div>
+                  <div className="template-builder-empty-copy">Create a draft to start composing sections, modules, tasks, and publish-ready template versions.</div>
+                  {canManageTemplates && <Btn variant="primary" size="sm" onClick={() => setShowCreateTemplateModal(true)}>Create Template</Btn>}
+                </div>
               ) : (
-                <Card style={{ padding: 0, overflow: "hidden" }}>
-	                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-	                    <thead><tr>
-	                      <th style={tableHeaderStyle}>Name</th>
-	                    </tr></thead>
-	                    <tbody>
-	                      {group.rows.map((row) => {
-                        return (
-                          <tr
-                            key={`${row.kind}_${row.id}`}
-                            onClick={() => openTemplatePreview(row.id, row.version?.id || null, row.kind)}
-                            style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-	                          >
-	                            <td style={{ padding: "12px 14px", fontSize: 13, fontWeight: 700, color: C.pri }}>
-                                {row.name}
-                                {row.is_active === false && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>Inactive</span>}
-                              </td>
-	                          </tr>
-	                        );
-	                      })}
-                    </tbody>
-                  </table>
-                </Card>
+                <div className="template-builder-grid">
+                  {group.rows.map((row) => {
+                    const classLabel = row.kind === "review" ? "30 / 60 / 90 Review" : String(row.template_class || "training_template").replace(/_/g, " ");
+                    return (
+                      <div
+                        key={`${row.kind}_${row.id}`}
+                        role="button"
+                        tabIndex={0}
+                        className="template-builder-card"
+                        onClick={() => openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind);
+                          }
+                        }}
+                      >
+                        <div className="template-builder-chip-row">
+                          {row.version?.is_current && <Badge color="info">Current v{row.version.version_no}</Badge>}
+                          {row.hasDraft && <Badge color="warning">Draft v{row.draftVersion.version_no}</Badge>}
+                          {row.is_active === false && <Badge color="default">Inactive</Badge>}
+                        </div>
+                        <div className="template-builder-card-title">{row.name}</div>
+                        <div className="template-builder-card-meta">{classLabel} · {row.role_scopes?.length ? row.role_scopes.join(", ") : "All roles"}</div>
+                        <div className="template-builder-card-footer">
+                          <span className="template-builder-pill is-muted">{row.stats.sectionCount || 0} sections · {row.stats.itemCount || 0} items</span>
+                          {canManageTemplates && (
+                            <Btn
+                              variant={row.hasDraft ? "secondary" : "ghost"}
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind);
+                                setTemplateManageStructure(Boolean(row.draftVersion));
+                              }}
+                            >
+                              {row.hasDraft ? "Resume Draft" : "Edit Template"}
+                            </Btn>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           ))}
@@ -22478,313 +23411,436 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {!loading && tab === "templates" && canUseLaborTab("templates") && previewTemplateId && previewTemplate && (
-        <div>
-          <button onClick={() => { setPreviewTemplateId(null); setPreviewTemplateVersionId(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
-            <I.Back /> Back to Templates
+        <div className="template-builder-editor-shell">
+          <button className="template-builder-back" onClick={() => { setPreviewTemplateId(null); setPreviewTemplateVersionId(null); }}>
+            <I.Back /> Back to Template Library
           </button>
 
-          <Card style={{ padding: 24, marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
-              <div>
-                {canManageTemplates && previewTemplate.version?.status === "draft" ? (
-                  <input
-                    defaultValue={previewTemplate.name}
-                    onBlur={(event) => handleUpdateTemplateName(event.target.value)}
-                    style={{ width: "100%", maxWidth: 420, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 22, fontWeight: 800, color: C.text, fontFamily: "inherit", marginBottom: 8 }}
-                  />
-	                ) : (
-	                  <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{previewTemplate.name}</div>
-	                )}
-	                {previewTemplate.version && (
-	                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
-	                    <span>Version {previewTemplate.version.version_no}</span>
-	                    {previewTemplate.version.published_at && <span>Published: {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
-	                  </div>
-	                )}
-	              </div>
-	              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-	                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{(templateStats[previewTemplate.id] || {}).sectionCount || 0} sections — {(templateStats[previewTemplate.id] || {}).itemCount || 0} items</div>
-	                {canManageTemplates && (
-	                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div className={`template-builder-editor-hero ${previewTemplate.version?.status === "draft" ? "is-draft" : ""}`}>
+            <div>
+              <div className="template-builder-kicker">{previewTemplate.kind === "review" ? "Review builder" : "Training builder"}</div>
+              {canManageTemplates && previewTemplate.version?.status === "draft" ? (
+                <input
+                  className="template-builder-title-input"
+                  defaultValue={previewTemplate.name}
+                  onBlur={(event) => commitRequiredTemplateTextInput(
+                    event,
+                    previewTemplate.name,
+                    "Template name",
+                    handleUpdateTemplateName
+                  )}
+                />
+              ) : (
+                <div className="template-builder-editor-title">{previewTemplate.name}</div>
+              )}
+              <div className="template-builder-chip-row" style={{ marginTop: 10 }}>
+                {previewTemplate.version && <span className="template-builder-pill">Version {previewTemplate.version.version_no}</span>}
+                {previewTemplate.version?.is_current && <Badge color="info">Current</Badge>}
+                {previewTemplate.version?.status === "draft" && <Badge color="warning">Draft</Badge>}
+                {previewTemplateDraftVersion?.id && previewTemplate.version?.status !== "draft" && <Badge color="warning">Draft available</Badge>}
+                {previewTemplate.is_active === false && <Badge color="default">Inactive</Badge>}
+                {previewTemplate.version?.published_at && <span className="template-builder-pill is-muted">Published {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
+              </div>
+            </div>
+            <div className="template-builder-actions">
+              {canManageTemplates && previewTemplate.version?.status !== "draft" && (
+                <Btn variant="primary" size="sm" onClick={handleCreateTemplateDraft} disabled={templateActionPending}>
+                  {savingTemplateAction === "draft" ? "Cloning..." : templatePreviewEditButtonLabel}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <Btn variant="primary" size="sm" onClick={handlePublishTemplateVersion} disabled={templateActionPending || !templatePublishValidation.valid}>
+                  {savingTemplateAction === "publish" ? "Publishing..." : "Publish Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <Btn variant="danger" size="sm" onClick={handleDeleteTemplateDraft} disabled={templateActionPending}>
+                  {savingTemplateAction === "delete-draft" ? "Deleting..." : "Delete Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version && previewTemplate.version.status !== "draft" && (
+                <Btn variant="ghost" size="sm" onClick={handleRestoreTemplateVersion} disabled={templateActionPending}>
+                  {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && (
+                <Btn variant="ghost" size="sm" onClick={handleToggleTemplateActive} disabled={templateActionPending}>
+                  {previewTemplate.is_active === false
+                    ? (savingTemplateAction === "activate" ? "Marking Active..." : "Mark Active")
+                    : (savingTemplateAction === "deactivate" ? "Marking Inactive..." : "Mark Inactive")}
+                </Btn>
+              )}
+            </div>
+          </div>
+
+          <div className="template-builder-metric-strip" style={{ marginBottom: 16 }}>
+            <div className="template-builder-metric"><strong>{previewTemplateStats.sectionCount || 0}</strong><span>Sections</span></div>
+            <div className="template-builder-metric"><strong>{previewTemplateStats.itemCount || 0}</strong><span>{previewTemplate.kind === "review" ? "Prompts" : "Tasks"}</span></div>
+            <div className="template-builder-metric"><strong>{previewTemplateVersionHistory.length}</strong><span>Versions</span></div>
+          </div>
+
+          <div className="template-builder-layout">
+            <aside className="template-builder-sidebar">
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Structure Navigator</div>
+                    <div className="template-builder-panel-copy">Jump between expanded builder sections.</div>
+                  </div>
+                  <Badge color="default">{previewTemplate.sections.length}</Badge>
+                </div>
+                <div className="template-builder-nav-list">
+                  {previewTemplate.sections.length === 0 ? (
+                    <div className="template-builder-panel-copy">No sections yet.</div>
+                  ) : previewTemplate.sections.map((section, index) => {
+                    const sectionKey = `${previewTemplate.kind === "review" ? "review" : "tpl"}_${section.id}`;
+                    return (
+                      <button key={section.id} className="template-builder-nav-item" onClick={() => toggleSection(sectionKey)}>
+                        <div style={{ fontSize: 12, fontWeight: 950, color: C.text }}>{index + 1}. {section.title || "Untitled section"}</div>
+                        <div style={{ marginTop: 4, fontSize: 11, color: C.textMut, fontWeight: 750 }}>
+                          {previewTemplate.kind === "review"
+                            ? `${section.items?.length || 0} prompt${section.items?.length === 1 ? "" : "s"}`
+                            : `${section.children?.length || 0} module${section.children?.length === 1 ? "" : "s"} · ${(section.directItems?.length || 0) + toObjectRows(section.children).reduce((sum, child) => sum + toObjectRows(child.items).length, 0)} task${((section.directItems?.length || 0) + toObjectRows(section.children).reduce((sum, child) => sum + toObjectRows(child.items).length, 0)) === 1 ? "" : "s"}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Version Control</div>
+                    <div className="template-builder-panel-copy">Inspect published, current, and draft versions.</div>
+                  </div>
+                </div>
+                <div className="template-builder-version-list">
+                  {previewTemplateVersionHistory.map((version) => {
+                    const selected = previewTemplate.version?.id === version.id;
+                    return (
+                      <button
+                        key={version.id}
+                        className={`template-builder-version-button ${selected ? "is-selected" : ""}`}
+                        onClick={() => setPreviewTemplateVersionId(version.id)}
+                      >
+                        <div className="template-builder-version-row">
+                          <div style={{ fontSize: 13, fontWeight: 950, color: C.text }}>v{version.version_no}</div>
+                          <span className="template-builder-pill is-muted">{version.status}</span>
+                        </div>
+                        <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 750 }}>
+                          {version.is_current ? "Current version · " : ""}{version.published_at ? `Published ${formatTrainingTimestamp(version.published_at)}` : `Created ${formatTrainingTimestamp(version.created_at)}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
+
+            <main className="template-builder-canvas">
+              <div className="template-builder-canvas-toolbar">
+                <div>
+                  <div className="template-builder-kicker">Manage Structure</div>
+                  <div className="template-builder-group-title">{previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"}</div>
+                  <div className="template-builder-group-subtitle">Compose sections, modules, tasks, prompts, question types, and movement rules in one builder canvas.</div>
+                </div>
+                {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                  <div className="template-builder-inline-actions">
+                    <Btn variant={templateManageStructure ? "secondary" : "ghost"} size="sm" onClick={() => setTemplateManageStructure((current) => !current)}>
+                      {templateManageStructure ? "Done Managing" : "Manage Structure"}
+                    </Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
                     <Btn
                       variant="secondary"
                       size="sm"
-                      onClick={handleCreateTemplateDraft}
-                      disabled={savingTemplateAction === "draft"}
+                      onClick={() => {
+                        const targetSection = previewTemplate.kind === "review" ? previewTemplate.sections[0] : (previewTemplate.sections[0]?.children?.[0] || previewTemplate.sections[0]);
+                        if (targetSection?.id) handleAddTemplateItem(targetSection.id);
+                        else handleAddTemplateSection(null);
+                      }}
                     >
-	                      {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-	                    </Btn>
-	                    {previewTemplate.version?.status === "draft" && (
-	                      <Btn
-	                        variant="danger"
-	                        size="sm"
-	                        onClick={handleDeleteTemplateDraft}
-	                        disabled={savingTemplateAction === "delete-draft"}
-	                      >
-	                        {savingTemplateAction === "delete-draft" ? "Deleting..." : "Delete Draft"}
-	                      </Btn>
-	                    )}
-	                    {previewTemplate.version?.status === "draft" && (
-	                      <Btn
-	                        variant="primary"
-                        size="sm"
-                        onClick={handlePublishTemplateVersion}
-                        disabled={savingTemplateAction === "publish"}
-                      >
-                        {savingTemplateAction === "publish" ? "Publishing..." : "Publish Draft"}
-                      </Btn>
-                    )}
-                    {previewTemplate.version && previewTemplate.version.status !== "draft" && (
-                      <Btn
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleRestoreTemplateVersion}
-                        disabled={savingTemplateAction === "restore"}
-                      >
-	                        {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
-	                      </Btn>
-	                    )}
-	                    <Btn
-	                      variant="ghost"
-	                      size="sm"
-	                      onClick={handleToggleTemplateActive}
-	                      disabled={savingTemplateAction === "activate" || savingTemplateAction === "deactivate"}
-	                    >
-	                      {previewTemplate.is_active === false
-	                        ? (savingTemplateAction === "activate" ? "Marking Active..." : "Mark Active")
-	                        : (savingTemplateAction === "deactivate" ? "Marking Inactive..." : "Mark Inactive")}
-	                    </Btn>
-	                  </div>
-	                )}
-	              </div>
-            </div>
-          </Card>
-
-          <Card style={{ padding: 16, marginBottom: 16 }}>
-            <SectionHeader title="Version History" count={previewTemplateVersionHistory.length} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {previewTemplateVersionHistory.map((version) => {
-                const selected = previewTemplate.version?.id === version.id;
-                return (
-                  <button
-                    key={version.id}
-                    onClick={() => setPreviewTemplateVersionId(version.id)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      borderRadius: 12,
-                      border: selected ? `1.5px solid ${C.pri}` : `1px solid ${C.borderLight}`,
-                      background: selected ? C.priLt : C.surface,
-                      padding: "12px 14px",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
-                          v{version.version_no} {version.is_current ? "· Current" : ""}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
-                          {version.published_at
-                            ? `Published ${formatTrainingTimestamp(version.published_at)}`
-                            : `Created ${formatTrainingTimestamp(version.created_at)}`}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: version.status === "published" ? C.suc : version.status === "draft" ? C.warn : C.textMut }}>
-                        {version.status}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </Card>
-
-	          <SectionHeader title={previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"} count={previewTemplate.sections.length}>
-	            {canManageTemplates && previewTemplate.version?.status === "draft" && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Btn variant={templateManageStructure ? "secondary" : "ghost"} size="sm" onClick={() => setTemplateManageStructure((current) => !current)}>
-                    {templateManageStructure ? "Done Managing" : "Manage Structure"}
-                  </Btn>
-	                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
-                </div>
-	            )}
-	          </SectionHeader>
-	          {previewTemplate.kind === "review" ? previewTemplate.sections.map((sec) => {
-	            const isOpen = templateManageStructure || expandedSections[`review_${sec.id}`];
-            const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
-            return (
-              <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
-                <button
-                  onClick={() => toggleSection(`review_${sec.id}`)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{sec.title}</div>
-                      {sec.instructions && <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{sec.instructions}</div>}
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 11, color: C.textMut }}>{sec.items.length} prompt{sec.items.length !== 1 ? "s" : ""}</span>
-                </button>
-
-                {isOpen && (
-                  <div style={{ padding: "0 16px 14px" }}>
-                    {isDraft && (
-                      <Card style={{ padding: 12, marginTop: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          <input
-                            defaultValue={sec.title}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value && value !== sec.title) {
-                                handleUpdateTemplateSection(sec.id, { title: value });
-                              }
-                            }}
-                            placeholder="Section title"
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
-                          />
-                          <textarea
-                            defaultValue={sec.instructions || ""}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value !== (sec.instructions || "")) {
-                                handleUpdateTemplateSection(sec.id, { instructions: value || null });
-                              }
-                            }}
-                            placeholder="Section description"
-                            rows={2}
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                          />
-	                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
-	                          </div>
-                        </div>
-                      </Card>
-                    )}
-                    <div style={{ marginTop: 12 }}>
-                      {sec.items.map((item) => renderTemplatePreviewItem(item, isDraft))}
-                    </div>
+                      {previewTemplate.kind === "review" ? "Add Prompt" : "Add Task"}
+                    </Btn>
                   </div>
                 )}
-              </Card>
-            );
-	          }) : previewTemplate.sections.map(sec => {
-	            const isOpen = templateManageStructure || expandedSections[`tpl_${sec.id}`];
-            const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
-            const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
-            return (
-              <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
-                <button onClick={() => toggleSection(`tpl_${sec.id}`)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.15s" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-                    <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}><I.ChevronRight /></span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sec.title}</div>
-                      {(sec.day_number || sec.time_block_start) && <div style={{ fontSize: 11, color: C.textMut }}>
-                        {formatTrainingTimeRange(sec.time_block_start, sec.time_block_end) || `Day ${sec.day_number}`}
-                      </div>}
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600, flexShrink: 0 }}>
-                    {sec.children.length > 0 ? `${sec.children.length} module${sec.children.length !== 1 ? "s" : ""}` : ""}{sec.children.length > 0 && totalItems > 0 ? " — " : ""}{totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : ""}
-                  </span>
-                </button>
+              </div>
 
-                {isOpen && (
-                  <div style={{ padding: "0 16px 14px" }}>
-                    {isDraft && (
-                      <Card style={{ padding: 12, marginTop: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          <input
-                            defaultValue={sec.title}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value && value !== sec.title) {
-                                handleUpdateTemplateSection(sec.id, { title: value });
-                              }
-                            }}
-                            placeholder="Section title"
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
-                          />
-                          <textarea
-                            defaultValue={sec.instructions || ""}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value !== (sec.instructions || "")) {
-                                handleUpdateTemplateSection(sec.id, { instructions: value || null });
-                              }
-                            }}
-                            placeholder="Section description"
-                            rows={2}
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                          />
-	                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+              {savingTemplateFieldCount > 0 && (
+                <div className="template-builder-readiness-card is-warning" style={{ marginBottom: 12, fontSize: 12, fontWeight: 900, color: C.warn }}>Saving template edits…</div>
+              )}
+              {previewTemplate.version?.status === "draft" && !templatePublishValidation.valid && (
+                <div className="template-builder-readiness-card is-warning" style={{ marginBottom: 12, fontSize: 12, fontWeight: 850, color: C.warn, lineHeight: 1.5 }}>
+                  Fix before publishing: {templatePublishValidation.errors.join(" ")}
+                </div>
+              )}
+
+              {previewTemplate.sections.length === 0 ? (
+                <div className="template-builder-empty">
+                  <div className="template-builder-empty-title">Start with a section</div>
+                  <div className="template-builder-empty-copy">Drafts become publishable after they contain at least one section and one {previewTemplate.kind === "review" ? "prompt" : "task"}.</div>
+                  {canManageTemplates && previewTemplate.version?.status === "draft" && <Btn variant="primary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>}
+                </div>
+              ) : previewTemplate.kind === "review" ? previewTemplate.sections.map((sec, index) => {
+                const isOpen = templateManageStructure || expandedSections[`review_${sec.id}`];
+                const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
+                return (
+                  <div key={sec.id} className="template-builder-section-card">
+                    <button className={`template-builder-section-summary ${isOpen ? "is-open" : ""}`} onClick={() => toggleSection(`review_${sec.id}`)}>
+                      <div className="template-builder-section-left">
+                        <div className="template-builder-section-index">{index + 1}</div>
+                        <div>
+                          <div className="template-builder-section-title">{sec.title || "Untitled section"}</div>
+                          {sec.instructions && <div className="template-builder-section-description">{sec.instructions}</div>}
+                        </div>
+                      </div>
+                      <div className="template-builder-chip-row">
+                        <span className="template-builder-pill is-muted">{sec.items.length} prompt{sec.items.length !== 1 ? "s" : ""}</span>
+                        <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="template-builder-section-body">
+                        {isDraft && (
+                          <div className="template-builder-config-card">
+                            <div className="template-builder-field-grid">
+                              <label className="template-builder-field">
+                                <span>Section title</span>
+                                <input
+                                  defaultValue={sec.title}
+                                  onBlur={(event) => commitRequiredTemplateTextInput(
+                                    event,
+                                    sec.title,
+                                    "Section title",
+                                    (value) => handleUpdateTemplateSection(sec.id, { title: value })
+                                  )}
+                                  placeholder="Section title"
+                                />
+                              </label>
+                              <label className="template-builder-field is-wide">
+                                <span>Section description</span>
+                                <textarea
+                                  defaultValue={sec.instructions || ""}
+                                  onBlur={(event) => {
+                                    const value = event.target.value.trim();
+                                    if (value !== (sec.instructions || "")) {
+                                      handleUpdateTemplateSection(sec.id, { instructions: value || null });
+                                    }
+                                  }}
+                                  placeholder="Section description"
+                                  rows={2}
+                                />
+                              </label>
+                            </div>
+                            <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 12 }}>{sec.items.map((item) => renderTemplatePreviewItem(item, isDraft))}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }) : previewTemplate.sections.map((sec, index) => {
+                const isOpen = templateManageStructure || expandedSections[`tpl_${sec.id}`];
+                const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
+                const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
+                return (
+                  <div key={sec.id} className="template-builder-section-card">
+                    <button className={`template-builder-section-summary ${isOpen ? "is-open" : ""}`} onClick={() => toggleSection(`tpl_${sec.id}`)}>
+                      <div className="template-builder-section-left">
+                        <div className="template-builder-section-index">{index + 1}</div>
+                        <div>
+                          <div className="template-builder-section-title">{sec.title || "Untitled section"}</div>
+                          <div className="template-builder-section-description">
+                            {formatTrainingTimeRange(sec.time_block_start, sec.time_block_end) || (sec.day_number ? `Day ${sec.day_number}` : sec.instructions || "Training section")}
                           </div>
                         </div>
-                      </Card>
-                    )}
-                    {sec.children.map(child => (
-                      <div key={child.id} style={{ marginTop: 12 }}>
-                        {isDraft ? (
-                          <Card style={{ padding: 12, background: C.surface, border: `1px solid ${C.borderLight}` }}>
-                            <div style={{ display: "grid", gap: 10 }}>
-                              <input
-                                defaultValue={child.title}
-                                onBlur={(event) => {
-                                  const value = event.target.value.trim();
-                                  if (value && value !== child.title) {
-                                    handleUpdateTemplateSection(child.id, { title: value });
-                                  }
-                                }}
-                                placeholder="Module title"
-                                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: C.pri }}
-                              />
-                              <textarea
-                                defaultValue={child.instructions || ""}
-                                onBlur={(event) => {
-                                  const value = event.target.value.trim();
-                                  if (value !== (child.instructions || "")) {
-                                    handleUpdateTemplateSection(child.id, { instructions: value || null });
-                                  }
-                                }}
-                                placeholder="Module description"
-                                rows={2}
-                                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                              />
-	                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, -1)}>Move Up</Btn>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, 1)}>Move Down</Btn>
-	                                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
-	                              </div>
-                              {child.items.map((item) => renderTemplatePreviewItem(item, true))}
-                            </div>
-                          </Card>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{child.title}</div>
-                            {child.items.map((item) => renderTemplatePreviewItem(item))}
-                          </>
-                        )}
                       </div>
-                    ))}
-                    {sec.directItems.map(item => renderTemplatePreviewItem(item, isDraft))}
-                    {!isDraft && sec.instructions && <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontStyle: "italic" }}>{sec.instructions}</div>}
+                      <div className="template-builder-chip-row">
+                        <span className="template-builder-pill is-muted">{sec.children.length} module{sec.children.length !== 1 ? "s" : ""}</span>
+                        <span className="template-builder-pill is-muted">{totalItems} task{totalItems !== 1 ? "s" : ""}</span>
+                        <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="template-builder-section-body">
+                        {isDraft && (
+                          <div className="template-builder-config-card">
+                            <div className="template-builder-field-grid">
+                              <label className="template-builder-field">
+                                <span>Section title</span>
+                                <input
+                                  defaultValue={sec.title}
+                                  onBlur={(event) => commitRequiredTemplateTextInput(
+                                    event,
+                                    sec.title,
+                                    "Section title",
+                                    (value) => handleUpdateTemplateSection(sec.id, { title: value })
+                                  )}
+                                  placeholder="Section title"
+                                />
+                              </label>
+                              <label className="template-builder-field is-wide">
+                                <span>Section instructions</span>
+                                <textarea
+                                  defaultValue={sec.instructions || ""}
+                                  onBlur={(event) => {
+                                    const value = event.target.value.trim();
+                                    if (value !== (sec.instructions || "")) {
+                                      handleUpdateTemplateSection(sec.id, { instructions: value || null });
+                                    }
+                                  }}
+                                  placeholder="Section instructions"
+                                  rows={2}
+                                />
+                              </label>
+                            </div>
+                            <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+                            </div>
+                          </div>
+                        )}
+
+                        {sec.children.map((child) => (
+                          <div key={child.id} className="template-builder-config-card">
+                            {isDraft ? (
+                              <>
+                                <div className="template-builder-field-grid">
+                                  <label className="template-builder-field">
+                                    <span>Module title</span>
+                                    <input
+                                      defaultValue={child.title}
+                                      onBlur={(event) => commitRequiredTemplateTextInput(
+                                        event,
+                                        child.title,
+                                        "Module title",
+                                        (value) => handleUpdateTemplateSection(child.id, { title: value })
+                                      )}
+                                      placeholder="Module title"
+                                    />
+                                  </label>
+                                  <label className="template-builder-field is-wide">
+                                    <span>Module instructions</span>
+                                    <textarea
+                                      defaultValue={child.instructions || ""}
+                                      onBlur={(event) => {
+                                        const value = event.target.value.trim();
+                                        if (value !== (child.instructions || "")) {
+                                          handleUpdateTemplateSection(child.id, { instructions: value || null });
+                                        }
+                                      }}
+                                      placeholder="Module instructions"
+                                      rows={2}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, -1)}>Move Up</Btn>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, 1)}>Move Down</Btn>
+                                  <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
+                                </div>
+                                {child.items.map((item) => renderTemplatePreviewItem(item, true))}
+                              </>
+                            ) : (
+                              <>
+                                <div className="template-builder-section-title" style={{ fontSize: 13 }}>{child.title}</div>
+                                {child.instructions && <div className="template-builder-section-description">{child.instructions}</div>}
+                                {child.items.map((item) => renderTemplatePreviewItem(item))}
+                              </>
+                            )}
+                          </div>
+                        ))}
+                        {sec.directItems.map((item) => renderTemplatePreviewItem(item, isDraft))}
+                        {!isDraft && sec.instructions && <div className="template-builder-section-description" style={{ marginTop: 10 }}>{sec.instructions}</div>}
+                      </div>
+                    )}
                   </div>
-                )}
-              </Card>
-            );
-          })}
+                );
+              })}
+            </main>
+
+            <aside className="template-builder-inspector">
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Publish Readiness</div>
+                    <div className="template-builder-panel-copy">Validation and save state for this version.</div>
+                  </div>
+                  <Badge color={previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "warning" : "info"}>
+                    {previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "Needs fixes" : "Ready"}
+                  </Badge>
+                </div>
+                <div className={`template-builder-readiness-card ${previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "is-warning" : "is-ready"}`}>
+                  <div style={{ fontSize: 13, fontWeight: 950, color: C.text }}>
+                    {templateActionPending ? "Saving changes" : previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "Fix validation messages" : "Publish checks clear"}
+                  </div>
+                  <div className="template-builder-panel-copy" style={{ marginTop: 5 }}>
+                    {templatePublishValidation.errors.length > 0 ? templatePublishValidation.errors.join(" ") : "No blocking issues detected for the selected version."}
+                  </div>
+                </div>
+              </div>
+
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <div className="template-builder-panel">
+                  <div className="template-builder-panel-header">
+                    <div>
+                      <div className="template-builder-panel-title">Bulk Configuration</div>
+                      <div className="template-builder-panel-copy">Apply common settings across every visible {previewTemplate.kind === "review" ? "prompt" : "task"} in this draft.</div>
+                    </div>
+                  </div>
+                  {previewTemplate.kind === "review" ? (
+                    <div className="template-builder-chip-row">
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "long_text", options: null }, "All prompts set to long text")}>Long text</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "short_text", options: null }, "All prompts set to short text")}>Short text</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "rating", options: ["Exceeds Expectations", "Meets Expectations", "Needs Improvement"] }, "All prompts set to rating")}>Rating</Btn>
+                    </div>
+                  ) : (
+                    <div className="template-builder-chip-row">
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: true }, "All tasks marked required")}>All required</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: false }, "All tasks marked optional")}>All optional</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "checkbox" }, "All tasks set to checklist")}>Checklist</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ completion_mode: "pass_fail" }, "All tasks set to pass / fail")}>Pass / fail</Btn>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <div className="template-builder-panel">
+                  <div className="template-builder-panel-header">
+                    <div>
+                      <div className="template-builder-panel-title">Quick Add</div>
+                      <div className="template-builder-panel-copy">Create structure without losing your place in the canvas.</div>
+                    </div>
+                  </div>
+                  <div className="template-builder-chip-row">
+                    <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Section</Btn>
+                    <Btn
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        const targetSection = previewTemplate.kind === "review" ? previewTemplate.sections[0] : (previewTemplate.sections[0]?.children?.[0] || previewTemplate.sections[0]);
+                        if (targetSection?.id) handleAddTemplateItem(targetSection.id);
+                        else handleAddTemplateSection(null);
+                      }}
+                    >
+                      {previewTemplate.kind === "review" ? "Prompt" : "Task"}
+                    </Btn>
+                  </div>
+                </div>
+              )}
+            </aside>
+          </div>
         </div>
       )}
 
