@@ -155,6 +155,13 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).toContain("PDF restricted");
   });
 
+  it("does not infer a waived cell from a generic completed date", () => {
+    expect(reviewGridSource).toContain("const isPolicyWaiver = normalizeText(cycle.exceptionKind || cycle.exception_kind) === \"waived\"");
+    expect(reviewGridSource).toContain("const completionMode = normalizeText(cycle.instance?.metadata?.completion_mode);");
+    expect(reviewGridSource).toContain("completed && (status === \"complete\" || status === \"completed\" || completionMode === \"completed\")");
+    expect(reviewGridSource).not.toContain("waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on");
+  });
+
   it("saves custom Compliance cells directly instead of creating legacy review instances", () => {
     expect(source).toContain("isDirectComplianceRequirementCycle");
     expect(source).toContain("getReviewCycleRequirementId");
