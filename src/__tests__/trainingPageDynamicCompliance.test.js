@@ -174,11 +174,11 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("handlePreviewComplianceReviewEvidenceDocument");
     expect(source).toContain("closeComplianceReviewEditor();\n    handlePreviewEmployeeDocument(document);");
     expect(source).toContain("onClick={() => handlePreviewComplianceReviewEvidenceDocument(complianceReviewEvidenceDocument)}");
-    expect(source).toContain('import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";');
     expect(source).toContain("function AttachmentPdfPreview");
-    expect(source).toContain("const pdfBytes = new Uint8Array(await response.arrayBuffer())");
-    expect(source).toContain("pdfjsLib.getDocument({ data: pdfBytes })");
+    expect(source).toContain("const objectUrl = URL.createObjectURL(pdfBlob)");
+    expect(source).toContain("URL.revokeObjectURL(objectUrlRef.current)");
     expect(source).toContain("<AttachmentPdfPreview");
+    expect(source).toContain("src={`${previewState.objectUrl}#toolbar=1&navpanes=0&view=FitH`}");
     expect(source).toContain("\"Open PDF\"");
     expect(reviewGridSource).toContain("canViewPdfs = false");
     expect(reviewGridSource).toContain("getCompletionEvidence");
