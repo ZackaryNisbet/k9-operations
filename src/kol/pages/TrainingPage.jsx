@@ -657,6 +657,47 @@ function findReviewCycleRowBySortKey(row = {}, sortKey = "") {
   return toObjectRows(row.cycles || row.performance_review_compliance?.cycleRows)
     .find((cycle) => reviewCycleMatchesKey(cycle, cycleKey)) || null;
 }
+const COMPLIANCE_EVIDENCE_REQUIRED_POLICIES = new Set(["file_required", "url_or_reference"]);
+function getReviewCyclePolicyCell(reviewCycle = {}) {
+  return isObjectRow(reviewCycle?.policyCell)
+    ? reviewCycle.policyCell
+    : isObjectRow(reviewCycle?.requirementStatus)
+      ? reviewCycle.requirementStatus
+      : {};
+}
+function getReviewCycleRequirementId(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  return reviewCycle?.requirementId
+    || reviewCycle?.requirement?.id
+    || policyCell.requirement_id
+    || policyCell.requirementId
+    || "";
+}
+function getReviewCycleLegacyReviewCycle(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const compatibility = isObjectRow(policyCell.compatibility) ? policyCell.compatibility : {};
+  const requirementMetadata = isObjectRow(reviewCycle?.requirement?.metadata) ? reviewCycle.requirement.metadata : {};
+  return reviewCycle?.legacyReviewCycle
+    || policyCell.legacy_review_cycle
+    || policyCell.legacyReviewCycle
+    || compatibility.legacy_review_cycle
+    || requirementMetadata.legacy_review_cycle
+    || "";
+}
+function isDirectComplianceRequirementCycle(reviewCycle = {}) {
+  return Boolean(reviewCycle?.isDirectComplianceRequirement || (getReviewCycleRequirementId(reviewCycle) && !getReviewCycleLegacyReviewCycle(reviewCycle)));
+}
+function getReviewCycleEvidencePolicy(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  return reviewCycle?.evidencePolicy
+    || reviewCycle?.requirement?.evidence_policy
+    || policyCell.evidence_policy
+    || policyCell.evidencePolicy
+    || "checkbox_only";
+}
+function isReviewCycleEvidenceRequired(reviewCycle = {}) {
+  return Boolean(reviewCycle?.evidenceRequired || reviewCycle?.requiresEvidence || COMPLIANCE_EVIDENCE_REQUIRED_POLICIES.has(getReviewCycleEvidencePolicy(reviewCycle)));
+}
 function getReviewCycleDueDateForSort(row = {}, sortKey = "") {
   const cycle = findReviewCycleRowBySortKey(row, sortKey);
   return cycle?.dueDate || cycle?.due_date || "";
@@ -9656,11 +9697,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const handleUploadPerformanceReviewEvidence = useCallback(async ({ laborEmployee, reviewInstance, reviewCycle, file, completedOn }) => {
     const laborEmployeeId = getLaborEmployeeRowId(laborEmployee);
-    if (!laborEmployeeId || !reviewInstance?.id) throw new Error("Choose an employee review before uploading evidence.");
+    const requirementId = getReviewCycleRequirementId(reviewCycle);
+    if (!laborEmployeeId || (!reviewInstance?.id && !requirementId)) throw new Error("Choose a compliance checkpoint before uploading evidence.");
     const mimeType = inferLaborTrainingRequirementEvidenceMimeType(file);
-    const fallbackFileName = buildPerformanceReviewPdfFileName(laborEmployee, reviewInstance.review_cycle || reviewCycle?.id || "review");
+    const fallbackFileName = reviewInstance?.id
+      ? buildPerformanceReviewPdfFileName(laborEmployee, reviewInstance.review_cycle || reviewCycle?.id || "review")
+      : `${laborEmployee?.full_name || "employee"}-${reviewCycle?.label || "compliance"}-evidence.pdf`;
     const evidenceFileName = String(file?.name || fallbackFileName || "performance-review-evidence.pdf").trim() || "performance-review-evidence.pdf";
-    const reviewSlug = reviewCycle?.slug || reviewCycle?.id || reviewInstance.review_cycle || reviewInstance.id;
+    const reviewSlug = reviewCycle?.slug || reviewCycle?.id || reviewInstance?.review_cycle || reviewInstance?.id || requirementId;
     const storagePath = buildLaborEmployeeRequirementEvidencePath({
       laborEmployeeId,
       requirementSlug: `performance-review-${reviewSlug}`,
@@ -9690,10 +9734,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         mime_type: mimeType,
         file_size_bytes: Number(file?.size || 0),
         metadata: {
-          source_module: "performance_reviews",
-          review_instance_id: reviewInstance.id,
-          review_cycle: reviewInstance.review_cycle || reviewCycle?.id || null,
-          requirement_id: reviewCycle?.requirementId || reviewCycle?.requirement?.id || null,
+          source_module: reviewInstance?.id ? "performance_reviews" : "compliance_requirements",
+          review_instance_id: reviewInstance?.id || null,
+          review_cycle: reviewInstance?.review_cycle || reviewCycle?.id || null,
+          requirement_id: requirementId || null,
           requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
           policy_key: reviewCycle?.policyKey || reviewCycle?.requirement?.parent_requirement_id || null,
           completed_on: completedOn || null,
@@ -11678,20 +11722,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const handleOpenComplianceReviewEditor = useCallback((laborEmployee, reviewCycle) => {
     const reviewInstance = reviewCycle?.instance || null;
-    if (!laborEmployee || !reviewInstance?.id) return;
-    const metadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
+    const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
+    if (!laborEmployee || (!reviewInstance?.id && !directRequirement)) return;
+    const policyCell = getReviewCyclePolicyCell(reviewCycle);
+    const metadata = isObjectRow(reviewInstance?.metadata) ? reviewInstance.metadata : {};
     const waiver = isObjectRow(metadata.completion_waiver) ? metadata.completion_waiver : null;
+    const policyWaiver = reviewCycle?.status === "waived" || reviewCycle?.exceptionKind === "waived" || policyCell.exception_kind === "waived";
     const completedOn = reviewCycle?.completedDate
+      || policyCell.completed_on
       || metadata?.completion_evidence?.completed_on
       || waiver?.waived_on
-      || String(reviewInstance.completed_at || "").slice(0, 10)
+      || String(reviewInstance?.completed_at || "").slice(0, 10)
       || todayStr();
     setComplianceReviewEditorModal({
       laborEmployee,
       reviewCycle,
       reviewInstance,
     });
-    setCompletionMode(waiver ? "waived" : "completed");
+    setCompletionMode(waiver || policyWaiver ? "waived" : "completed");
     setPerformanceReviewCompletedOn(completedOn);
     setPerformanceReviewEvidenceFile(null);
     setPerformanceReviewEvidenceError("");
@@ -11699,6 +11747,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, []);
 
   const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {
+    if (isDirectComplianceRequirementCycle(reviewCycle)) {
+      handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);
+      return null;
+    }
     const reviewCycleKey = reviewCycle?.id || reviewCycle?.slug || reviewCycle?.requirementId || reviewCycle?.policyKey;
     const createdInstance = await handleCreateReviewInstanceForEmployee(laborEmployee, reviewCycleKey, { openDetail: false });
     if (createdInstance?.id) {
@@ -11715,15 +11767,149 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const reviewInstance = editor?.reviewInstance || editor?.reviewCycle?.instance || null;
     const laborEmployee = editor?.laborEmployee || null;
     const reviewCycle = editor?.reviewCycle || null;
-    if (!reviewInstance?.id || !laborEmployee) return;
+    const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
+    if ((!reviewInstance?.id && !directRequirement) || !laborEmployee) return;
     if (!performanceReviewCompletedOn) {
       addGlobalToast("Completed date is required", "error");
+      return;
+    }
+
+    const laborEmployeeId = getLaborEmployeeRowId(laborEmployee);
+    const requirementId = getReviewCycleRequirementId(reviewCycle);
+    if (directRequirement && (!laborEmployeeId || !requirementId)) {
+      addGlobalToast("Compliance requirement setup is missing for this checkpoint", "error");
       return;
     }
 
     setCompletingReview(true);
     let evidenceDocument = null;
     try {
+      if (directRequirement) {
+        const nowIso = new Date().toISOString();
+        const evidenceRequired = isReviewCycleEvidenceRequired(reviewCycle);
+        const policyCell = getReviewCyclePolicyCell(reviewCycle);
+        const existingEvidenceLinkId = reviewCycle?.evidenceLinkId || policyCell.evidence_link_id || policyCell.evidenceLinkId || "";
+
+        if (completionMode === "completed" && evidenceRequired) {
+          if (!performanceReviewEvidenceFile) {
+            setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
+            addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
+            return;
+          }
+
+          const { acceptedFile, error: fileError } = validateLaborTrainingRequirementEvidenceFile(performanceReviewEvidenceFile);
+          if (fileError || !acceptedFile) {
+            setPerformanceReviewEvidenceError(fileError || "Upload a valid PDF evidence file.");
+            addGlobalToast(fileError || "Upload a valid PDF evidence file", "error");
+            return;
+          }
+
+          evidenceDocument = await handleUploadPerformanceReviewEvidence({
+            laborEmployee,
+            reviewInstance: null,
+            reviewCycle,
+            file: acceptedFile,
+            completedOn: performanceReviewCompletedOn,
+          });
+        }
+
+        const supersedeExceptionRequest = supabase
+          .from("labor_compliance_exceptions")
+          .update({
+            superseded_at: nowIso,
+            updated_at: nowIso,
+            updated_by_user_id: actorUserId || null,
+          })
+          .eq("labor_employee_id", laborEmployeeId)
+          .eq("requirement_id", requirementId)
+          .is("superseded_at", null);
+        const { error: exceptionSupersedeError } = await supersedeExceptionRequest;
+        if (exceptionSupersedeError) throw exceptionSupersedeError;
+
+        if (completionMode === "waived") {
+          const { error: exceptionInsertError } = await supabase
+            .from("labor_compliance_exceptions")
+            .insert({
+              labor_employee_id: laborEmployeeId,
+              requirement_id: requirementId,
+              exception_kind: "waived",
+              original_due_date: reviewCycle?.dueDate || policyCell.due_date || policyCell.original_due_date || null,
+              effective_on: performanceReviewCompletedOn,
+              reason: "Waived from Compliance grid",
+              approved_by_user_id: actorUserId || null,
+              approved_by_name: actorName || null,
+              metadata: {
+                source_module: "compliance_grid",
+                actor_user_id: actorUserId || null,
+                actor_name: actorName || null,
+                requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
+              },
+              created_by_user_id: actorUserId || null,
+              updated_by_user_id: actorUserId || null,
+            });
+          if (exceptionInsertError) throw exceptionInsertError;
+        }
+
+        const evidencePayload = {
+          labor_employee_id: laborEmployeeId,
+          requirement_id: requirementId,
+          completed_on: performanceReviewCompletedOn,
+          renewal_due_date: null,
+          evidence_label: evidenceDocument?.file_name || null,
+          labor_employee_document_id: evidenceDocument?.id || null,
+          external_evidence_url: null,
+          internal_module_ref: null,
+          source_note: completionMode === "waived" ? "Waived in Compliance grid" : "Completed in Compliance grid",
+          is_current: true,
+          superseded_at: null,
+          metadata: {
+            source_module: "compliance_grid",
+            completion_mode: completionMode,
+            actor_user_id: actorUserId || null,
+            actor_name: actorName || null,
+            requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
+          },
+          updated_by_user_id: actorUserId || null,
+        };
+
+        if (existingEvidenceLinkId) {
+          const { error: evidenceUpdateError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .update({
+              ...evidencePayload,
+              updated_at: nowIso,
+            })
+            .eq("id", existingEvidenceLinkId);
+          if (evidenceUpdateError) throw evidenceUpdateError;
+        } else {
+          const { error: supersedeEvidenceError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .update({
+              is_current: false,
+              superseded_at: nowIso,
+              updated_at: nowIso,
+              updated_by_user_id: actorUserId || null,
+            })
+            .eq("labor_employee_id", laborEmployeeId)
+            .eq("requirement_id", requirementId)
+            .eq("is_current", true);
+          if (supersedeEvidenceError) throw supersedeEvidenceError;
+
+          const { error: evidenceInsertError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .insert({
+              ...evidencePayload,
+              created_by_user_id: actorUserId || null,
+            });
+          if (evidenceInsertError) throw evidenceInsertError;
+        }
+
+        await refreshLaborData();
+        closeComplianceReviewEditor();
+        addGlobalToast(completionMode === "waived" ? "Compliance checkpoint waived" : "Compliance checkpoint completed", "success");
+        return;
+      }
+
       if (completionMode === "waived") {
         const existingMetadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
         const { error } = await supabase
@@ -15134,6 +15320,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Modal>
   ) : null;
 
+  const complianceEditorEvidenceRequired = complianceReviewEditorModal
+    ? isReviewCycleEvidenceRequired(complianceReviewEditorModal.reviewCycle)
+    : true;
+  const complianceEditorCompletedHint = complianceEditorEvidenceRequired
+    ? "Requires completed date and PDF evidence"
+    : "Requires completed date";
+
   const complianceReviewEditorModalView = complianceReviewEditorModal ? (
     <Modal title="Update Compliance Checkpoint" onClose={closeComplianceReviewEditor}>
       <div style={{ display: "grid", gap: 14, minWidth: 480, maxWidth: 620 }}>
@@ -15161,7 +15354,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             }}
           >
             <span style={{ display: "block", fontSize: 13, fontWeight: 950 }}>Completed</span>
-            <small style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut, fontWeight: 750 }}>Requires completed date and PDF evidence</small>
+            <small style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut, fontWeight: 750 }}>{complianceEditorCompletedHint}</small>
           </button>
           <button
             type="button"
@@ -15185,7 +15378,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </button>
         </div>
         <Inp label={completionMode === "waived" ? "Waived On" : "Completed On"} type="date" value={performanceReviewCompletedOn} onChange={setPerformanceReviewCompletedOn} required />
-        {completionMode === "completed" && (
+        {completionMode === "completed" && complianceEditorEvidenceRequired && (
           <>
             <input
               ref={performanceReviewEvidenceFileInputRef}

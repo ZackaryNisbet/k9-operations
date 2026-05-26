@@ -163,6 +163,46 @@ describe("performance review compliance", () => {
     expect(status.completed).toBe(false);
   });
 
+  it("treats custom yes/no compliance columns as direct policy requirements", () => {
+    const cycle = buildPerformanceReviewCyclesFromPolicy([
+      {
+        id: "req-custom-test",
+        slug: "custom_test",
+        requirement_kind: "review_checkpoint",
+        title: "Test",
+        evidence_policy: "checkbox_only",
+        display_group: "custom",
+        metadata: { ui_kind: "custom_yes_no" },
+      },
+    ])[0];
+
+    expect(cycle).toMatchObject({
+      requirementId: "req-custom-test",
+      isDirectComplianceRequirement: true,
+      legacyReviewCycle: null,
+    });
+
+    const status = getPerformanceReviewCycleStatus({
+      requirements: [
+        {
+          requirement_id: "req-custom-test",
+          slug: "custom_test",
+          requirement_kind: "review_checkpoint",
+          status: "complete",
+          completed_on: "2026-05-26",
+          evidence_policy: "checkbox_only",
+          evidence_link_id: "link-custom-test",
+        },
+      ],
+    }, cycle, "2026-05-26");
+
+    expect(status.completed).toBe(true);
+    expect(status.evidenceRequired).toBe(false);
+    expect(status.evidenceLinkId).toBe("link-custom-test");
+    expect(status.isDirectComplianceRequirement).toBe(true);
+    expect(status.legacyReviewCycle).toBe("");
+  });
+
   it("keeps employees compliant when no review checkpoint is overdue", () => {
     const result = getPerformanceReviewCompliance({
       review_30_due_date: "2026-01-01",
