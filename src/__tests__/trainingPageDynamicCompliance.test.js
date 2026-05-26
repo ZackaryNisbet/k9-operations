@@ -145,10 +145,29 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("getReviewCycleRequirementId");
     expect(source).toContain('from("labor_compliance_evidence_links")');
     expect(source).toContain('from("labor_compliance_exceptions")');
-    expect(source).toContain("if (isDirectComplianceRequirementCycle(reviewCycle))");
+    expect(source).toContain("const directRequirement = isDirectComplianceRequirementCycle(reviewCycle)");
     expect(source).toContain("reviewInstance: null");
     expect(reviewGridSource).toContain("const isDirectRequirement");
     expect(reviewGridSource).toContain("if (hasCheckpoint || isDirectRequirement) onOpenEvidence(row, cycle);");
+  });
+
+  it("creates legacy review checkpoints with the configured legacy review cycle key", () => {
+    expect(source).toContain("const legacyReviewCycle = getReviewCycleLegacyReviewCycle(reviewCycle)");
+    expect(source).toContain("const reviewCycleKey = legacyReviewCycle");
+    expect(source).toContain("metadata.legacy_review_cycle");
+    expect(source).toContain("p_review_cycle: reviewCycle");
+    expect(source).toContain("announce: false");
+    expect(source).toContain("throwOnError: true");
+  });
+
+  it("keeps empty Compliance cell clicks read-only until the modal save action", () => {
+    expect(source).toContain("const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {\n    handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);\n    return null;");
+    expect(source).toContain("!directRequirement && !legacyReviewCycle");
+    expect(source).toContain("refresh: false");
+    const fileValidationIndex = source.indexOf('if (completionMode === "completed") {\n        if (!performanceReviewEvidenceFile)');
+    const instanceCreateIndex = source.indexOf("reviewInstance = await handleCreateReviewInstanceForEmployee", fileValidationIndex);
+    expect(fileValidationIndex).toBeGreaterThan(-1);
+    expect(instanceCreateIndex).toBeGreaterThan(fileValidationIndex);
   });
 
   it("requires PDF evidence only for completed checkpoints", () => {
