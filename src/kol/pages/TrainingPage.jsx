@@ -27277,7 +27277,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   onChange={(value) => setCreateTemplateKind(value || "training")}
                   options={[
                     { value: "training", label: "Training Template" },
-                    { value: "review", label: "Policy Review Template" },
+                    { value: "review", label: "30 / 60 / 90 Review Template" },
                   ]}
                 />
               </div>

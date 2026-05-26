@@ -4,7 +4,7 @@
 
 ### Web
 - Labor roster was rebuilt around separate roster fields, sortable headers, inactive toggle, unified compliance state, separate 30 / 60 / 90 columns, full-page review flows, and the animated filter/save-view experience.
-- Labor templates now have a real top-right `Add Template` path instead of clone-only creation, and the employee-facing version history no longer leaks source-document provenance.
+- Labor templates now have a real top-right `Add Template` path instead of clone-only creation, and the employee-facing version history no longer leaks source-document provenance. Current edit/resume draft behavior is documented in `docs/LABOR_TEMPLATE_EDIT_WORKFLOW.md`.
 - `Client Management` was relabeled to `Incidents` across the lean shell surfaces, with incident-category cleanup, incident-rate math, and draft recovery support.
 - Homepage now pulls the same canonical core metrics as dashboard logic, includes the `5 a.m. Briefing`, and exposes Inventory, Scheduling, Labor, Incidents, Resources, Grassroots, and Checkout TV quick access.
 - Resources and Grassroots are live resort-level pages.
