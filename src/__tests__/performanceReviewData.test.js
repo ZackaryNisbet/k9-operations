@@ -203,6 +203,42 @@ describe("performance review compliance", () => {
     expect(status.legacyReviewCycle).toBe("");
   });
 
+  it("lets explicit Compliance waiver markers override completed evidence status", () => {
+    const cycle = buildPerformanceReviewCyclesFromPolicy([
+      {
+        id: "req-training-packet",
+        slug: "training_packet",
+        requirement_kind: "review_checkpoint",
+        title: "Training Packet",
+        evidence_policy: "file_required",
+        display_group: "custom",
+        metadata: { ui_kind: "custom_yes_no" },
+      },
+    ])[0];
+
+    const status = getPerformanceReviewCycleStatus({
+      requirements: [
+        {
+          requirement_id: "req-training-packet",
+          slug: "training_packet",
+          requirement_kind: "review_checkpoint",
+          status: "complete",
+          completed_on: "2026-05-26",
+          source_note: "Waived in Compliance grid",
+          evidence_policy: "file_required",
+          evidence_link_id: "link-training-packet",
+        },
+      ],
+    }, cycle, "2026-05-26");
+
+    expect(status.rawStatus).toBe("waived");
+    expect(status.status).toBe("waived");
+    expect(status.completed).toBe(true);
+    expect(status.overdue).toBe(false);
+    expect(status.evidenceMissing).toBe(false);
+    expect(status.evidenceLinkId).toBe("link-training-packet");
+  });
+
   it("keeps employees compliant when no review checkpoint is overdue", () => {
     const result = getPerformanceReviewCompliance({
       review_30_due_date: "2026-01-01",

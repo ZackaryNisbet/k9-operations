@@ -16,6 +16,11 @@ const reviewGridSource = readFileSync(
   "utf8"
 );
 
+const performanceReviewDataSource = readFileSync(
+  new URL("../kol/performanceReviewData.js", import.meta.url),
+  "utf8"
+);
+
 describe("TrainingPage configurable compliance integration", () => {
   it("does not load training compliance requirements through hardcoded slug constants", () => {
     expect(source).not.toContain(".in(\"slug\", Object.values(LABOR_TRAINING_REQUIREMENT_SLUGS))");
@@ -136,12 +141,27 @@ describe("TrainingPage configurable compliance integration", () => {
   it("uses an in-place compliance checkpoint modal instead of routing cells to the old review page", () => {
     expect(source).toContain("complianceReviewEditorModal");
     expect(source).toContain('Modal title="Update Compliance Checkpoint"');
-    expect(source).toContain('setCompletionMode("completed")');
-    expect(source).toContain('setCompletionMode("waived")');
+    expect(source).toContain('setComplianceCompletionMode("completed")');
+    expect(source).toContain('setComplianceCompletionMode("waived")');
+    expect(source).toContain("completionModeRef.current");
+    expect(source).toContain("const selectedCompletionMode = completionModeRef.current || completionMode");
     expect(source).toContain("handleOpenComplianceReviewEditor");
     expect(source).toContain("handleSaveComplianceReviewCheckpoint");
     expect(source).toContain("handleUploadPerformanceReviewEvidence");
     expect(source).not.toContain("setSelectedReviewInstanceId(cycle.instance.id)");
+  });
+
+  it("keeps Compliance checkpoint saves from forcing a full labor page reload", () => {
+    expect(source).toContain("const refreshLaborSupportData = useCallback");
+    expect(source).toContain("await refreshLaborSupportData();");
+    const saveStart = source.indexOf("const handleSaveComplianceReviewCheckpoint = useCallback");
+    const saveEnd = source.indexOf("const closeComplianceRequirementEditor", saveStart);
+    expect(saveStart).toBeGreaterThan(-1);
+    expect(saveEnd).toBeGreaterThan(saveStart);
+    const saveSource = source.slice(saveStart, saveEnd);
+    expect(saveSource).not.toContain("await refreshLaborData();");
+    expect(saveSource).not.toContain("refreshLaborData,");
+    expect(saveSource).toContain("refreshLaborSupportData,");
   });
 
   it("guards compliance PDF viewing behind the dedicated Lite permission", () => {
@@ -177,6 +197,8 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).toContain("if (hasExplicitWaiver)");
     expect(reviewGridSource).toContain("if (hasExplicitCompletion || (completed && status !== \"waived\"))");
     expect(reviewGridSource).not.toContain("waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on");
+    expect(performanceReviewDataSource).toContain("isWaivedPerformanceReviewRequirementStatus(requirementStatus)");
+    expect(performanceReviewDataSource).toContain('sourceNote === "waived in compliance grid"');
   });
 
   it("saves custom Compliance cells directly instead of creating legacy review instances", () => {
@@ -203,7 +225,7 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {\n    handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);\n    return null;");
     expect(source).toContain("!directRequirement && !legacyReviewCycle");
     expect(source).toContain("refresh: false");
-    expect(source).toContain('completionMode === "waived" && laborEmployeeId && requirementId');
+    expect(source).toContain('selectedCompletionMode === "waived" && laborEmployeeId && requirementId');
     expect(source).toContain('source_note: "Waived in Compliance grid"');
     expect(source).toContain("getReviewCycleLegacyReviewCycle");
     expect(source).toContain("getReviewCycleInstanceKeys");
@@ -211,9 +233,9 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("legacyReviewInstanceIds");
     expect(source).toContain("relatedReviewInstanceIds");
     expect(source).toContain("setReviewInstances((prev)");
-    const fileValidationIndex = source.indexOf('if (completionMode === "completed") {\n        if (!performanceReviewEvidenceFile)');
+    const fileValidationIndex = source.indexOf('if (selectedCompletionMode === "completed") {\n        if (!performanceReviewEvidenceFile)');
     const instanceCreateIndex = source.indexOf("reviewInstance = await handleCreateReviewInstanceForEmployee", fileValidationIndex);
-    const policyWaiverIndex = source.indexOf('completionMode === "waived" && laborEmployeeId && requirementId');
+    const policyWaiverIndex = source.indexOf('selectedCompletionMode === "waived" && laborEmployeeId && requirementId');
     expect(fileValidationIndex).toBeGreaterThan(-1);
     expect(policyWaiverIndex).toBeGreaterThan(-1);
     expect(policyWaiverIndex).toBeLessThan(fileValidationIndex);
@@ -221,8 +243,8 @@ describe("TrainingPage configurable compliance integration", () => {
   });
 
   it("requires PDF evidence only for completed checkpoints", () => {
-    expect(source).toContain('completionMode === "completed"');
-    expect(source).toContain('completionMode === "waived"');
+    expect(source).toContain('selectedCompletionMode === "completed"');
+    expect(source).toContain('selectedCompletionMode === "waived"');
     expect(source).toContain("Upload the completed review PDF before saving this checkpoint");
     expect(source).toContain("complete_employee_review_instance");
   });

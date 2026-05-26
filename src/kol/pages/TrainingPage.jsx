@@ -7396,6 +7396,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [performanceReviewCompletedOn, setPerformanceReviewCompletedOn] = useState(todayStr());
   const [complianceReviewEditorModal, setComplianceReviewEditorModal] = useState(null);
   const [completionMode, setCompletionMode] = useState("completed");
+  const completionModeRef = useRef("completed");
+  const setComplianceCompletionMode = useCallback((mode) => {
+    completionModeRef.current = mode;
+    setCompletionMode(mode);
+  }, []);
   const [complianceRequirementEditorOpen, setComplianceRequirementEditorOpen] = useState(false);
   const [complianceRequirementEditingId, setComplianceRequirementEditingId] = useState("");
   const [complianceRequirementTitle, setComplianceRequirementTitle] = useState("");
@@ -8328,6 +8333,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       await loadSupportBundle(true, coreData);
     }
   }, [loadCoreData, loadSupportBundle, loadTrainingBundle]);
+  const refreshLaborSupportData = useCallback(async () => {
+    await loadSupportBundle(true, {
+      resolvedLocationId: resolvedLaborLocationId || laborLocationRef || "",
+      laborEmployees,
+      rosterSnapshot,
+    });
+  }, [laborEmployees, laborLocationRef, loadSupportBundle, resolvedLaborLocationId, rosterSnapshot]);
   const refreshTemplateBundle = useCallback(async () => {
     await loadTrainingBundle(true, laborLocationRef || null);
   }, [laborLocationRef, loadTrainingBundle]);
@@ -12020,12 +12032,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const closeComplianceReviewEditor = useCallback(() => {
     setComplianceReviewEditorModal(null);
-    setCompletionMode("completed");
+    setComplianceCompletionMode("completed");
     setPerformanceReviewCompletedOn(todayStr());
     setPerformanceReviewEvidenceFile(null);
     setPerformanceReviewEvidenceError("");
     if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
-  }, []);
+  }, [setComplianceCompletionMode]);
 
   const handlePreviewComplianceReviewEvidenceDocument = useCallback((document) => {
     closeComplianceReviewEditor();
@@ -12052,12 +12064,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       reviewCycle,
       reviewInstance,
     });
-    setCompletionMode(waiver || policyWaiver ? "waived" : "completed");
+    setComplianceCompletionMode(waiver || policyWaiver ? "waived" : "completed");
     setPerformanceReviewCompletedOn(completedOn);
     setPerformanceReviewEvidenceFile(null);
     setPerformanceReviewEvidenceError("");
     if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
-  }, []);
+  }, [setComplianceCompletionMode]);
 
   const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {
     handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);
@@ -12072,6 +12084,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
     const legacyReviewCycle = getReviewCycleLegacyReviewCycle(reviewCycle) || reviewCycle?.id || reviewCycle?.slug || "";
     if ((!reviewInstance?.id && !directRequirement && !legacyReviewCycle) || !laborEmployee) return;
+    const selectedCompletionMode = completionModeRef.current || completionMode;
     if (!performanceReviewCompletedOn) {
       addGlobalToast("Completed date is required", "error");
       return;
@@ -12093,7 +12106,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const policyCell = getReviewCyclePolicyCell(reviewCycle);
         const existingEvidenceLinkId = reviewCycle?.evidenceLinkId || policyCell.evidence_link_id || policyCell.evidenceLinkId || "";
 
-        if (completionMode === "completed" && evidenceRequired) {
+        if (selectedCompletionMode === "completed" && evidenceRequired) {
           if (!performanceReviewEvidenceFile) {
             setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
             addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
@@ -12129,7 +12142,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const { error: exceptionSupersedeError } = await supersedeExceptionRequest;
         if (exceptionSupersedeError) throw exceptionSupersedeError;
 
-        if (completionMode === "waived") {
+        if (selectedCompletionMode === "waived") {
           const { error: exceptionInsertError } = await supabase
             .from("labor_compliance_exceptions")
             .insert({
@@ -12162,12 +12175,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           labor_employee_document_id: evidenceDocument?.id || null,
           external_evidence_url: null,
           internal_module_ref: null,
-          source_note: completionMode === "waived" ? "Waived in Compliance grid" : "Completed in Compliance grid",
+          source_note: selectedCompletionMode === "waived" ? "Waived in Compliance grid" : "Completed in Compliance grid",
           is_current: true,
           superseded_at: null,
           metadata: {
             source_module: "compliance_grid",
-            completion_mode: completionMode,
+            completion_mode: selectedCompletionMode,
             actor_user_id: actorUserId || null,
             actor_name: actorName || null,
             requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
@@ -12207,13 +12220,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           if (evidenceInsertError) throw evidenceInsertError;
         }
 
-        await refreshLaborData();
+        await refreshLaborSupportData();
         closeComplianceReviewEditor();
-        addGlobalToast(completionMode === "waived" ? "Compliance checkpoint waived" : "Compliance checkpoint completed", "success");
+        addGlobalToast(selectedCompletionMode === "waived" ? "Compliance checkpoint waived" : "Compliance checkpoint completed", "success");
         return;
       }
 
-      if (completionMode === "waived" && laborEmployeeId && requirementId) {
+      if (selectedCompletionMode === "waived" && laborEmployeeId && requirementId) {
         const nowIso = new Date().toISOString();
         const policyCell = getReviewCyclePolicyCell(reviewCycle);
         const existingEvidenceLinkId = reviewCycle?.evidenceLinkId || policyCell.evidence_link_id || policyCell.evidenceLinkId || "";
@@ -12369,14 +12382,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )));
         }
 
-        await refreshLaborData();
+        await refreshLaborSupportData();
         closeComplianceReviewEditor();
         addGlobalToast("Compliance checkpoint waived", "success");
         return;
       }
 
       let acceptedPerformanceReviewFile = null;
-      if (completionMode === "completed") {
+      if (selectedCompletionMode === "completed") {
         if (!performanceReviewEvidenceFile) {
           setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
           addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
@@ -12405,7 +12418,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         if (!reviewInstance?.id) throw new Error("Failed to prepare compliance checkpoint.");
       }
 
-      if (completionMode === "waived") {
+      if (selectedCompletionMode === "waived") {
         const existingMetadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
         const relatedReviewInstanceIds = toObjectRows(reviewInstances)
           .filter((instance) => {
@@ -12457,7 +12470,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             }
             : instance
         )));
-        await refreshLaborData();
+        await refreshLaborSupportData();
         closeComplianceReviewEditor();
         addGlobalToast("Compliance checkpoint waived", "success");
         return;
@@ -12480,7 +12493,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       });
       if (error) throw error;
 
-      await refreshLaborData();
+      await refreshLaborSupportData();
       closeComplianceReviewEditor();
       addGlobalToast("Compliance checkpoint completed", "success");
     } catch (error) {
@@ -12506,7 +12519,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     handleUploadPerformanceReviewEvidence,
     performanceReviewCompletedOn,
     performanceReviewEvidenceFile,
-    refreshLaborData,
+    refreshLaborSupportData,
     reviewInstances,
   ]);
 
@@ -15924,7 +15937,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <button
             type="button"
-            onClick={() => setCompletionMode("completed")}
+            onClick={() => setComplianceCompletionMode("completed")}
             className={`labor-view-option${completionMode === "completed" ? " is-active" : ""}`}
             style={{
               border: `1.5px solid ${completionMode === "completed" ? C.pri : C.borderLight}`,
@@ -15942,7 +15955,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <button
             type="button"
             onClick={() => {
-              setCompletionMode("waived");
+              setComplianceCompletionMode("waived");
               setPerformanceReviewEvidenceError("");
             }}
             className={`labor-view-option${completionMode === "waived" ? " is-active" : ""}`}
