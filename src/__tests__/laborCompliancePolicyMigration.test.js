@@ -17,6 +17,10 @@ const reviewWaiverCleanupSql = readFileSync(
   new URL("../../supabase/migrations/20260526180700_complete_review_clears_waiver_state.sql", import.meta.url),
   "utf8"
 );
+const reviewWaiverRepairSql = readFileSync(
+  new URL("../../supabase/migrations/20260526181930_repair_completed_review_waiver_state.sql", import.meta.url),
+  "utf8"
+);
 
 describe("labor compliance policy spine migration", () => {
   it("creates scoped dynamic policy tables instead of global hardcoded requirements", () => {
@@ -126,6 +130,15 @@ describe("labor compliance policy spine migration", () => {
     expect(reviewWaiverCleanupSql).toContain("completed_at = v_completed_on::timestamptz");
     expect(reviewWaiverCleanupSql).toContain("metadata = (COALESCE(metadata, '{}'::jsonb) - 'completion_waiver' - 'completion_mode')");
     expect(reviewWaiverCleanupSql).toContain("'completion_mode', 'completed'");
+  });
+
+  it("repairs already-completed evidence rows that retained stale waiver state", () => {
+    expect(reviewWaiverRepairSql).toContain("completed_review_requirements");
+    expect(reviewWaiverRepairSql).toContain("eri.metadata ? 'completion_evidence'");
+    expect(reviewWaiverRepairSql).toContain("ex.exception_kind = 'waived'");
+    expect(reviewWaiverRepairSql).toContain("AND ex.superseded_at IS NULL");
+    expect(reviewWaiverRepairSql).toContain("metadata = (COALESCE(metadata, '{}'::jsonb) - 'completion_waiver' - 'completion_mode')");
+    expect(reviewWaiverRepairSql).toContain("'completion_mode', 'completed'");
   });
 
   it("allows compliance evidence PDF uploads through compliance evidence permissions", () => {
