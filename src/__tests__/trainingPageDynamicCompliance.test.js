@@ -140,6 +140,17 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).not.toContain("setSelectedReviewInstanceId(cycle.instance.id)");
   });
 
+  it("saves custom Compliance cells directly instead of creating legacy review instances", () => {
+    expect(source).toContain("isDirectComplianceRequirementCycle");
+    expect(source).toContain("getReviewCycleRequirementId");
+    expect(source).toContain('from("labor_compliance_evidence_links")');
+    expect(source).toContain('from("labor_compliance_exceptions")');
+    expect(source).toContain("if (isDirectComplianceRequirementCycle(reviewCycle))");
+    expect(source).toContain("reviewInstance: null");
+    expect(reviewGridSource).toContain("const isDirectRequirement");
+    expect(reviewGridSource).toContain("if (hasCheckpoint || isDirectRequirement) onOpenEvidence(row, cycle);");
+  });
+
   it("requires PDF evidence only for completed checkpoints", () => {
     expect(source).toContain('completionMode === "completed"');
     expect(source).toContain('completionMode === "waived"');

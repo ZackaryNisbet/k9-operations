@@ -321,7 +321,14 @@ export function buildPerformanceReviewCyclesFromPolicy(policyRequirements = []) 
         : null;
       const order = Number(row.display_order ?? row.displayOrder ?? row.order ?? row.metadata?.display_order ?? row.metadata?.displayOrder ?? offsetDays ?? index);
       const shortLabel = String(row.short_label || row.shortLabel || row.metadata?.short_label || row.metadata?.shortLabel || offsetDays || "").trim();
+      const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
       const evidencePolicy = row.evidence_policy || row.evidencePolicy || "checkbox_only";
+      const legacyReviewCycle = row.legacy_review_cycle
+        || row.legacyReviewCycle
+        || row.review_cycle
+        || row.reviewCycle
+        || metadata.legacy_review_cycle
+        || null;
       return {
         id,
         slug: normalizeReviewPolicyKey(slug || id),
@@ -338,6 +345,8 @@ export function buildPerformanceReviewCyclesFromPolicy(policyRequirements = []) 
         requirement: row,
         evidencePolicy,
         requiresEvidence: ["file_required", "url_or_reference"].includes(evidencePolicy),
+        legacyReviewCycle,
+        isDirectComplianceRequirement: Boolean(row.id || row.requirement_id) && !legacyReviewCycle,
         dueRule,
       };
     })
@@ -463,6 +472,23 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
   const evidencePolicy = requirementStatus?.evidence_policy || requirementStatus?.evidencePolicy || cycle.evidencePolicy || "checkbox_only";
   const evidenceRequired = ["file_required", "url_or_reference"].includes(evidencePolicy);
   const evidence = normalizePerformanceReviewEvidence(requirementStatus || row);
+  const requirementId = requirementStatus?.requirement_id
+    || requirementStatus?.requirementId
+    || cycle.requirementId
+    || cycle.requirement?.id
+    || "";
+  const compatibility = requirementStatus?.compatibility && typeof requirementStatus.compatibility === "object"
+    ? requirementStatus.compatibility
+    : {};
+  const requirementMetadata = cycle.requirement?.metadata && typeof cycle.requirement.metadata === "object"
+    ? cycle.requirement.metadata
+    : {};
+  const legacyReviewCycle = cycle.legacyReviewCycle
+    || requirementStatus?.legacy_review_cycle
+    || requirementStatus?.legacyReviewCycle
+    || compatibility.legacy_review_cycle
+    || requirementMetadata.legacy_review_cycle
+    || "";
   const hasReferenceEvidence = Boolean(
     requirementStatus?.external_evidence_url
       || requirementStatus?.externalEvidenceUrl
@@ -486,6 +512,17 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
     evidenceMissing,
     evidenceUploadedAt: evidence[0]?.uploadedAt || "",
     evidenceUploadedByName: evidence[0]?.uploadedByName || "",
+    requirementStatus,
+    policyCell: requirementStatus,
+    requirementId,
+    evidenceLinkId: requirementStatus?.evidence_link_id || requirementStatus?.evidenceLinkId || "",
+    exceptionKind: requirementStatus?.exception_kind || requirementStatus?.exceptionKind || "",
+    exceptionReason: requirementStatus?.exception_reason || requirementStatus?.exceptionReason || "",
+    originalDueDate: requirementStatus?.original_due_date || requirementStatus?.originalDueDate || "",
+    adjustedDueDate: requirementStatus?.adjusted_due_date || requirementStatus?.adjustedDueDate || "",
+    legacyReviewCycle,
+    legacyReviewInstanceId: compatibility.legacy_review_instance_id || requirementStatus?.legacy_review_instance_id || requirementStatus?.legacyReviewInstanceId || "",
+    isDirectComplianceRequirement: Boolean(requirementId) && !legacyReviewCycle,
     rawStatus,
     status,
     overdue,
