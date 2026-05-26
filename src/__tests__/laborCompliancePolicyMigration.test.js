@@ -21,6 +21,10 @@ const reviewWaiverRepairSql = readFileSync(
   new URL("../../supabase/migrations/20260526181930_repair_completed_review_waiver_state.sql", import.meta.url),
   "utf8"
 );
+const complianceCellStateControlsSql = readFileSync(
+  new URL("../../supabase/migrations/20260526231525_labor_compliance_cell_state_controls.sql", import.meta.url),
+  "utf8"
+);
 
 describe("labor compliance policy spine migration", () => {
   it("creates scoped dynamic policy tables instead of global hardcoded requirements", () => {
@@ -152,5 +156,26 @@ describe("labor compliance policy spine migration", () => {
     expect(uploadRlsSql).toContain("storage_path LIKE (labor_employee_id::text || '/requirements/performance-review-%')");
     expect(uploadRlsSql).toContain("COALESCE(metadata->>'source_module', '') IN ('performance_reviews', 'compliance_requirements')");
     expect(uploadRlsSql).toContain("'Labor Compliance View PDFs'");
+  });
+
+  it("adds canonical per-cell state controls without replacing immutable history rows", () => {
+    expect(complianceCellStateControlsSql).toContain("CREATE TABLE IF NOT EXISTS public.labor_compliance_due_date_overrides");
+    expect(complianceCellStateControlsSql).toContain("CREATE TABLE IF NOT EXISTS public.labor_compliance_notes");
+    expect(complianceCellStateControlsSql).toContain("CREATE UNIQUE INDEX IF NOT EXISTS labor_compliance_due_date_overrides_current_unique_idx");
+    expect(complianceCellStateControlsSql).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(complianceCellStateControlsSql).toContain("public.labor_compliance_can_update_evidence(e.location_id)");
+    expect(complianceCellStateControlsSql).toContain("GRANT SELECT, INSERT, UPDATE ON TABLE public.labor_compliance_due_date_overrides TO authenticated");
+    expect(complianceCellStateControlsSql).not.toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.labor_compliance_due_date_overrides TO authenticated");
+    expect(complianceCellStateControlsSql).toContain("CREATE OR REPLACE FUNCTION public.set_labor_compliance_checkpoint_state");
+    expect(complianceCellStateControlsSql).toContain("v_state NOT IN ('completed', 'waived', 'not_started')");
+    expect(complianceCellStateControlsSql).toContain("document_type <> 'performance_review_evidence'");
+    expect(complianceCellStateControlsSql).toContain("is_current = false");
+    expect(complianceCellStateControlsSql).toContain("superseded_at = COALESCE(superseded_at, v_now)");
+    expect(complianceCellStateControlsSql).toContain("'completion_mode', 'waived'");
+    expect(complianceCellStateControlsSql).toContain("metadata = COALESCE(metadata, '{}'::jsonb) - 'completion_evidence' - 'completion_waiver' - 'completion_mode'");
+    expect(complianceCellStateControlsSql).toContain("CREATE OR REPLACE FUNCTION public.set_labor_compliance_due_date");
+    expect(complianceCellStateControlsSql).toContain("CREATE OR REPLACE FUNCTION public.append_labor_compliance_note");
+    expect(complianceCellStateControlsSql).toContain("latest_due_overrides");
+    expect(complianceCellStateControlsSql).toContain("'due_date_override_id', sr.due_date_override_id");
   });
 });

@@ -107,7 +107,8 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).toContain('label: "Waived"');
     expect(reviewGridSource).toContain('label: "Not Started"');
     expect(reviewGridSource).not.toContain("Evidence Due");
-    expect(reviewGridSource).toContain("Date due");
+    expect(reviewGridSource).toContain("No due date");
+    expect(reviewGridSource).not.toContain("Date due");
     expect(reviewGridSource).toContain("Date waived");
     expect(reviewGridSource).toContain("Action date");
     expect(reviewGridSource).not.toContain("Action date pending");
@@ -143,11 +144,16 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('Modal title="Update Compliance Checkpoint"');
     expect(source).toContain('setComplianceCompletionMode("completed")');
     expect(source).toContain('setComplianceCompletionMode("waived")');
+    expect(source).toContain('setComplianceCompletionMode("not_started")');
     expect(source).toContain("completionModeRef.current");
     expect(source).toContain("const selectedCompletionMode = completionModeRef.current || completionMode");
     expect(source).toContain("handleOpenComplianceReviewEditor");
     expect(source).toContain("handleSaveComplianceReviewCheckpoint");
     expect(source).toContain("handleUploadPerformanceReviewEvidence");
+    expect(source).toContain("handleSaveComplianceDueDate");
+    expect(source).toContain("handleAddComplianceCellNote");
+    expect(source).toContain("Cell History");
+    expect(source).toContain("Add Note");
     expect(source).not.toContain("setSelectedReviewInstanceId(cycle.instance.id)");
   });
 
@@ -204,8 +210,10 @@ describe("TrainingPage configurable compliance integration", () => {
   it("saves custom Compliance cells directly instead of creating legacy review instances", () => {
     expect(source).toContain("isDirectComplianceRequirementCycle");
     expect(source).toContain("getReviewCycleRequirementId");
-    expect(source).toContain('from("labor_compliance_evidence_links")');
-    expect(source).toContain('from("labor_compliance_exceptions")');
+    expect(source).toContain('supabase.rpc("set_labor_compliance_checkpoint_state"');
+    expect(source).toContain('p_state: selectedCompletionMode');
+    expect(source).toContain('p_state: "not_started"');
+    expect(source).not.toContain('source_note: "Waived in Compliance grid"');
     expect(source).toContain("const directRequirement = isDirectComplianceRequirementCycle(reviewCycle)");
     expect(source).toContain("reviewInstance: null");
     expect(reviewGridSource).toContain("const isDirectRequirement");
@@ -226,11 +234,10 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("!directRequirement && !legacyReviewCycle");
     expect(source).toContain("refresh: false");
     expect(source).toContain('selectedCompletionMode === "waived" && laborEmployeeId && requirementId');
-    expect(source).toContain('source_note: "Waived in Compliance grid"');
+    expect(source).toContain('p_state: "waived"');
     expect(source).toContain("getReviewCycleLegacyReviewCycle");
     expect(source).toContain("getReviewCycleInstanceKeys");
     expect(source).toContain("reviewInstanceMatchesReviewCycle");
-    expect(source).toContain("legacyReviewInstanceIds");
     expect(source).toContain("relatedReviewInstanceIds");
     expect(source).toContain("setReviewInstances((prev)");
     const fileValidationIndex = source.indexOf('if (selectedCompletionMode === "completed") {\n        if (!performanceReviewEvidenceFile)');
