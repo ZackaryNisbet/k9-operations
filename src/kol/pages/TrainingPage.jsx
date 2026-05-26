@@ -91,6 +91,7 @@ import {
 import AttendanceTrackerPage from "./AttendancePage";
 import LaborInterviewsPage from "./LaborInterviewsPage";
 import PerformanceReviewComplianceGrid, {
+  getCompletionEvidence,
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
@@ -762,6 +763,41 @@ function getReviewCycleEvidencePolicy(reviewCycle = {}) {
 }
 function isReviewCycleEvidenceRequired(reviewCycle = {}) {
   return Boolean(reviewCycle?.evidenceRequired || reviewCycle?.requiresEvidence || COMPLIANCE_EVIDENCE_REQUIRED_POLICIES.has(getReviewCycleEvidencePolicy(reviewCycle)));
+}
+function getReviewCycleEvidenceDocument(reviewCycle = {}, documentsById = {}) {
+  const evidence = getCompletionEvidence(reviewCycle);
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const documentIdCandidates = [
+    evidence.documentId,
+    evidence.id,
+    policyCell.labor_employee_document_id,
+    policyCell.document_id,
+    policyCell.evidence_document_id,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const matchedDocument = documentIdCandidates.map((id) => documentsById[id]).find(Boolean);
+  if (matchedDocument) return matchedDocument;
+
+  const fileName = evidence.fileName || policyCell.evidence_label || policyCell.document_file_name || "";
+  const storagePath = evidence.storagePath || policyCell.storage_path || "";
+  const externalUrl = evidence.url || policyCell.external_evidence_url || "";
+  if (!fileName && !storagePath && !externalUrl) return null;
+
+  return {
+    id: documentIdCandidates[0] || `${fileName || storagePath || externalUrl}-compliance-evidence`,
+    document_type: "performance_review_evidence",
+    file_name: fileName || "Compliance evidence PDF",
+    storage_bucket: evidence.storageBucket || policyCell.storage_bucket || LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+    storage_path: storagePath,
+    external_url: externalUrl,
+    mime_type: "application/pdf",
+    file_size_bytes: Number(policyCell.file_size_bytes || 0),
+    uploaded_at: evidence.uploadedAt || policyCell.uploaded_at || "",
+    uploaded_by_name: evidence.uploadedByName || policyCell.uploaded_by_name || "",
+    metadata: {
+      source_module: "compliance_requirements",
+      source: "compliance_grid",
+    },
+  };
 }
 function getReviewCycleDueDateForSort(row = {}, sortKey = "") {
   const cycle = findReviewCycleRowBySortKey(row, sortKey);
@@ -8492,6 +8528,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return acc;
     }, {});
   }, [laborEmployeeDocuments]);
+  const laborEmployeeDocumentsById = useMemo(() => {
+    return Object.fromEntries(toObjectRows(laborEmployeeDocuments)
+      .map((document) => [document.id, document])
+      .filter(([documentId]) => documentId));
+  }, [laborEmployeeDocuments]);
   const laborComplianceBoardEmployeeById = useMemo(() => {
     return Object.fromEntries(toObjectRows(laborComplianceBoardEmployees)
       .map((employee) => [employee.labor_employee_id || employee.id, employee])
@@ -15615,6 +15656,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const complianceEditorCompletedHint = complianceEditorEvidenceRequired
     ? "Requires completed date and PDF evidence"
     : "Requires completed date";
+  const complianceReviewEvidenceDocument = complianceReviewEditorModal
+    ? getReviewCycleEvidenceDocument(complianceReviewEditorModal.reviewCycle, laborEmployeeDocumentsById)
+    : null;
+  const complianceReviewEvidenceUploadedLabel = complianceReviewEvidenceDocument?.uploaded_at
+    ? formatTrainingTimestamp(complianceReviewEvidenceDocument.uploaded_at)
+    : "";
 
   const complianceReviewEditorModalView = complianceReviewEditorModal ? (
     <Modal title="Update Compliance Checkpoint" onClose={closeComplianceReviewEditor}>
@@ -15627,6 +15674,43 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             {complianceReviewEditorModal.reviewCycle?.label || complianceReviewEditorModal.reviewInstance?.review_cycle || "Policy checkpoint"}
           </div>
         </div>
+        {complianceReviewEvidenceDocument ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              padding: "9px 10px",
+              border: `1px solid ${C.borderLight}`,
+              borderRadius: 8,
+              background: C.bg,
+              minWidth: 0,
+            }}
+          >
+            <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 12, fontWeight: 900, color: C.text }}>
+                <I.FileText />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {complianceReviewEvidenceDocument.file_name || "Compliance evidence PDF"}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 750, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {complianceReviewEvidenceUploadedLabel || "PDF evidence attached"}
+                {complianceReviewEvidenceDocument.file_size_bytes ? ` · ${formatLaborAttachmentFileSize(complianceReviewEvidenceDocument.file_size_bytes)}` : ""}
+              </div>
+            </div>
+            <Btn
+              variant="secondary"
+              size="sm"
+              icon={canViewCompliancePdfs ? <I.FileText /> : <I.EyeOff />}
+              onClick={() => handlePreviewEmployeeDocument(complianceReviewEvidenceDocument)}
+              disabled={!canViewCompliancePdfs || previewingAttachmentId === complianceReviewEvidenceDocument.id}
+            >
+              {!canViewCompliancePdfs ? "PDF Restricted" : previewingAttachmentId === complianceReviewEvidenceDocument.id ? "Opening..." : "Open PDF"}
+            </Btn>
+          </div>
+        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <button
             type="button"
