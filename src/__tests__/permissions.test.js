@@ -57,6 +57,7 @@ describe("lean permission aliases", () => {
     const required = [
       "Labor Compliance View",
       "Labor Compliance Update Evidence",
+      "Labor Compliance View PDFs",
       "Labor Compliance Manage Policy",
       "Labor Compliance Historical Cleanup",
     ];
@@ -75,6 +76,8 @@ describe("lean permission aliases", () => {
     });
 
     expect(hasLeanPermission({ role: "supervisor" }, "Labor Compliance View")).toBe(true);
+    expect(hasLeanPermission({ role: "supervisor" }, "Labor Compliance View PDFs")).toBe(true);
+    expect(hasLeanPermission({ role: "csr" }, "Labor Compliance View PDFs")).toBe(false);
     expect(hasLeanPermission({ role: "supervisor" }, "Labor Compliance Manage Policy")).toBe(false);
     expect(hasLeanPermission({ role: "manager" }, "Labor Compliance Manage Policy")).toBe(true);
     expect(hasLeanPermission({ role: "location_admin" }, "Labor Compliance Historical Cleanup")).toBe(true);
