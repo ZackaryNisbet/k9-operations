@@ -10799,7 +10799,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           section_type: parentSectionId ? "module" : "phase",
           sequence_order: nextOrder,
           instructions: null,
-          completion_mode: "complete_only",
+          completion_mode: "observe_participate_demonstrate",
         };
     setSavingTemplateFieldCount((count) => count + 1);
     try {
@@ -10843,7 +10843,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           item_type: "task",
           sequence_order: nextOrder,
           required: true,
-          completion_mode: "complete_only",
+          completion_mode: "observe_participate_demonstrate",
         };
     setSavingTemplateFieldCount((count) => count + 1);
     try {
@@ -15247,6 +15247,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       );
     }
+    const trainingCompletionMode = item.completion_mode || "observe_participate_demonstrate";
+    const usesStandardReadinessMode = trainingCompletionMode === "observe_participate_demonstrate";
 
     return (
       <div key={item.id} className="template-builder-item-editor">
@@ -15324,20 +15326,37 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   ]}
                 />
               </label>
-              <label className="template-builder-field">
+              <div className="template-builder-field is-wide">
                 <span>Completion mode</span>
-                <CustomSelect
-                  value={item.completion_mode || "complete_only"}
-                  onChange={(value) => handleUpdateTemplateItem(item.id, { completion_mode: value || "complete_only" })}
-                  options={[
-                    { value: "complete_only", label: "Complete only" },
-                    { value: "pass_fail", label: "Pass / fail" },
-                    { value: "observe_participate_demonstrate", label: "Observe → Participate → Demonstrate" },
-                    { value: "score_based", label: "Score based" },
-                    { value: "dependency_rollup", label: "Dependency rollup" },
-                  ]}
-                />
-              </label>
+                <div className="template-builder-standard-mode">
+                  <div className="template-builder-standard-mode-head">
+                    <strong>Readiness statuses</strong>
+                    {!usesStandardReadinessMode && (
+                      <Btn
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleUpdateTemplateItem(item.id, { completion_mode: "observe_participate_demonstrate" })}
+                      >
+                        Use Standard
+                      </Btn>
+                    )}
+                  </div>
+                  <div className="template-builder-standard-mode-options">
+                    {PCT_READINESS_STATUS_OPTIONS.map((option) => {
+                      const statusStyle = PCT_READINESS_STATUS_STYLES[option.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                      return (
+                        <span
+                          key={option.value}
+                          className="template-builder-standard-mode-chip"
+                          style={{ background: statusStyle.bg, borderColor: statusStyle.border, color: statusStyle.text }}
+                        >
+                          {option.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
               <label className="template-builder-field is-wide">
                 <span>Task description</span>
                 <textarea
@@ -18131,6 +18150,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .template-builder-title-input:focus {
           border-color: rgba(20, 83, 45, 0.52);
           box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.09);
+        }
+        .template-builder-standard-mode {
+          border: 1px solid #dbe5ef;
+          border-radius: 12px;
+          background: #fff;
+          padding: 10px 11px;
+        }
+        .template-builder-standard-mode-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          color: ${C.text};
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .template-builder-standard-mode-options {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 7px;
+          margin-top: 9px;
+        }
+        .template-builder-standard-mode-chip {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 25px;
+          border: 1px solid;
+          border-radius: 7px;
+          padding: 4px 8px;
+          font-size: 11px;
+          font-weight: 900;
+          line-height: 1.15;
         }
         .template-builder-item-preview {
           display: flex;
@@ -26079,7 +26132,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: true }, "All tasks marked required")}>All required</Btn>
                       <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: false }, "All tasks marked optional")}>All optional</Btn>
                       <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "checkbox" }, "All tasks set to checklist")}>Checklist</Btn>
-                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ completion_mode: "pass_fail" }, "All tasks set to pass / fail")}>Pass / fail</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ completion_mode: "observe_participate_demonstrate" }, "All tasks use readiness statuses")}>Readiness statuses</Btn>
                     </div>
                   )}
                 </div>
