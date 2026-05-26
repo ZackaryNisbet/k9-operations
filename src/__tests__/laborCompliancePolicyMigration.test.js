@@ -13,6 +13,10 @@ const uploadRlsSql = readFileSync(
   new URL("../../supabase/migrations/20260526160513_compliance_evidence_upload_rls.sql", import.meta.url),
   "utf8"
 );
+const reviewWaiverCleanupSql = readFileSync(
+  new URL("../../supabase/migrations/20260526180700_complete_review_clears_waiver_state.sql", import.meta.url),
+  "utf8"
+);
 
 describe("labor compliance policy spine migration", () => {
   it("creates scoped dynamic policy tables instead of global hardcoded requirements", () => {
@@ -113,6 +117,15 @@ describe("labor compliance policy spine migration", () => {
     expect(reviewEvidenceSql).toContain("'employee_review_instances'");
     expect(reviewEvidenceSql).toContain("'completion_evidence'");
     expect(reviewEvidenceSql).toContain("GRANT EXECUTE ON FUNCTION public.complete_employee_review_instance(uuid, uuid, text, uuid, date) TO authenticated");
+  });
+
+  it("clears waiver state when a review checkpoint is completed after being waived", () => {
+    expect(reviewWaiverCleanupSql).toContain("CREATE OR REPLACE FUNCTION public.complete_employee_review_instance");
+    expect(reviewWaiverCleanupSql).toContain("UPDATE public.labor_compliance_exceptions");
+    expect(reviewWaiverCleanupSql).toContain("AND superseded_at IS NULL");
+    expect(reviewWaiverCleanupSql).toContain("completed_at = v_completed_on::timestamptz");
+    expect(reviewWaiverCleanupSql).toContain("metadata = (COALESCE(metadata, '{}'::jsonb) - 'completion_waiver' - 'completion_mode')");
+    expect(reviewWaiverCleanupSql).toContain("'completion_mode', 'completed'");
   });
 
   it("allows compliance evidence PDF uploads through compliance evidence permissions", () => {
