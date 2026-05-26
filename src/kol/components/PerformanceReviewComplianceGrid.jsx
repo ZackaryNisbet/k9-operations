@@ -60,15 +60,20 @@ function getCellKey(employeeId, cycle = {}) {
   return `${employeeId || "employee"}:${getCycleKey(cycle)}`;
 }
 
-function getCompletionEvidence(cycle = {}) {
+export function getCompletionEvidence(cycle = {}) {
   const metadataEvidence = cycle.instance?.metadata?.completion_evidence && typeof cycle.instance.metadata.completion_evidence === "object"
     ? cycle.instance.metadata.completion_evidence
     : {};
   const evidence = Array.isArray(cycle.evidence) ? cycle.evidence[0] || {} : {};
   return {
+    id: metadataEvidence.id || metadataEvidence.labor_employee_document_id || evidence.id || evidence.documentId || "",
+    documentId: metadataEvidence.labor_employee_document_id || metadataEvidence.document_id || evidence.documentId || evidence.id || "",
     fileName: metadataEvidence.file_name || metadataEvidence.evidence_label || evidence.fileName || "",
     uploadedAt: metadataEvidence.uploaded_at || evidence.uploadedAt || cycle.evidenceUploadedAt || "",
     uploadedByName: evidence.uploadedByName || cycle.evidenceUploadedByName || cycle.instance?.reviewer_name || "",
+    storageBucket: metadataEvidence.storage_bucket || evidence.storageBucket || "",
+    storagePath: metadataEvidence.storage_path || evidence.storagePath || "",
+    url: metadataEvidence.external_url || evidence.url || "",
     completedOn: cycle.completedDate || metadataEvidence.completed_on || "",
   };
 }
@@ -256,6 +261,12 @@ export function ReviewCycleCell({
   const actionLabel = action.value ? `${action.label} ${formatCellDate(action.value, formatDate)}` : "";
   const uploadedLabel = evidence.uploadedAt ? `Uploaded ${formatTimestamp(evidence.uploadedAt)}` : "";
   const hasEvidencePdf = Boolean(evidence.fileName || evidence.uploadedAt);
+  const evidenceActionDate = action.value ? formatCellDate(action.value, formatDate) : "";
+  const evidenceActionLabel = evidenceActionDate && state.key === "waived"
+    ? `Waived ${evidenceActionDate}`
+    : evidenceActionDate && (state.key === "completed" || state.key === "completed-late")
+      ? `Completed ${evidenceActionDate}`
+      : evidenceActionDate;
   const evidenceTitle = canViewPdfs && evidence.fileName
     ? evidence.fileName
     : hasEvidencePdf
@@ -278,10 +289,27 @@ export function ReviewCycleCell({
         <span>{state.label}</span>
       </span>
       <span className="review-cycle-cell-detail">{dueLabel}</span>
-      {actionLabel ? <span className="review-cycle-cell-detail">{actionLabel}</span> : null}
-      {canViewPdfs && evidence.fileName ? <span className="review-cycle-cell-file">{evidence.fileName}</span> : null}
-      {canViewPdfs && !evidence.fileName && uploadedLabel ? <span className="review-cycle-cell-file">{uploadedLabel}</span> : null}
-      {!canViewPdfs && hasEvidencePdf ? <span className="review-cycle-cell-file is-restricted">PDF restricted</span> : null}
+      {canViewPdfs && evidence.fileName ? (
+        <span className="review-cycle-cell-evidence">
+          <I.FileText />
+          <span className="review-cycle-cell-file">{evidence.fileName}</span>
+          {evidenceActionLabel ? <span className="review-cycle-cell-evidence-date">{evidenceActionLabel}</span> : null}
+        </span>
+      ) : canViewPdfs && !evidence.fileName && uploadedLabel ? (
+        <span className="review-cycle-cell-evidence">
+          <I.FileText />
+          <span className="review-cycle-cell-file">{uploadedLabel}</span>
+          {evidenceActionLabel ? <span className="review-cycle-cell-evidence-date">{evidenceActionLabel}</span> : null}
+        </span>
+      ) : !canViewPdfs && hasEvidencePdf ? (
+        <span className="review-cycle-cell-evidence is-restricted">
+          <I.FileText />
+          <span className="review-cycle-cell-file">PDF restricted</span>
+          {evidenceActionLabel ? <span className="review-cycle-cell-evidence-date">{evidenceActionLabel}</span> : null}
+        </span>
+      ) : actionLabel ? (
+        <span className="review-cycle-cell-detail">{actionLabel}</span>
+      ) : null}
     </button>
   );
 }
@@ -1284,6 +1312,39 @@ export function PerformanceReviewComplianceGridStyles() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.review-cycle-cell-evidence {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: currentColor;
+  opacity: .78;
+  font-size: 10.5px;
+  font-weight: 760;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.review-cycle-cell-evidence svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  stroke-width: 2.25;
+}
+.review-cycle-cell-evidence .review-cycle-cell-file {
+  min-width: 0;
+  display: block;
+  opacity: 1;
+  flex: 1 1 auto;
+}
+.review-cycle-cell-evidence-date {
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 48%;
+}
+.review-cycle-cell-evidence.is-restricted {
+  opacity: .58;
 }
 .review-cycle-cell-file.is-restricted {
   opacity: .58;
