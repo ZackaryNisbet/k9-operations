@@ -78,7 +78,7 @@ function getCompletionWaiver(cycle = {}) {
     ? cycle.instance.metadata.completion_waiver
     : {};
   return {
-    waivedOn: cycle.waivedOn || waiver.waived_on || String(cycle.instance?.completed_at || "").slice(0, 10) || "",
+    waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on || String(cycle.instance?.completed_at || "").slice(0, 10) || "",
     actorName: waiver.actor_name || cycle.instance?.reviewer_name || "",
   };
 }
@@ -236,6 +236,7 @@ export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint
   const evidence = getCompletionEvidence(cycle);
   const waiver = getCompletionWaiver(cycle);
   const hasCheckpoint = Boolean(cycle.instance?.id);
+  const isDirectRequirement = Boolean(cycle.isDirectComplianceRequirement || (cycle.requirementId && !cycle.legacyReviewCycle));
   const action = state.key === "waived"
     ? { label: "Date waived", value: waiver.waivedOn }
     : state.key === "completed" || state.key === "completed-late"
@@ -252,10 +253,10 @@ export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint
       type="button"
       className={joinClassNames("review-cycle-cell", `is-${state.key}`)}
       onClick={() => {
-        if (hasCheckpoint) onOpenEvidence(row, cycle);
+        if (hasCheckpoint || isDirectRequirement) onOpenEvidence(row, cycle);
         else onCreateCheckpoint(row, cycle);
       }}
-      disabled={!hasCheckpoint && !row.template}
+      disabled={!hasCheckpoint && !isDirectRequirement && !row.template}
       title={evidence.fileName || state.detail}
     >
       <span className="review-cycle-cell-token">
