@@ -10,6 +10,7 @@ import { I } from "../../shared/icons";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
 import { useWeatherData } from "../../hooks/useWeatherData";
+import { useWeatherDisplaySettings } from "../../hooks/useWeatherDisplaySettings";
 import WeatherHourlyGraph from "../../shared/WeatherHourlyGraph";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import {
@@ -1591,6 +1592,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
   const { health: platformHealth, loading: platformHealthLoading } = usePlatformHealth(locationId, today);
   const [showPlatformHealth, setShowPlatformHealth] = useState(false);
   const [showWeather, setShowWeather] = useState(false);
+  const { showDashboardWeather } = useWeatherDisplaySettings(locationId || "cherry-hill");
   const {
     getWeatherForDate,
     loading: weatherLoading,
@@ -1598,7 +1600,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
     limitations: weatherLimitations,
     refresh: refreshWeather,
   } = useWeatherData(locationId || "cherry-hill", today, today, {
-    enabled: Boolean(locationId || "cherry-hill"),
+    enabled: showDashboardWeather && Boolean(locationId || "cherry-hill"),
   });
   const weather = getWeatherForDate(today);
   const [inventorySummary, setInventorySummary] = useState({
@@ -1644,12 +1646,14 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
 
   const healthButton = (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-      <HomeWeatherButton
-        weather={weather}
-        loading={weatherLoading}
-        error={weatherError}
-        onClick={() => setShowWeather(true)}
-      />
+      {showDashboardWeather ? (
+        <HomeWeatherButton
+          weather={weather}
+          loading={weatherLoading}
+          error={weatherError}
+          onClick={() => setShowWeather(true)}
+        />
+      ) : null}
       <HomePlatformHealthButton
         health={platformHealth}
         loading={platformHealthLoading}
@@ -1657,7 +1661,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
       />
     </div>
   );
-  const weatherCard = (
+  const weatherCard = showDashboardWeather ? (
     <HomeWeatherCard
       weather={weather}
       loading={weatherLoading}
@@ -1666,7 +1670,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
       targetDate={today}
       onOpen={() => setShowWeather(true)}
     />
-  );
+  ) : null;
 
   let content;
   if (tier === "staff") {
@@ -1728,7 +1732,7 @@ function HomePage({ nav, profile, analyticsMode, currentLocation }) {
           onClose={() => setShowPlatformHealth(false)}
         />
       ) : null}
-      {showWeather ? (
+      {showDashboardWeather && showWeather ? (
         <HomeWeatherModal
           weather={weather}
           loading={weatherLoading}

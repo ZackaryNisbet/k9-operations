@@ -9,7 +9,7 @@ import {
   resolveLeanPermissionKeys,
   resolveLeanRoleKey,
 } from "../shared/permissions";
-import { LEAN_ROLES } from "../shared/theme";
+import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_CATEGORIES, LEAN_PERMISSION_MATRIX, LEAN_ROLES } from "../shared/theme";
 
 describe("lean permission aliases", () => {
   it("maps newer admin-style roles onto the lean permission matrix", () => {
@@ -51,6 +51,33 @@ describe("lean permission aliases", () => {
     expect(hasLeanPermission({ role: "supervisor" }, "Inventory Edit Catalog")).toBe(false);
     expect(hasLeanPermission({ role: "manager" }, "Inventory Edit Catalog")).toBe(true);
     expect(hasLeanPermission({ role: "manager" }, "Labor Manage Interviews")).toBe(true);
+  });
+
+  it("exposes split labor compliance permissions in the UI matrix", () => {
+    const required = [
+      "Labor Compliance View",
+      "Labor Compliance Update Evidence",
+      "Labor Compliance Manage Policy",
+      "Labor Compliance Historical Cleanup",
+    ];
+
+    required.forEach((key) => {
+      expect(LEAN_PERMISSION_AREAS).toContain(key);
+    });
+
+    const laborCategory = LEAN_PERMISSION_CATEGORIES.find((category) => category.key === "labor");
+    expect(laborCategory?.permissions.map((permission) => permission.key)).toEqual(expect.arrayContaining(required));
+
+    Object.values(LEAN_PERMISSION_MATRIX).forEach((permissions) => {
+      required.forEach((key) => {
+        expect(permissions).toHaveProperty(key);
+      });
+    });
+
+    expect(hasLeanPermission({ role: "supervisor" }, "Labor Compliance View")).toBe(true);
+    expect(hasLeanPermission({ role: "supervisor" }, "Labor Compliance Manage Policy")).toBe(false);
+    expect(hasLeanPermission({ role: "manager" }, "Labor Compliance Manage Policy")).toBe(true);
+    expect(hasLeanPermission({ role: "location_admin" }, "Labor Compliance Historical Cleanup")).toBe(true);
   });
 
   it("builds a permission matrix from persisted lite permission overrides without mutating defaults", () => {

@@ -18,6 +18,7 @@ import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
 import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { useWeatherData } from "../../hooks/useWeatherData";
+import { useWeatherDisplaySettings } from "../../hooks/useWeatherDisplaySettings";
 import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
 import { mergeGingrLive } from "../../shared/gingrLive";
@@ -1074,6 +1075,7 @@ function DashboardContent({
   const [showWeatherModal, setShowWeatherModal] = useState(false);
   const today = todayStr();
   const dashboardLocationId = locationId || profile?.location_id || "cherry-hill";
+  const { showDashboardWeather } = useWeatherDisplaySettings(dashboardLocationId);
   const {
     getWeatherForDate: getDashboardWeatherForDate,
     loading: dashboardWeatherLoading,
@@ -1081,7 +1083,7 @@ function DashboardContent({
     limitations: dashboardWeatherLimitations,
     refresh: refreshDashboardWeather,
   } = useWeatherData(dashboardLocationId, today, today, {
-    enabled: Boolean(dashboardLocationId),
+    enabled: showDashboardWeather && Boolean(dashboardLocationId),
   });
   const dashboardWeather = getDashboardWeatherForDate(today);
   const { events: enrichmentEvents, loading: enrichmentLoading } = useEnrichmentEvents(locationId || profile?.location_id || "demo", today);
@@ -1854,7 +1856,7 @@ function DashboardContent({
           onClose={() => setShowPlatformHealthModal(false)}
         />
       )}
-      {showWeatherModal && (
+      {showDashboardWeather && showWeatherModal && (
         <DashboardWeatherModal
           weather={dashboardWeather}
           loading={dashboardWeatherLoading}
@@ -1897,12 +1899,14 @@ function DashboardContent({
               onClick={() => setShowPlatformHealthModal(true)}
             />
           )}
-          <DashboardWeatherStatusButton
-            weather={dashboardWeather}
-            loading={dashboardWeatherLoading}
-            error={dashboardWeatherError}
-            onClick={() => setShowWeatherModal(true)}
-          />
+          {showDashboardWeather ? (
+            <DashboardWeatherStatusButton
+              weather={dashboardWeather}
+              loading={dashboardWeatherLoading}
+              error={dashboardWeatherError}
+              onClick={() => setShowWeatherModal(true)}
+            />
+          ) : null}
           <button
             onClick={refresh}
             disabled={metricsLoading}
@@ -1947,14 +1951,16 @@ function DashboardContent({
         )}
       </div>
 
-      <DashboardWeatherStrip
-        weather={dashboardWeather}
-        loading={dashboardWeatherLoading}
-        error={dashboardWeatherError}
-        limitations={dashboardWeatherLimitations}
-        targetDate={today}
-        onOpen={() => setShowWeatherModal(true)}
-      />
+      {showDashboardWeather ? (
+        <DashboardWeatherStrip
+          weather={dashboardWeather}
+          loading={dashboardWeatherLoading}
+          error={dashboardWeatherError}
+          limitations={dashboardWeatherLimitations}
+          targetDate={today}
+          onOpen={() => setShowWeatherModal(true)}
+        />
+      ) : null}
 
       {/* ═══ MAIN CONTENT ═══ */}
       {analyticsMode ? (
