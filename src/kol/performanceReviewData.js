@@ -400,6 +400,15 @@ function isReviewLateStatus(status) {
   return ["completed_late", "complete_late", "late_complete"].includes(String(status || "").trim().toLowerCase());
 }
 
+function isWaivedPerformanceReviewRequirementStatus(requirementStatus = {}) {
+  const exceptionKind = String(requirementStatus?.exception_kind || requirementStatus?.exceptionKind || "").trim().toLowerCase();
+  if (exceptionKind === "waived") return true;
+  const metadata = requirementStatus?.metadata && typeof requirementStatus.metadata === "object" ? requirementStatus.metadata : {};
+  if (String(metadata.completion_mode || "").trim().toLowerCase() === "waived") return true;
+  const sourceNote = String(requirementStatus?.source_note || requirementStatus?.sourceNote || "").trim().toLowerCase();
+  return sourceNote === "waived in compliance grid";
+}
+
 function findPerformanceReviewRequirementStatus(row = {}, cycle = {}) {
   const requirements = Array.isArray(row?.requirements) ? row.requirements : [];
   const keys = new Set([
@@ -459,7 +468,9 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
     ? cycleId
     : getPerformanceReviewCycle(cycleId, options);
   const requirementStatus = findPerformanceReviewRequirementStatus(row, cycle);
-  const rawStatus = String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
+  const rawStatus = isWaivedPerformanceReviewRequirementStatus(requirementStatus)
+    ? "waived"
+    : String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
   const status = normalizePerformanceReviewStatus(rawStatus);
   const dueDate = parseDateOnly(requirementStatus?.due_date || requirementStatus?.dueDate || row?.[cycle.dueDateKey]);
   const completedDate = parseDateOnly(
