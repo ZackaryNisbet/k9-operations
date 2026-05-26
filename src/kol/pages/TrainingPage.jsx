@@ -11846,6 +11846,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
   }, []);
 
+  const handlePreviewComplianceReviewEvidenceDocument = useCallback((document) => {
+    closeComplianceReviewEditor();
+    handlePreviewEmployeeDocument(document);
+  }, [closeComplianceReviewEditor, handlePreviewEmployeeDocument]);
+
   const handleOpenComplianceReviewEditor = useCallback((laborEmployee, reviewCycle) => {
     const reviewInstance = reviewCycle?.instance || null;
     const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
@@ -15723,7 +15728,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               variant="secondary"
               size="sm"
               icon={canViewCompliancePdfs ? <I.FileText /> : <I.EyeOff />}
-              onClick={() => handlePreviewEmployeeDocument(complianceReviewEvidenceDocument)}
+              onClick={() => handlePreviewComplianceReviewEvidenceDocument(complianceReviewEvidenceDocument)}
               disabled={!canViewCompliancePdfs || previewingAttachmentId === complianceReviewEvidenceDocument.id}
             >
               {!canViewCompliancePdfs ? "PDF Restricted" : previewingAttachmentId === complianceReviewEvidenceDocument.id ? "Opening..." : "Open PDF"}
@@ -16449,8 +16454,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           {laborEmployeeEditorModal}
           {employeeNoteEditorModal}
-          {attachmentPreviewModal}
           {complianceReviewEditorModalView}
+          {attachmentPreviewModal}
         </div>
       );
     }
@@ -17090,10 +17095,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </Modal>
         )}
 
-        {attachmentPreviewModal}
         {laborEmployeeEditorModal}
         {employeeNoteEditorModal}
         {complianceReviewEditorModalView}
+        {attachmentPreviewModal}
       </div>
     );
   }
@@ -27851,9 +27856,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {laborEmployeeEditorModal}
       {employeeNoteEditorModal}
-      {attachmentPreviewModal}
       {complianceReviewEditorModalView}
       {complianceRequirementEditorModalView}
+      {attachmentPreviewModal}
 
       {canAccessEmployeeNotes && showGlobalNoteModal && (
         <Modal title="Add Employee Note" onClose={() => setShowGlobalNoteModal(false)}>
