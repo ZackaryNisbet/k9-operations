@@ -151,6 +151,9 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("isCompliancePdfDocument(document) && !canViewCompliancePdfs");
     expect(source).toContain("!canViewCompliancePdfs ? \"PDF Restricted\" : renderingReviewPdf");
     expect(source).toContain("getReviewCycleEvidenceDocument");
+    expect(source).toContain("handlePreviewComplianceReviewEvidenceDocument");
+    expect(source).toContain("closeComplianceReviewEditor();\n    handlePreviewEmployeeDocument(document);");
+    expect(source).toContain("onClick={() => handlePreviewComplianceReviewEvidenceDocument(complianceReviewEvidenceDocument)}");
     expect(source).toContain("\"Open PDF\"");
     expect(reviewGridSource).toContain("canViewPdfs = false");
     expect(reviewGridSource).toContain("getCompletionEvidence");
