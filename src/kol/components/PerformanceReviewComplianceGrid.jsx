@@ -82,8 +82,10 @@ function getCompletionWaiver(cycle = {}) {
   const waiver = cycle.instance?.metadata?.completion_waiver && typeof cycle.instance.metadata.completion_waiver === "object"
     ? cycle.instance.metadata.completion_waiver
     : {};
+  const isPolicyWaiver = normalizeText(cycle.exceptionKind || cycle.exception_kind) === "waived"
+    || normalizeText(cycle.rawStatus || cycle.status) === "waived";
   return {
-    waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on || String(cycle.instance?.completed_at || "").slice(0, 10) || "",
+    waivedOn: cycle.waivedOn || waiver.waived_on || (isPolicyWaiver ? cycle.completedDate || String(cycle.instance?.completed_at || "").slice(0, 10) : "") || "",
     actorName: waiver.actor_name || cycle.instance?.reviewer_name || "",
   };
 }
@@ -101,8 +103,17 @@ function getCycleState(cycle = {}) {
   const status = normalizeText(cycle.rawStatus || cycle.status || cycle.instance?.status);
   const evidence = getCompletionEvidence(cycle);
   const waiver = getCompletionWaiver(cycle);
+  const completionMode = normalizeText(cycle.instance?.metadata?.completion_mode);
   const completed = Boolean(cycle.completed || cycle.instance?.completed_at || evidence.completedOn);
-  if (status === "waived" || waiver.waivedOn || cycle.instance?.metadata?.completion_mode === "waived") {
+  if (completed && (status === "complete" || status === "completed" || completionMode === "completed")) {
+    return {
+      key: cycle.completedLate ? "completed-late" : "completed",
+      icon: "OK",
+      label: "Verified / Qualified",
+      detail: evidence.uploadedByName || cycle.instance?.reviewer_name || evidence.fileName || "Evidence uploaded",
+    };
+  }
+  if (status === "waived" || waiver.waivedOn || completionMode === "waived") {
     return { key: "waived", icon: "W", label: "Waived", detail: waiver.actorName || evidence.uploadedByName || "Manager override" };
   }
   if (completed) {
