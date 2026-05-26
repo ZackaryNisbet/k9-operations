@@ -231,7 +231,15 @@ function SortHeader({ label, columnKey, sort, onSort, align = "left" }) {
   );
 }
 
-export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint, formatDate = defaultFormatter, formatTimestamp = defaultFormatter }) {
+export function ReviewCycleCell({
+  row,
+  cycle,
+  onOpenEvidence,
+  onCreateCheckpoint,
+  canViewPdfs = false,
+  formatDate = defaultFormatter,
+  formatTimestamp = defaultFormatter,
+}) {
   const state = getCycleState(cycle);
   const evidence = getCompletionEvidence(cycle);
   const waiver = getCompletionWaiver(cycle);
@@ -247,6 +255,12 @@ export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint
   const dueLabel = `Date due ${formatCellDate(getCycleDueDate(cycle), formatDate)}`;
   const actionLabel = action.value ? `${action.label} ${formatCellDate(action.value, formatDate)}` : "";
   const uploadedLabel = evidence.uploadedAt ? `Uploaded ${formatTimestamp(evidence.uploadedAt)}` : "";
+  const hasEvidencePdf = Boolean(evidence.fileName || evidence.uploadedAt);
+  const evidenceTitle = canViewPdfs && evidence.fileName
+    ? evidence.fileName
+    : hasEvidencePdf
+      ? "Compliance PDF restricted"
+      : state.detail;
 
   return (
     <button
@@ -257,7 +271,7 @@ export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint
         else onCreateCheckpoint(row, cycle);
       }}
       disabled={!hasCheckpoint && !isDirectRequirement && !row.template}
-      title={evidence.fileName || state.detail}
+      title={evidenceTitle}
     >
       <span className="review-cycle-cell-token">
         <span className="review-cycle-cell-icon">{state.icon}</span>
@@ -265,8 +279,9 @@ export function ReviewCycleCell({ row, cycle, onOpenEvidence, onCreateCheckpoint
       </span>
       <span className="review-cycle-cell-detail">{dueLabel}</span>
       {actionLabel ? <span className="review-cycle-cell-detail">{actionLabel}</span> : null}
-      {evidence.fileName ? <span className="review-cycle-cell-file">{evidence.fileName}</span> : null}
-      {!evidence.fileName && uploadedLabel ? <span className="review-cycle-cell-file">{uploadedLabel}</span> : null}
+      {canViewPdfs && evidence.fileName ? <span className="review-cycle-cell-file">{evidence.fileName}</span> : null}
+      {canViewPdfs && !evidence.fileName && uploadedLabel ? <span className="review-cycle-cell-file">{uploadedLabel}</span> : null}
+      {!canViewPdfs && hasEvidencePdf ? <span className="review-cycle-cell-file is-restricted">PDF restricted</span> : null}
     </button>
   );
 }
@@ -281,6 +296,7 @@ export default function PerformanceReviewComplianceGrid({
   onOpenEmployee = () => {},
   onOpenEvidence = () => {},
   onCreateCheckpoint = () => {},
+  canViewPdfs = false,
   getEmployeeId = (row) => row?.id || row?.labor_employee_id || row?.full_name || "",
   formatDate = defaultFormatter,
   formatTimestamp = defaultFormatter,
@@ -711,6 +727,7 @@ export default function PerformanceReviewComplianceGrid({
                         cycle={cycle}
                         onOpenEvidence={onOpenEvidence}
                         onCreateCheckpoint={onCreateCheckpoint}
+                        canViewPdfs={canViewPdfs}
                         formatDate={formatDate}
                         formatTimestamp={formatTimestamp}
                       />
@@ -1267,6 +1284,9 @@ export function PerformanceReviewComplianceGridStyles() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.review-cycle-cell-file.is-restricted {
+  opacity: .58;
 }
 @keyframes complianceFilterFadeIn {
   from { opacity: 0; }

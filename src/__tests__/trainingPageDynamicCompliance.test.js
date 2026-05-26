@@ -140,6 +140,17 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).not.toContain("setSelectedReviewInstanceId(cycle.instance.id)");
   });
 
+  it("guards compliance PDF viewing behind the dedicated Lite permission", () => {
+    expect(source).toContain('"Labor Compliance View PDFs"');
+    expect(source).toContain("canViewCompliancePdfs");
+    expect(source).toContain("You do not have permission to view Compliance PDFs");
+    expect(source).toContain("isCompliancePdfDocument(document) && !canViewCompliancePdfs");
+    expect(source).toContain("!canViewCompliancePdfs ? \"PDF Restricted\" : renderingReviewPdf");
+    expect(reviewGridSource).toContain("canViewPdfs = false");
+    expect(reviewGridSource).toContain("Compliance PDF restricted");
+    expect(reviewGridSource).toContain("PDF restricted");
+  });
+
   it("saves custom Compliance cells directly instead of creating legacy review instances", () => {
     expect(source).toContain("isDirectComplianceRequirementCycle");
     expect(source).toContain("getReviewCycleRequirementId");

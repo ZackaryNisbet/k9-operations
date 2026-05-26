@@ -6953,6 +6953,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const canManageInterviews = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Manage Interviews");
   const canManageTemplates = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Templates");
   const canManageCompliancePolicy = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Compliance Manage Policy");
+  const canViewCompliancePdfs = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Compliance View PDFs");
   const canAccessEmployeeNotes = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Employee Notes");
   const canUseLaborTab = useCallback((tabId) => {
     if (!hasLaborModuleAccess) return false;
@@ -9500,11 +9501,23 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return createdDocuments;
   }, [actorName, actorUserId]);
 
+  const isCompliancePdfDocument = useCallback((document) => {
+    const metadata = isObjectRow(document?.metadata) ? document.metadata : {};
+    const sourceModule = String(metadata.source_module || "").toLowerCase();
+    const documentType = String(document?.document_type || "").toLowerCase();
+    return documentType === "performance_review_evidence"
+      || ["performance_reviews", "compliance_requirements"].includes(sourceModule);
+  }, []);
+
   const handlePreviewEmployeeDocument = useCallback(async (document) => {
     if (!document) return;
     const previewKind = getLaborAttachmentPreviewKind(document);
     if (previewKind === "unsupported") {
       addGlobalToast("This attachment type cannot be previewed in the app", "error");
+      return;
+    }
+    if (isCompliancePdfDocument(document) && !canViewCompliancePdfs) {
+      addGlobalToast("You do not have permission to view Compliance PDFs", "error");
       return;
     }
 
@@ -9537,7 +9550,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     } finally {
       setPreviewingAttachmentId(null);
     }
-  }, [addGlobalToast]);
+  }, [addGlobalToast, canViewCompliancePdfs, isCompliancePdfDocument]);
 
   const handleDeleteEmployeeDocument = useCallback(async (document) => {
     if (!document?.id || String(document.id).startsWith("requirement-url-")) return;
@@ -9618,6 +9631,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const isPreviewable = previewKind !== "unsupported";
     const isSyntheticDocument = String(document?.id || "").startsWith("requirement-url-");
     const canDeleteDocument = Boolean(options.allowDelete && document?.id && !isSyntheticDocument && !isLaborEmployeeDocumentDeleted(document));
+    const compliancePdfRestricted = isCompliancePdfDocument(document) && !canViewCompliancePdfs;
     return (
       <span
         key={documentId}
@@ -9631,7 +9645,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <button
           type="button"
           onClick={() => handlePreviewEmployeeDocument(document)}
-          disabled={!isPreviewable || previewingAttachmentId === document.id}
+          disabled={!isPreviewable || compliancePdfRestricted || previewingAttachmentId === document.id}
+          title={compliancePdfRestricted ? "Requires View Compliance PDFs permission" : document.file_name || "Attachment"}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -9641,9 +9656,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             padding: "7px 10px",
             borderRadius: 8,
             border: `1px solid ${C.border}`,
-            background: isPreviewable ? "#fff" : C.bg,
-            color: isPreviewable ? C.text : C.textMut,
-            cursor: isPreviewable ? "pointer" : "not-allowed",
+            background: isPreviewable && !compliancePdfRestricted ? "#fff" : C.bg,
+            color: isPreviewable && !compliancePdfRestricted ? C.text : C.textMut,
+            cursor: isPreviewable && !compliancePdfRestricted ? "pointer" : "not-allowed",
             fontFamily: "inherit",
             fontSize: 10.5,
             fontWeight: 900,
@@ -9651,9 +9666,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             textTransform: "uppercase",
           }}
         >
-          <I.Eye />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{document.file_name || "Attachment"}</span>
-          {document.file_size_bytes ? <span style={{ color: C.textMut, fontWeight: 600 }}>{formatLaborAttachmentFileSize(document.file_size_bytes)}</span> : null}
+          {compliancePdfRestricted ? <I.EyeOff /> : <I.Eye />}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {compliancePdfRestricted ? "Compliance PDF restricted" : document.file_name || "Attachment"}
+          </span>
+          {!compliancePdfRestricted && document.file_size_bytes ? <span style={{ color: C.textMut, fontWeight: 600 }}>{formatLaborAttachmentFileSize(document.file_size_bytes)}</span> : null}
         </button>
         {canDeleteDocument && (
           <button
@@ -9683,7 +9700,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         )}
       </span>
     );
-  }, [deletingAttachmentId, handleDeleteEmployeeDocument, handlePreviewEmployeeDocument, previewingAttachmentId]);
+  }, [canViewCompliancePdfs, deletingAttachmentId, handleDeleteEmployeeDocument, handlePreviewEmployeeDocument, isCompliancePdfDocument, previewingAttachmentId]);
 
   const openTrainingRequirementEditor = useCallback((requirementRow) => {
     if (!requirementRow) return;
@@ -12583,6 +12600,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [laborContactLocationName, reviewDrafts, reviewPdfDraft, selectedLaborEmployeeView, selectedReviewInstance, selectedReviewResponses, selectedReviewSections]);
 
   const handlePreviewPerformanceReviewPdf = useCallback(async () => {
+    if (!canViewCompliancePdfs) {
+      addGlobalToast("You do not have permission to view Compliance PDFs", "error");
+      return;
+    }
     setRenderingReviewPdf(true);
     try {
       const pdfBytes = await buildSelectedPerformanceReviewPdfBytes();
@@ -12596,7 +12617,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     } finally {
       setRenderingReviewPdf(false);
     }
-  }, [addGlobalToast, buildSelectedPerformanceReviewPdfBytes]);
+  }, [addGlobalToast, buildSelectedPerformanceReviewPdfBytes, canViewCompliancePdfs]);
 
   const saveHierarchy = useCallback(async () => {
     if (!canEditRoster) {
@@ -16100,8 +16121,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <Btn variant="secondary" size="sm" onClick={() => saveReviewPdfDraft()} disabled={savingReviewPdfDraft}>
                     {savingReviewPdfDraft ? "Saving..." : "Save PDF Fields"}
                   </Btn>
-                  <Btn variant="ghost" size="sm" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
-                    {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
+                  <Btn variant="ghost" size="sm" onClick={handlePreviewPerformanceReviewPdf} disabled={!canViewCompliancePdfs || renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
+                    {!canViewCompliancePdfs ? "PDF Restricted" : renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
                 </div>
               </Card>
@@ -16219,8 +16240,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         : `Save ${unsavedReviewResponseCount} ${unsavedReviewResponseCount === 1 ? "Response" : "Responses"}`}
                     </Btn>
                   )}
-                  <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
-                    {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
+                  <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={!canViewCompliancePdfs || renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
+                    {!canViewCompliancePdfs ? "PDF Restricted" : renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
                   <Btn
                     variant={selectedReviewTemplateMismatch ? "secondary" : "ghost"}
@@ -16251,7 +16272,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     {selectedReviewInstance.completed_at ? "Review evidence uploaded" : "evidence required"}
                   </Badge>
                   {selectedReviewInstance.completed_at && <Badge color="default">Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</Badge>}
-                  {reviewCompletionEvidenceFileName && <Badge color="default">{reviewCompletionEvidenceFileName}</Badge>}
+                  {canViewCompliancePdfs && reviewCompletionEvidenceFileName && <Badge color="default">{reviewCompletionEvidenceFileName}</Badge>}
+                  {!canViewCompliancePdfs && reviewCompletionEvidenceFileName && <Badge color="default">PDF restricted</Badge>}
                 </div>
                 {!selectedReviewInstance.completed_at && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -16716,6 +16738,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       cycle={cycle}
                       onOpenEvidence={handleOpenComplianceReviewEditor}
                       onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
+                      canViewPdfs={canViewCompliancePdfs}
                       formatDate={formatLaborDate}
                       formatTimestamp={formatTrainingTimestamp}
                     />
@@ -24493,6 +24516,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
               onOpenEvidence={handleOpenComplianceReviewEditor}
               onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
+              canViewPdfs={canViewCompliancePdfs}
             />
           )}
           {complianceView === "summary" && (
@@ -24522,6 +24546,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
                 onOpenEvidence={handleOpenComplianceReviewEditor}
                 onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
+                canViewPdfs={canViewCompliancePdfs}
               />
             </div>
           )}
