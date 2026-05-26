@@ -11488,13 +11488,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [allReviewTemplateVersions]);
 
   const handleCreateReviewInstanceForEmployee = useCallback(async (employee, reviewCycle, options = {}) => {
-    const { openDetail = true } = options || {};
+    const { openDetail = true, refresh = true, announce = true, throwOnError = false } = options || {};
     const employeeId = getLaborEmployeeRowId(employee);
     if (!employeeId) return null;
     const matchingTemplate = findReviewTemplateForEmployee(employee);
 
     if (!matchingTemplate?.id) {
-      addGlobalToast("No review template is available for this role", "error");
+      const templateError = new Error("No review template is available for this role");
+      if (throwOnError) throw templateError;
+      if (announce) addGlobalToast(templateError.message, "error");
       return null;
     }
 
@@ -11507,17 +11509,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       p_actor_name: actorName,
     });
     if (error) {
-      addGlobalToast("Failed to create review instance", "error");
+      if (throwOnError) throw error;
+      if (announce) addGlobalToast("Failed to create review instance", "error");
       return null;
     }
     const createdInstance = Array.isArray(data) ? data[0] : data;
-    await refreshLaborData();
+    if (refresh) await refreshLaborData();
     if (openDetail) {
       setSelectedLaborEmployeeId(employeeId);
       setSelectedLaborEmployeeSeed(isObjectRow(employee) ? employee : null);
       if (createdInstance?.id) setSelectedReviewInstanceId(createdInstance.id);
     }
-    addGlobalToast("Review instance created", "success");
+    if (announce) addGlobalToast("Review instance created", "success");
     return createdInstance || null;
   }, [actorName, actorUserId, addGlobalToast, findReviewTemplateForEmployee, refreshLaborData]);
 
@@ -11723,7 +11726,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const handleOpenComplianceReviewEditor = useCallback((laborEmployee, reviewCycle) => {
     const reviewInstance = reviewCycle?.instance || null;
     const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
-    if (!laborEmployee || (!reviewInstance?.id && !directRequirement)) return;
+    const legacyReviewCycle = getReviewCycleLegacyReviewCycle(reviewCycle) || reviewCycle?.id || reviewCycle?.slug || "";
+    if (!laborEmployee || (!reviewInstance?.id && !directRequirement && !legacyReviewCycle)) return;
     const policyCell = getReviewCyclePolicyCell(reviewCycle);
     const metadata = isObjectRow(reviewInstance?.metadata) ? reviewInstance.metadata : {};
     const waiver = isObjectRow(metadata.completion_waiver) ? metadata.completion_waiver : null;
@@ -11747,28 +11751,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, []);
 
   const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {
-    if (isDirectComplianceRequirementCycle(reviewCycle)) {
-      handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);
-      return null;
-    }
-    const reviewCycleKey = reviewCycle?.id || reviewCycle?.slug || reviewCycle?.requirementId || reviewCycle?.policyKey;
-    const createdInstance = await handleCreateReviewInstanceForEmployee(laborEmployee, reviewCycleKey, { openDetail: false });
-    if (createdInstance?.id) {
-      handleOpenComplianceReviewEditor(laborEmployee, {
-        ...reviewCycle,
-        instance: createdInstance,
-      });
-    }
-    return createdInstance || null;
-  }, [handleCreateReviewInstanceForEmployee, handleOpenComplianceReviewEditor]);
+    handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);
+    return null;
+  }, [handleOpenComplianceReviewEditor]);
 
   const handleSaveComplianceReviewCheckpoint = useCallback(async () => {
     const editor = complianceReviewEditorModal;
-    const reviewInstance = editor?.reviewInstance || editor?.reviewCycle?.instance || null;
+    let reviewInstance = editor?.reviewInstance || editor?.reviewCycle?.instance || null;
     const laborEmployee = editor?.laborEmployee || null;
     const reviewCycle = editor?.reviewCycle || null;
     const directRequirement = isDirectComplianceRequirementCycle(reviewCycle);
-    if ((!reviewInstance?.id && !directRequirement) || !laborEmployee) return;
+    const legacyReviewCycle = getReviewCycleLegacyReviewCycle(reviewCycle) || reviewCycle?.id || reviewCycle?.slug || "";
+    if ((!reviewInstance?.id && !directRequirement && !legacyReviewCycle) || !laborEmployee) return;
     if (!performanceReviewCompletedOn) {
       addGlobalToast("Completed date is required", "error");
       return;
@@ -11910,6 +11904,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         return;
       }
 
+      let acceptedPerformanceReviewFile = null;
+      if (completionMode === "completed") {
+        if (!performanceReviewEvidenceFile) {
+          setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
+          addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
+          return;
+        }
+
+        const { acceptedFile, error: fileError } = validateLaborTrainingRequirementEvidenceFile(performanceReviewEvidenceFile);
+        if (fileError || !acceptedFile) {
+          setPerformanceReviewEvidenceError(fileError || "Upload a valid PDF evidence file.");
+          addGlobalToast(fileError || "Upload a valid PDF evidence file", "error");
+          return;
+        }
+        acceptedPerformanceReviewFile = acceptedFile;
+      }
+
+      if (!reviewInstance?.id) {
+        const reviewCycleKey = legacyReviewCycle
+          || reviewCycle?.requirementId
+          || reviewCycle?.policyKey;
+        reviewInstance = await handleCreateReviewInstanceForEmployee(laborEmployee, reviewCycleKey, {
+          openDetail: false,
+          refresh: false,
+          announce: false,
+          throwOnError: true,
+        });
+        if (!reviewInstance?.id) throw new Error("Failed to prepare compliance checkpoint.");
+      }
+
       if (completionMode === "waived") {
         const existingMetadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
         const { error } = await supabase
@@ -11940,24 +11964,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         return;
       }
 
-      if (!performanceReviewEvidenceFile) {
-        setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
-        addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
-        return;
-      }
-
-      const { acceptedFile, error: fileError } = validateLaborTrainingRequirementEvidenceFile(performanceReviewEvidenceFile);
-      if (fileError || !acceptedFile) {
-        setPerformanceReviewEvidenceError(fileError || "Upload a valid PDF evidence file.");
-        addGlobalToast(fileError || "Upload a valid PDF evidence file", "error");
-        return;
-      }
-
       evidenceDocument = await handleUploadPerformanceReviewEvidence({
         laborEmployee,
         reviewInstance,
         reviewCycle,
-        file: acceptedFile,
+        file: acceptedPerformanceReviewFile,
         completedOn: performanceReviewCompletedOn,
       });
 
@@ -11992,6 +12003,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     closeComplianceReviewEditor,
     complianceReviewEditorModal,
     completionMode,
+    handleCreateReviewInstanceForEmployee,
     handleUploadPerformanceReviewEvidence,
     performanceReviewCompletedOn,
     performanceReviewEvidenceFile,
