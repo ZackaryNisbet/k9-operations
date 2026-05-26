@@ -1444,7 +1444,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Attendance Marks</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Record and review attendance marks against canonical labor employee records.</div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Btn

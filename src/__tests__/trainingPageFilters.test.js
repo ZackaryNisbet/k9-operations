@@ -11,9 +11,12 @@ import {
   buildLaborModelCrossRoleCoverageSummary,
   buildPlannedCrossRoleCoverageRows,
   buildLaborModulePanelKey,
+  buildComplianceHistoryRows,
   buildTrainingHistoryRows,
   buildTrainingHistoryDayMetrics,
   buildTrainingHistoryFilterOptions,
+  formatComplianceRequirementDueRule,
+  formatComplianceRequirementEvidence,
   collectTrainingActorLookupEmails,
   buildHourAnalysisModel,
   buildOutOfPositionLaborSummary,
@@ -28,6 +31,8 @@ import {
   getLaborModelCoverageDisplay,
   getLaborEmployeeRowId,
   getTrainingRecordEmployeeId,
+  isCustomComplianceRequirement,
+  isDefaultReviewComplianceRequirement,
   isTrainingRecordForEmployee,
   LABOR_MANAGEMENT_TABS,
   makeLaborModelCellKey,
@@ -180,6 +185,7 @@ describe("applyLaborRosterFilters", () => {
 
   it("shows readiness status actor display names without falling back to emails", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const pctReadinessMigration = readFileSync(new URL("../../supabase/migrations/20260510013419_pct_team_readiness_board.sql", import.meta.url), "utf8");
     const renderRecordItem = source.slice(
       source.indexOf("const renderRecordItem"),
       source.indexOf("const renderTemplatePreviewItem"),
@@ -187,11 +193,42 @@ describe("applyLaborRosterFilters", () => {
 
     expect(source).toContain("function cleanReadinessActorName");
     expect(source).toContain("isEmailLike(trimmed)");
+    expect(source).toContain('"pct workbook import"');
+    expect(source).toContain("function readReadinessMetadataActorName");
+    expect(source).toContain('"verified_accuracy_by"');
+    expect(source).toContain("metadata?.raw_values");
+    expect(source).toContain("metadata?.source_values");
+    expect(source).toContain("function resolveLaborActorNameByUserId");
+    expect(source).toContain("normalizeOptionalUuid(employee.linked_user_id) === userId");
+    expect(source).toContain("function resolveLaborActorDisplayName");
+    expect(source).toContain("row.actor_user_id");
+    expect(source).toContain("resolveLaborActorDisplayName(event, laborActorRows)");
+    expect(source).toContain("function resolveReadinessCellEmailActorDisplayName");
+    expect(source).toContain("const canResolveCellEmailActors = toObjectRows(laborActorRows).length > 0");
+    expect(source).toContain("resolveReadinessCellEmailActorDisplayName(sourceCell, status, laborActorRows)");
+    expect(source).toContain("resolveReadinessCellEmailActorDisplayName(result || {}, readinessStatus, laborActorRows)");
     expect(source).toContain("function getReadinessCellActorDisplayName");
+    expect(source).toContain("function getReadinessCellActorLine");
+    expect(source).toContain("const TRAINING_ACTIVITY_LOOKBACK_LIMIT = 5000");
+    expect(source).toContain("latestTrainingNoteByReadinessCellKey");
+    expect(source).toContain("latestTrainingStatusActorByReadinessCellKey");
+    expect(source).toContain('.select("user_id,full_name,email")');
+    expect(source).not.toContain('.select("user_id,name,full_name,email")');
+    expect(source).toContain("latest_note_actor_name = noteActor.actorName");
+    expect(source).toContain("latest_status_actor_name = statusActor.actorName");
+    expect(source).toContain("latest_status_actor_at = statusActor.created_at");
     expect(renderRecordItem).toContain("latest_note_actor_name");
-    expect(renderRecordItem).toContain("readinessActorName");
-    expect(source).toContain("cellActorName || \"Comment\"");
-    expect(source).toContain("rowActorName");
+    expect(renderRecordItem).toContain("latest_status_actor_name");
+    expect(renderRecordItem).toContain("readinessActorLine");
+    expect(source).toContain("cellActorLine");
+    expect(source).toContain("rowActorLine");
+    expect(source).not.toContain("cellActorName || \"Comment\"");
+    expect(source).not.toContain("`Staff on ${actionDate}`");
+    expect(source).not.toContain("return `Staff on");
+    expect(pctReadinessMigration).toContain("AS latest_note_actor_name");
+    expect(pctReadinessMigration).toContain("'latest_note_actor_name', latest_note_actor_name");
+    expect(pctReadinessMigration).toContain("AS latest_status_actor_name");
+    expect(pctReadinessMigration).toContain("'latest_status_actor_name', latest_status_actor_name");
   });
 
   it("adds a sticky training record section navigator and wraps long note labels", () => {
@@ -237,7 +274,8 @@ describe("applyLaborRosterFilters", () => {
 
     expect(handleSaveSource).not.toContain("refreshLaborData");
     expect(handleSaveSource.indexOf("closePctReadinessCellEditor();")).toBeLessThan(handleSaveSource.indexOf("reloadRecordDetailData(savedRecordId)"));
-    expect(handleSaveSource.indexOf("closePctReadinessCellEditor();")).toBeLessThan(handleSaveSource.indexOf("loadPctReadinessBoard(true)"));
+    expect(handleSaveSource).not.toContain("loadPctReadinessBoard(true)");
+    expect(handleSaveSource).toContain("patchReadinessBoard");
   });
 
   it("renames labor navigation to Roster and Capacity Planning routes", () => {
@@ -420,6 +458,17 @@ describe("applyLaborRosterFilters", () => {
     expect(textarea.value).toBe("(555) 123-4567");
     expect(execCommand).toHaveBeenCalledWith("copy");
     expect(activeElement.focus).toHaveBeenCalled();
+  });
+
+  it("uses the shared roster copy control for name and position cells", () => {
+    const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(source).toContain("const rowName = row.full_name");
+    expect(source).toContain("const rowPosition = formatLaborPositionTitle(row.position_title)");
+    expect(source).toContain("`name:${rowEmployeeId || rowName}`");
+    expect(source).toContain("`position:${rowEmployeeId || rowPosition}`");
+    expect(source).toContain('label: "Name"');
+    expect(source).toContain('label: "Position"');
   });
 
   it("formats signed capacity delta hours for surplus, deficit, and aligned states", () => {
@@ -1483,6 +1532,105 @@ describe("applyLaborRosterFilters", () => {
     });
   });
 
+  it("builds Compliance History rows with employee, checkpoint, actor, status, and detail fields", () => {
+    const rows = buildComplianceHistoryRows({
+      laborEmployeeMap: {
+        "employee-1": { id: "employee-1", full_name: "Skylerary Brooks" },
+      },
+      reviewInstances: [
+        {
+          id: "review-1",
+          labor_employee_id: "employee-1",
+          review_cycle: "30_day",
+          due_date: "2026-03-18",
+          completed_at: "2026-04-25T12:00:00Z",
+          reviewer_name: "Skyler Brooks",
+        },
+      ],
+      reviewCycles: [
+        { id: "30_day", label: "30 Day" },
+      ],
+      events: [
+        {
+          id: "event-1",
+          labor_employee_id: "employee-1",
+          source_table: "employee_review_instances",
+          source_id: "review-1",
+          event_type: "performance_review_updated",
+          title: "Performance review completed",
+          summary: "30 day",
+          old_values: { status: "scheduled", review_cycle: "30_day", due_date: "2026-03-18" },
+          new_values: {
+            status: "completed",
+            review_cycle: "30_day",
+            due_date: "2026-03-18",
+            completed_at: "2026-04-25T12:00:00Z",
+            metadata: { completion_evidence: { file_name: "zack-review.pdf" } },
+          },
+          actor_name: "manager@example.com",
+          actor_full_name: "Angelina DeAugustine",
+          occurred_at: "2026-05-25T21:15:00Z",
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      employeeName: "Skylerary Brooks",
+      actionLabel: "Compliance checkpoint completed",
+      categoryTaskLabel: "30 Day",
+      summary: "30 Day",
+      actorDisplayName: "Angelina DeAugustine",
+      statusChange: {
+        previousLabel: "Scheduled",
+        nextLabel: "Complete",
+      },
+    });
+    expect(rows[0].detailParts).toEqual([
+      "Due 03/18/2026",
+      "Action 04/25/2026",
+      "Evidence zack-review.pdf",
+    ]);
+  });
+
+  it("classifies Compliance requirements for the column manager without exposing training policy rows", () => {
+    const customColumn = {
+      id: "custom-1",
+      requirement_kind: "review_checkpoint",
+      scope_type: "location",
+      slug: "custom_handbook",
+      display_group: "custom",
+      evidence_policy: "checkbox_only",
+      metadata: { ui_kind: "custom_yes_no" },
+    };
+    const defaultCheckpoint = {
+      id: "review-30",
+      requirement_kind: "review_checkpoint",
+      scope_type: "enterprise",
+      slug: "review_30_day",
+      display_group: "reviews",
+      evidence_policy: "file_required",
+      due_rule: { anchor: "start_date", offset_days: 30 },
+      metadata: { legacy_review_cycle: "30_day" },
+    };
+    const trainingPolicy = {
+      id: "training-1",
+      requirement_kind: "training",
+      scope_type: "enterprise",
+      slug: "dog_cpr",
+      display_group: "training",
+      evidence_policy: "url_or_reference",
+    };
+
+    expect(isCustomComplianceRequirement(customColumn)).toBe(true);
+    expect(isDefaultReviewComplianceRequirement(defaultCheckpoint)).toBe(true);
+    expect(isCustomComplianceRequirement(trainingPolicy)).toBe(false);
+    expect(isDefaultReviewComplianceRequirement(trainingPolicy)).toBe(false);
+    expect(formatComplianceRequirementEvidence(customColumn)).toBe("Yes/no");
+    expect(formatComplianceRequirementEvidence(defaultCheckpoint)).toBe("PDF required");
+    expect(formatComplianceRequirementDueRule(defaultCheckpoint)).toBe("Start date + 30 days");
+  });
+
   it("falls back to email only when no verified actor name is available", () => {
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com" })).toBe("manager@example.com");
     expect(resolveVerifiedActorDisplayName({ actor_name: "manager@example.com", actor_full_name: "Maria Manager" })).toBe("Maria Manager");
@@ -1521,6 +1669,32 @@ describe("applyLaborRosterFilters", () => {
   it("keeps interview detail state out of the labor panel remount key", () => {
     expect(buildLaborModulePanelKey({ tab: "interviews", interviewView: "records", attendanceView: "summary" })).toBe("interviews:records::");
     expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary:");
+  });
+
+  it("keeps attendance subtabs and marks header free of redundant subtext", () => {
+    const trainingPageSource = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+    const attendancePageSource = readFileSync(new URL("../kol/pages/AttendancePage.jsx", import.meta.url), "utf8");
+
+    expect(trainingPageSource).toContain('{ id: "input", label: "Attendance Input" }');
+    expect(trainingPageSource).toContain('{ id: "summary", label: "Attendance Summary" }');
+    expect(trainingPageSource).not.toContain("Attendance marks and policy actions");
+    expect(trainingPageSource).not.toContain("Summary, history, and reference guidance");
+    expect(attendancePageSource).not.toContain("Record and review attendance marks against canonical labor employee records.");
+  });
+
+  it("keeps training subtabs compact and local history timestamp sorting defined", () => {
+    const trainingPageSource = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+
+    expect(trainingPageSource).toContain('function getHistoryTimestampValue(value)');
+    expect(trainingPageSource).toContain('{ id: "board", label: "Team Readiness Board" }');
+    expect(trainingPageSource).toContain('{ id: "records", label: "Records" }');
+    expect(trainingPageSource).toContain('{ id: "history", label: "History" }');
+    expect(trainingPageSource).toContain("--labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;");
+    expect(trainingPageSource.match(/transition: var\(--labor-indicator-flat-transition\);/g)).toHaveLength(3);
+    expect(trainingPageSource).not.toContain("--labor-indicator-bounce-transition");
+    expect(trainingPageSource).not.toContain("Skills by employee");
+    expect(trainingPageSource).not.toContain("Active and completed training records");
+    expect(trainingPageSource).not.toContain("Training audit trail");
   });
 
   it("builds hour analysis from active roster rows, expected-hour defaults, overrides, and what-if rows", () => {

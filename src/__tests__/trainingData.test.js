@@ -10,6 +10,7 @@ import {
   buildLaborDashboardMetrics,
   buildLaborRosterStaffingSummary,
   buildCreateTrainingRecordRpcArgs,
+  buildEmployeeTrainingRequirementRows,
   CSR_READINESS_TEMPLATE_SLUG,
   buildPctReadinessCellUpdateArgs,
   buildPctReadinessCategoryHotspots,
@@ -36,6 +37,7 @@ import {
   reconcilePctReadinessLegacyActorName,
   resolveTrainingLocationId,
   summarizeTrainingWorkflow,
+  summarizeEmployeeTrainingRequirementCompliance,
   TEAM_READINESS_TEMPLATE_OPTIONS,
 } from "../kol/trainingData";
 
@@ -636,6 +638,76 @@ describe("trainingData helpers", () => {
     expect(metrics.partTimeCount).toBe(1);
     expect(metrics.unassignedCommitmentCount).toBe(0);
     expect(metrics.staffingMatrix.find((row) => row.key === "manager")).toMatchObject({ fullTime: 1, partTime: 0, total: 1 });
+  });
+
+  it("derives training requirement rows from resolved policy rows instead of legacy constants", () => {
+    const requirements = [
+      {
+        id: "policy-food-safety",
+        slug: "food_safety",
+        requirement_kind: "training",
+        label: "Food Safety",
+        helper: "Upload the current food safety certificate.",
+        evidence_policy: "file_required",
+        due_rule: { frequency: "one_time" },
+        display_order: 5,
+        role_applicability: [{ position_title: "Pet Care Technician", is_applicable: true }],
+      },
+      {
+        id: "policy-shift-lead",
+        slug: "shift_lead_playbook",
+        requirement_kind: "training",
+        label: "Shift Lead Playbook",
+        evidence_policy: "checkbox_only",
+        display_order: 10,
+        role_applicability: [{ position_title: "Supervisor", is_applicable: true }],
+      },
+    ];
+
+    const rows = buildEmployeeTrainingRequirementRows({
+      employee: { position_title: "Pet Care Technician" },
+      requirements,
+      certifications: [
+        {
+          requirement_id: "policy-food-safety",
+          completed_on: "2026-05-01",
+          labor_employee_document_id: "doc-food-safety",
+        },
+      ],
+      documents: [
+        {
+          id: "doc-food-safety",
+          document_type: "training_requirement_evidence",
+          metadata: { labor_compliance_requirement_id: "policy-food-safety" },
+          uploaded_at: "2026-05-02T12:00:00Z",
+        },
+      ],
+      today: "2026-05-25",
+    });
+
+    expect(rows.map((row) => row.slug)).toEqual(["food_safety"]);
+    expect(rows[0]).toMatchObject({
+      slug: "food_safety",
+      label: "Food Safety",
+      helper: "Upload the current food safety certificate.",
+      evidenceMode: "pdf",
+      frequency: "one_time",
+      order: 5,
+      requirementId: "policy-food-safety",
+      status: "complete",
+      isComplete: true,
+    });
+    expect(summarizeEmployeeTrainingRequirementCompliance(rows)).toMatchObject({
+      isCompliant: true,
+      label: "Compliant",
+    });
+
+    const nonApplicableRows = buildEmployeeTrainingRequirementRows({
+      employee: { position_title: "Customer Service Representative" },
+      requirements,
+      today: "2026-05-25",
+    });
+    expect(nonApplicableRows).toEqual([]);
   });
 
   it("builds active-only staffing matrix with leadership as managers and unassigned commitments", () => {
