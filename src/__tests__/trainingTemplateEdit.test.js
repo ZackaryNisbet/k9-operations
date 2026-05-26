@@ -11,6 +11,10 @@ import {
 } from "../kol/pages/TrainingPage.jsx";
 
 const trainingPageSource = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
+const standardReadinessCompletionModeSql = readFileSync(
+  new URL("../../supabase/migrations/20260526192657_standardize_training_readiness_completion_mode.sql", import.meta.url),
+  "utf8"
+);
 
 describe("labor training template edit helpers", () => {
   it("counts sections and items from the selected training template version", () => {
@@ -211,6 +215,23 @@ describe("labor training template edit helpers", () => {
     expect(trainingPageSource).toContain("Question type");
     expect(trainingPageSource).toContain("Task type");
     expect(trainingPageSource).toContain("template-builder-layout");
+  });
+
+  it("uses the standard readiness status set for training task completion modes", () => {
+    expect(trainingPageSource).toContain("PCT_READINESS_STATUS_OPTIONS.map");
+    expect(trainingPageSource).toContain('completion_mode: "observe_participate_demonstrate"');
+    expect(trainingPageSource).toContain("Readiness statuses");
+    expect(trainingPageSource).toContain("Use Standard");
+    expect(trainingPageSource).not.toContain('{ value: "complete_only", label: "Complete only" }');
+    expect(trainingPageSource).not.toContain('{ value: "pass_fail", label: "Pass / fail" }');
+    expect(trainingPageSource).not.toContain('{ value: "score_based", label: "Score based" }');
+    expect(trainingPageSource).not.toContain("All tasks set to pass / fail");
+  });
+
+  it("standardizes existing training templates to the readiness completion mode", () => {
+    expect(standardReadinessCompletionModeSql).toContain("UPDATE public.training_template_items item");
+    expect(standardReadinessCompletionModeSql).toContain("UPDATE public.training_template_sections section");
+    expect(standardReadinessCompletionModeSql).toContain("'observe_participate_demonstrate'::public.training_completion_mode");
   });
 
   it("hides template management actions from users without template permissions", () => {

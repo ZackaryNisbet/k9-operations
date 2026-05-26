@@ -19,10 +19,9 @@ const FILTER_OP_LABELS = {
 const REQUIREMENT_STATUS_OPTIONS = [
   { value: "compliant", label: "Compliant" },
   { value: "non-compliant", label: "Non-compliant" },
-  { value: "completed", label: "Completed" },
+  { value: "completed", label: "Complete" },
   { value: "waived", label: "Waived" },
   { value: "overdue", label: "Overdue" },
-  { value: "in-progress", label: "In Progress" },
   { value: "not-started", label: "Not Started" },
 ];
 
@@ -103,13 +102,35 @@ function getCycleState(cycle = {}) {
   const status = normalizeText(cycle.rawStatus || cycle.status || cycle.instance?.status);
   const evidence = getCompletionEvidence(cycle);
   const waiver = getCompletionWaiver(cycle);
-  const completionMode = normalizeText(cycle.instance?.metadata?.completion_mode);
+  const instanceMetadata = cycle.instance?.metadata && typeof cycle.instance.metadata === "object" ? cycle.instance.metadata : {};
+  const policyMetadata = cycle.requirementStatus?.metadata && typeof cycle.requirementStatus.metadata === "object"
+    ? cycle.requirementStatus.metadata
+    : cycle.policyCell?.metadata && typeof cycle.policyCell.metadata === "object"
+      ? cycle.policyCell.metadata
+      : {};
+  const completionMode = normalizeText(
+    instanceMetadata.completion_mode
+      || policyMetadata.completion_mode
+      || cycle.completion_mode
+      || cycle.completionMode
+  );
   const completed = Boolean(cycle.completed || cycle.instance?.completed_at || evidence.completedOn);
-  if (completed && (status === "complete" || status === "completed" || completionMode === "completed")) {
+  const hasCompletionEvidence = Boolean(evidence.completedOn || evidence.documentId || evidence.fileName || evidence.uploadedAt);
+  const hasExplicitWaiver = completionMode === "waived"
+    || Boolean(instanceMetadata.completion_waiver?.waived_on || policyMetadata.completion_waiver?.waived_on);
+  const hasCompleteStatus = ["complete", "completed", "completed_late", "complete_late", "late_complete"].includes(status);
+  const hasExplicitCompletion = completionMode === "completed"
+    || hasCompleteStatus
+    || (completed && hasCompletionEvidence && !hasExplicitWaiver);
+
+  if (hasExplicitWaiver) {
+    return { key: "waived", icon: "W", label: "Waived", detail: waiver.actorName || evidence.uploadedByName || "Manager override" };
+  }
+  if (hasExplicitCompletion || (completed && status !== "waived")) {
     return {
       key: cycle.completedLate ? "completed-late" : "completed",
       icon: "OK",
-      label: "Verified / Qualified",
+      label: "Complete",
       detail: evidence.uploadedByName || cycle.instance?.reviewer_name || evidence.fileName || "Evidence uploaded",
     };
   }
@@ -120,15 +141,15 @@ function getCycleState(cycle = {}) {
     return {
       key: cycle.completedLate ? "completed-late" : "completed",
       icon: "OK",
-      label: "Verified / Qualified",
+      label: "Complete",
       detail: evidence.uploadedByName || cycle.instance?.reviewer_name || evidence.fileName || "Evidence uploaded",
     };
   }
   if (cycle.overdue || status === "overdue") {
     return { key: "overdue", icon: "!", label: "Overdue", detail: cycle.dueDate ? `Due ${cycle.dueDate}` : "Past due" };
   }
-  if (cycle.instance || status === "in_progress") {
-    return { key: "in-progress", icon: "D", label: "In Progress", detail: cycle.dueDate ? `Due ${cycle.dueDate}` : "Checkpoint started" };
+  if (cycle.instance || status === "in_progress" || status === "scheduled") {
+    return { key: "not-started", icon: "O", label: "Not Started", detail: cycle.dueDate ? `Due ${cycle.dueDate}` : "Checkpoint started" };
   }
   return { key: "not-started", icon: "O", label: "Not Started", detail: cycle.dueDate ? `Due ${cycle.dueDate}` : "No checkpoint" };
 }
