@@ -164,9 +164,20 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {\n    handleOpenComplianceReviewEditor(laborEmployee, reviewCycle);\n    return null;");
     expect(source).toContain("!directRequirement && !legacyReviewCycle");
     expect(source).toContain("refresh: false");
+    expect(source).toContain('completionMode === "waived" && laborEmployeeId && requirementId');
+    expect(source).toContain('source_note: "Waived in Compliance grid"');
+    expect(source).toContain("getReviewCycleLegacyReviewCycle");
+    expect(source).toContain("getReviewCycleInstanceKeys");
+    expect(source).toContain("reviewInstanceMatchesReviewCycle");
+    expect(source).toContain("legacyReviewInstanceIds");
+    expect(source).toContain("relatedReviewInstanceIds");
+    expect(source).toContain("setReviewInstances((prev)");
     const fileValidationIndex = source.indexOf('if (completionMode === "completed") {\n        if (!performanceReviewEvidenceFile)');
     const instanceCreateIndex = source.indexOf("reviewInstance = await handleCreateReviewInstanceForEmployee", fileValidationIndex);
+    const policyWaiverIndex = source.indexOf('completionMode === "waived" && laborEmployeeId && requirementId');
     expect(fileValidationIndex).toBeGreaterThan(-1);
+    expect(policyWaiverIndex).toBeGreaterThan(-1);
+    expect(policyWaiverIndex).toBeLessThan(fileValidationIndex);
     expect(instanceCreateIndex).toBeGreaterThan(fileValidationIndex);
   });
 

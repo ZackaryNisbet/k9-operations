@@ -667,10 +667,14 @@ function getReviewCyclePolicyCell(reviewCycle = {}) {
 }
 function getReviewCycleRequirementId(reviewCycle = {}) {
   const policyCell = getReviewCyclePolicyCell(reviewCycle);
-  return reviewCycle?.requirementId
-    || reviewCycle?.requirement?.id
-    || policyCell.requirement_id
-    || policyCell.requirementId
+  return normalizeOptionalUuid(reviewCycle?.requirementId)
+    || normalizeOptionalUuid(reviewCycle?.requirement?.id)
+    || normalizeOptionalUuid(policyCell.requirement_id)
+    || normalizeOptionalUuid(policyCell.requirementId)
+    || normalizeOptionalUuid(reviewCycle?.policyKey)
+    || normalizeOptionalUuid(reviewCycle?.requirement?.parent_requirement_id)
+    || normalizeOptionalUuid(policyCell.parent_requirement_id)
+    || normalizeOptionalUuid(policyCell.policy_key)
     || "";
 }
 function getReviewCycleLegacyReviewCycle(reviewCycle = {}) {
@@ -683,6 +687,67 @@ function getReviewCycleLegacyReviewCycle(reviewCycle = {}) {
     || compatibility.legacy_review_cycle
     || requirementMetadata.legacy_review_cycle
     || "";
+}
+function getReviewCycleOffsetDays(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const dueRule = isObjectRow(reviewCycle?.dueRule)
+    ? reviewCycle.dueRule
+    : isObjectRow(reviewCycle?.requirement?.due_rule)
+      ? reviewCycle.requirement.due_rule
+      : isObjectRow(policyCell.due_rule)
+        ? policyCell.due_rule
+        : {};
+  const numericCandidates = [
+    reviewCycle?.offsetDays,
+    reviewCycle?.offset_days,
+    reviewCycle?.requirement?.offset_days,
+    reviewCycle?.requirement?.offsetDays,
+    policyCell.offset_days,
+    policyCell.offsetDays,
+    dueRule.offset_days,
+    dueRule.offsetDays,
+    reviewCycle?.shortLabel,
+  ];
+  for (const candidate of numericCandidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const labelMatch = String(reviewCycle?.label || reviewCycle?.title || reviewCycle?.slug || "").match(/(\d+)\s*-?\s*day/i);
+  return labelMatch ? Number(labelMatch[1]) : null;
+}
+function getReviewCycleInstanceKeys(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const keys = new Set([
+    reviewCycle?.id,
+    reviewCycle?.slug,
+    reviewCycle?.baseKey,
+    reviewCycle?.requirementId,
+    reviewCycle?.policyKey,
+    reviewCycle?.requirement?.id,
+    reviewCycle?.requirement?.slug,
+    policyCell.requirement_id,
+    policyCell.requirementId,
+    policyCell.slug,
+    policyCell.policy_key,
+    policyCell.policyKey,
+    getReviewCycleLegacyReviewCycle(reviewCycle),
+  ].filter(Boolean).map((value) => String(value)));
+  const offsetDays = getReviewCycleOffsetDays(reviewCycle);
+  if (Number.isFinite(offsetDays) && offsetDays > 0) {
+    keys.add(`${offsetDays}_day`);
+    keys.add(`review_${offsetDays}`);
+    keys.add(`review_${offsetDays}_day`);
+  }
+  return Array.from(keys);
+}
+function reviewInstanceMatchesReviewCycle(instance = {}, reviewCycle = {}) {
+  const instanceCycle = String(instance?.review_cycle || "");
+  if (!instanceCycle) return false;
+  const normalizedInstanceCycle = normalizeLocalReviewCycleKey(instanceCycle);
+  return getReviewCycleInstanceKeys(reviewCycle).some((key) => (
+    String(key) === instanceCycle
+    || normalizeLocalReviewCycleKey(key) === normalizedInstanceCycle
+  ));
 }
 function isDirectComplianceRequirementCycle(reviewCycle = {}) {
   return Boolean(reviewCycle?.isDirectComplianceRequirement || (getReviewCycleRequirementId(reviewCycle) && !getReviewCycleLegacyReviewCycle(reviewCycle)));
@@ -11904,6 +11969,168 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         return;
       }
 
+      if (completionMode === "waived" && laborEmployeeId && requirementId) {
+        const nowIso = new Date().toISOString();
+        const policyCell = getReviewCyclePolicyCell(reviewCycle);
+        const existingEvidenceLinkId = reviewCycle?.evidenceLinkId || policyCell.evidence_link_id || policyCell.evidenceLinkId || "";
+
+        const { error: exceptionSupersedeError } = await supabase
+          .from("labor_compliance_exceptions")
+          .update({
+            superseded_at: nowIso,
+            updated_at: nowIso,
+            updated_by_user_id: actorUserId || null,
+          })
+          .eq("labor_employee_id", laborEmployeeId)
+          .eq("requirement_id", requirementId)
+          .is("superseded_at", null);
+        if (exceptionSupersedeError) throw exceptionSupersedeError;
+
+        const { error: exceptionInsertError } = await supabase
+          .from("labor_compliance_exceptions")
+          .insert({
+            labor_employee_id: laborEmployeeId,
+            requirement_id: requirementId,
+            exception_kind: "waived",
+            original_due_date: reviewCycle?.dueDate || policyCell.due_date || policyCell.original_due_date || null,
+            effective_on: performanceReviewCompletedOn,
+            reason: "Waived from Compliance grid",
+            approved_by_user_id: actorUserId || null,
+            approved_by_name: actorName || null,
+            metadata: {
+              source_module: "compliance_grid",
+              actor_user_id: actorUserId || null,
+              actor_name: actorName || null,
+              requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
+              legacy_review_cycle: legacyReviewCycle || null,
+            },
+            created_by_user_id: actorUserId || null,
+            updated_by_user_id: actorUserId || null,
+          });
+        if (exceptionInsertError) throw exceptionInsertError;
+
+        const evidencePayload = {
+          labor_employee_id: laborEmployeeId,
+          requirement_id: requirementId,
+          completed_on: performanceReviewCompletedOn,
+          renewal_due_date: null,
+          evidence_label: null,
+          labor_employee_document_id: null,
+          external_evidence_url: null,
+          internal_module_ref: null,
+          source_note: "Waived in Compliance grid",
+          is_current: true,
+          superseded_at: null,
+          metadata: {
+            source_module: "compliance_grid",
+            completion_mode: "waived",
+            actor_user_id: actorUserId || null,
+            actor_name: actorName || null,
+            requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
+            legacy_review_cycle: legacyReviewCycle || null,
+          },
+          updated_by_user_id: actorUserId || null,
+        };
+
+        if (existingEvidenceLinkId) {
+          const { error: evidenceUpdateError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .update({
+              ...evidencePayload,
+              updated_at: nowIso,
+            })
+            .eq("id", existingEvidenceLinkId);
+          if (evidenceUpdateError) throw evidenceUpdateError;
+        } else {
+          const { error: supersedeEvidenceError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .update({
+              is_current: false,
+              superseded_at: nowIso,
+              updated_at: nowIso,
+              updated_by_user_id: actorUserId || null,
+            })
+            .eq("labor_employee_id", laborEmployeeId)
+            .eq("requirement_id", requirementId)
+            .eq("is_current", true);
+          if (supersedeEvidenceError) throw supersedeEvidenceError;
+
+          const { error: evidenceInsertError } = await supabase
+            .from("labor_compliance_evidence_links")
+            .insert({
+              ...evidencePayload,
+              created_by_user_id: actorUserId || null,
+            });
+          if (evidenceInsertError) throw evidenceInsertError;
+        }
+
+        const legacyReviewInstanceIds = legacyReviewCycle
+          ? toObjectRows(reviewInstances)
+            .filter((instance) => {
+              if (instance.labor_employee_id !== laborEmployeeId) return false;
+              if (!reviewInstanceMatchesReviewCycle(instance, reviewCycle)) return false;
+              const status = String(instance.status || "").toLowerCase();
+              return !instance.completed_at || ["scheduled", "in_progress", "not_started"].includes(status);
+            })
+            .map((instance) => instance.id)
+            .filter(Boolean)
+          : [];
+        const reviewInstanceIdsToComplete = Array.from(new Set([
+          ...legacyReviewInstanceIds,
+          (!reviewInstance?.completed_at && reviewInstance?.id) ? reviewInstance.id : "",
+        ].filter(Boolean)));
+        if (reviewInstanceIdsToComplete.length > 0) {
+          const { error: reviewUpdateError } = await supabase
+            .from("employee_review_instances")
+            .update({
+              status: "completed",
+              completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+              reviewer_user_id: actorUserId,
+              reviewer_name: actorName,
+              metadata: {
+                completion_mode: "waived",
+                completion_waiver: {
+                  waived_on: performanceReviewCompletedOn,
+                  waived_at: nowIso,
+                  actor_user_id: actorUserId,
+                  actor_name: actorName,
+                  review_cycle: legacyReviewCycle || reviewCycle?.id || reviewCycle?.slug || null,
+                },
+              },
+              updated_by_user_id: actorUserId,
+            })
+            .in("id", reviewInstanceIdsToComplete);
+          if (reviewUpdateError) throw reviewUpdateError;
+
+          setReviewInstances((prev) => toObjectRows(prev).map((instance) => (
+            reviewInstanceIdsToComplete.includes(instance.id)
+              ? {
+                ...instance,
+                status: "completed",
+                completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+                reviewer_user_id: actorUserId,
+                reviewer_name: actorName,
+                metadata: {
+                  completion_mode: "waived",
+                  completion_waiver: {
+                    waived_on: performanceReviewCompletedOn,
+                    waived_at: nowIso,
+                    actor_user_id: actorUserId,
+                    actor_name: actorName,
+                    review_cycle: legacyReviewCycle || reviewCycle?.id || reviewCycle?.slug || null,
+                  },
+                },
+              }
+              : instance
+          )));
+        }
+
+        await refreshLaborData();
+        closeComplianceReviewEditor();
+        addGlobalToast("Compliance checkpoint waived", "success");
+        return;
+      }
+
       let acceptedPerformanceReviewFile = null;
       if (completionMode === "completed") {
         if (!performanceReviewEvidenceFile) {
@@ -11936,28 +12163,56 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       if (completionMode === "waived") {
         const existingMetadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
-        const { error } = await supabase
+        const relatedReviewInstanceIds = toObjectRows(reviewInstances)
+          .filter((instance) => {
+            if (instance.labor_employee_id !== laborEmployeeId) return false;
+            if (!reviewInstanceMatchesReviewCycle(instance, reviewCycle)) return false;
+            const status = String(instance.status || "").toLowerCase();
+            return !instance.completed_at || ["scheduled", "in_progress", "not_started"].includes(status);
+          })
+          .map((instance) => instance.id)
+          .filter(Boolean);
+        const reviewInstanceIdsToComplete = Array.from(new Set([
+          ...relatedReviewInstanceIds,
+          reviewInstance?.id || "",
+        ].filter(Boolean)));
+        const waiverMetadata = {
+          ...existingMetadata,
+          completion_mode: "waived",
+          completion_waiver: {
+            waived_on: performanceReviewCompletedOn,
+            waived_at: new Date().toISOString(),
+            actor_user_id: actorUserId,
+            actor_name: actorName,
+            review_cycle: legacyReviewCycle || reviewInstance.review_cycle || reviewCycle?.id || reviewCycle?.slug || null,
+          },
+        };
+        const reviewUpdateRequest = supabase
           .from("employee_review_instances")
           .update({
             status: "completed",
             completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
             reviewer_user_id: actorUserId,
             reviewer_name: actorName,
-            metadata: {
-              ...existingMetadata,
-              completion_mode: "waived",
-              completion_waiver: {
-                waived_on: performanceReviewCompletedOn,
-                waived_at: new Date().toISOString(),
-                actor_user_id: actorUserId,
-                actor_name: actorName,
-                review_cycle: reviewInstance.review_cycle || reviewCycle?.id || reviewCycle?.slug || null,
-              },
-            },
+            metadata: waiverMetadata,
             updated_by_user_id: actorUserId,
-          })
-          .eq("id", reviewInstance.id);
+          });
+        const { error } = reviewInstanceIdsToComplete.length > 1
+          ? await reviewUpdateRequest.in("id", reviewInstanceIdsToComplete)
+          : await reviewUpdateRequest.eq("id", reviewInstance.id);
         if (error) throw error;
+        setReviewInstances((prev) => toObjectRows(prev).map((instance) => (
+          reviewInstanceIdsToComplete.includes(instance.id)
+            ? {
+              ...instance,
+              status: "completed",
+              completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+              reviewer_user_id: actorUserId,
+              reviewer_name: actorName,
+              metadata: waiverMetadata,
+            }
+            : instance
+        )));
         await refreshLaborData();
         closeComplianceReviewEditor();
         addGlobalToast("Compliance checkpoint waived", "success");
@@ -12008,6 +12263,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     performanceReviewCompletedOn,
     performanceReviewEvidenceFile,
     refreshLaborData,
+    reviewInstances,
   ]);
 
   const closeComplianceRequirementEditor = useCallback(() => {
@@ -14269,7 +14525,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           template: resolvePerformanceReviewTemplate(row),
           cycles: compliance.cycleRows.map((cycle) => ({
             ...cycle,
-            instance: employeeInstances.find((instance) => instance.review_cycle === cycle.id || instance.review_cycle === cycle.slug) || null,
+            instance: employeeInstances.find((instance) => reviewInstanceMatchesReviewCycle(instance, cycle)) || null,
           })),
         };
       });
