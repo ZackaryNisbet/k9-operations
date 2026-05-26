@@ -95,8 +95,12 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).toContain("labor-roster-header-button");
     expect(reviewGridSource).toContain('active ? (direction === "desc" ? "↓" : "↑") : "↕"');
     expect(reviewGridSource).toContain("review-cycle-cell");
-    expect(reviewGridSource).toContain("Verified / Qualified");
+    expect(reviewGridSource).toContain('label: "Complete"');
+    expect(reviewGridSource).not.toContain("Verified / Qualified");
+    expect(reviewGridSource).not.toContain("In Progress");
     expect(reviewGridSource).toContain('label: "Overdue"');
+    expect(reviewGridSource).toContain('label: "Waived"');
+    expect(reviewGridSource).toContain('label: "Not Started"');
     expect(reviewGridSource).not.toContain("Evidence Due");
     expect(reviewGridSource).toContain("Date due");
     expect(reviewGridSource).toContain("Date waived");
@@ -157,8 +161,13 @@ describe("TrainingPage configurable compliance integration", () => {
 
   it("does not infer a waived cell from a generic completed date", () => {
     expect(reviewGridSource).toContain("const isPolicyWaiver = normalizeText(cycle.exceptionKind || cycle.exception_kind) === \"waived\"");
-    expect(reviewGridSource).toContain("const completionMode = normalizeText(cycle.instance?.metadata?.completion_mode);");
-    expect(reviewGridSource).toContain("completed && (status === \"complete\" || status === \"completed\" || completionMode === \"completed\")");
+    expect(reviewGridSource).toContain("const completionMode = normalizeText(");
+    expect(reviewGridSource).toContain("instanceMetadata.completion_mode");
+    expect(reviewGridSource).toContain("policyMetadata.completion_mode");
+    expect(reviewGridSource).toContain("const hasExplicitWaiver = completionMode === \"waived\"");
+    expect(reviewGridSource).toContain("const hasExplicitCompletion = completionMode === \"completed\"");
+    expect(reviewGridSource).toContain("if (hasExplicitWaiver)");
+    expect(reviewGridSource).toContain("if (hasExplicitCompletion || (completed && status !== \"waived\"))");
     expect(reviewGridSource).not.toContain("waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on");
   });
 
