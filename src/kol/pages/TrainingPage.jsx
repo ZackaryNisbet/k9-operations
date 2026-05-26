@@ -3,7 +3,6 @@
 // and Training Record Detail with section expand/collapse and item completion.
 
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from "react";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr, fmtDate, fmtDateFull, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
@@ -800,142 +799,55 @@ function getReviewCycleEvidenceDocument(reviewCycle = {}, documentsById = {}) {
     },
   };
 }
-const PDF_ATTACHMENT_POINT_TO_CSS_PX = 96 / 72;
 function AttachmentPdfPreview({ url, fileName }) {
-  const containerRef = useRef(null);
-  const canvasRefs = useRef(new Map());
-  const pdfDocRef = useRef(null);
-  const renderRunRef = useRef(0);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [pageState, setPageState] = useState({ loading: false, error: "", pages: [] });
+  const objectUrlRef = useRef("");
+  const [previewState, setPreviewState] = useState({ loading: false, error: "", objectUrl: "" });
 
   useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return undefined;
-    const update = () => setContainerWidth(node.getBoundingClientRect().width || 0);
-    update();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", update);
-      return () => window.removeEventListener("resize", update);
-    }
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!url || !containerWidth) return undefined;
+    if (!url) return undefined;
     let cancelled = false;
-    let loadingTask = null;
-    setPageState({ loading: true, error: "", pages: [] });
-    canvasRefs.current = new Map();
-    renderRunRef.current += 1;
-    if (pdfDocRef.current) {
-      try { pdfDocRef.current.destroy?.(); } catch (_) {}
-      pdfDocRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = "";
     }
+    setPreviewState({ loading: true, error: "", objectUrl: "" });
 
-    async function loadPdfPages() {
+    async function loadPdfBlob() {
       try {
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) throw new Error("Unable to load PDF evidence file.");
-        const pdfBytes = new Uint8Array(await response.arrayBuffer());
-        loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
-        const pdf = await loadingTask.promise;
-        const maxWidth = Math.max(280, containerWidth - 28);
-        const pages = [];
-
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-          const page = await pdf.getPage(pageNumber);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const scale = Math.min(PDF_ATTACHMENT_POINT_TO_CSS_PX, maxWidth / baseViewport.width);
-          const viewport = page.getViewport({ scale });
-          pages.push({
-            pageNumber,
-            scale,
-            width: viewport.width,
-            height: viewport.height,
-          });
+        const blob = await response.blob();
+        const pdfBlob = blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" });
+        const objectUrl = URL.createObjectURL(pdfBlob);
+        if (cancelled) URL.revokeObjectURL(objectUrl);
+        else {
+          objectUrlRef.current = objectUrl;
+          setPreviewState({ loading: false, error: "", objectUrl });
         }
-
-        if (cancelled) {
-          await pdf.destroy?.();
-          return;
-        }
-
-        pdfDocRef.current = pdf;
-        setPageState({ loading: true, error: "", pages });
       } catch (error) {
         if (!cancelled) {
-          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pages: [] });
+          setPreviewState({ loading: false, error: error?.message || "Unable to load PDF preview.", objectUrl: "" });
         }
       }
     }
 
-    loadPdfPages();
+    loadPdfBlob();
     return () => {
       cancelled = true;
-      try { loadingTask?.destroy?.(); } catch (_) {}
-      if (pdfDocRef.current) {
-        try { pdfDocRef.current.destroy?.(); } catch (_) {}
-        pdfDocRef.current = null;
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = "";
       }
     };
-  }, [url, containerWidth]);
-
-  useEffect(() => {
-    const pdf = pdfDocRef.current;
-    const pages = pageState.pages;
-    if (!pdf || !pages.length) return undefined;
-    let cancelled = false;
-    const runId = renderRunRef.current + 1;
-    renderRunRef.current = runId;
-
-    async function renderPages() {
-      try {
-        for (const pageInfo of pages) {
-          if (cancelled || runId !== renderRunRef.current) return;
-          const canvas = canvasRefs.current.get(pageInfo.pageNumber);
-          if (!canvas) continue;
-          const page = await pdf.getPage(pageInfo.pageNumber);
-          const viewport = page.getViewport({ scale: pageInfo.scale });
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = Math.floor(viewport.width * dpr);
-          canvas.height = Math.floor(viewport.height * dpr);
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          const context = canvas.getContext("2d", { alpha: false });
-          context.save();
-          context.fillStyle = "#fff";
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          context.restore();
-          await page.render({ canvasContext: context, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
-        }
-        if (!cancelled && runId === renderRunRef.current) {
-          setPageState((prev) => ({ ...prev, loading: false }));
-        }
-      } catch (error) {
-        if (!cancelled && runId === renderRunRef.current) {
-          setPageState({ loading: false, error: error?.message || "Unable to render PDF preview.", pages: [] });
-        }
-      }
-    }
-
-    renderPages();
-    return () => {
-      cancelled = true;
-    };
-  }, [pageState.pages]);
+  }, [url]);
 
   const openOriginal = useCallback(() => {
     if (url) window.open(url, "_blank", "noopener,noreferrer");
   }, [url]);
 
   return (
-    <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "auto", background: "#f8fafc" }}>
-      {pageState.error ? (
+    <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#fff" }}>
+      {previewState.error ? (
         <div style={{ minHeight: 420, display: "grid", placeItems: "center", gap: 12, padding: 24, textAlign: "center" }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>PDF preview could not render here.</div>
@@ -943,36 +855,18 @@ function AttachmentPdfPreview({ url, fileName }) {
           </div>
           <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={openOriginal}>Open Original PDF</Btn>
         </div>
+      ) : previewState.objectUrl ? (
+        <iframe
+          title={fileName || "Compliance evidence PDF"}
+          src={`${previewState.objectUrl}#toolbar=1&navpanes=0&view=FitH`}
+          style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
+        />
       ) : (
-        <div style={{ display: "grid", gap: 18, justifyItems: "center", padding: 14 }}>
-          {pageState.pages.length ? (
-            pageState.pages.map((pageInfo) => (
-              <div
-                key={pageInfo.pageNumber}
-                style={{
-                  width: pageInfo.width,
-                  minHeight: pageInfo.height,
-                  background: "#fff",
-                  boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
-                }}
-              >
-                <canvas
-                  ref={(node) => {
-                    if (node) canvasRefs.current.set(pageInfo.pageNumber, node);
-                    else canvasRefs.current.delete(pageInfo.pageNumber);
-                  }}
-                  style={{ display: "block", background: "#fff" }}
-                />
-              </div>
-            ))
-          ) : (
-            <div style={{ minHeight: 420, display: "grid", placeItems: "center", color: C.textMut, fontSize: 13, fontWeight: 850 }}>
-              Loading PDF preview...
-            </div>
-          )}
+        <div style={{ minHeight: 420, height: "100%", display: "grid", placeItems: "center", color: C.textMut, fontSize: 13, fontWeight: 850 }}>
+          Loading PDF preview...
         </div>
       )}
-      {pageState.loading && (
+      {previewState.loading && (
         <div style={{ position: "absolute", right: 14, top: 14, zIndex: 4, borderRadius: 999, background: "rgba(255,255,255,0.95)", border: `1px solid ${C.borderLight}`, color: C.textSec, fontSize: 11, fontWeight: 900, padding: "5px 9px", boxShadow: "0 8px 20px rgba(15,23,42,0.12)" }}>
           Loading
         </div>
