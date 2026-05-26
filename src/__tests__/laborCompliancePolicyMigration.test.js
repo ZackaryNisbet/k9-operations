@@ -9,6 +9,10 @@ const reviewEvidenceSql = readFileSync(
   new URL("../../supabase/migrations/20260525113005_labor_review_evidence_completion.sql", import.meta.url),
   "utf8"
 );
+const uploadRlsSql = readFileSync(
+  new URL("../../supabase/migrations/20260526160513_compliance_evidence_upload_rls.sql", import.meta.url),
+  "utf8"
+);
 
 describe("labor compliance policy spine migration", () => {
   it("creates scoped dynamic policy tables instead of global hardcoded requirements", () => {
@@ -109,5 +113,18 @@ describe("labor compliance policy spine migration", () => {
     expect(reviewEvidenceSql).toContain("'employee_review_instances'");
     expect(reviewEvidenceSql).toContain("'completion_evidence'");
     expect(reviewEvidenceSql).toContain("GRANT EXECUTE ON FUNCTION public.complete_employee_review_instance(uuid, uuid, text, uuid, date) TO authenticated");
+  });
+
+  it("allows compliance evidence PDF uploads through compliance evidence permissions", () => {
+    expect(uploadRlsSql).toContain("labor_employee_attachments_requirement_evidence_insert");
+    expect(uploadRlsSql).toContain("array_length(storage.foldername(name), 1) >= 3");
+    expect(uploadRlsSql).toContain("(storage.foldername(name))[2] = 'requirements'");
+    expect(uploadRlsSql).toContain("(storage.foldername(name))[3] LIKE 'performance-review-%'");
+    expect(uploadRlsSql).toContain("public.labor_compliance_can_update_evidence(e.location_id)");
+    expect(uploadRlsSql).toContain("labor_employee_documents_compliance_evidence_insert");
+    expect(uploadRlsSql).toContain("document_type = 'performance_review_evidence'");
+    expect(uploadRlsSql).toContain("storage_path LIKE (labor_employee_id::text || '/requirements/performance-review-%')");
+    expect(uploadRlsSql).toContain("COALESCE(metadata->>'source_module', '') IN ('performance_reviews', 'compliance_requirements')");
+    expect(uploadRlsSql).toContain("'Labor Compliance View PDFs'");
   });
 });
