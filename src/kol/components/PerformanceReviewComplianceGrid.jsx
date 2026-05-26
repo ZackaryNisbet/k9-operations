@@ -117,7 +117,9 @@ function getCycleState(cycle = {}) {
   const completed = Boolean(cycle.completed || cycle.instance?.completed_at || evidence.completedOn);
   const hasCompletionEvidence = Boolean(evidence.completedOn || evidence.documentId || evidence.fileName || evidence.uploadedAt);
   const hasExplicitWaiver = completionMode === "waived"
-    || Boolean(instanceMetadata.completion_waiver?.waived_on || policyMetadata.completion_waiver?.waived_on);
+    || status === "waived"
+    || normalizeText(cycle.exceptionKind || cycle.exception_kind || cycle.policyCell?.exception_kind || cycle.requirementStatus?.exception_kind) === "waived"
+    || Boolean(waiver.waivedOn || instanceMetadata.completion_waiver?.waived_on || policyMetadata.completion_waiver?.waived_on);
   const hasCompleteStatus = ["complete", "completed", "completed_late", "complete_late", "late_complete"].includes(status);
   const hasExplicitCompletion = completionMode === "completed"
     || hasCompleteStatus
@@ -133,9 +135,6 @@ function getCycleState(cycle = {}) {
       label: "Complete",
       detail: evidence.uploadedByName || cycle.instance?.reviewer_name || evidence.fileName || "Evidence uploaded",
     };
-  }
-  if (status === "waived" || waiver.waivedOn || completionMode === "waived") {
-    return { key: "waived", icon: "W", label: "Waived", detail: waiver.actorName || evidence.uploadedByName || "Manager override" };
   }
   if (completed) {
     return {
@@ -289,7 +288,8 @@ export function ReviewCycleCell({
       : state.key === "in-progress"
         ? { label: "Action date", value: cycle.instance?.created_at || cycle.instance?.updated_at }
         : { label: "Action date", value: "" };
-  const dueLabel = `Date due ${formatCellDate(getCycleDueDate(cycle), formatDate)}`;
+  const dueDate = getCycleDueDate(cycle);
+  const dueLabel = dueDate ? `Due ${formatCellDate(dueDate, formatDate)}` : "No due date";
   const actionLabel = action.value ? `${action.label} ${formatCellDate(action.value, formatDate)}` : "";
   const uploadedLabel = evidence.uploadedAt ? `Uploaded ${formatTimestamp(evidence.uploadedAt)}` : "";
   const hasEvidencePdf = Boolean(evidence.fileName || evidence.uploadedAt);
