@@ -622,7 +622,33 @@ BEGIN
           AND note.template_item_id = result.template_item_id
         ORDER BY note.created_at DESC
         LIMIT 1
-      ) AS latest_note_at
+      ) AS latest_note_at,
+      (
+        SELECT COALESCE(NULLIF(note.created_by_name, ''), NULLIF(note.initials, ''))
+        FROM public.training_record_notes note
+        WHERE note.record_id = result.record_id
+          AND note.template_item_id = result.template_item_id
+        ORDER BY note.created_at DESC
+        LIMIT 1
+      ) AS latest_note_actor_name,
+      (
+        SELECT NULLIF(event.actor_name, '')
+        FROM public.training_record_events event
+        WHERE event.record_id = result.record_id
+          AND event.template_item_id = result.template_item_id
+          AND event.event_type = 'item_status_changed'
+        ORDER BY event.created_at DESC
+        LIMIT 1
+      ) AS latest_status_actor_name,
+      (
+        SELECT event.created_at
+        FROM public.training_record_events event
+        WHERE event.record_id = result.record_id
+          AND event.template_item_id = result.template_item_id
+          AND event.event_type = 'item_status_changed'
+        ORDER BY event.created_at DESC
+        LIMIT 1
+      ) AS latest_status_actor_at
     FROM public.training_record_item_results result
     JOIN public.training_records record ON record.id = result.record_id
     WHERE record.location_id = v_location_id
@@ -645,6 +671,9 @@ BEGIN
       'updated_at', updated_at,
       'latest_note', latest_note,
       'latest_note_at', latest_note_at,
+      'latest_note_actor_name', latest_note_actor_name,
+      'latest_status_actor_name', latest_status_actor_name,
+      'latest_status_actor_at', latest_status_actor_at,
       'metadata', metadata
     )
   ), '{}'::jsonb)

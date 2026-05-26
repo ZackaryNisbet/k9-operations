@@ -17,7 +17,6 @@ import {
   LABOR_EMPLOYMENT_COMMITMENT_OPTIONS,
   LABOR_SHIRT_SIZE_OPTIONS,
   LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT,
-  LABOR_TRAINING_REQUIREMENT_SLUGS,
   buildEmployeeHistoryTimeline,
   buildEmployeeTrainingRequirementRows,
   buildCreateLaborEmployeeRpcArgs,
@@ -77,10 +76,10 @@ import {
   loadLaborRosterPdfAssets,
 } from "../laborRosterPdf";
 import {
-  buildDocuSealPerformanceReviewFields,
   buildPerformanceReviewDraftFromInstance,
   buildPerformanceReviewPdfFileName,
   fillPerformanceReviewPdfBytes,
+  buildPerformanceReviewCyclesFromPolicy,
   getPerformanceReviewTemplateOptions,
   getPerformanceReviewTemplateOverrideKey,
   getPerformanceReviewCompliance,
@@ -91,6 +90,10 @@ import {
 } from "../performanceReviewData";
 import AttendanceTrackerPage from "./AttendancePage";
 import LaborInterviewsPage from "./LaborInterviewsPage";
+import PerformanceReviewComplianceGrid, {
+  PerformanceReviewComplianceGridStyles,
+  ReviewCycleCell,
+} from "../components/PerformanceReviewComplianceGrid";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -126,9 +129,9 @@ const PCT_READINESS_STATUS_STYLES = {
 };
 
 const TRAINING_VIEW_OPTIONS = [
-  { id: "board", label: "Team Readiness Board", subtitle: "Skills by employee" },
-  { id: "records", label: "Records", subtitle: "Active and completed training records" },
-  { id: "history", label: "History", subtitle: "Training audit trail" },
+  { id: "board", label: "Team Readiness Board" },
+  { id: "records", label: "Records" },
+  { id: "history", label: "History" },
 ];
 
 const DEFAULT_PCT_READINESS_FILTERS = {
@@ -146,6 +149,21 @@ const DEFAULT_TRAINING_HISTORY_FILTERS = {
   actor: "",
 };
 
+const DEFAULT_COMPLIANCE_HISTORY_FILTERS = {
+  date: "",
+  employee: "",
+  categoryTask: "",
+  actor: "",
+};
+
+const TRAINING_ACTIVITY_LOOKBACK_LIMIT = 5000;
+
+const TRAINING_RECORD_EMPLOYEE_STATUS_OPTIONS = [
+  { id: "active", label: "Active employees" },
+  { id: "inactive", label: "Inactive employees" },
+  { id: "all", label: "All employees" },
+];
+
 export const TRAINING_REALTIME_TABLES = [
   "training_records",
   "training_record_item_results",
@@ -158,7 +176,7 @@ const TRAINING_REALTIME_REFRESH_DELAY_MS = 150;
 export const LABOR_MANAGEMENT_TABS = [
   { id: "home", label: "Roster" },
   { id: "attendance", label: "Attendance" },
-  { id: "performance-reviews", label: "Performance Reviews" },
+  { id: "performance-reviews", label: "Compliance" },
   { id: "training", label: "Training" },
   { id: "interviews", label: "Interviews" },
   { id: "notes", label: "Notes" },
@@ -174,7 +192,7 @@ const LABOR_TAB_IDS = new Set([...TABS, ...HIDDEN_LABOR_TABS].map((tab) => tab.i
 const LABOR_TAB_PERMISSION_MAP = {
   home: "Labor Roster",
   training: "Labor Roster",
-  "performance-reviews": "Labor Performance Reviews",
+  "performance-reviews": "Labor Compliance View",
   templates: "Labor Templates",
   attendance: "Labor Attendance",
   interviews: "Labor Interviews",
@@ -185,6 +203,14 @@ const LABOR_TAB_PERMISSION_MAP = {
 const normalizeLaborTab = (value) => value === "labor-model" ? "hour-analysis" : (LABOR_TAB_IDS.has(value) ? value : "home");
 const normalizeAttendanceView = (value) => value === "summary" ? "summary" : "input";
 const normalizeInterviewView = (value) => value === "config" ? "config" : "records";
+export const COMPLIANCE_VIEW_OPTIONS = [
+  { id: "employees", label: "Employees" },
+  { id: "summary", label: "Summary" },
+  { id: "requirements", label: "Requirements" },
+  { id: "history", label: "History" },
+];
+const COMPLIANCE_VIEW_IDS = new Set(COMPLIANCE_VIEW_OPTIONS.map((view) => view.id));
+const normalizeComplianceView = (value) => COMPLIANCE_VIEW_IDS.has(value) ? value : "employees";
 export const CAPACITY_PLANNING_VIEWS = [
   { id: "staffing-capacity", label: "Staffing Capacity", subtitle: "Expected hours, coverage gaps, and hiring pressure" },
   { id: "labor-model", label: "Labor Model", subtitle: "Build the operating floor that feeds staffing capacity" },
@@ -192,23 +218,26 @@ export const CAPACITY_PLANNING_VIEWS = [
 const CAPACITY_PLANNING_VIEW_IDS = new Set(CAPACITY_PLANNING_VIEWS.map((view) => view.id));
 export const normalizeCapacityPlanningView = (value) => CAPACITY_PLANNING_VIEW_IDS.has(value) ? value : "staffing-capacity";
 
-export function buildLaborModulePanelKey({ tab, interviewView, attendanceView, capacityPlanningView } = {}) {
+export function buildLaborModulePanelKey({ tab, interviewView, attendanceView, capacityPlanningView, complianceView } = {}) {
   const normalizedTab = normalizeLaborTab(tab);
-  return [
+  const parts = [
     normalizedTab,
     normalizedTab === "interviews" ? normalizeInterviewView(interviewView) : "",
     normalizedTab === "attendance" ? normalizeAttendanceView(attendanceView) : "",
     normalizedTab === "hour-analysis" ? normalizeCapacityPlanningView(capacityPlanningView) : "",
-  ].join(":");
+  ];
+  if (normalizedTab === "performance-reviews") parts.push(normalizeComplianceView(complianceView));
+  return parts.join(":");
 }
 
 function LaborViewSwitcher({ options = [], value, onChange }) {
   const visibleOptions = options.filter(Boolean);
   const activeIndex = Math.max(0, visibleOptions.findIndex((option) => option.id === value));
+  const hasSubtitles = visibleOptions.some((option) => option.subtitle);
   if (!visibleOptions.length) return null;
   return (
     <div
-      className="labor-view-switcher"
+      className={`labor-view-switcher${hasSubtitles ? "" : " is-compact"}`}
       style={{
         "--labor-view-count": visibleOptions.length,
         "--labor-view-active-index": activeIndex,
@@ -225,7 +254,77 @@ function LaborViewSwitcher({ options = [], value, onChange }) {
             onClick={() => onChange(option.id)}
           >
             <span>{option.label}</span>
-            <small>{option.subtitle}</small>
+            {option.subtitle ? <small>{option.subtitle}</small> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompactLaborTabSwitcher({ options = [], value, onChange }) {
+  const visibleOptions = options.filter(Boolean);
+  const activeIndex = Math.max(0, visibleOptions.findIndex((option) => option.id === value));
+  if (!visibleOptions.length) return null;
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "grid",
+        gridTemplateColumns: `repeat(${visibleOptions.length}, minmax(0, 1fr))`,
+        gap: 0,
+        minHeight: 50,
+        padding: 4,
+        marginBottom: 18,
+        borderRadius: 14,
+        border: `1px solid ${C.border}`,
+        background: "linear-gradient(180deg, #fff 0%, #f8fafc 100%)",
+        boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: 4,
+          bottom: 4,
+          left: 4,
+          width: `calc((100% - 8px) / ${visibleOptions.length})`,
+          borderRadius: 10,
+          background: "linear-gradient(135deg, rgba(220,252,231,0.78), rgba(240,253,244,0.68))",
+          border: "1px solid rgba(22,101,52,0.28)",
+          boxShadow: "0 6px 18px rgba(22,101,52,0.08)",
+          transform: `translateX(${activeIndex * 100}%)`,
+          transition: "transform 180ms ease",
+        }}
+      />
+      {visibleOptions.map((option) => {
+        const active = option.id === value;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            style={{
+              position: "relative",
+              zIndex: 1,
+              minHeight: 42,
+              border: "none",
+              borderRadius: 10,
+              background: "transparent",
+              color: active ? C.pri : C.text,
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: active ? 950 : 850,
+              lineHeight: 1.15,
+              textAlign: "center",
+              cursor: "pointer",
+              padding: "8px 10px",
+              transition: "color 160ms ease",
+            }}
+          >
+            {option.label}
           </button>
         );
       })}
@@ -512,7 +611,7 @@ const LABOR_ROSTER_SORT_COLUMNS = [
   { key: "phone", label: "Phone" },
   { key: "email", label: "Email" },
   { key: "training", label: "Training" },
-  { key: "performance_reviews", label: "Performance Reviews" },
+  { key: "performance_reviews", label: "Compliance" },
   { key: "notes", label: "Notes" },
 ];
 const LABOR_TRAINING_SORT_COLUMNS = [
@@ -524,16 +623,44 @@ const LABOR_TRAINING_SORT_COLUMNS = [
   { key: "status", label: "Status" },
   { key: "target", label: "Target Date" },
 ];
-const LABOR_PERFORMANCE_REVIEW_SORT_COLUMNS = [
+const LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS = [
   { key: "hierarchy", label: "Position Order" },
   { key: "employee", label: "Employee" },
   { key: "position", label: "Position" },
   { key: "start_date", label: "Start Date" },
   { key: "compliance", label: "Review Status" },
-  { key: "review30", label: "30 Day" },
-  { key: "review60", label: "60 Day" },
-  { key: "review90", label: "90 Day" },
+  { key: "open_checkpoints", label: "Open Checkpoints" },
 ];
+const REVIEW_CYCLE_SORT_KEY_PREFIX = "review_cycle:";
+function buildPerformanceReviewSortKey(cycle = {}) {
+  return `${REVIEW_CYCLE_SORT_KEY_PREFIX}${cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || "review"}`;
+}
+function normalizeLocalReviewCycleKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/^review_/, "")
+    .replace(/_day$/, "");
+}
+function reviewCycleMatchesKey(cycle = {}, value = "") {
+  const target = normalizeLocalReviewCycleKey(value);
+  if (!target) return false;
+  return [cycle.id, cycle.slug, cycle.baseKey, cycle.requirementId, cycle.policyKey, cycle.requirement?.slug]
+    .filter(Boolean)
+    .some((candidate) => normalizeLocalReviewCycleKey(candidate) === target);
+}
+function findReviewCycleRowBySortKey(row = {}, sortKey = "") {
+  if (!String(sortKey || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) return null;
+  const cycleKey = String(sortKey).slice(REVIEW_CYCLE_SORT_KEY_PREFIX.length);
+  return toObjectRows(row.cycles || row.performance_review_compliance?.cycleRows)
+    .find((cycle) => reviewCycleMatchesKey(cycle, cycleKey)) || null;
+}
+function getReviewCycleDueDateForSort(row = {}, sortKey = "") {
+  const cycle = findReviewCycleRowBySortKey(row, sortKey);
+  return cycle?.dueDate || cycle?.due_date || "";
+}
 const LABOR_HOUR_PERSON_SORT_COLUMNS = [
   { key: "hierarchy", label: "Position Order" },
   { key: "name", label: "Name" },
@@ -936,7 +1063,7 @@ const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employment", key: "employment_status", label: "Employment Status", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
   { section: "Employment", key: "start_date", label: "Start Date", type: "date", ops: ["after", "before", "inLastDays"] },
   { section: "Compliance", key: "training", label: "Training", type: "select", ops: ["is", "isNot"], options: ["Compliant", "In Progress", "Non-Compliant"] },
-  { section: "Compliance", key: "performance_reviews", label: "Performance Reviews", type: "select", ops: ["is", "isNot"], options: ["Compliant", "Non-compliant", "Needs setup"] },
+  { section: "Compliance", key: "performance_reviews", label: "Compliance", type: "select", ops: ["is", "isNot"], options: ["Compliant", "Non-compliant", "Needs setup"] },
 ];
 
 const LABOR_NOTE_TYPE_OPTIONS = [
@@ -2193,29 +2320,91 @@ function PctReadinessCategoryJumpControl({
 function cleanReadinessActorName(value = "") {
   const trimmed = String(value || "").trim();
   if (!trimmed || isEmailLike(trimmed)) return "";
+  const normalized = trimmed.toLowerCase();
+  if (trimmed.length > 48) return "";
+  if (/\b(need|needs|struggle|struggles|quality|walkie|slow|instructions?|confirmed|not\s)\b/.test(normalized)) return "";
+  const genericActors = new Set([
+    "staff",
+    "system",
+    "workbook import",
+    "pct workbook import",
+    "csr workbook import",
+  ]);
+  if (genericActors.has(normalized)) return "";
   return trimmed;
 }
 
-function getReadinessCellActorDisplayName(cell = {}, status = "") {
+function readReadinessMetadataActorName(metadata = {}, keys = []) {
+  const sources = [
+    isObjectRow(metadata) ? metadata : {},
+    isObjectRow(metadata?.raw_values) ? metadata.raw_values : {},
+    isObjectRow(metadata?.source_values) ? metadata.source_values : {},
+  ];
+  for (const source of sources) {
+    for (const key of keys) {
+      const actorName = cleanReadinessActorName(source[key]);
+      if (actorName) return actorName;
+    }
+  }
+  return "";
+}
+
+function getReadinessCellStatusActorDisplayName(cell = {}, status = "") {
   const metadata = isObjectRow(cell?.metadata) ? cell.metadata : {};
   const normalizedStatus = normalizePctReadinessStatus(status || cell.readiness_status || cell.status);
   if (normalizedStatus === "not_started") return "";
   const statusCandidates = normalizedStatus === "verified" || normalizedStatus === "waived"
     ? {
-        verified_actor_name: cell.verified_by || metadata.verified_by_name,
+        verified_actor_name: cell.verified_by || metadata.verified_by_name || readReadinessMetadataActorName(metadata, ["verified_accuracy_by", "verified_by"]),
         completed_by_name: cell.completed_by_name,
+        actor_full_name: cell.latest_status_actor_full_name,
+        actor_name: cell.latest_status_actor_name || metadata.latest_status_actor_name,
         updated_by_name: metadata.last_updated_by_name,
-        actor_name: cell.latest_note_actor_name,
         evaluated_by_name: cell.evaluated_by_name,
       }
     : {
-        actor_name: cell.demonstrated_by || metadata.demonstrated_by_name,
+        actor_name: cell.demonstrated_by || metadata.demonstrated_by_name || readReadinessMetadataActorName(metadata, ["demonstrated_by"]),
+        actor_full_name: cell.latest_status_actor_full_name,
+        actorName: cell.latest_status_actor_name || metadata.latest_status_actor_name,
         updated_by_name: metadata.last_updated_by_name,
-        created_by_name: cell.latest_note_actor_name,
         evaluated_by_name: cell.evaluated_by_name,
         completed_by_name: cell.completed_by_name,
       };
   return cleanReadinessActorName(resolveVerifiedActorDisplayName(statusCandidates, ""));
+}
+
+function getReadinessCellNoteActorDisplayName(cell = {}) {
+  return cleanReadinessActorName(resolveVerifiedActorDisplayName({
+    actor_full_name: cell.latest_note_actor_full_name,
+    actor_name: cell.latest_note_actor_name,
+    created_by_full_name: cell.latest_note_created_by_full_name,
+    created_by_name: cell.latest_note_created_by_name,
+  }, ""));
+}
+
+function getReadinessCellActorDisplayName(cell = {}, status = "") {
+  return getReadinessCellStatusActorDisplayName(cell, status) || getReadinessCellNoteActorDisplayName(cell);
+}
+
+function getReadinessCellActionDate(cell = {}, status = "") {
+  const metadata = isObjectRow(cell?.metadata) ? cell.metadata : {};
+  const normalizedStatus = normalizePctReadinessStatus(status || cell.readiness_status || cell.status);
+  const statusDate = normalizedStatus === "verified" || normalizedStatus === "waived"
+    ? cell.completed_at || metadata.verified_at || metadata.completed_at || cell.latest_status_actor_at || metadata.latest_status_actor_at || metadata.last_updated_at
+    : metadata.demonstrated_at || cell.latest_status_actor_at || metadata.latest_status_actor_at || metadata.last_updated_at || cell.completed_at;
+  const statusActorName = getReadinessCellStatusActorDisplayName(cell, normalizedStatus);
+  if (statusActorName) return statusDate || cell.updated_at || metadata.updated_at || cell.latest_note_at || "";
+  return cell.latest_note_at || statusDate || cell.updated_at || metadata.updated_at || "";
+}
+
+function getReadinessCellActorLine(cell = {}, status = "") {
+  const normalizedStatus = normalizePctReadinessStatus(status || cell.readiness_status || cell.status);
+  if (normalizedStatus === "not_started") return "";
+  const actorName = getReadinessCellActorDisplayName(cell, normalizedStatus);
+  const actionDate = formatLaborDate(getReadinessCellActionDate(cell, normalizedStatus));
+  if (actorName && actionDate) return `${actorName} on ${actionDate}`;
+  if (actorName) return actorName;
+  return "";
 }
 
 function TrainingHistoryStatusChange({ statusChange }) {
@@ -2463,7 +2652,20 @@ function PerformanceReviewStyles() {
   );
 }
 
+function formatReviewWorkflowLabel(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text
+    .replace(/\b30\s*\/\s*60\s*\/\s*90\s*day\s*review\b/gi, "Policy Review")
+    .replace(/\b30\s*\/\s*60\s*\/\s*90\s*workflow\b/gi, "policy checkpoint workflow")
+    .replace(/\b30\s*\/\s*60\s*\/\s*90\b/gi, "policy")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function ReviewTemplateStatusLine({ reviewTemplateName, pdfTemplateName, mismatch }) {
+  const visibleReviewTemplateName = formatReviewWorkflowLabel(reviewTemplateName);
+  const visiblePdfTemplateName = formatReviewWorkflowLabel(pdfTemplateName);
   return (
     <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
       <span
@@ -2493,7 +2695,7 @@ function ReviewTemplateStatusLine({ reviewTemplateName, pdfTemplateName, mismatc
         {mismatch ? "Template sync needed" : "Templates aligned"}
       </span>
       <span style={{ color: C.textMut, fontWeight: 700 }}>
-        Form: {reviewTemplateName || "Not loaded"} · PDF: {pdfTemplateName || "Not set"}
+        Form: {visibleReviewTemplateName || "Not loaded"} · PDF: {visiblePdfTemplateName || "Not set"}
       </span>
     </div>
   );
@@ -2519,6 +2721,246 @@ function isObjectRow(value) {
 
 export function toObjectRows(rows = []) {
   return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
+}
+
+function normalizeComplianceEvidencePolicy(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function trainingRequirementEvidencePolicy(requirementRow = {}) {
+  return normalizeComplianceEvidencePolicy(
+    requirementRow.evidencePolicy
+    || requirementRow.evidence_policy
+    || requirementRow.requirement?.evidence_policy
+    || requirementRow.policyRequirement?.evidence_policy
+    || requirementRow.metadata?.evidence_policy
+    || requirementRow.requirement?.metadata?.evidence_policy
+    || requirementRow.evidenceMode
+    || requirementRow.evidence_mode
+  );
+}
+
+function trainingRequirementAllowsReferenceUrl(requirementRow = {}) {
+  const policy = trainingRequirementEvidencePolicy(requirementRow);
+  return ["url_or_reference", "pdf_or_url", "reference_url", "external_url"].includes(policy);
+}
+
+function trainingRequirementRequiresFileEvidence(requirementRow = {}) {
+  const policy = trainingRequirementEvidencePolicy(requirementRow);
+  return !["checkbox_only", "none", "internal_module"].includes(policy);
+}
+
+function readTrainingRequirementDueRule(requirementRow = {}) {
+  const dueRule = requirementRow.dueRule
+    || requirementRow.due_rule
+    || requirementRow.requirement?.due_rule
+    || requirementRow.policyRequirement?.due_rule
+    || requirementRow.metadata?.due_rule
+    || requirementRow.requirement?.metadata?.due_rule
+    || {};
+  return dueRule && typeof dueRule === "object" ? dueRule : {};
+}
+
+function getTrainingRequirementRenewalIntervalDays(requirementRow = {}) {
+  const dueRule = readTrainingRequirementDueRule(requirementRow);
+  const rawValue = requirementRow.renewalIntervalDays
+    ?? requirementRow.renewal_interval_days
+    ?? requirementRow.requirement?.renewal_interval_days
+    ?? requirementRow.policyRequirement?.renewal_interval_days
+    ?? requirementRow.metadata?.renewal_interval_days
+    ?? requirementRow.requirement?.metadata?.renewal_interval_days
+    ?? dueRule.renewal_interval_days
+    ?? dueRule.renewalIntervalDays;
+  const days = Number(rawValue);
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
+function trainingRequirementRequiresRenewalDueDate(requirementRow = {}) {
+  if (requirementRow.renewalDueDateRequired === true || requirementRow.renewal_due_date_required === true) return true;
+  if (requirementRow.requirement?.renewal_due_date_required === true || requirementRow.policyRequirement?.renewal_due_date_required === true) return true;
+  if (requirementRow.metadata?.renewal_due_date_required === true || requirementRow.requirement?.metadata?.renewal_due_date_required === true) return true;
+  const frequency = String(requirementRow.frequency || requirementRow.requirement?.frequency || requirementRow.metadata?.frequency || "").toLowerCase();
+  return ["annual", "annually", "renewing", "recurring"].includes(frequency) || Boolean(getTrainingRequirementRenewalIntervalDays(requirementRow));
+}
+
+function normalizeComplianceRequirementLabel(row = {}) {
+  return String(row.label || row.title || row.name || row.slug || "Requirement").trim() || "Requirement";
+}
+
+export function isCustomComplianceRequirement(row = {}) {
+  if (!isObjectRow(row) || row.is_active === false) return false;
+  const metadata = isObjectRow(row.metadata) ? row.metadata : {};
+  return String(row.scope_type || "") === "location"
+    && String(row.requirement_kind || "") === "review_checkpoint"
+    && (
+      String(row.display_group || "") === "custom"
+      || metadata.ui_kind === "custom_yes_no"
+      || String(row.slug || "").startsWith("custom_")
+    );
+}
+
+export function isDefaultReviewComplianceRequirement(row = {}) {
+  if (!isObjectRow(row) || row.is_active === false) return false;
+  const metadata = isObjectRow(row.metadata) ? row.metadata : {};
+  return String(row.requirement_kind || "") === "review_checkpoint"
+    && !isCustomComplianceRequirement(row)
+    && (
+      String(row.display_group || "") === "reviews"
+      || metadata.legacy_review_cycle
+      || String(row.slug || "").startsWith("review_")
+    );
+}
+
+export function formatComplianceRequirementDueRule(row = {}) {
+  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : {};
+  const offsetDays = Number(dueRule.offset_days);
+  if (dueRule.anchor === "start_date" && Number.isFinite(offsetDays) && offsetDays > 0) {
+    return `Start date + ${offsetDays} days`;
+  }
+  const renewalDays = Number(dueRule.renewal_interval_days);
+  if (Number.isFinite(renewalDays) && renewalDays > 0) return `Renews every ${renewalDays} days`;
+  return row.renewal_due_date_required ? "Renewal date required" : "One time";
+}
+
+export function formatComplianceRequirementEvidence(row = {}) {
+  const policy = String(row.evidence_policy || "checkbox_only");
+  if (policy === "checkbox_only") return "Yes/no";
+  if (policy === "file_required") return "PDF required";
+  if (policy === "url_or_reference") return "URL or reference";
+  return policy.replace(/_/g, " ");
+}
+
+function findPolicyReviewCellForCycle(cells = [], cycle = {}) {
+  const cycleRequirementId = String(cycle.requirementId || cycle.requirement?.id || "");
+  const cycleSlug = String(cycle.requirement?.slug || cycle.id || "");
+  return toObjectRows(cells).find((cell) => {
+    const cellRequirementId = String(cell.requirement_id || cell.requirementId || "");
+    const cellParentRequirementId = String(cell.parent_requirement_id || cell.parentRequirementId || "");
+    const cellSlug = String(cell.slug || cell.requirement_slug || "");
+    return (cycleRequirementId && (cellRequirementId === cycleRequirementId || cellParentRequirementId === cycleRequirementId))
+      || (cycleSlug && (cellSlug === cycleSlug || cellSlug.replace(/_day$/, "") === cycleSlug.replace(/_day$/, "")));
+  }) || null;
+}
+
+function buildPerformanceReviewPolicyFields(policyEmployee = {}, cycles = []) {
+  const cells = toObjectRows(policyEmployee?.requirements)
+    .filter((cell) => String(cell.requirement_kind || "") === "review_checkpoint");
+  if (cells.length === 0) return {};
+  return toObjectRows(cycles).reduce((acc, cycle) => {
+    const cell = findPolicyReviewCellForCycle(cells, cycle);
+    if (!cell) return acc;
+    acc[cycle.dueDateKey] = cell.adjusted_due_date || cell.due_date || cell.original_due_date || null;
+    acc[cycle.statusKey] = cell.status || "not_started";
+    acc[cycle.completedDateKey] = cell.completed_on || null;
+    acc[`${cycle.baseKey || cycle.statusKey}_upload_timestamp`] = cell.uploaded_at || cell.updated_at || null;
+    acc[`${cycle.baseKey || cycle.statusKey}_policy_cell`] = cell;
+    return acc;
+  }, {});
+}
+
+function compareTemplateVersionRecency(left = {}, right = {}) {
+  const leftVersion = Number(left.version_no ?? 0);
+  const rightVersion = Number(right.version_no ?? 0);
+  if (rightVersion !== leftVersion) return rightVersion - leftVersion;
+  return String(right.created_at || right.updated_at || "").localeCompare(String(left.created_at || left.updated_at || ""));
+}
+
+export function getEditableTemplateDraftVersion(versions = [], templateId = "") {
+  const targetTemplateId = String(templateId || "").trim();
+  if (!targetTemplateId) return null;
+  return toObjectRows(versions)
+    .filter((version) => String(version.template_id || "") === targetTemplateId && String(version.status || "").toLowerCase() === "draft")
+    .sort(compareTemplateVersionRecency)[0] || null;
+}
+
+export function buildTemplatePreviewVersionStats({
+  kind = "training",
+  versionId = "",
+  sections = [],
+  items = [],
+  reviewSections = [],
+  reviewItems = [],
+} = {}) {
+  const targetVersionId = String(versionId || "").trim();
+  if (!targetVersionId) return { sectionCount: 0, itemCount: 0 };
+  if (kind === "review") {
+    return {
+      sectionCount: toObjectRows(reviewSections).filter((section) => section.template_version_id === targetVersionId).length,
+      itemCount: toObjectRows(reviewItems).filter((item) => item.template_version_id === targetVersionId).length,
+    };
+  }
+  return {
+    sectionCount: toObjectRows(sections).filter((section) => section.template_version_id === targetVersionId && !section.parent_section_id).length,
+    itemCount: toObjectRows(items).filter((item) => item.template_version_id === targetVersionId).length,
+  };
+}
+
+export function normalizeTemplateRequiredTextInput(value = "", currentValue = "", fieldLabel = "Field") {
+  const nextText = String(value || "").trim();
+  const currentText = String(currentValue || "").trim();
+  const label = String(fieldLabel || "Field").trim() || "Field";
+  if (!nextText) {
+    return {
+      valid: false,
+      changed: false,
+      value: currentText,
+      error: `${label} is required.`,
+    };
+  }
+  return {
+    valid: true,
+    changed: nextText !== currentText,
+    value: nextText,
+    error: "",
+  };
+}
+
+function flattenTrainingTemplatePreviewItems(section = {}) {
+  const directItems = toObjectRows(section.directItems);
+  const childItems = toObjectRows(section.children).flatMap((child) => toObjectRows(child.items));
+  return [...directItems, ...childItems];
+}
+
+export function validateTemplateVersionForPublish(template = {}) {
+  const errors = [];
+  const kind = template?.kind === "review" ? "review" : "training";
+  const name = String(template?.name || "").trim();
+  const version = isObjectRow(template?.version) ? template.version : null;
+  const sectionsForValidation = toObjectRows(template?.sections);
+  const addError = (message) => {
+    if (!errors.includes(message)) errors.push(message);
+  };
+
+  if (!name) addError("Template name is required.");
+  if (!version?.id) addError("Choose a draft version before publishing.");
+  if (version?.id && String(version.status || "").toLowerCase() !== "draft") {
+    addError("Only draft versions can be published.");
+  }
+
+  if (kind === "review") {
+    const reviewItemsForValidation = sectionsForValidation.flatMap((section) => toObjectRows(section.items));
+    if (reviewItemsForValidation.length === 0) addError("Add at least one review prompt before publishing.");
+    sectionsForValidation.forEach((section) => {
+      if (!String(section.title || "").trim()) addError("Every review section needs a title before publishing.");
+    });
+    reviewItemsForValidation.forEach((item) => {
+      if (!String(item.prompt || "").trim()) addError("Every review prompt needs text before publishing.");
+    });
+  } else {
+    const trainingItemsForValidation = sectionsForValidation.flatMap(flattenTrainingTemplatePreviewItems);
+    if (trainingItemsForValidation.length === 0) addError("Add at least one task before publishing.");
+    sectionsForValidation.forEach((section) => {
+      if (!String(section.title || "").trim()) addError("Every section needs a title before publishing.");
+      toObjectRows(section.children).forEach((child) => {
+        if (!String(child.title || "").trim()) addError("Every module needs a title before publishing.");
+      });
+    });
+    trainingItemsForValidation.forEach((item) => {
+      if (!String(item.label || "").trim()) addError("Every task needs a label before publishing.");
+    });
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 function isMissingTeamReadinessRpcError(error) {
@@ -5498,39 +5940,6 @@ export async function copyTextToClipboard(value, environment = {}) {
   }
 }
 
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return window.btoa(binary);
-}
-
-async function readEdgeFunctionError(error, fallbackMessage) {
-  if (!error) return fallbackMessage;
-  try {
-    if (error.context?.json) {
-      const body = await error.context.json();
-      return body?.error || body?.message || fallbackMessage;
-    }
-    if (error.context?.text) {
-      const text = await error.context.text();
-      if (!text) return fallbackMessage;
-      try {
-        const body = JSON.parse(text);
-        return body?.error || body?.message || text;
-      } catch {
-        return text;
-      }
-    }
-  } catch (_) {
-    // Fall through to the SDK message below.
-  }
-  return error.message || fallbackMessage;
-}
-
 export function isTrainingRecordForEmployee(record = {}, employee = {}) {
   const employeeId = getLaborEmployeeRowId(employee);
   const recordEmployeeId = getTrainingRecordEmployeeId(record);
@@ -5554,6 +5963,28 @@ function slugifyTemplateName(value = "") {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 72);
+}
+
+function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
+  const base = `custom_${slugifyTemplateName(value) || "requirement"}`.slice(0, 72).replace(/_+$/g, "");
+  const existingSlugs = new Set(toObjectRows(existingRequirements).map((row) => String(row.slug || "").trim()).filter(Boolean));
+  if (!existingSlugs.has(base)) return base;
+  for (let index = 2; index < 100; index += 1) {
+    const suffix = `_${index}`;
+    const candidate = `${base.slice(0, 72 - suffix.length)}${suffix}`;
+    if (!existingSlugs.has(candidate)) return candidate;
+  }
+  const timestampSuffix = `_${Date.now().toString(36).slice(-6)}`;
+  return `${base.slice(0, 72 - timestampSuffix.length)}${timestampSuffix}`;
+}
+
+function compareCompliancePolicyRequirements(left = {}, right = {}) {
+  const groupCompare = String(left.display_group || "").localeCompare(String(right.display_group || ""), undefined, { sensitivity: "base" });
+  if (groupCompare !== 0) return groupCompare;
+  const leftOrder = Number(left.display_order ?? left.displayOrder ?? left.metadata?.display_order ?? 0);
+  const rightOrder = Number(right.display_order ?? right.displayOrder ?? right.metadata?.display_order ?? 0);
+  if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) return leftOrder - rightOrder;
+  return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
 }
 
 function getDaysSince(dateValue) {
@@ -5592,31 +6023,6 @@ function getTrainingComplianceState(row) {
   return { label: "Non-Compliant", color: "danger", inProgress: false };
 }
 
-function getReviewStatusPresentation(row, reviewKey) {
-  const dueDate = row?.[`${reviewKey}_due_date`] || null;
-  const status = String(row?.[`${reviewKey}_status`] || "not_started");
-  if (!dueDate) {
-    return { label: "—", tone: C.textMut, background: "transparent" };
-  }
-
-  const due = new Date(`${dueDate}T12:00:00`);
-  const today = new Date(`${todayStr()}T12:00:00`);
-  const diffDays = Math.ceil((due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
-  const doneStatuses = new Set(["completed", "complete", "current"]);
-
-  if (doneStatuses.has(status)) {
-    return { label: formatLaborDate(dueDate), tone: C.suc, background: C.sucLt };
-  }
-  if (diffDays < 0) {
-    return { label: formatLaborDate(dueDate), tone: C.dan, background: C.danLt };
-  }
-  if (diffDays <= REVIEW_WARNING_WINDOW_DAYS) {
-    return { label: formatLaborDate(dueDate), tone: C.warn, background: C.warnLt };
-  }
-
-  return { label: formatLaborDate(dueDate), tone: C.suc, background: C.sucLt };
-}
-
 export function noteMatchesSearch(note = {}, query = "") {
   const cleanQuery = String(query || "").trim().toLowerCase();
   if (!cleanQuery) return true;
@@ -5653,6 +6059,128 @@ function normalizeActorLookupEmail(value = "") {
 
 function resolveActorProfileDisplayName(profileRow = {}) {
   return String(profileRow.full_name || profileRow.name || profileRow.email || "").trim();
+}
+
+function getNormalizedNameTokens(value = "") {
+  return normalizeEmployeeName(value)
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function getActorEmailNameParts(value = "") {
+  const email = normalizeActorLookupEmail(value);
+  if (!email) return null;
+  const tokens = email
+    .split("@")[0]
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 2) return null;
+  return {
+    firstName: tokens[0],
+    lastName: tokens[tokens.length - 1],
+  };
+}
+
+function actorFirstNameMatches(emailFirstName = "", employeeFirstName = "") {
+  if (!emailFirstName || !employeeFirstName) return false;
+  return emailFirstName === employeeFirstName
+    || (emailFirstName.length >= 4 && employeeFirstName.startsWith(emailFirstName))
+    || (employeeFirstName.length >= 4 && emailFirstName.startsWith(employeeFirstName));
+}
+
+function resolveLaborActorNameByEmail(value = "", employeeRows = []) {
+  const emailName = getActorEmailNameParts(value);
+  if (!emailName) return "";
+  const match = toObjectRows(employeeRows).find((employee) => {
+    const tokens = getNormalizedNameTokens(employee.full_name || employee.name);
+    if (tokens.length < 2) return false;
+    const firstName = tokens[0];
+    const lastName = tokens[tokens.length - 1];
+    return lastName === emailName.lastName && actorFirstNameMatches(emailName.firstName, firstName);
+  });
+  return String(match?.full_name || match?.name || "").trim();
+}
+
+function resolveLaborActorNameByUserId(value = "", employeeRows = []) {
+  const userId = normalizeOptionalUuid(value);
+  if (!userId) return "";
+  const match = toObjectRows(employeeRows).find((employee) => (
+    normalizeOptionalUuid(employee.linked_user_id) === userId
+    || normalizeOptionalUuid(employee.user_id) === userId
+    || normalizeOptionalUuid(employee.linked_lite_profile_user_id) === userId
+  ));
+  return String(match?.full_name || match?.name || "").trim();
+}
+
+function resolveLaborActorDisplayName(row = {}, employeeRows = []) {
+  const userIdCandidates = [
+    row.actor_user_id,
+    row.created_by_user_id,
+    row.updated_by_user_id,
+    row.deleted_by_user_id,
+    row.uploaded_by_user_id,
+    row.reviewer_user_id,
+  ];
+  for (const candidate of userIdCandidates) {
+    const actorName = resolveLaborActorNameByUserId(candidate, employeeRows);
+    if (actorName) return actorName;
+  }
+  const candidates = [
+    row.actor_email,
+    row.actor_name,
+    row.actorName,
+    row.created_by_email,
+    row.created_by_name,
+    row.createdByName,
+    row.updated_by_email,
+    row.updated_by_name,
+    row.updatedByName,
+    row.email,
+  ];
+  for (const candidate of candidates) {
+    const actorName = resolveLaborActorNameByEmail(candidate, employeeRows);
+    if (actorName) return actorName;
+  }
+  return "";
+}
+
+function resolveReadinessCellEmailActorDisplayName(cell = {}, status = "", employeeRows = []) {
+  const metadata = isObjectRow(cell?.metadata) ? cell.metadata : {};
+  const normalizedStatus = normalizePctReadinessStatus(status || cell.readiness_status || cell.status);
+  if (normalizedStatus === "not_started") return "";
+  const statusCandidates = normalizedStatus === "verified" || normalizedStatus === "waived"
+    ? [
+        cell.verified_by,
+        metadata.verified_by_name,
+        metadata.verified_accuracy_by,
+        metadata.verified_by,
+        cell.completed_by_name,
+        metadata.completed_by_name,
+        metadata.last_updated_by_name,
+        cell.evaluated_by_name,
+      ]
+    : [
+        cell.demonstrated_by,
+        metadata.demonstrated_by_name,
+        metadata.demonstrated_by,
+        metadata.last_updated_by_name,
+        cell.evaluated_by_name,
+        cell.completed_by_name,
+        metadata.completed_by_name,
+      ];
+  const nestedCandidates = [
+    isObjectRow(metadata.raw_values) ? metadata.raw_values : {},
+    isObjectRow(metadata.source_values) ? metadata.source_values : {},
+  ].flatMap((source) => normalizedStatus === "verified" || normalizedStatus === "waived"
+    ? [source.verified_by_name, source.verified_accuracy_by, source.verified_by, source.completed_by_name]
+    : [source.demonstrated_by_name, source.demonstrated_by, source.completed_by_name]);
+  for (const candidate of [...statusCandidates, ...nestedCandidates]) {
+    const actorName = resolveLaborActorNameByEmail(candidate, employeeRows);
+    if (actorName) return actorName;
+  }
+  return "";
 }
 
 export function collectTrainingActorLookupEmails(...rowGroups) {
@@ -5770,6 +6298,11 @@ function getTrainingHistoryActionLabel(event = {}) {
   if (event.event_type === "record_created") return "Record created";
   if (event.event_type === "record_reopened") return "Record updated";
   return String(event.event_type || "training_event").replace(/_/g, " ");
+}
+
+function getHistoryTimestampValue(value) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : 0;
 }
 
 export function buildTrainingHistoryRows({
@@ -5923,6 +6456,228 @@ export function buildTrainingHistoryDayMetrics(rows = [], dateValue = "") {
   };
 }
 
+function normalizeComplianceHistoryCycleLabel(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const dayMatch = raw.match(/(?:review[_\s-]*)?(\d+)[_\s-]*(?:day)?/i);
+  if (dayMatch?.[1]) return `${dayMatch[1]} Day`;
+  return raw
+    .replace(/^performance\s+review\s*/i, "")
+    .replace(/^review[_\s-]*/i, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizeComplianceHistoryActionLabel(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "Compliance update";
+  return raw
+    .replace(/performance\s+review/gi, "Compliance checkpoint")
+    .replace(/performance\s+response/gi, "Compliance response")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function readComplianceHistoryState(event = {}, key = "new") {
+  const preferred = key === "old"
+    ? (event.old_values || event.before_state)
+    : (event.new_values || event.after_state);
+  return isObjectRow(preferred) ? preferred : {};
+}
+
+function readComplianceHistoryMetadata(row = {}) {
+  return isObjectRow(row.metadata) ? row.metadata : {};
+}
+
+function findComplianceHistoryReviewInstance(event = {}, reviewInstanceMap = {}) {
+  const sourceId = String(event.source_id || "").trim();
+  if (sourceId && reviewInstanceMap[sourceId]) return reviewInstanceMap[sourceId];
+  const nextState = readComplianceHistoryState(event, "new");
+  const previousState = readComplianceHistoryState(event, "old");
+  const reviewInstanceId = nextState.review_instance_id || previousState.review_instance_id || readComplianceHistoryMetadata(event).review_instance_id;
+  return reviewInstanceId ? (reviewInstanceMap[reviewInstanceId] || null) : null;
+}
+
+function findComplianceHistoryCycle(reviewCycle = "", reviewCycles = []) {
+  return toObjectRows(reviewCycles).find((cycle) => reviewCycleMatchesKey(cycle, reviewCycle)) || null;
+}
+
+function findComplianceHistoryRequirement(reviewCycle = "", requirementId = "", requirements = []) {
+  const normalizedCycle = normalizeLocalReviewCycleKey(reviewCycle);
+  const normalizedRequirementId = String(requirementId || "");
+  return toObjectRows(requirements).find((requirement) => {
+    if (normalizedRequirementId && String(requirement.id || "") === normalizedRequirementId) return true;
+    const metadata = readComplianceHistoryMetadata(requirement);
+    const legacyCycle = metadata.legacy_review_cycle || requirement.review_cycle || requirement.cycle_id || requirement.slug || "";
+    return normalizedCycle && normalizeLocalReviewCycleKey(legacyCycle) === normalizedCycle;
+  }) || null;
+}
+
+function getComplianceHistoryStatusLabel(status = "") {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) return "";
+  const labels = {
+    scheduled: "Scheduled",
+    in_progress: "In Progress",
+    completed: "Complete",
+    complete: "Complete",
+    waived: "Waived",
+    overdue: "Overdue",
+    evidence_due: "Overdue",
+    not_started: "Not Started",
+  };
+  return labels[normalized] || normalized.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getComplianceHistoryStatusChange(event = {}) {
+  const previousState = readComplianceHistoryState(event, "old");
+  const nextState = readComplianceHistoryState(event, "new");
+  const previousStatus = String(previousState.status || previousState.compliance_status || "").trim().toLowerCase();
+  const nextStatus = String(nextState.status || nextState.compliance_status || "").trim().toLowerCase();
+  if (!nextStatus || previousStatus === nextStatus) return null;
+  return {
+    previousStatus,
+    previousLabel: getComplianceHistoryStatusLabel(previousStatus),
+    nextStatus,
+    nextLabel: getComplianceHistoryStatusLabel(nextStatus),
+  };
+}
+
+function getComplianceHistoryActor(event = {}, reviewInstance = {}) {
+  return resolveVerifiedActorDisplayName({
+    ...reviewInstance,
+    ...event,
+    actor_full_name: event.actor_full_name || event.actor_name || reviewInstance.reviewer_name,
+    actor_name: event.actor_name || reviewInstance.reviewer_name,
+    actor_user_id: event.actor_user_id || reviewInstance.reviewer_user_id,
+  });
+}
+
+function buildComplianceHistoryDetailParts({ event = {}, reviewInstance = {}, checkpointLabel = "" } = {}) {
+  const previousState = readComplianceHistoryState(event, "old");
+  const nextState = readComplianceHistoryState(event, "new");
+  const eventMetadata = readComplianceHistoryMetadata(event);
+  const instanceMetadata = readComplianceHistoryMetadata(reviewInstance);
+  const completionEvidence = readComplianceHistoryMetadata(nextState).completion_evidence
+    || eventMetadata.completion_evidence
+    || instanceMetadata.completion_evidence
+    || {};
+  const completionWaiver = readComplianceHistoryMetadata(nextState).completion_waiver
+    || eventMetadata.completion_waiver
+    || instanceMetadata.completion_waiver
+    || {};
+  const dueDate = nextState.due_date || previousState.due_date || reviewInstance.due_date || eventMetadata.due_date;
+  const completedDate = nextState.completed_at || reviewInstance.completed_at || completionEvidence.completed_on || completionWaiver.completed_on;
+  const reviewItemLabel = eventMetadata.review_item_label || "";
+  const parts = [
+    dueDate ? `Due ${formatLaborDate(dueDate)}` : "",
+    completedDate ? `Action ${formatLaborDate(completedDate)}` : "",
+    reviewItemLabel && reviewItemLabel !== checkpointLabel ? reviewItemLabel : "",
+    completionEvidence.file_name ? `Evidence ${completionEvidence.file_name}` : "",
+    completionWaiver.reason ? `Waiver ${completionWaiver.reason}` : "",
+  ].filter(Boolean);
+  return parts;
+}
+
+function isComplianceHistoryEvent(event = {}) {
+  const text = [
+    event.event_category,
+    event.category,
+    event.module,
+    event.event_type,
+    event.source_table,
+    event.title,
+    event.summary,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  return text.includes("employee_review")
+    || text.includes("performance_review")
+    || text.includes("performance response")
+    || text.includes("performance")
+    || text.includes("compliance")
+    || text.includes("review checkpoint");
+}
+
+export function buildComplianceHistoryRows({
+  events = [],
+  reviewInstances = [],
+  reviewCycles = [],
+  requirements = [],
+  laborEmployeeMap = {},
+} = {}) {
+  const reviewInstanceMap = Object.fromEntries(
+    toObjectRows(reviewInstances)
+      .map((instance) => [String(instance.id || ""), instance])
+      .filter(([id]) => id)
+  );
+
+  return toObjectRows(events)
+    .filter(isComplianceHistoryEvent)
+    .map((event, index) => {
+      const reviewInstance = findComplianceHistoryReviewInstance(event, reviewInstanceMap) || {};
+      const previousState = readComplianceHistoryState(event, "old");
+      const nextState = readComplianceHistoryState(event, "new");
+      const metadata = readComplianceHistoryMetadata(event);
+      const reviewCycle = metadata.review_cycle
+        || nextState.review_cycle
+        || previousState.review_cycle
+        || reviewInstance.review_cycle
+        || event.summary
+        || "";
+      const cycle = findComplianceHistoryCycle(reviewCycle, reviewCycles);
+      const requirement = findComplianceHistoryRequirement(
+        reviewCycle,
+        metadata.requirement_id || nextState.requirement_id || previousState.requirement_id,
+        requirements,
+      );
+      const fallbackCycleLabel = normalizeComplianceHistoryCycleLabel(reviewCycle);
+      const checkpointLabel = cycle?.label
+        || (requirement ? normalizeComplianceRequirementLabel(requirement) : "")
+        || fallbackCycleLabel
+        || normalizeComplianceHistoryCycleLabel(event.summary)
+        || "Compliance checkpoint";
+      const employeeId = event.labor_employee_id || reviewInstance.labor_employee_id || "";
+      const employee = laborEmployeeMap[employeeId] || {};
+      const detailParts = buildComplianceHistoryDetailParts({ event, reviewInstance, checkpointLabel });
+      return {
+        ...event,
+        id: `compliance_event_${event.id || `${event.created_at || event.occurred_at || "event"}_${index}`}`,
+        entityId: event.id,
+        historyKind: "compliance_event",
+        created_at: event.occurred_at || event.created_at || reviewInstance.updated_at || reviewInstance.created_at,
+        labor_employee_id: employeeId,
+        reviewInstance,
+        cycle,
+        requirement,
+        categoryTaskLabel: [
+          checkpointLabel,
+          metadata.review_item_label,
+        ].filter(Boolean).join(" / "),
+        employeeName: employee.full_name || nextState.employee_full_name || previousState.employee_full_name || reviewInstance.employee_full_name || "Unknown employee",
+        actionLabel: normalizeComplianceHistoryActionLabel(event.title || event.event_type || "Compliance update"),
+        actorDisplayName: getComplianceHistoryActor(event, reviewInstance),
+        statusChange: getComplianceHistoryStatusChange(event),
+        summary: checkpointLabel,
+        detailParts,
+      };
+    })
+    .sort((a, b) => getHistoryTimestampValue(b.created_at) - getHistoryTimestampValue(a.created_at));
+}
+
+function buildComplianceHistoryFilterOptions(rows = []) {
+  const options = buildTrainingHistoryFilterOptions(rows);
+  return {
+    ...options,
+    categoryTasks: [
+      { value: "", label: "All checkpoints / requirements" },
+      ...options.categoryTasks.slice(1),
+    ],
+  };
+}
+
 export function applyLaborRosterFilters(rows, filters) {
   const keys = Object.keys(filters || {});
   if (keys.length === 0) return rows;
@@ -5985,13 +6740,11 @@ export function applyLaborRosterFilters(rows, filters) {
 
     const dateValue = (() => {
       if (key === "start_date") return parseDate(row.start_date);
-      if (key === "review30") return parseDate(row.review_30_due_date);
-      if (key === "review60") return parseDate(row.review_60_due_date);
-      if (key === "review90") return parseDate(row.review_90_due_date);
+      if (String(key || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) return parseDate(getReviewCycleDueDateForSort(row, key));
       return "";
     })();
 
-    if (key === "start_date" || key === "review30" || key === "review60" || key === "review90") {
+    if (key === "start_date" || String(key || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) {
       if (op === "hasDate") return !!dateValue;
       if (op === "noDate") return !dateValue;
       if (!dateValue) return false;
@@ -6012,6 +6765,7 @@ export function applyLaborRosterFilters(rows, filters) {
 export default function TrainingPage({ data, save, nav, profile, addGlobalToast, locationName, params = {} }) {
   const routeLaborTab = normalizeLaborTab(params?.laborTab);
   const routeAttendanceView = normalizeAttendanceView(params?.attendanceView);
+  const routeComplianceView = normalizeComplianceView(params?.complianceView);
   const routeInterviewView = normalizeInterviewView(params?.interviewView);
   const routeCapacityPlanningView = normalizeCapacityPlanningView(params?.capacityPlanningView || (params?.laborTab === "labor-model" ? "labor-model" : ""));
   const routeInterviewId = typeof params?.interviewId === "string" ? params.interviewId : "";
@@ -6023,6 +6777,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [supportBundleLoaded, setSupportBundleLoaded] = useState(false);
   const [supportBundleLoading, setSupportBundleLoading] = useState(false);
   const [attendanceView, setAttendanceView] = useState(routeAttendanceView);
+  const [complianceView, setComplianceView] = useState(routeComplianceView);
   const [interviewView, setInterviewView] = useState(routeInterviewView);
   const [capacityPlanningView, setCapacityPlanningView] = useState(routeCapacityPlanningView);
   const [interviewDetailOpen, setInterviewDetailOpen] = useState(!!routeInterviewId);
@@ -6052,6 +6807,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [reviewResponses, setReviewResponses] = useState([]);
   const [employeeCertifications, setEmployeeCertifications] = useState([]);
   const [certificationRequirements, setCertificationRequirements] = useState([]);
+  const [laborCompliancePolicyRequirements, setLaborCompliancePolicyRequirements] = useState([]);
+  const [laborComplianceBoardEmployees, setLaborComplianceBoardEmployees] = useState([]);
+  const [laborCompliancePolicyLoaded, setLaborCompliancePolicyLoaded] = useState(false);
   const [allTrainingNotes, setAllTrainingNotes] = useState([]);
   const [allTrainingEvents, setAllTrainingEvents] = useState([]);
   const [serverDashboardMetrics, setServerDashboardMetrics] = useState(null);
@@ -6073,6 +6831,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const [previewTemplateVersionId, setPreviewTemplateVersionId] = useState(null);
   const [savingTemplateAction, setSavingTemplateAction] = useState("");
+  const [savingTemplateFieldCount, setSavingTemplateFieldCount] = useState(0);
   const [showCreateTemplateModal, setShowCreateTemplateModal] = useState(false);
   const [createTemplateKind, setCreateTemplateKind] = useState("training");
   const [createTemplateName, setCreateTemplateName] = useState("");
@@ -6087,10 +6846,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const canLogAttendance = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Log Attendance");
   const canManageInterviews = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Manage Interviews");
   const canManageTemplates = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Templates");
+  const canManageCompliancePolicy = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Compliance Manage Policy");
   const canAccessEmployeeNotes = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Employee Notes");
   const canUseLaborTab = useCallback((tabId) => {
     if (!hasLaborModuleAccess) return false;
     const permissionKey = LABOR_TAB_PERMISSION_MAP[normalizeLaborTab(tabId)];
+    if (permissionKey === "Labor Compliance View") {
+      return hasLeanPermission(profile, "Labor Compliance View") || hasLeanPermission(profile, "Labor Performance Reviews");
+    }
     return !permissionKey || hasLeanPermission(profile, permissionKey);
   }, [hasLaborModuleAccess, profile]);
   const visibleTabs = useMemo(() => TABS.filter((item) => canUseLaborTab(item.id)), [canUseLaborTab]);
@@ -6117,6 +6880,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     } else {
       delete nextRouteParams.attendanceView;
     }
+    if (nextLaborTab === "performance-reviews") {
+      nextRouteParams.complianceView = normalizeComplianceView(nextRouteParams.complianceView);
+      if (nextRouteParams.complianceView === "employees") delete nextRouteParams.complianceView;
+    } else {
+      delete nextRouteParams.complianceView;
+    }
     if (nextLaborTab === "hour-analysis") {
       nextRouteParams.capacityPlanningView = normalizeCapacityPlanningView(nextRouteParams.capacityPlanningView);
       if (nextRouteParams.capacityPlanningView === "staffing-capacity") delete nextRouteParams.capacityPlanningView;
@@ -6141,17 +6910,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       navigateLaborRoute(nextLaborTab, { attendanceView });
       return;
     }
+    if (nextLaborTab === "performance-reviews") {
+      navigateLaborRoute(nextLaborTab, { complianceView });
+      return;
+    }
     if (nextLaborTab === "hour-analysis") {
       navigateLaborRoute(nextLaborTab, { capacityPlanningView });
       return;
     }
     navigateLaborRoute(nextLaborTab);
-  }, [addGlobalToast, attendanceView, canUseLaborTab, capacityPlanningView, interviewView, navigateLaborRoute]);
+  }, [addGlobalToast, attendanceView, canUseLaborTab, capacityPlanningView, complianceView, interviewView, navigateLaborRoute]);
 
   const changeAttendanceView = useCallback((nextView) => {
     const normalizedView = normalizeAttendanceView(nextView);
     setAttendanceView(normalizedView);
     navigateLaborRoute("attendance", { attendanceView: normalizedView });
+  }, [navigateLaborRoute]);
+
+  const changeComplianceView = useCallback((nextView) => {
+    const normalizedView = normalizeComplianceView(nextView);
+    setComplianceView(normalizedView);
+    navigateLaborRoute("performance-reviews", { complianceView: normalizedView });
   }, [navigateLaborRoute]);
 
   const changeInterviewView = useCallback((nextView) => {
@@ -6188,6 +6967,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setAttendanceView(routeAttendanceView);
     }
   }, [attendanceView, routeAttendanceView, routeLaborTab]);
+
+  useEffect(() => {
+    if (routeLaborTab === "performance-reviews" && complianceView !== routeComplianceView) {
+      setComplianceView(routeComplianceView);
+    }
+  }, [complianceView, routeComplianceView, routeLaborTab]);
 
   useEffect(() => {
     if (routeLaborTab === "hour-analysis" && capacityPlanningView !== routeCapacityPlanningView) {
@@ -6282,8 +7067,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [savingPerformanceReviewTemplateRole, setSavingPerformanceReviewTemplateRole] = useState(false);
   const [restartingReview, setRestartingReview] = useState(false);
   const [renderingReviewPdf, setRenderingReviewPdf] = useState(false);
-  const [sendingReviewSignature, setSendingReviewSignature] = useState(false);
-  const [reviewSignatureDeliveryMethod, setReviewSignatureDeliveryMethod] = useState("sms");
+  const [performanceReviewEvidenceFile, setPerformanceReviewEvidenceFile] = useState(null);
+  const [performanceReviewEvidenceError, setPerformanceReviewEvidenceError] = useState("");
+  const [performanceReviewCompletedOn, setPerformanceReviewCompletedOn] = useState(todayStr());
+  const [complianceReviewEditorModal, setComplianceReviewEditorModal] = useState(null);
+  const [completionMode, setCompletionMode] = useState("completed");
+  const [complianceRequirementEditorOpen, setComplianceRequirementEditorOpen] = useState(false);
+  const [complianceRequirementEditingId, setComplianceRequirementEditingId] = useState("");
+  const [complianceRequirementTitle, setComplianceRequirementTitle] = useState("");
+  const [complianceRequirementDescription, setComplianceRequirementDescription] = useState("");
+  const [complianceRequirementEvidencePolicy, setComplianceRequirementEvidencePolicy] = useState("checkbox_only");
+  const [savingComplianceRequirement, setSavingComplianceRequirement] = useState(false);
+  const [deletingComplianceRequirementId, setDeletingComplianceRequirementId] = useState("");
+  const performanceReviewEvidenceFileInputRef = useRef(null);
   const reviewPdfObjectUrlRef = useRef("");
   const [showGlobalNoteModal, setShowGlobalNoteModal] = useState(false);
   const [globalNoteEmployeeId, setGlobalNoteEmployeeId] = useState("");
@@ -6299,6 +7095,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [noteSearchText, setNoteSearchText] = useState("");
   const [rosterSort, setRosterSort] = useState(LABOR_DEFAULT_SORT);
   const [trainingSort, setTrainingSort] = useState(LABOR_DEFAULT_SORT);
+  const [trainingRecordEmployeeStatusFilter, setTrainingRecordEmployeeStatusFilter] = useState("active");
+  const [showTrainingRecordFilterPanel, setShowTrainingRecordFilterPanel] = useState(false);
+  const [trainingRecordFilterPickerReady, setTrainingRecordFilterPickerReady] = useState(false);
   const [trainingView, setTrainingView] = useState("board");
   const [selectedReadinessTemplateSlug, setSelectedReadinessTemplateSlug] = useState(PCT_READINESS_TEMPLATE_SLUG);
   const [pctReadinessBoard, setPctReadinessBoard] = useState(null);
@@ -6308,6 +7107,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessError, setPctReadinessError] = useState("");
   const [pctReadinessFilters, setPctReadinessFilters] = useState(DEFAULT_PCT_READINESS_FILTERS);
   const [trainingHistoryFilters, setTrainingHistoryFilters] = useState(DEFAULT_TRAINING_HISTORY_FILTERS);
+  const [complianceHistoryFilters, setComplianceHistoryFilters] = useState(DEFAULT_COMPLIANCE_HISTORY_FILTERS);
   const [showPctReadinessFilterPanel, setShowPctReadinessFilterPanel] = useState(false);
   const [pctReadinessFilterPickerReady, setPctReadinessFilterPickerReady] = useState(false);
   const [pctReadinessCollapsedSections, setPctReadinessCollapsedSections] = useState({});
@@ -6796,6 +7596,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setReviewInstances([]);
     setReviewResponses([]);
     setEmployeeCertifications([]);
+    setCertificationRequirements([]);
+    setLaborCompliancePolicyRequirements([]);
+    setLaborComplianceBoardEmployees([]);
+    setLaborCompliancePolicyLoaded(false);
     setAllTrainingNotes([]);
     try {
       const resolvedLocationId = await resolveTrainingLocationId(supabase, locationRef, actorUserId);
@@ -7027,7 +7831,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
       const employeeIds = Array.from(new Set(employeeRowsForBundle.map(getLaborEmployeeRowId).filter(Boolean)));
 
-      const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes] = await Promise.all([
+      const complianceLocationId = normalizeOptionalUuid(locationIdForBundle);
+      const [noteRes, documentRes, historyEventRes, attendanceIncidentRes, reviewInstanceRes, certificationRes, requirementRes, complianceBoardRes] = await Promise.all([
         employeeIds.length > 0
           ? supabase.from("labor_employee_notes").select("*").in("labor_employee_id", employeeIds).order("created_at", { ascending: false })
           : Promise.resolve({ data: [], error: null }),
@@ -7049,8 +7854,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         supabase
           .from("certification_requirements")
           .select("*")
-          .in("slug", Object.values(LABOR_TRAINING_REQUIREMENT_SLUGS))
           .order("name", { ascending: true }),
+        complianceLocationId
+          ? supabase.rpc("get_labor_compliance_board", {
+              p_location_id: complianceLocationId,
+              p_as_of: todayStr(),
+            })
+          : Promise.resolve({ data: null, error: null }),
       ]);
 
       if (noteRes.error) throw noteRes.error;
@@ -7063,6 +7873,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (reviewInstanceRes.error) throw reviewInstanceRes.error;
       if (certificationRes.error) throw certificationRes.error;
       if (requirementRes.error) throw requirementRes.error;
+      const complianceBoard = complianceBoardRes?.error ? null : (complianceBoardRes?.data || null);
+      if (complianceBoardRes?.error) {
+        console.warn("Labor compliance policy board unavailable; falling back to legacy compliance rows", complianceBoardRes.error);
+      }
+      const resolvedPolicyRequirements = toObjectRows(complianceBoard?.requirements);
+      const resolvedPolicyEmployees = toObjectRows(complianceBoard?.employees);
 
       const reviewInstanceIds = (reviewInstanceRes.data || []).map((instance) => instance.id);
       const [responseRes, trainingNoteRes, trainingEventRes] = await Promise.all([
@@ -7078,13 +7894,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           .select("*, training_records!inner(id, location_id, labor_employee_id, employee_full_name, template_name_snapshot)")
           .eq("training_records.location_id", locationIdForBundle)
           .order("created_at", { ascending: false })
-          .limit(500),
+          .limit(TRAINING_ACTIVITY_LOOKBACK_LIMIT),
         supabase
           .from("training_record_events")
           .select("*, training_records!inner(id, location_id, labor_employee_id, employee_full_name, template_name_snapshot)")
           .eq("training_records.location_id", locationIdForBundle)
           .order("created_at", { ascending: false })
-          .limit(500),
+          .limit(TRAINING_ACTIVITY_LOOKBACK_LIMIT),
       ]);
 
       if (responseRes.error) throw responseRes.error;
@@ -7120,7 +7936,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (actorIds.length > 0) {
         const { data: actorProfiles, error: actorProfileError } = await supabase
           .from("lite_profiles")
-          .select("user_id,name,full_name,email")
+          .select("user_id,full_name,email")
           .in("user_id", actorIds);
         if (actorProfileError) {
           console.warn("Unable to enrich training actors from lite_profiles", actorProfileError);
@@ -7134,7 +7950,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (actorEmails.length > 0) {
         const { data: actorEmailProfiles, error: actorEmailProfileError } = await supabase
           .from("lite_profiles")
-          .select("user_id,name,full_name,email")
+          .select("user_id,full_name,email")
           .in("email", actorEmails);
         if (actorEmailProfileError) {
           console.warn("Unable to enrich training actors from lite_profiles by email", actorEmailProfileError);
@@ -7166,6 +7982,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setReviewResponses(responseRes.data || []);
       setEmployeeCertifications(certificationRes.data || []);
       setCertificationRequirements(requirementRes.data || []);
+      setLaborCompliancePolicyRequirements(resolvedPolicyRequirements);
+      setLaborComplianceBoardEmployees(resolvedPolicyEmployees);
+      setLaborCompliancePolicyLoaded(Boolean(complianceBoard));
       setAllTrainingNotes(trainingNoteRows);
       setAllTrainingEvents(trainingEventRows);
       setSupportBundleLoaded(true);
@@ -7363,8 +8182,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [reloadRecordDetailData, selectedRecordId]);
 
   // ── Derived data ──
-  const activeRecords = useMemo(() => toObjectRows(records).filter((record) => ACTIVE_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [records]);
-  const completedRecords = useMemo(() => toObjectRows(records).filter((record) => COMPLETED_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [records]);
+  const laborEmployeeMap = useMemo(() => {
+    const entries = [...toObjectRows(rosterSnapshot), ...toObjectRows(laborEmployees)]
+      .map((employee) => [getLaborEmployeeRowId(employee), employee])
+      .filter(([employeeId]) => employeeId);
+    return Object.fromEntries(entries);
+  }, [laborEmployees, rosterSnapshot]);
+  const laborActorRows = useMemo(() => (
+    [...toObjectRows(rosterSnapshot), ...toObjectRows(laborEmployees)]
+  ), [laborEmployees, rosterSnapshot]);
+  const trainingRecordMatchesEmployeeStatus = useCallback((record, statusFilter = trainingRecordEmployeeStatusFilter) => {
+    if (statusFilter === "all") return true;
+    const employee = (record?.labor_employee_id && laborEmployeeMap[record.labor_employee_id])
+      || (isObjectRow(record?.employee) ? record.employee : null);
+    if (!employee) return statusFilter === "active";
+    const active = isLaborEmployeeActive(employee);
+    return statusFilter === "inactive" ? !active : active;
+  }, [laborEmployeeMap, trainingRecordEmployeeStatusFilter]);
+  const visibleTrainingRecords = useMemo(() => (
+    toObjectRows(records).filter((record) => trainingRecordMatchesEmployeeStatus(record))
+  ), [records, trainingRecordMatchesEmployeeStatus]);
+  const activeRecords = useMemo(() => visibleTrainingRecords.filter((record) => ACTIVE_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [visibleTrainingRecords]);
+  const completedRecords = useMemo(() => visibleTrainingRecords.filter((record) => COMPLETED_TRAINING_RECORD_STATUSES.includes(record.overall_status)), [visibleTrainingRecords]);
   const activeTemplates = useMemo(() => toObjectRows(templates).filter((template) => template.is_active), [templates]);
   const activeLaborEmployees = useMemo(() => toObjectRows(rosterSnapshot).filter((row) => isLaborEmployeeActive(row)), [rosterSnapshot]);
   const laborNotesByEmployee = useMemo(() => groupLaborEmployeeNotes(toObjectRows(laborEmployeeNotes)), [laborEmployeeNotes]);
@@ -7484,12 +8323,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	    };
   }, [selectedLaborEmployee, selectedLaborEmployeeId, selectedLaborEmployeeSeed, selectedLaborEmployeeSnapshot, selectedRecord, selectedRecordEmployeeId]);
   const hasSelectedLaborEmployee = Boolean(selectedLaborEmployeeId || selectedLaborEmployeeSeed);
-  const laborEmployeeMap = useMemo(() => {
-    const entries = [...toObjectRows(rosterSnapshot), ...toObjectRows(laborEmployees)]
-      .map((employee) => [getLaborEmployeeRowId(employee), employee])
-      .filter(([employeeId]) => employeeId);
-    return Object.fromEntries(entries);
-  }, [laborEmployees, rosterSnapshot]);
   const performanceReviewTemplateOptions = useMemo(() => getPerformanceReviewTemplateOptions(), []);
   const recordMap = useMemo(() => Object.fromEntries(toObjectRows(records).map((record) => [record.id, record])), [records]);
   const trainingItemMap = useMemo(() => Object.fromEntries(toObjectRows(items).map((item) => [item.id, item])), [items]);
@@ -7552,15 +8385,37 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       return acc;
     }, {});
   }, [laborEmployeeDocuments]);
+  const laborComplianceBoardEmployeeById = useMemo(() => {
+    return Object.fromEntries(toObjectRows(laborComplianceBoardEmployees)
+      .map((employee) => [employee.labor_employee_id || employee.id, employee])
+      .filter(([employeeId]) => employeeId));
+  }, [laborComplianceBoardEmployees]);
+  const activePerformanceReviewCycles = useMemo(() => {
+    const resolvedCycles = buildPerformanceReviewCyclesFromPolicy(laborCompliancePolicyRequirements);
+    return laborCompliancePolicyLoaded ? resolvedCycles : PERFORMANCE_REVIEW_CYCLES;
+  }, [laborCompliancePolicyLoaded, laborCompliancePolicyRequirements]);
+  const performanceReviewSortColumns = useMemo(() => ([
+    ...LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS,
+    ...toObjectRows(activePerformanceReviewCycles).map((cycle) => ({
+      key: buildPerformanceReviewSortKey(cycle),
+      label: cycle.shortLabel ? `${cycle.shortLabel} Day` : cycle.label || "Review Checkpoint",
+    })),
+  ]), [activePerformanceReviewCycles]);
+  useEffect(() => {
+    if (!performanceReviewSort?.key) return;
+    if (performanceReviewSortColumns.some((column) => column.key === performanceReviewSort.key)) return;
+    setPerformanceReviewSort(LABOR_DEFAULT_SORT);
+  }, [performanceReviewSort, performanceReviewSortColumns]);
   const selectedEmployeeTrainingRequirementRows = useMemo(() => {
     if (!selectedLaborEmployeeView?.id) return [];
     return buildEmployeeTrainingRequirementRows({
       employee: selectedLaborEmployeeView,
       certifications: selectedEmployeeCertifications,
       requirements: certificationRequirements,
+      policyRequirements: laborCompliancePolicyLoaded ? laborCompliancePolicyRequirements : null,
       documents: selectedEmployeeDocuments,
     });
-  }, [certificationRequirements, selectedEmployeeCertifications, selectedEmployeeDocuments, selectedLaborEmployeeView]);
+  }, [certificationRequirements, laborCompliancePolicyLoaded, laborCompliancePolicyRequirements, selectedEmployeeCertifications, selectedEmployeeDocuments, selectedLaborEmployeeView]);
   const selectedEmployeeTrainingRequirementSummary = useMemo(() => {
     return summarizeEmployeeTrainingRequirementCompliance(selectedEmployeeTrainingRequirementRows);
   }, [selectedEmployeeTrainingRequirementRows]);
@@ -7701,9 +8556,97 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const pctReadinessRecords = useMemo(() => (
     Array.isArray(pctReadinessBoard?.records) ? pctReadinessBoard.records : []
   ), [pctReadinessBoard]);
-  const pctReadinessCells = useMemo(() => (
-    isObjectRow(pctReadinessBoard?.cells) ? pctReadinessBoard.cells : {}
-  ), [pctReadinessBoard]);
+  const visiblePctReadinessRecords = useMemo(() => (
+    pctReadinessRecords.filter((record) => trainingRecordMatchesEmployeeStatus(record, "active"))
+  ), [pctReadinessRecords, trainingRecordMatchesEmployeeStatus]);
+  const latestTrainingNoteByReadinessCellKey = useMemo(() => {
+    const noteByKey = {};
+    toObjectRows(allTrainingNotes).forEach((note) => {
+      if (!note.record_id || !note.template_item_id) return;
+      const actorName = cleanReadinessActorName(resolveVerifiedActorDisplayName(note, ""))
+        || resolveLaborActorDisplayName(note, laborActorRows);
+      if (!actorName) return;
+      const key = `${note.record_id}:${note.template_item_id}`;
+      const existing = noteByKey[key];
+      if (existing && getHistoryTimestampValue(existing.created_at) >= getHistoryTimestampValue(note.created_at)) return;
+      noteByKey[key] = {
+        actorName,
+        created_at: note.created_at || "",
+        note_text: note.note_text || "",
+      };
+    });
+    return noteByKey;
+  }, [allTrainingNotes, laborActorRows]);
+  const latestTrainingStatusActorByReadinessCellKey = useMemo(() => {
+    const actorByKey = {};
+    toObjectRows(allTrainingEvents).forEach((event) => {
+      const afterState = isObjectRow(event.after_state) ? event.after_state : {};
+      const templateItemId = event.template_item_id || afterState.template_item_id || afterState.item_id || "";
+      if (!event.record_id || !templateItemId) return;
+      const status = getTrainingHistoryStateStatus(afterState);
+      if (!status || status === "not_started") return;
+      const actorName = cleanReadinessActorName(resolveVerifiedActorDisplayName(event, ""))
+        || resolveLaborActorDisplayName(event, laborActorRows);
+      if (!actorName) return;
+      const key = `${event.record_id}:${templateItemId}:${status}`;
+      const createdAt = event.created_at || event.occurred_at || event.updated_at || "";
+      const existing = actorByKey[key];
+      if (existing && getHistoryTimestampValue(existing.created_at) >= getHistoryTimestampValue(createdAt)) return;
+      actorByKey[key] = {
+        actorName,
+        created_at: createdAt,
+        status,
+      };
+    });
+    return actorByKey;
+  }, [allTrainingEvents, laborActorRows]);
+  const pctReadinessCells = useMemo(() => {
+    const cells = isObjectRow(pctReadinessBoard?.cells) ? pctReadinessBoard.cells : {};
+    const hasNoteActors = Object.keys(latestTrainingNoteByReadinessCellKey).length > 0;
+    const hasStatusActors = Object.keys(latestTrainingStatusActorByReadinessCellKey).length > 0;
+    const canResolveCellEmailActors = toObjectRows(laborActorRows).length > 0;
+    if (!hasNoteActors && !hasStatusActors && !canResolveCellEmailActors) return cells;
+    let hasEnrichedCell = false;
+    const enrichedCells = {};
+    Object.entries(cells).forEach(([key, cell]) => {
+      const sourceCell = isObjectRow(cell) ? cell : {};
+      const status = normalizePctReadinessStatus(sourceCell.readiness_status || sourceCell.status);
+      const noteActor = latestTrainingNoteByReadinessCellKey[key];
+      const statusActor = status && status !== "not_started"
+        ? latestTrainingStatusActorByReadinessCellKey[`${key}:${status}`]
+        : null;
+      const hasCellNoteActor = getReadinessCellNoteActorDisplayName(sourceCell);
+      const hasCellStatusActor = getReadinessCellStatusActorDisplayName(sourceCell, status);
+      const emailStatusActor = status && status !== "not_started" && !hasCellStatusActor
+        ? resolveReadinessCellEmailActorDisplayName(sourceCell, status, laborActorRows)
+        : "";
+      const nextCell = { ...sourceCell };
+      let shouldEnrichCell = false;
+      if (statusActor && !hasCellStatusActor) {
+        shouldEnrichCell = true;
+        nextCell.latest_status_actor_name = statusActor.actorName;
+        nextCell.latest_status_actor_at = statusActor.created_at || "";
+      }
+      if (emailStatusActor && !statusActor && !hasCellStatusActor) {
+        shouldEnrichCell = true;
+        nextCell.latest_status_actor_name = emailStatusActor;
+        nextCell.latest_status_actor_at = getReadinessCellActionDate(sourceCell, status) || "";
+      }
+      if (noteActor && !hasCellNoteActor) {
+        shouldEnrichCell = true;
+        nextCell.latest_note = sourceCell.latest_note || noteActor.note_text || "";
+        nextCell.latest_note_at = sourceCell.latest_note_at || noteActor.created_at || "";
+        nextCell.latest_note_actor_name = noteActor.actorName;
+      }
+      if (shouldEnrichCell) {
+        hasEnrichedCell = true;
+        enrichedCells[key] = nextCell;
+        return;
+      }
+      enrichedCells[key] = cell;
+    });
+    return hasEnrichedCell ? enrichedCells : cells;
+  }, [laborActorRows, latestTrainingNoteByReadinessCellKey, latestTrainingStatusActorByReadinessCellKey, pctReadinessBoard]);
   const pctReadinessRecordProgressById = useMemo(() => {
     const items = pctReadinessSections.flatMap((section) => toObjectRows(section.items));
     const total = items.length;
@@ -7922,7 +8865,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ), [pctReadinessBoard]);
   const pctReadinessNewEmployeeOptions = useMemo(() => (
     buildPctReadinessEmployeeOptions({
-      employees: pctReadinessAvailableEmployees,
+      employees: pctReadinessAvailableEmployees.filter((employee) => isLaborEmployeeActive(employee)),
       records: pctReadinessRecords,
       excludeExistingReadinessRecords: true,
     }).map((option) => ({
@@ -7935,17 +8878,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ), [newPctReadinessEmployeeId, pctReadinessAvailableEmployees]);
   const pctReadinessEmployeeFilterOptions = useMemo(() => ([
     { value: "", label: "All employees" },
-    ...pctReadinessRecords.map((record) => ({
+    ...visiblePctReadinessRecords.map((record) => ({
       value: record.labor_employee_id || record.id,
       label: record.employee_full_name || "Employee",
     })),
-  ]), [pctReadinessRecords]);
+  ]), [visiblePctReadinessRecords]);
   const filteredPctReadinessRecords = useMemo(() => {
-    return pctReadinessRecords.filter((record) => {
+    return visiblePctReadinessRecords.filter((record) => {
       if (pctReadinessFilters.employee && record.labor_employee_id !== pctReadinessFilters.employee) return false;
       return true;
     });
-  }, [pctReadinessFilters.employee, pctReadinessRecords]);
+  }, [pctReadinessFilters.employee, visiblePctReadinessRecords]);
   const filteredPctReadinessSections = useMemo(() => {
     const taskQuery = String(pctReadinessFilters.task || "").trim().toLowerCase();
     const visibleRecordIds = new Set(filteredPctReadinessRecords.map((record) => record.id));
@@ -8006,14 +8949,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         ? (pctReadinessBoard || readinessSummaryBoards[option.slug])
         : readinessSummaryBoards[option.slug];
       const summary = isObjectRow(board?.summary) ? board.summary : {};
+      const visibleRecords = toObjectRows(board?.records).filter((record) => trainingRecordMatchesEmployeeStatus(record, "active"));
       return {
         ...option,
-        activeTraineeCount: Number(summary.total_active_trainees ?? summary.total_active_pct_trainees ?? 0),
+        activeTraineeCount: visibleRecords.length,
         averageDemonstrated: Number(summary.average_demonstrated ?? summary.average_readiness ?? 0),
         averageCompletion: Number(summary.average_completion ?? summary.average_readiness ?? 0),
       };
     })
-  ), [pctReadinessBoard, readinessSummaryBoards, selectedReadinessTemplateSlug]);
+  ), [pctReadinessBoard, readinessSummaryBoards, selectedReadinessTemplateSlug, trainingRecordMatchesEmployeeStatus]);
   const trainingHistoryRows = useMemo(() => (
     buildTrainingHistoryRows({
       events: allTrainingEvents,
@@ -8039,6 +8983,53 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     trainingHistoryFilters.categoryTask,
     trainingHistoryFilters.actor,
   ].filter(Boolean).length;
+  const complianceHistoryRows = useMemo(() => (
+    buildComplianceHistoryRows({
+      events: laborEmployeeHistoryEvents,
+      reviewInstances,
+      reviewCycles: activePerformanceReviewCycles,
+      requirements: laborCompliancePolicyRequirements,
+      laborEmployeeMap,
+    })
+  ), [
+    activePerformanceReviewCycles,
+    laborCompliancePolicyRequirements,
+    laborEmployeeHistoryEvents,
+    laborEmployeeMap,
+    reviewInstances,
+  ]);
+  const complianceHistoryFilterOptions = useMemo(() => (
+    buildComplianceHistoryFilterOptions(complianceHistoryRows)
+  ), [complianceHistoryRows]);
+  const filteredComplianceHistoryRows = useMemo(() => (
+    applyTrainingHistoryFilters(complianceHistoryRows, complianceHistoryFilters)
+  ), [complianceHistoryFilters, complianceHistoryRows]);
+  const complianceHistoryDayMetrics = useMemo(() => (
+    buildTrainingHistoryDayMetrics(complianceHistoryRows, complianceHistoryFilters.date)
+  ), [complianceHistoryFilters.date, complianceHistoryRows]);
+  const complianceHistoryFilterCount = [
+    complianceHistoryFilters.date,
+    complianceHistoryFilters.employee,
+    complianceHistoryFilters.categoryTask,
+    complianceHistoryFilters.actor,
+  ].filter(Boolean).length;
+  const customCompliancePolicyRequirements = useMemo(() => (
+    toObjectRows(laborCompliancePolicyRequirements)
+      .filter(isCustomComplianceRequirement)
+      .sort(compareCompliancePolicyRequirements)
+  ), [laborCompliancePolicyRequirements]);
+  const defaultReviewComplianceRequirements = useMemo(() => (
+    toObjectRows(laborCompliancePolicyRequirements)
+      .filter(isDefaultReviewComplianceRequirement)
+      .sort(compareCompliancePolicyRequirements)
+  ), [laborCompliancePolicyRequirements]);
+  const complianceRequirementEditingRow = useMemo(() => (
+    customCompliancePolicyRequirements.find((requirement) => requirement.id === complianceRequirementEditingId) || null
+  ), [complianceRequirementEditingId, customCompliancePolicyRequirements]);
+  const trainingRecordFilterCount = trainingRecordEmployeeStatusFilter === "all" ? 0 : 1;
+  const trainingRecordEmployeeStatusLabel = TRAINING_RECORD_EMPLOYEE_STATUS_OPTIONS.find((option) => (
+    option.id === trainingRecordEmployeeStatusFilter
+  ))?.label || "Active employees";
 
   // Template stats: section and item counts per template
   const templateStats = useMemo(() => {
@@ -8070,28 +9061,42 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [allReviewTemplateVersions, reviewItems, reviewSections, reviewTemplates]);
 
   const combinedTemplateRows = useMemo(() => {
-    const trainingRows = toObjectRows(templates).map((template) => ({
-      id: template.id,
-      kind: "training",
-      slug: template.slug,
-      name: template.name,
-      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
-      template_class: template.template_class,
-      is_active: template.is_active !== false,
-      version: toObjectRows(allTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
-      stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
-    }));
-    const reviewRows = toObjectRows(reviewTemplates).map((template) => ({
-      id: template.id,
-      kind: "review",
-      slug: template.slug,
-      name: template.name,
-      role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
-      template_class: "performance_review",
-      is_active: template.is_active !== false,
-      version: toObjectRows(allReviewTemplateVersions).find((version) => version.template_id === template.id && version.is_current) || null,
-      stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
-    }));
+    const trainingVersionRows = toObjectRows(allTemplateVersions);
+    const reviewVersionRows = toObjectRows(allReviewTemplateVersions);
+    const trainingRows = toObjectRows(templates).map((template) => {
+      const version = trainingVersionRows.find((row) => row.template_id === template.id && row.is_current) || null;
+      const draftVersion = getEditableTemplateDraftVersion(trainingVersionRows, template.id);
+      return ({
+        id: template.id,
+        kind: "training",
+        slug: template.slug,
+        name: template.name,
+        role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
+        template_class: template.template_class,
+        is_active: template.is_active !== false,
+        version,
+        draftVersion,
+        hasDraft: Boolean(draftVersion),
+        stats: templateStats[template.id] || { sectionCount: 0, itemCount: 0 },
+      });
+    });
+    const reviewRows = toObjectRows(reviewTemplates).map((template) => {
+      const version = reviewVersionRows.find((row) => row.template_id === template.id && row.is_current) || null;
+      const draftVersion = getEditableTemplateDraftVersion(reviewVersionRows, template.id);
+      return ({
+        id: template.id,
+        kind: "review",
+        slug: template.slug,
+        name: template.name,
+        role_scopes: Array.isArray(template.role_scopes) ? template.role_scopes : [],
+        template_class: "performance_review",
+        is_active: template.is_active !== false,
+        version,
+        draftVersion,
+        hasDraft: Boolean(draftVersion),
+        stats: reviewTemplateStats[template.id] || { sectionCount: 0, itemCount: 0 },
+      });
+    });
     return [...trainingRows, ...reviewRows];
   }, [allReviewTemplateVersions, allTemplateVersions, reviewTemplateStats, reviewTemplates, templateStats, templates]);
   const visibleTemplateRows = useMemo(() => {
@@ -8175,6 +9180,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     });
     return { ...template, kind: "training", version, sections: sectionData };
   }, [allReviewTemplateVersions, allTemplateVersions, items, previewTemplateId, previewTemplateKind, previewTemplateVersionId, reviewItems, reviewSections, reviewTemplates, sections, templates]);
+
+  const previewTemplateDraftVersion = useMemo(() => {
+    if (!previewTemplateId) return null;
+    const versionSource = previewTemplateKind === "review" ? allReviewTemplateVersions : allTemplateVersions;
+    return getEditableTemplateDraftVersion(versionSource, previewTemplateId);
+  }, [allReviewTemplateVersions, allTemplateVersions, previewTemplateId, previewTemplateKind]);
+
+  const previewTemplateStats = useMemo(() => buildTemplatePreviewVersionStats({
+    kind: previewTemplateKind,
+    versionId: previewTemplate?.version?.id,
+    sections,
+    items,
+    reviewSections,
+    reviewItems,
+  }), [items, previewTemplate, previewTemplateKind, reviewItems, reviewSections, sections]);
+
+  const templatePublishValidation = useMemo(() => (
+    previewTemplate?.version?.status === "draft" ? validateTemplateVersionForPublish(previewTemplate) : { valid: true, errors: [] }
+  ), [previewTemplate]);
+  const templateActionPending = Boolean(savingTemplateAction) || savingTemplateFieldCount > 0;
+  const templatePreviewEditButtonLabel = previewTemplateDraftVersion?.id ? "Resume Draft" : "Edit Template";
+
   const globalNotesFeed = useMemo(() => {
     const employeeNotesFeed = toObjectRows(laborEmployeeNotes)
       .filter((note) => !isLaborEmployeeNoteDeleted(note))
@@ -8573,6 +9600,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     if (error) addGlobalToast(error, "error");
   }, [addGlobalToast]);
 
+  const handlePerformanceReviewEvidenceFileChange = useCallback((event) => {
+    const file = event.target.files?.[0] || null;
+    const { acceptedFile, error } = validateLaborTrainingRequirementEvidenceFile(file);
+    setPerformanceReviewEvidenceFile(acceptedFile);
+    setPerformanceReviewEvidenceError(error);
+    if (error) addGlobalToast(error, "error");
+  }, [addGlobalToast]);
+
   const uploadTrainingRequirementEvidence = useCallback(async ({ laborEmployeeId, requirementRow, file }) => {
     const mimeType = inferLaborTrainingRequirementEvidenceMimeType(file);
     const storagePath = buildLaborEmployeeRequirementEvidencePath({
@@ -8619,6 +9654,64 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return insertedDocument || null;
   }, [actorName, actorUserId]);
 
+  const handleUploadPerformanceReviewEvidence = useCallback(async ({ laborEmployee, reviewInstance, reviewCycle, file, completedOn }) => {
+    const laborEmployeeId = getLaborEmployeeRowId(laborEmployee);
+    if (!laborEmployeeId || !reviewInstance?.id) throw new Error("Choose an employee review before uploading evidence.");
+    const mimeType = inferLaborTrainingRequirementEvidenceMimeType(file);
+    const fallbackFileName = buildPerformanceReviewPdfFileName(laborEmployee, reviewInstance.review_cycle || reviewCycle?.id || "review");
+    const evidenceFileName = String(file?.name || fallbackFileName || "performance-review-evidence.pdf").trim() || "performance-review-evidence.pdf";
+    const reviewSlug = reviewCycle?.slug || reviewCycle?.id || reviewInstance.review_cycle || reviewInstance.id;
+    const storagePath = buildLaborEmployeeRequirementEvidencePath({
+      laborEmployeeId,
+      requirementSlug: `performance-review-${reviewSlug}`,
+      fileName: evidenceFileName,
+    });
+
+    const { error: uploadError } = await supabase
+      .storage
+      .from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET)
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: insertedDocument, error: documentError } = await supabase
+      .from("labor_employee_documents")
+      .insert({
+        labor_employee_id: laborEmployeeId,
+        document_type: "performance_review_evidence",
+        file_name: evidenceFileName,
+        storage_bucket: LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
+        storage_path: storagePath,
+        external_url: null,
+        mime_type: mimeType,
+        file_size_bytes: Number(file?.size || 0),
+        metadata: {
+          source_module: "performance_reviews",
+          review_instance_id: reviewInstance.id,
+          review_cycle: reviewInstance.review_cycle || reviewCycle?.id || null,
+          requirement_id: reviewCycle?.requirementId || reviewCycle?.requirement?.id || null,
+          requirement_slug: reviewCycle?.slug || reviewCycle?.requirement?.slug || null,
+          policy_key: reviewCycle?.policyKey || reviewCycle?.requirement?.parent_requirement_id || null,
+          completed_on: completedOn || null,
+          original_file_name: evidenceFileName,
+        },
+        uploaded_by_user_id: actorUserId,
+        uploaded_by_name: actorName,
+      })
+      .select("*")
+      .single();
+
+    if (documentError) {
+      await supabase.storage.from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET).remove([storagePath]);
+      throw documentError;
+    }
+    return insertedDocument || null;
+  }, [actorName, actorUserId]);
+
   const handleSaveTrainingRequirement = useCallback(async () => {
     const requirementRow = trainingRequirementEditor;
     if (!selectedLaborEmployeeView?.id || !requirementRow) return;
@@ -8633,13 +9726,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
     const existingDocumentId = requirementRow.certification?.labor_employee_document_id || requirementRow.evidenceDocument?.id || null;
     const hasEvidenceFile = Boolean(trainingRequirementEvidenceFile);
-    const cprUrl = String(trainingRequirementDocumentUrl || "").trim();
-    const allowsUrl = requirementRow.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR;
-    const hasAcceptedEvidence = hasEvidenceFile || existingDocumentId || (allowsUrl && cprUrl);
+    const evidenceUrl = String(trainingRequirementDocumentUrl || "").trim();
+    const allowsUrl = trainingRequirementAllowsReferenceUrl(requirementRow);
+    const hasAcceptedEvidence = hasEvidenceFile || existingDocumentId || (allowsUrl && evidenceUrl);
 
     if (!hasAcceptedEvidence) {
       addGlobalToast(
-        allowsUrl ? "Upload a CPR PDF or paste the certificate link" : "Upload a PDF before saving this requirement",
+        allowsUrl ? "Upload a PDF or paste the evidence link" : "Upload a PDF before saving this requirement",
         "error"
       );
       return;
@@ -8657,8 +9750,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
 
       const documentId = evidenceDocument?.id || existingDocumentId || null;
-      const resolvedExpiresOn = requirementRow.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR
-        ? (trainingRequirementExpiresOn || addDaysToDateString(trainingRequirementCompletedOn, 365) || null)
+      const renewalIntervalDays = getTrainingRequirementRenewalIntervalDays(requirementRow);
+      const resolvedExpiresOn = trainingRequirementRequiresRenewalDueDate(requirementRow)
+        ? (trainingRequirementExpiresOn || (renewalIntervalDays ? addDaysToDateString(trainingRequirementCompletedOn, renewalIntervalDays) : null))
         : null;
       const payload = {
         labor_employee_id: selectedLaborEmployeeView.id,
@@ -8666,7 +9760,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         completed_on: trainingRequirementCompletedOn,
         expires_on: resolvedExpiresOn,
         labor_employee_document_id: documentId,
-        external_document_url: allowsUrl ? (cprUrl || null) : null,
+        external_document_url: allowsUrl ? (evidenceUrl || null) : null,
         source_note: trainingRequirementSourceNote.trim() || null,
         metadata: {
           ...(requirementRow.certification?.metadata || {}),
@@ -9219,7 +10313,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, []);
 
   const handleCreateTemplateDraft = useCallback(async () => {
-    if (!previewTemplateId) return;
+    if (!previewTemplateId || templateActionPending) return;
+    if (previewTemplate?.version?.status === "draft") {
+      setTemplateManageStructure(true);
+      addGlobalToast("Draft is ready to edit", "success");
+      return;
+    }
+    if (previewTemplateDraftVersion?.id) {
+      setPreviewTemplateVersionId(previewTemplateDraftVersion.id);
+      setTemplateManageStructure(true);
+      addGlobalToast("Existing draft opened", "success");
+      return;
+    }
     setSavingTemplateAction("draft");
     const sourceVersionId = previewTemplate?.version?.id || null;
     const rpcName = previewTemplateKind === "review" ? "create_review_template_draft" : "create_training_template_draft";
@@ -9239,10 +10344,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     await refreshTemplateBundle();
     if (draftVersion?.id) {
       setPreviewTemplateVersionId(draftVersion.id);
+      setTemplateManageStructure(true);
     }
     addGlobalToast("Template draft created", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateDraftVersion, previewTemplateId, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const resetCreateTemplateModal = useCallback(() => {
     setShowCreateTemplateModal(false);
@@ -9356,7 +10462,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ]);
 
   const handlePublishTemplateVersion = useCallback(async () => {
-    if (!previewTemplate?.version?.id) return;
+    if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
+    if (templateActionPending) {
+      addGlobalToast("Finish pending template saves before publishing", "error");
+      return;
+    }
+    const validation = validateTemplateVersionForPublish(previewTemplate);
+    if (!validation.valid) {
+      addGlobalToast(validation.errors[0] || "Fix template validation before publishing", "error");
+      return;
+    }
     setSavingTemplateAction("publish");
     const rpcName = previewTemplateKind === "review" ? "publish_review_template_version" : "publish_training_template_version";
     const { data, error } = await supabase.rpc(rpcName, {
@@ -9377,10 +10492,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     addGlobalToast("Template version published", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const handleRestoreTemplateVersion = useCallback(async () => {
     if (!previewTemplateId || !previewTemplate?.version?.id) return;
+    if (templateActionPending) {
+      addGlobalToast("Finish pending template saves before restoring", "error");
+      return;
+    }
+    if (previewTemplateDraftVersion?.id && previewTemplate.version.status !== "draft") {
+      setPreviewTemplateVersionId(previewTemplateDraftVersion.id);
+      setTemplateManageStructure(true);
+      addGlobalToast("Existing draft opened", "success");
+      return;
+    }
     setSavingTemplateAction("restore");
     const rpcName = previewTemplateKind === "review" ? "restore_review_template_version" : "restore_training_template_version";
     const { data, error } = await supabase.rpc(rpcName, {
@@ -9401,7 +10526,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     addGlobalToast("Historical version restored into a new draft", "success");
     setSavingTemplateAction("");
-  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateId, previewTemplateKind, refreshTemplateBundle]);
+  }, [actorName, actorUserId, addGlobalToast, previewTemplate, previewTemplateDraftVersion, previewTemplateId, previewTemplateKind, refreshTemplateBundle, templateActionPending]);
 
   const handleUpdateTemplateName = useCallback(async (value) => {
     if (!previewTemplateId) return;
@@ -9411,48 +10536,74 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const tableName = previewTemplateKind === "review" ? "review_templates" : "training_templates";
     const currentTemplate = toObjectRows(templateSource).find((template) => template.id === previewTemplateId);
     if (!currentTemplate || currentTemplate.name === nextName) return;
-    const { error } = await supabase
-      .from(tableName)
-      .update({
-        name: nextName,
-        updated_by_user_id: actorUserId,
-      })
-      .eq("id", previewTemplateId);
-    if (error) {
-      addGlobalToast("Failed to update template name", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update({
+          name: nextName,
+          updated_by_user_id: actorUserId,
+        })
+        .eq("id", previewTemplateId);
+      if (error) {
+        addGlobalToast("Failed to update template name", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast("Template name updated", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast("Template name updated", "success");
   }, [actorUserId, addGlobalToast, previewTemplateId, previewTemplateKind, reviewTemplates, templates, refreshTemplateBundle]);
 
   const handleUpdateTemplateSection = useCallback(async (sectionId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_sections" : "training_template_sections";
-    const { error } = await supabase
-      .from(tableName)
-      .update(patch)
-      .eq("id", sectionId);
-    if (error) {
-      addGlobalToast("Failed to update section", "error");
-      return false;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update(patch)
+        .eq("id", sectionId);
+      if (error) {
+        addGlobalToast("Failed to update section", "error");
+        return false;
+      }
+      await refreshTemplateBundle();
+      return true;
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    return true;
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
 
   const handleUpdateTemplateItem = useCallback(async (itemId, patch) => {
     const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
-    const { error } = await supabase
-      .from(tableName)
-      .update(patch)
-      .eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return false;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update(patch)
+        .eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to update ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return false;
+      }
+      await refreshTemplateBundle();
+      return true;
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    return true;
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
+
+  const commitRequiredTemplateTextInput = useCallback((event, currentValue, fieldLabel, onCommit) => {
+    const result = normalizeTemplateRequiredTextInput(event?.target?.value, currentValue, fieldLabel);
+    if (event?.target) event.target.value = result.value;
+    if (!result.valid) {
+      addGlobalToast(result.error, "error");
+      return;
+    }
+    if (!result.changed) return;
+    onCommit(result.value);
+  }, [addGlobalToast]);
 
   const handleAddTemplateSection = useCallback(async (parentSectionId = null) => {
     if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
@@ -9483,15 +10634,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           instructions: null,
           completion_mode: "complete_only",
         };
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_sections" : "training_template_sections")
-      .insert(insertPayload);
-    if (error) {
-      addGlobalToast("Failed to add section", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_sections" : "training_template_sections")
+        .insert(insertPayload);
+      if (error) {
+        addGlobalToast("Failed to add section", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review section added" : parentSectionId ? "Module added" : "Section added", "success");
   }, [addGlobalToast, previewTemplate, previewTemplateKind, reviewSections, sections, refreshTemplateBundle]);
 
   const handleAddTemplateItem = useCallback(async (sectionId) => {
@@ -9522,31 +10678,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           required: true,
           completion_mode: "complete_only",
         };
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
-      .insert(insertPayload);
-    if (error) {
-      addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
+        .insert(insertPayload);
+      if (error) {
+        addGlobalToast(`Failed to add ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review item added" : "Task added", "success");
   }, [addGlobalToast, items, previewTemplate, previewTemplateKind, reviewItems, refreshTemplateBundle]);
 
   const handleDeleteTemplateItem = useCallback(async (itemId) => {
-    const { error } = await supabase
-      .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
-      .delete()
-      .eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
-      return;
+    const itemSource = previewTemplateKind === "review" ? toObjectRows(reviewItems) : toObjectRows(items);
+    const item = itemSource.find((row) => row.id === itemId);
+    const itemLabel = previewTemplateKind === "review" ? (item?.prompt || "this prompt") : (item?.label || "this task");
+    if (!window.confirm(`Delete ${previewTemplateKind === "review" ? "review prompt" : "task"} "${itemLabel}"? This cannot be undone.`)) return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase
+        .from(previewTemplateKind === "review" ? "review_items" : "training_template_items")
+        .delete()
+        .eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to delete ${previewTemplateKind === "review" ? "review item" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
-    addGlobalToast(previewTemplateKind === "review" ? "Review item deleted" : "Task deleted", "success");
-  }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle]);
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
 
   const handleDeleteTemplateSection = useCallback(async (sectionId) => {
+    const sectionSource = previewTemplateKind === "review" ? toObjectRows(reviewSections) : toObjectRows(sections);
+    const section = sectionSource.find((row) => row.id === sectionId);
+    const sectionKindLabel = previewTemplateKind === "review" ? "review section" : section?.parent_section_id ? "module" : "section";
+    const sectionTitle = section?.title || `this ${sectionKindLabel}`;
+    if (!window.confirm(`Delete ${sectionKindLabel} "${sectionTitle}" and all of its contents? This cannot be undone.`)) return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
     if (previewTemplateKind === "review") {
       const sectionItems = toObjectRows(reviewItems).filter((item) => item.review_section_id === sectionId);
       if (sectionItems.length > 0) {
@@ -9617,6 +10794,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     await refreshTemplateBundle();
     addGlobalToast("Section deleted", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
   }, [addGlobalToast, items, previewTemplateKind, reviewItems, sections, refreshTemplateBundle]);
 
   const handleToggleTemplateActive = useCallback(async () => {
@@ -9730,12 +10910,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const reordered = [...siblings];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const error = await resequenceRows(tableName, reordered);
-    if (error) {
-      addGlobalToast("Failed to reorder section", "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const error = await resequenceRows(tableName, reordered);
+      if (error) {
+        addGlobalToast("Failed to reorder section", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
   }, [addGlobalToast, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewSections, sections]);
 
   const handleMoveTemplateItemOrder = useCallback(async (itemId, direction) => {
@@ -9752,12 +10937,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const reordered = [...siblings];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const error = await resequenceRows(tableName, reordered);
-    if (error) {
-      addGlobalToast(`Failed to reorder ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
-      return;
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const error = await resequenceRows(tableName, reordered);
+      if (error) {
+        addGlobalToast(`Failed to reorder ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
     }
-    await refreshTemplateBundle();
   }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, resequenceRows, reviewItems]);
 
   const handleMoveTemplateItemSection = useCallback(async (itemId, sectionId) => {
@@ -9772,13 +10962,52 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const patch = previewTemplateKind === "review"
       ? { review_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 }
       : { template_section_id: sectionId, sequence_order: (targetItems.length + 1) * 10 };
-    const { error } = await supabase.from(tableName).update(patch).eq("id", itemId);
-    if (error) {
-      addGlobalToast(`Failed to move ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const { error } = await supabase.from(tableName).update(patch).eq("id", itemId);
+      if (error) {
+        addGlobalToast(`Failed to move ${previewTemplateKind === "review" ? "prompt" : "task"}`, "error");
+        return;
+      }
+      await refreshTemplateBundle();
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
+  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
+
+  const getEditablePreviewTemplateItems = useCallback(() => {
+    if (!previewTemplate) return [];
+    if (previewTemplate.kind === "review") {
+      return toObjectRows(previewTemplate.sections).flatMap((section) => toObjectRows(section.items));
+    }
+    return toObjectRows(previewTemplate.sections).flatMap((section) => [
+      ...toObjectRows(section.directItems),
+      ...toObjectRows(section.children).flatMap((child) => toObjectRows(child.items)),
+    ]);
+  }, [previewTemplate]);
+
+  const handleBulkUpdateTemplateItems = useCallback(async (patch, successMessage) => {
+    if (!previewTemplate?.version?.id || previewTemplate.version.status !== "draft") return;
+    const targetItems = getEditablePreviewTemplateItems();
+    if (targetItems.length === 0) {
+      addGlobalToast(previewTemplateKind === "review" ? "Add a prompt before using bulk configuration" : "Add a task before using bulk configuration", "error");
       return;
     }
-    await refreshTemplateBundle();
-  }, [addGlobalToast, items, previewTemplateKind, refreshTemplateBundle, reviewItems]);
+    const tableName = previewTemplateKind === "review" ? "review_items" : "training_template_items";
+    setSavingTemplateFieldCount((count) => count + 1);
+    try {
+      const results = await Promise.all(targetItems.map((item) => supabase.from(tableName).update(patch).eq("id", item.id)));
+      const error = results.find((result) => result.error)?.error;
+      if (error) {
+        addGlobalToast("Failed to apply bulk configuration", "error");
+        return;
+      }
+      await refreshTemplateBundle();
+      addGlobalToast(successMessage || "Bulk configuration applied", "success");
+    } finally {
+      setSavingTemplateFieldCount((count) => Math.max(0, count - 1));
+    }
+  }, [addGlobalToast, getEditablePreviewTemplateItems, previewTemplate, previewTemplateKind, refreshTemplateBundle]);
 
   const openLaborEmployeeProfile = useCallback((employeeId, seedRow = null, options = {}) => {
     const resolvedEmployeeId = employeeId || getLaborEmployeeRowId(seedRow);
@@ -9809,6 +11038,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const clearTrainingHistoryFilters = useCallback(() => {
     setTrainingHistoryFilters(DEFAULT_TRAINING_HISTORY_FILTERS);
+  }, []);
+
+  const updateComplianceHistoryFilter = useCallback((key, value) => {
+    setComplianceHistoryFilters((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const clearComplianceHistoryFilters = useCallback(() => {
+    setComplianceHistoryFilters(DEFAULT_COMPLIANCE_HISTORY_FILTERS);
   }, []);
 
   const clearPctReadinessFilters = useCallback(() => {
@@ -9903,14 +11140,77 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
       const savedRecordId = pctReadinessCellEditor.record.id;
       const shouldRefreshRecordDetail = savedRecordId === selectedRecordId;
-      const shouldRefreshReadinessBoard = trainingView === "board" || Boolean(selectedPctReadinessRecordId);
+      const savedAt = new Date().toISOString();
+      const normalizedSavedStatus = normalizePctReadinessStatus(pctReadinessEditorStatus);
+      const commentText = String(pctReadinessEditorComment || "").trim();
+      const cellKey = `${savedRecordId}:${pctReadinessCellEditor.item.id}`;
+      const previousCell = pctReadinessCellEditor.cell || {};
+      const nextMetadata = {
+        ...(isObjectRow(previousCell.metadata) ? previousCell.metadata : {}),
+        last_updated_by_name: actorName || previousCell.metadata?.last_updated_by_name || "",
+        last_updated_at: savedAt,
+      };
+      if (normalizedSavedStatus === "demonstrated") {
+        nextMetadata.demonstrated_by_name = pctReadinessEditorDemonstratedBy || actorName || previousCell.demonstrated_by || "";
+        nextMetadata.demonstrated_at = savedAt;
+      }
+      if (normalizedSavedStatus === "verified" || normalizedSavedStatus === "waived") {
+        nextMetadata.verified_by_name = pctReadinessEditorVerifiedBy || actorName || previousCell.verified_by || "";
+        nextMetadata.verified_at = savedAt;
+      }
+      const nextCell = {
+        ...previousCell,
+        record_id: savedRecordId,
+        template_item_id: pctReadinessCellEditor.item.id,
+        template_section_id: pctReadinessCellEditor.section?.id || previousCell.template_section_id,
+        readiness_status: normalizedSavedStatus,
+        status: normalizedSavedStatus,
+        demonstrated_by: normalizedSavedStatus === "demonstrated"
+          ? nextMetadata.demonstrated_by_name
+          : previousCell.demonstrated_by,
+        verified_by: normalizedSavedStatus === "verified" || normalizedSavedStatus === "waived"
+          ? nextMetadata.verified_by_name
+          : previousCell.verified_by,
+        completed_by_name: normalizedSavedStatus === "verified" || normalizedSavedStatus === "waived"
+          ? nextMetadata.verified_by_name
+          : previousCell.completed_by_name,
+        completed_at: normalizedSavedStatus === "verified" || normalizedSavedStatus === "waived"
+          ? savedAt
+          : previousCell.completed_at,
+        updated_at: savedAt,
+        latest_status_actor_name: actorName || previousCell.latest_status_actor_name || "",
+        latest_status_actor_at: savedAt,
+        latest_note: commentText || previousCell.latest_note || "",
+        latest_note_actor_name: commentText ? (actorName || previousCell.latest_note_actor_name || "") : previousCell.latest_note_actor_name,
+        latest_note_at: commentText ? savedAt : previousCell.latest_note_at,
+        metadata: nextMetadata,
+      };
+      const patchReadinessBoard = (board) => {
+        if (!board || !isObjectRow(board)) return board;
+        const cells = isObjectRow(board.cells) ? board.cells : {};
+        return {
+          ...board,
+          cells: {
+            ...cells,
+            [cellKey]: nextCell,
+          },
+          records: toObjectRows(board.records).map((record) => (
+            record.id === savedRecordId ? { ...record, updated_at: savedAt } : record
+          )),
+        };
+      };
+      setPctReadinessBoard((current) => patchReadinessBoard(current));
+      setReadinessSummaryBoards((current) => {
+        const slug = templateSlug || selectedReadinessTemplateSlug;
+        return {
+          ...current,
+          [slug]: patchReadinessBoard(current[slug]),
+        };
+      });
       closePctReadinessCellEditor();
       addGlobalToast?.("Readiness cell updated", "success");
       if (shouldRefreshRecordDetail) {
         await reloadRecordDetailData(savedRecordId);
-      }
-      if (shouldRefreshReadinessBoard) {
-        await loadPctReadinessBoard(true);
       }
     } catch (error) {
       console.error("Team readiness cell save error:", error);
@@ -9922,15 +11222,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     actorUserId,
     addGlobalToast,
     closePctReadinessCellEditor,
-    loadPctReadinessBoard,
     pctReadinessCellEditor,
     pctReadinessEditorComment,
+    pctReadinessEditorDemonstratedBy,
     pctReadinessEditorStatus,
+    pctReadinessEditorVerifiedBy,
     reloadRecordDetailData,
-    selectedPctReadinessRecordId,
     selectedReadinessTemplateSlug,
     selectedRecordId,
-    trainingView,
   ]);
 
   const handleCreatePctReadinessRecord = useCallback(async () => {
@@ -10144,7 +11443,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       || null;
   }, [allReviewTemplateVersions]);
 
-  const handleCreateReviewInstanceForEmployee = useCallback(async (employee, reviewCycle) => {
+  const handleCreateReviewInstanceForEmployee = useCallback(async (employee, reviewCycle, options = {}) => {
+    const { openDetail = true } = options || {};
     const employeeId = getLaborEmployeeRowId(employee);
     if (!employeeId) return null;
     const matchingTemplate = findReviewTemplateForEmployee(employee);
@@ -10168,9 +11468,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     const createdInstance = Array.isArray(data) ? data[0] : data;
     await refreshLaborData();
-    setSelectedLaborEmployeeId(employeeId);
-    setSelectedLaborEmployeeSeed(isObjectRow(employee) ? employee : null);
-    if (createdInstance?.id) setSelectedReviewInstanceId(createdInstance.id);
+    if (openDetail) {
+      setSelectedLaborEmployeeId(employeeId);
+      setSelectedLaborEmployeeSeed(isObjectRow(employee) ? employee : null);
+      if (createdInstance?.id) setSelectedReviewInstanceId(createdInstance.id);
+    }
     addGlobalToast("Review instance created", "success");
     return createdInstance || null;
   }, [actorName, actorUserId, addGlobalToast, findReviewTemplateForEmployee, refreshLaborData]);
@@ -10261,34 +11563,432 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     handleSaveAllReviewResponses();
   }, [handleSaveAllReviewResponses]);
 
-  const handleCompleteReviewInstance = useCallback(async () => {
-    if (!selectedReviewInstanceId) return;
-    setCompletingReview(true);
-    const savedResponses = await handleSaveAllReviewResponses({ quiet: true });
-    if (!savedResponses) {
-      setCompletingReview(false);
-      return;
-    }
-    const { error } = await supabase.rpc("complete_employee_review_instance", {
+  const saveReviewPdfDraft = useCallback(async ({ quiet = false } = {}) => {
+    if (!selectedReviewInstanceId) return false;
+    setSavingReviewPdfDraft(true);
+    const { error } = await supabase.rpc("save_employee_review_pdf_draft", {
       p_review_instance_id: selectedReviewInstanceId,
+      p_review_rating: reviewPdfDraft.rating || null,
+      p_manager_notes: reviewPdfDraft.managerNotes || null,
+      p_action_plan: reviewPdfDraft.actionPlan || null,
+      p_overall_rating: reviewPdfDraft.overallRating || null,
+      p_overall_comments: reviewPdfDraft.overallComments || null,
       p_actor_user_id: actorUserId,
-      p_actor_name: actorName,
     });
     if (error) {
-      addGlobalToast("Failed to complete review", "error");
-      setCompletingReview(false);
-      return;
+      addGlobalToast("Failed to save PDF draft fields", "error");
+      setSavingReviewPdfDraft(false);
+      return false;
     }
     await refreshLaborData();
-    setCompletingReview(false);
-    addGlobalToast("Review completed", "success");
-  }, [actorName, actorUserId, addGlobalToast, handleSaveAllReviewResponses, selectedReviewInstanceId, refreshLaborData]);
+    setSavingReviewPdfDraft(false);
+    if (!quiet) addGlobalToast("PDF draft fields saved", "success");
+    return true;
+  }, [actorUserId, addGlobalToast, refreshLaborData, reviewPdfDraft, selectedReviewInstanceId]);
+
+  const handleCompleteReviewInstance = useCallback(async () => {
+    if (!selectedReviewInstanceId || !selectedReviewInstance || !selectedLaborEmployeeView?.id) return;
+    if (!performanceReviewCompletedOn) {
+      addGlobalToast("Review completed date is required", "error");
+      return;
+    }
+    if (!performanceReviewEvidenceFile) {
+      setPerformanceReviewEvidenceError("Upload the completed review PDF before completing this checkpoint.");
+      addGlobalToast("Upload the completed review PDF before completing this checkpoint", "error");
+      return;
+    }
+
+    const { acceptedFile, error: fileError } = validateLaborTrainingRequirementEvidenceFile(performanceReviewEvidenceFile);
+    if (fileError || !acceptedFile) {
+      setPerformanceReviewEvidenceError(fileError || "Upload a valid PDF evidence file.");
+      addGlobalToast(fileError || "Upload a valid PDF evidence file", "error");
+      return;
+    }
+
+    const selectedReviewCycle = toObjectRows(activePerformanceReviewCycles)
+      .find((cycle) => reviewCycleMatchesKey(cycle, selectedReviewInstance.review_cycle)) || null;
+
+    setCompletingReview(true);
+    let evidenceDocument = null;
+    try {
+      const savedResponses = await handleSaveAllReviewResponses({ quiet: true });
+      if (!savedResponses) return;
+      const savedDraft = await saveReviewPdfDraft({ quiet: true });
+      if (!savedDraft) return;
+
+      evidenceDocument = await handleUploadPerformanceReviewEvidence({
+        laborEmployee: selectedLaborEmployeeView,
+        reviewInstance: selectedReviewInstance,
+        reviewCycle: selectedReviewCycle,
+        file: acceptedFile,
+        completedOn: performanceReviewCompletedOn,
+      });
+
+      const { error } = await supabase.rpc("complete_employee_review_instance", {
+        p_review_instance_id: selectedReviewInstanceId,
+        p_actor_user_id: actorUserId,
+        p_actor_name: actorName,
+        p_labor_employee_document_id: evidenceDocument?.id || null,
+        p_completed_on: performanceReviewCompletedOn,
+      });
+      if (error) throw error;
+
+      await refreshLaborData();
+      setPerformanceReviewEvidenceFile(null);
+      setPerformanceReviewEvidenceError("");
+      setPerformanceReviewCompletedOn(todayStr());
+      if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
+      addGlobalToast("Review evidence uploaded and checkpoint completed", "success");
+    } catch (error) {
+      if (evidenceDocument?.id) {
+        await supabase.from("labor_employee_documents").delete().eq("id", evidenceDocument.id);
+      }
+      if (evidenceDocument?.storage_path) {
+        await supabase.storage.from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET).remove([evidenceDocument.storage_path]);
+      }
+      console.error("Performance review completion error:", error);
+      addGlobalToast(error?.message || "Failed to complete review", "error");
+    } finally {
+      setCompletingReview(false);
+    }
+  }, [
+    activePerformanceReviewCycles,
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    handleSaveAllReviewResponses,
+    performanceReviewCompletedOn,
+    performanceReviewEvidenceFile,
+    refreshLaborData,
+    saveReviewPdfDraft,
+    selectedLaborEmployeeView,
+    selectedReviewInstance,
+    selectedReviewInstanceId,
+    handleUploadPerformanceReviewEvidence,
+  ]);
+
+  const closeComplianceReviewEditor = useCallback(() => {
+    setComplianceReviewEditorModal(null);
+    setCompletionMode("completed");
+    setPerformanceReviewCompletedOn(todayStr());
+    setPerformanceReviewEvidenceFile(null);
+    setPerformanceReviewEvidenceError("");
+    if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
+  }, []);
+
+  const handleOpenComplianceReviewEditor = useCallback((laborEmployee, reviewCycle) => {
+    const reviewInstance = reviewCycle?.instance || null;
+    if (!laborEmployee || !reviewInstance?.id) return;
+    const metadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
+    const waiver = isObjectRow(metadata.completion_waiver) ? metadata.completion_waiver : null;
+    const completedOn = reviewCycle?.completedDate
+      || metadata?.completion_evidence?.completed_on
+      || waiver?.waived_on
+      || String(reviewInstance.completed_at || "").slice(0, 10)
+      || todayStr();
+    setComplianceReviewEditorModal({
+      laborEmployee,
+      reviewCycle,
+      reviewInstance,
+    });
+    setCompletionMode(waiver ? "waived" : "completed");
+    setPerformanceReviewCompletedOn(completedOn);
+    setPerformanceReviewEvidenceFile(null);
+    setPerformanceReviewEvidenceError("");
+    if (performanceReviewEvidenceFileInputRef.current) performanceReviewEvidenceFileInputRef.current.value = "";
+  }, []);
+
+  const handleCreateComplianceReviewCheckpoint = useCallback(async (laborEmployee, reviewCycle) => {
+    const reviewCycleKey = reviewCycle?.id || reviewCycle?.slug || reviewCycle?.requirementId || reviewCycle?.policyKey;
+    const createdInstance = await handleCreateReviewInstanceForEmployee(laborEmployee, reviewCycleKey, { openDetail: false });
+    if (createdInstance?.id) {
+      handleOpenComplianceReviewEditor(laborEmployee, {
+        ...reviewCycle,
+        instance: createdInstance,
+      });
+    }
+    return createdInstance || null;
+  }, [handleCreateReviewInstanceForEmployee, handleOpenComplianceReviewEditor]);
+
+  const handleSaveComplianceReviewCheckpoint = useCallback(async () => {
+    const editor = complianceReviewEditorModal;
+    const reviewInstance = editor?.reviewInstance || editor?.reviewCycle?.instance || null;
+    const laborEmployee = editor?.laborEmployee || null;
+    const reviewCycle = editor?.reviewCycle || null;
+    if (!reviewInstance?.id || !laborEmployee) return;
+    if (!performanceReviewCompletedOn) {
+      addGlobalToast("Completed date is required", "error");
+      return;
+    }
+
+    setCompletingReview(true);
+    let evidenceDocument = null;
+    try {
+      if (completionMode === "waived") {
+        const existingMetadata = isObjectRow(reviewInstance.metadata) ? reviewInstance.metadata : {};
+        const { error } = await supabase
+          .from("employee_review_instances")
+          .update({
+            status: "completed",
+            completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+            reviewer_user_id: actorUserId,
+            reviewer_name: actorName,
+            metadata: {
+              ...existingMetadata,
+              completion_mode: "waived",
+              completion_waiver: {
+                waived_on: performanceReviewCompletedOn,
+                waived_at: new Date().toISOString(),
+                actor_user_id: actorUserId,
+                actor_name: actorName,
+                review_cycle: reviewInstance.review_cycle || reviewCycle?.id || reviewCycle?.slug || null,
+              },
+            },
+            updated_by_user_id: actorUserId,
+          })
+          .eq("id", reviewInstance.id);
+        if (error) throw error;
+        await refreshLaborData();
+        closeComplianceReviewEditor();
+        addGlobalToast("Compliance checkpoint waived", "success");
+        return;
+      }
+
+      if (!performanceReviewEvidenceFile) {
+        setPerformanceReviewEvidenceError("Upload the completed review PDF before saving this checkpoint.");
+        addGlobalToast("Upload the completed review PDF before saving this checkpoint", "error");
+        return;
+      }
+
+      const { acceptedFile, error: fileError } = validateLaborTrainingRequirementEvidenceFile(performanceReviewEvidenceFile);
+      if (fileError || !acceptedFile) {
+        setPerformanceReviewEvidenceError(fileError || "Upload a valid PDF evidence file.");
+        addGlobalToast(fileError || "Upload a valid PDF evidence file", "error");
+        return;
+      }
+
+      evidenceDocument = await handleUploadPerformanceReviewEvidence({
+        laborEmployee,
+        reviewInstance,
+        reviewCycle,
+        file: acceptedFile,
+        completedOn: performanceReviewCompletedOn,
+      });
+
+      const { error } = await supabase.rpc("complete_employee_review_instance", {
+        p_review_instance_id: reviewInstance.id,
+        p_actor_user_id: actorUserId,
+        p_actor_name: actorName,
+        p_labor_employee_document_id: evidenceDocument?.id || null,
+        p_completed_on: performanceReviewCompletedOn,
+      });
+      if (error) throw error;
+
+      await refreshLaborData();
+      closeComplianceReviewEditor();
+      addGlobalToast("Compliance checkpoint completed", "success");
+    } catch (error) {
+      if (evidenceDocument?.id) {
+        await supabase.from("labor_employee_documents").delete().eq("id", evidenceDocument.id);
+      }
+      if (evidenceDocument?.storage_path) {
+        await supabase.storage.from(LABOR_EMPLOYEE_ATTACHMENT_BUCKET).remove([evidenceDocument.storage_path]);
+      }
+      console.error("Compliance checkpoint save error:", error);
+      addGlobalToast(error?.message || "Failed to save compliance checkpoint", "error");
+    } finally {
+      setCompletingReview(false);
+    }
+  }, [
+    actorName,
+    actorUserId,
+    addGlobalToast,
+    closeComplianceReviewEditor,
+    complianceReviewEditorModal,
+    completionMode,
+    handleUploadPerformanceReviewEvidence,
+    performanceReviewCompletedOn,
+    performanceReviewEvidenceFile,
+    refreshLaborData,
+  ]);
+
+  const closeComplianceRequirementEditor = useCallback(() => {
+    setComplianceRequirementEditorOpen(false);
+    setComplianceRequirementEditingId("");
+    setComplianceRequirementTitle("");
+    setComplianceRequirementDescription("");
+    setComplianceRequirementEvidencePolicy("checkbox_only");
+  }, []);
+
+  const openComplianceRequirementEditor = useCallback((requirement = null) => {
+    if (!canManageCompliancePolicy) {
+      addGlobalToast("You do not have permission to manage Compliance requirements", "error");
+      return;
+    }
+    if (requirement && !isCustomComplianceRequirement(requirement)) {
+      addGlobalToast("Only custom Compliance columns can be edited here", "error");
+      return;
+    }
+    setComplianceRequirementEditingId(requirement?.id || "");
+    setComplianceRequirementTitle(requirement ? normalizeComplianceRequirementLabel(requirement) : "");
+    setComplianceRequirementDescription(requirement?.description || "");
+    setComplianceRequirementEvidencePolicy(requirement?.evidence_policy || "checkbox_only");
+    setComplianceRequirementEditorOpen(true);
+  }, [addGlobalToast, canManageCompliancePolicy]);
+
+  const handleSaveComplianceRequirement = useCallback(async () => {
+    if (!canManageCompliancePolicy) {
+      addGlobalToast("You do not have permission to manage Compliance requirements", "error");
+      return;
+    }
+    const title = complianceRequirementTitle.trim();
+    if (!title) {
+      addGlobalToast("Requirement name is required", "error");
+      return;
+    }
+    const locationId = normalizeOptionalUuid(resolvedLaborLocationId);
+    if (!locationId) {
+      addGlobalToast("Compliance requirements need a resolved labor location", "error");
+      return;
+    }
+
+    const existingRequirements = toObjectRows(laborCompliancePolicyRequirements);
+    const editingRequirement = complianceRequirementEditingId
+      ? existingRequirements.find((requirement) => requirement.id === complianceRequirementEditingId)
+      : null;
+    if (complianceRequirementEditingId && !isCustomComplianceRequirement(editingRequirement)) {
+      addGlobalToast("Only custom Compliance columns can be edited here", "error");
+      return;
+    }
+    const maxDisplayOrder = existingRequirements.reduce((max, row) => {
+      const order = Number(row.display_order ?? row.displayOrder ?? 0);
+      return Number.isFinite(order) ? Math.max(max, order) : max;
+    }, 0);
+    const sharedPayload = {
+      title,
+      description: complianceRequirementDescription.trim() || null,
+      evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
+      updated_by_user_id: actorUserId || null,
+    };
+    const createPayload = {
+      requirement_kind: "review_checkpoint",
+      scope_type: "location",
+      scope_location_id: locationId,
+      slug: buildComplianceRequirementSlug(title, existingRequirements),
+      ...sharedPayload,
+      renewal_due_date_required: false,
+      due_rule: {},
+      display_group: "custom",
+      display_order: maxDisplayOrder + 10,
+      is_active: true,
+      metadata: {
+        ui_kind: "custom_yes_no",
+        created_from: "compliance_requirements_page",
+      },
+      created_by_user_id: actorUserId || null,
+    };
+
+    setSavingComplianceRequirement(true);
+    try {
+      const request = complianceRequirementEditingId
+        ? supabase
+          .from("labor_compliance_requirements")
+          .update({
+            ...sharedPayload,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", complianceRequirementEditingId)
+          .select("*")
+          .single()
+        : supabase
+          .from("labor_compliance_requirements")
+          .insert(createPayload)
+          .select("*")
+          .single();
+      const { data: savedRequirement, error } = await request;
+      if (error) throw error;
+      setLaborCompliancePolicyRequirements((prev) => (
+        (complianceRequirementEditingId
+          ? toObjectRows(prev).map((requirement) => (
+            requirement.id === complianceRequirementEditingId ? { ...requirement, ...(savedRequirement || sharedPayload) } : requirement
+          ))
+          : [...toObjectRows(prev), savedRequirement || createPayload]
+        ).sort(compareCompliancePolicyRequirements)
+      ));
+      setLaborCompliancePolicyLoaded(true);
+      closeComplianceRequirementEditor();
+      addGlobalToast(complianceRequirementEditingId ? "Compliance requirement updated" : "Compliance requirement added", "success");
+      await refreshLaborData({ includeTraining: false, includeSupport: true });
+    } catch (error) {
+      console.error("Compliance requirement save error:", error);
+      addGlobalToast(error?.message || "Failed to save Compliance requirement", "error");
+    } finally {
+      setSavingComplianceRequirement(false);
+    }
+  }, [
+    actorUserId,
+    addGlobalToast,
+    canManageCompliancePolicy,
+    closeComplianceRequirementEditor,
+    complianceRequirementEditingId,
+    complianceRequirementDescription,
+    complianceRequirementEvidencePolicy,
+    complianceRequirementTitle,
+    laborCompliancePolicyRequirements,
+    refreshLaborData,
+    resolvedLaborLocationId,
+  ]);
+
+  const handleDeleteComplianceRequirement = useCallback(async (requirement) => {
+    if (!canManageCompliancePolicy) {
+      addGlobalToast("You do not have permission to manage Compliance requirements", "error");
+      return;
+    }
+    if (!isCustomComplianceRequirement(requirement)) {
+      addGlobalToast("Only custom Compliance columns can be deleted here", "error");
+      return;
+    }
+    const title = normalizeComplianceRequirementLabel(requirement);
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Delete "${title}" from Compliance? Existing audit history stays available, but the column will be removed from the Employees grid.`);
+    if (!confirmed) return;
+
+    setDeletingComplianceRequirementId(requirement.id);
+    try {
+      const { error } = await supabase
+        .from("labor_compliance_requirements")
+        .update({
+          is_active: false,
+          updated_at: new Date().toISOString(),
+          updated_by_user_id: actorUserId || null,
+        })
+        .eq("id", requirement.id);
+      if (error) throw error;
+      setLaborCompliancePolicyRequirements((prev) => (
+        toObjectRows(prev).filter((row) => row.id !== requirement.id)
+      ));
+      setLaborCompliancePolicyLoaded(true);
+      addGlobalToast("Compliance requirement deleted", "success");
+      await refreshLaborData({ includeTraining: false, includeSupport: true });
+    } catch (error) {
+      console.error("Compliance requirement delete error:", error);
+      addGlobalToast(error?.message || "Failed to delete Compliance requirement", "error");
+    } finally {
+      setDeletingComplianceRequirementId("");
+    }
+  }, [
+    actorUserId,
+    addGlobalToast,
+    canManageCompliancePolicy,
+    refreshLaborData,
+  ]);
 
   const handleRestartSelectedReviewInstance = useCallback(async (targetReviewTemplate = null) => {
     if (!selectedReviewInstance || !selectedLaborEmployeeView) return;
-    const signature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
-    if (["sent", "completed"].includes(String(signature.status || ""))) {
-      addGlobalToast("This review already has a signature request. Start a new review instead of restarting this signed packet.", "error");
+    const completionEvidence = isObjectRow(selectedReviewInstance.metadata?.completion_evidence) ? selectedReviewInstance.metadata.completion_evidence : {};
+    if (selectedReviewInstance.completed_at || completionEvidence.document_id) {
+      addGlobalToast("This review already has completion evidence. Start a new review instead of restarting this completed checkpoint.", "error");
       return;
     }
 
@@ -10404,29 +12104,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     selectedLaborEmployeeView,
   ]);
 
-  const saveReviewPdfDraft = useCallback(async ({ quiet = false } = {}) => {
-    if (!selectedReviewInstanceId) return false;
-    setSavingReviewPdfDraft(true);
-    const { error } = await supabase.rpc("save_employee_review_pdf_draft", {
-      p_review_instance_id: selectedReviewInstanceId,
-      p_review_rating: reviewPdfDraft.rating || null,
-      p_manager_notes: reviewPdfDraft.managerNotes || null,
-      p_action_plan: reviewPdfDraft.actionPlan || null,
-      p_overall_rating: reviewPdfDraft.overallRating || null,
-      p_overall_comments: reviewPdfDraft.overallComments || null,
-      p_actor_user_id: actorUserId,
-    });
-    if (error) {
-      addGlobalToast("Failed to save PDF draft fields", "error");
-      setSavingReviewPdfDraft(false);
-      return false;
-    }
-    await refreshLaborData();
-    setSavingReviewPdfDraft(false);
-    if (!quiet) addGlobalToast("PDF draft fields saved", "success");
-    return true;
-  }, [actorUserId, addGlobalToast, refreshLaborData, reviewPdfDraft, selectedReviewInstanceId]);
-
   const buildSelectedPerformanceReviewPdfBytes = useCallback(async () => {
     if (!selectedReviewInstance || !selectedLaborEmployeeView) {
       throw new Error("Choose a review before rendering the PDF.");
@@ -10466,64 +12143,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setRenderingReviewPdf(false);
     }
   }, [addGlobalToast, buildSelectedPerformanceReviewPdfBytes]);
-
-  const handleSendPerformanceReviewSignature = useCallback(async () => {
-    if (!selectedReviewInstance || !selectedLaborEmployeeView) return;
-    const template = resolvePerformanceReviewTemplate(selectedLaborEmployeeView);
-    if (!template) {
-      addGlobalToast("No HR PDF template is mapped for this employee position", "error");
-      return;
-    }
-    const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
-    const employeePhone = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_phone");
-    const deliveryMethod = reviewSignatureDeliveryMethod === "email" ? "email" : "sms";
-    if (deliveryMethod === "sms" && !employeePhone) {
-      addGlobalToast("Add an employee phone number before sending by SMS", "error");
-      return;
-    }
-    if (deliveryMethod === "email" && !employeeEmail) {
-      addGlobalToast("Add an employee email before sending by email", "error");
-      return;
-    }
-
-    setSendingReviewSignature(true);
-    try {
-      const savedResponses = await handleSaveAllReviewResponses({ quiet: true });
-      if (!savedResponses) return;
-      const saved = await saveReviewPdfDraft({ quiet: true });
-      if (!saved) return;
-      const pdfBytes = await buildSelectedPerformanceReviewPdfBytes();
-      const fileName = buildPerformanceReviewPdfFileName(selectedLaborEmployeeView, selectedReviewInstance.review_cycle);
-      const { data, error } = await supabase.functions.invoke("performance-review-signing", {
-        body: {
-          review_instance_id: selectedReviewInstance.id,
-          delivery_method: deliveryMethod,
-          recipient_email: employeeEmail,
-          recipient_phone: employeePhone,
-          file_name: fileName,
-          pdf_base64: arrayBufferToBase64(pdfBytes),
-          fields: buildDocuSealPerformanceReviewFields(template, selectedReviewInstance.review_cycle),
-        },
-      });
-      if (error) throw new Error(await readEdgeFunctionError(error, "Failed to send performance review for signature"));
-      if (!data?.ok) throw new Error(data?.error || "Failed to send performance review for signature");
-      await refreshLaborData();
-      addGlobalToast(deliveryMethod === "sms" ? "Signature request texted to employee" : "Signature request emailed to employee", "success");
-    } catch (error) {
-      addGlobalToast(error?.message || "Failed to send performance review for signature", "error");
-    } finally {
-      setSendingReviewSignature(false);
-    }
-  }, [
-    addGlobalToast,
-    buildSelectedPerformanceReviewPdfBytes,
-    handleSaveAllReviewResponses,
-    refreshLaborData,
-    reviewSignatureDeliveryMethod,
-    saveReviewPdfDraft,
-    selectedLaborEmployeeView,
-    selectedReviewInstance,
-  ]);
 
   const saveHierarchy = useCallback(async () => {
     if (!canEditRoster) {
@@ -10698,9 +12317,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       start_date: employee.start_date,
       end_date: employee.end_date,
       cpr_status: "not_started",
-      review_30_status: "not_started",
-      review_60_status: "not_started",
-      review_90_status: "not_started",
       open_training_record_count: 0,
       completed_training_record_count: 0,
       active_training_record_id: null,
@@ -10731,10 +12347,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         position_title: positionTitle,
         employment_commitment: readLaborEmploymentCommitment(row) || readLaborEmploymentCommitment(contactEmployee) || null,
       };
+      const policyEmployee = laborComplianceBoardEmployeeById[employeeId] || null;
       const requirementRows = buildEmployeeTrainingRequirementRows({
         employee: mergedEmployee,
         certifications: employeeCertificationsByEmployee[employeeId] || [],
         requirements: certificationRequirements,
+        policyRequirements: laborCompliancePolicyLoaded ? laborCompliancePolicyRequirements : null,
         documents: laborEmployeeDocumentsByEmployee[employeeId] || [],
       });
       const requirementSummary = summarizeEmployeeTrainingRequirementCompliance(requirementRows);
@@ -10745,7 +12363,17 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       if (!requirementSummary.isCompliant && daysSinceStart != null && daysSinceStart < TRAINING_GRACE_PERIOD_DAYS) {
         trainingCompliance = { label: "In Progress", color: "warning", inProgress: true };
       }
-      const performanceReviewCompliance = getPerformanceReviewCompliance(row);
+      const policyReviewFields = buildPerformanceReviewPolicyFields(policyEmployee, activePerformanceReviewCycles);
+      const performanceReviewSourceRow = {
+        ...row,
+        ...policyReviewFields,
+        requirements: policyEmployee?.requirements || row.requirements || [],
+      };
+      const performanceReviewCompliance = getPerformanceReviewCompliance(
+        performanceReviewSourceRow,
+        todayStr(),
+        laborCompliancePolicyLoaded ? { policyRequirements: laborCompliancePolicyRequirements } : {},
+      );
       return {
         ...row,
         id: employeeId || row.id,
@@ -10767,14 +12395,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         training_compliance: trainingCompliance,
         training_requirement_rows: requirementRows,
         training_requirement_summary: requirementSummary,
-        review30: getReviewStatusPresentation(row, "review_30"),
-        review60: getReviewStatusPresentation(row, "review_60"),
-        review90: getReviewStatusPresentation(row, "review_90"),
         performance_review_compliance: performanceReviewCompliance,
+        performance_review_policy_employee: policyEmployee,
         employee_note_count: supportNoteCount || snapshotNoteCount,
       };
     });
-  }, [certificationRequirements, employeeCertificationsByEmployee, laborEmployeeDocumentsByEmployee, laborEmployeeMap, laborNotesByEmployee, rosterRows]);
+  }, [activePerformanceReviewCycles, certificationRequirements, employeeCertificationsByEmployee, laborComplianceBoardEmployeeById, laborCompliancePolicyLoaded, laborCompliancePolicyRequirements, laborEmployeeDocumentsByEmployee, laborEmployeeMap, laborNotesByEmployee, rosterRows]);
   const displayedDashboardMetrics = useMemo(() => {
     const activeRows = preparedRosterRows.filter((row) => isLaborEmployeeActive(row));
     if (activeRows.length === 0) return dashboardMetrics;
@@ -12399,12 +14025,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return String(row.training_compliance?.label || "");
         case "performance_reviews":
           return String(row.performance_review_compliance?.label || "");
-        case "review30":
-          return String(row.review_30_due_date || "");
-        case "review60":
-          return String(row.review_60_due_date || "");
-	        case "review90":
-	          return String(row.review_90_due_date || "");
 	        case "notes":
 	          return String(Number(row.employee_note_count || 0)).padStart(6, "0");
 	        default:
@@ -12435,19 +14055,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .map((row) => {
         const employeeId = getLaborEmployeeRowId(row);
         const employeeInstances = instances.filter((instance) => instance.labor_employee_id === employeeId);
+        const sourceRow = {
+          ...row,
+          ...buildPerformanceReviewPolicyFields(row.performance_review_policy_employee, activePerformanceReviewCycles),
+          requirements: row.performance_review_policy_employee?.requirements || row.requirements || [],
+        };
+        const compliance = getPerformanceReviewCompliance(
+          sourceRow,
+          todayStr(),
+          laborCompliancePolicyLoaded ? { policyRequirements: laborCompliancePolicyRequirements } : { cycles: activePerformanceReviewCycles },
+        );
         return {
           ...row,
+          performance_review_compliance: compliance,
           template: resolvePerformanceReviewTemplate(row),
-          cycles: PERFORMANCE_REVIEW_CYCLES.map((cycle) => ({
+          cycles: compliance.cycleRows.map((cycle) => ({
             ...cycle,
-            dueDate: row[cycle.dueDateKey] || null,
-            status: row[cycle.statusKey] || "not_started",
-            presentation: getReviewStatusPresentation(row, cycle.dueDateKey.replace(/_due_date$/, "")),
-            instance: employeeInstances.find((instance) => instance.review_cycle === cycle.id) || null,
+            instance: employeeInstances.find((instance) => instance.review_cycle === cycle.id || instance.review_cycle === cycle.slug) || null,
           })),
         };
       });
-  }, [preparedRosterRows, reviewInstances]);
+  }, [activePerformanceReviewCycles, laborCompliancePolicyLoaded, laborCompliancePolicyRequirements, preparedRosterRows, reviewInstances]);
   const sortedActiveRecords = useMemo(() => (
     sortLaborRowsByConfig(activeRecords, trainingSort, positionHierarchyIndex, (record, key) => {
       switch (key) {
@@ -12502,13 +14130,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return row.start_date || "";
         case "compliance":
           return row.performance_review_compliance?.label || "";
-        case "review30":
-          return row.review_30_due_date || "";
-        case "review60":
-          return row.review_60_due_date || "";
-        case "review90":
-          return row.review_90_due_date || "";
+        case "open_checkpoints":
+          return toObjectRows(row.cycles).filter((cycle) => !cycle.completed).length;
         default:
+          if (String(key || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) {
+            return getReviewCycleDueDateForSort(row, key);
+          }
           return row.full_name || "";
       }
     })
@@ -12538,31 +14165,31 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
     return [
       {
-        label: "Non-compliant",
+        label: "Needs Attention",
         value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Non-compliant").length,
         color: C.dan,
         helper: "active employees",
       },
       {
-        label: "Overdue cycles",
+        label: "Past Due",
         value: cycles.filter((cycle) => String(cycle.status) === "overdue").length,
         color: C.warn,
-        helper: "30/60/90 checkpoints",
+        helper: activePerformanceReviewCycles.length === 0 ? "No checkpoints configured" : "configured checkpoints",
       },
       {
-        label: "In progress",
+        label: "Started",
         value: cycles.filter((cycle) => String(cycle.status) === "in_progress").length,
         color: C.info,
-        helper: "open review packets",
+        helper: "checkpoint evidence pending",
       },
       {
-        label: "Compliant",
+        label: "Complete",
         value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Compliant").length,
         color: C.suc,
         helper: "active employees",
       },
     ];
-  }, [activePerformanceReviewRows]);
+  }, [activePerformanceReviewRows, activePerformanceReviewCycles]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -12827,17 +14454,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const showNotes = !!expandedItemNotes[item.id];
     const savingStatus = savingItemStatusId === item.id;
     const latestItemNote = itemNotes[0] || null;
+    const itemStatusActorKey = result?.record_id || selectedRecord?.id
+      ? `${result?.record_id || selectedRecord?.id}:${item.id}:${readinessStatus}`
+      : "";
+    const latestItemStatusActor = readinessStatus !== "not_started" && itemStatusActorKey
+      ? latestTrainingStatusActorByReadinessCellKey[itemStatusActorKey]
+      : null;
+    const resultStatusActorName = resolveReadinessCellEmailActorDisplayName(result || {}, readinessStatus, laborActorRows);
     const readinessCell = {
       ...(isObjectRow(result) ? result : {}),
       readiness_status: readinessStatus,
       status: readinessStatus,
       latest_note: latestItemNote?.note_text || result?.metadata?.latest_note || "",
-      latest_note_actor_name: latestItemNote?.created_by_full_name || latestItemNote?.created_by_name || latestItemNote?.initials || "",
+      latest_note_actor_name: latestItemNote?.created_by_full_name || resolveLaborActorDisplayName(latestItemNote || {}, laborActorRows) || latestItemNote?.created_by_name || latestItemNote?.initials || "",
+      latest_status_actor_name: latestItemStatusActor?.actorName || resultStatusActorName || result?.metadata?.latest_status_actor_name || "",
+      latest_status_actor_at: latestItemStatusActor?.created_at || result?.metadata?.latest_status_actor_at || "",
       demonstrated_by: result?.metadata?.demonstrated_by_name || (readinessStatus === "demonstrated" ? (result?.metadata?.last_updated_by_name || result?.evaluated_by_name) : ""),
       verified_by: result?.metadata?.verified_by_name || (isDone ? (result?.completed_by_name || result?.metadata?.last_updated_by_name || result?.evaluated_by_name || "") : ""),
       metadata: isObjectRow(result?.metadata) ? result.metadata : {},
     };
-    const readinessActorName = getReadinessCellActorDisplayName(readinessCell, readinessStatus);
+    const readinessActorLine = getReadinessCellActorLine(readinessCell, readinessStatus);
     const recordItemNotesPanel = showNotes ? (
       <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -12941,9 +14577,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <span style={{ flexShrink: 0 }}>{readinessStyle.icon}</span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{presentation.label}</span>
                 </span>
-                {readinessActorName && (
+                {readinessActorLine && (
                   <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {readinessActorName}
+                    {readinessActorLine}
                   </span>
                 )}
               </button>
@@ -13012,15 +14648,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   <button
                     type="button"
                     onClick={() => openPctReadinessCellEditor(selectedRecord, item, section, { cell: readinessCell })}
-                    style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: readinessActorName ? 124 : undefined, borderRadius: 8, border: `1px solid ${readinessStyle.border}`, background: readinessStyle.bg, color: readinessStyle.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}
+                    style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: readinessActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${readinessStyle.border}`, background: readinessStyle.bg, color: readinessStyle.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, lineHeight: 1.1 }}>
                       <span>{readinessStyle.icon}</span>
                       <span>{presentation.label}</span>
                     </span>
-                    {readinessActorName && (
+                    {readinessActorLine && (
                       <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {readinessActorName}
+                        {readinessActorLine}
                       </span>
                     )}
                   </button>
@@ -13044,6 +14680,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     handleAddItemNote,
     handleToggleItem,
     itemNoteDrafts,
+    laborActorRows,
+    latestTrainingStatusActorByReadinessCellKey,
     openPctReadinessCellEditor,
     savingItemNoteId,
     savingItemStatusId,
@@ -13055,7 +14693,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const renderTemplatePreviewItem = useCallback((item, editable = false) => {
     if (!isObjectRow(item) || !item.id) return null;
     const isReviewItem = previewTemplateKind === "review";
-    const itemType = String(item.item_type || "").trim();
+    const itemType = String(item.item_type || (isReviewItem ? "long_text" : "checkbox")).trim();
     const primaryLabel = String(isReviewItem ? item.prompt : item.label || "").trim() || "Untitled";
     const secondaryText = isReviewItem
       ? (itemType === "rating" && Array.isArray(item.options) && item.options.length > 0
@@ -13063,6 +14701,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           : itemType.replace(/_/g, " "))
       : item.description;
     const linkUrl = isReviewItem ? null : item.policy_reference;
+    const itemTypeLabel = itemType.replace(/_/g, " ");
     const sectionOptions = isReviewItem
       ? (previewTemplate?.sections || []).filter(isObjectRow).map((section) => ({ value: section.id, label: section.title }))
       : (previewTemplate?.sections || []).filter(isObjectRow).flatMap((section) => [
@@ -13072,107 +14711,161 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const currentSectionId = isReviewItem ? item.review_section_id : item.template_section_id;
     if (!editable) {
       return (
-        <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.border, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: C.text }}>{primaryLabel}</div>
+        <div key={item.id} className="template-builder-item-preview">
+          <span className="template-builder-item-grip" />
+          <div className="template-builder-item-copy">
+            <div className="template-builder-item-title">{primaryLabel}</div>
             {(secondaryText || linkUrl) && (
-              <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}>
-                {secondaryText && <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45 }}>{secondaryText}</div>}
+              <div className="template-builder-item-secondary">
+                {secondaryText && <div>{secondaryText}</div>}
                 {linkUrl && (
-                  <a href={linkUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 600, textDecoration: "none" }}>
+                  <a href={linkUrl} target="_blank" rel="noreferrer">
                     Open linked resource
                   </a>
                 )}
               </div>
             )}
           </div>
-          <span style={{ fontSize: 10, color: C.textMut }}>{item.item_type}</span>
-          {!isReviewItem && !item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+          <span className="template-builder-pill is-muted">{itemTypeLabel}</span>
+          {!isReviewItem && !item.required && <span className="template-builder-pill is-muted">optional</span>}
         </div>
       );
     }
 
     return (
-      <Card key={item.id} style={{ padding: 12, marginTop: 8, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <input
-            defaultValue={primaryLabel}
-            onBlur={(event) => {
-              const value = event.target.value.trim();
-              if (value && value !== primaryLabel) {
-                handleUpdateTemplateItem(item.id, isReviewItem ? { prompt: value } : { label: value });
-              }
-            }}
-            placeholder={isReviewItem ? "Review prompt" : "Task label"}
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }}
-          />
-	          {isReviewItem ? (
-	            <>
-	              <CustomSelect
-                value={item.item_type}
-                onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
-                options={[
-                  { value: "long_text", label: "Long Text" },
-                  { value: "short_text", label: "Short Text" },
-                  { value: "rating", label: "Rating" },
-                ]}
-              />
-              {item.item_type === "rating" && (
-                <Inp
-                  label="Rating Options"
-                  value={Array.isArray(item.options) ? item.options.join(", ") : ""}
-                  onChange={(value) => {
-                    const nextOptions = String(value || "")
-                      .split(",")
-                      .map((entry) => entry.trim())
-                      .filter(Boolean);
-                    handleUpdateTemplateItem(item.id, { options: nextOptions.length ? nextOptions : null });
-                  }}
-                  placeholder="Meets Expectations, Needs Improvement, Exceeds Expectations"
-                />
-	              )}
-	            </>
-	          ) : (
+      <div key={item.id} className="template-builder-item-editor">
+        <div className="template-builder-item-editor-head">
+          <span className="template-builder-drag-handle">⋮⋮</span>
+          <div>
+            <div className="template-builder-micro-label">{isReviewItem ? "Question" : "Training task"}</div>
+            <div className="template-builder-item-editor-title">{primaryLabel}</div>
+          </div>
+          <span className="template-builder-pill">{itemTypeLabel}</span>
+        </div>
+        <div className="template-builder-field-grid">
+          <label className="template-builder-field is-wide">
+            <span>{isReviewItem ? "Question prompt" : "Task label"}</span>
+            <input
+              defaultValue={primaryLabel}
+              onBlur={(event) => commitRequiredTemplateTextInput(
+                event,
+                primaryLabel,
+                isReviewItem ? "Review prompt" : "Task label",
+                (value) => handleUpdateTemplateItem(item.id, isReviewItem ? { prompt: value } : { label: value })
+              )}
+              placeholder={isReviewItem ? "Review prompt" : "Task label"}
+            />
+          </label>
+          {isReviewItem ? (
             <>
-              <textarea
-                defaultValue={item.description || ""}
-                onBlur={(event) => {
-                  const value = event.target.value.trim();
-                  if (value !== (item.description || "")) {
-                    handleUpdateTemplateItem(item.id, { description: value || null });
-                  }
-                }}
-                placeholder="Task description"
-                rows={2}
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-              />
-              <input
-                defaultValue={item.policy_reference || ""}
-                onBlur={(event) => {
-                  const value = event.target.value.trim();
-                  if (value !== (item.policy_reference || "")) {
-                    handleUpdateTemplateItem(item.id, { policy_reference: value || null });
-                  }
-                }}
-                placeholder="Optional resource link"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit" }}
-              />
-	            </>
-	          )}
-            {sectionOptions.length > 1 && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, marginBottom: 6 }}>Move to section</div>
+              <label className="template-builder-field">
+                <span>Question type</span>
                 <CustomSelect
-                  value={currentSectionId || ""}
-                  onChange={(value) => handleMoveTemplateItemSection(item.id, value)}
-                  options={sectionOptions}
+                  value={item.item_type || "long_text"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
+                  options={[
+                    { value: "long_text", label: "Long Text" },
+                    { value: "short_text", label: "Short Text" },
+                    { value: "rating", label: "Rating" },
+                  ]}
                 />
-              </div>
-            )}
-	          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-	            {!isReviewItem ? (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textSec }}>
+              </label>
+              {item.item_type === "rating" && (
+                <label className="template-builder-field is-wide">
+                  <span>Rating options</span>
+                  <input
+                    value={Array.isArray(item.options) ? item.options.join(", ") : ""}
+                    onChange={(event) => {
+                      const nextOptions = String(event.target.value || "")
+                        .split(",")
+                        .map((entry) => entry.trim())
+                        .filter(Boolean);
+                      handleUpdateTemplateItem(item.id, { options: nextOptions.length ? nextOptions : null });
+                    }}
+                    placeholder="Meets Expectations, Needs Improvement, Exceeds Expectations"
+                  />
+                </label>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="template-builder-field">
+                <span>Task type</span>
+                <CustomSelect
+                  value={item.item_type || "checkbox"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { item_type: value })}
+                  options={[
+                    { value: "checkbox", label: "Checklist" },
+                    { value: "task", label: "Task" },
+                    { value: "question_single_choice", label: "Single Choice" },
+                    { value: "question_multi_select", label: "Multi Select" },
+                    { value: "free_text", label: "Free Text" },
+                    { value: "observation_check", label: "Observation Check" },
+                    { value: "signoff", label: "Signoff" },
+                    { value: "attachment", label: "Attachment" },
+                    { value: "scenario_prompt", label: "Scenario Prompt" },
+                    { value: "status_gate", label: "Status Gate" },
+                  ]}
+                />
+              </label>
+              <label className="template-builder-field">
+                <span>Completion mode</span>
+                <CustomSelect
+                  value={item.completion_mode || "complete_only"}
+                  onChange={(value) => handleUpdateTemplateItem(item.id, { completion_mode: value || "complete_only" })}
+                  options={[
+                    { value: "complete_only", label: "Complete only" },
+                    { value: "pass_fail", label: "Pass / fail" },
+                    { value: "observe_participate_demonstrate", label: "Observe → Participate → Demonstrate" },
+                    { value: "score_based", label: "Score based" },
+                    { value: "dependency_rollup", label: "Dependency rollup" },
+                  ]}
+                />
+              </label>
+              <label className="template-builder-field is-wide">
+                <span>Task description</span>
+                <textarea
+                  defaultValue={item.description || ""}
+                  onBlur={(event) => {
+                    const value = event.target.value.trim();
+                    if (value !== (item.description || "")) {
+                      handleUpdateTemplateItem(item.id, { description: value || null });
+                    }
+                  }}
+                  placeholder="What should the trainer or trainee do?"
+                  rows={2}
+                />
+              </label>
+              <label className="template-builder-field is-wide">
+                <span>Optional resource link</span>
+                <input
+                  defaultValue={item.policy_reference || ""}
+                  onBlur={(event) => {
+                    const value = event.target.value.trim();
+                    if (value !== (item.policy_reference || "")) {
+                      handleUpdateTemplateItem(item.id, { policy_reference: value || null });
+                    }
+                  }}
+                  placeholder="https://docs, policy, video, checklist…"
+                />
+              </label>
+            </>
+          )}
+          {sectionOptions.length > 1 && (
+            <label className="template-builder-field">
+              <span>Move to section</span>
+              <CustomSelect
+                value={currentSectionId || ""}
+                onChange={(value) => handleMoveTemplateItemSection(item.id, value)}
+                options={sectionOptions}
+              />
+            </label>
+          )}
+        </div>
+        <div className="template-builder-item-footer">
+          {!isReviewItem ? (
+            <div className="template-builder-toggle-row">
+              <label>
                 <input
                   type="checkbox"
                   defaultChecked={item.required}
@@ -13180,17 +14873,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 />
                 Required task
               </label>
-            ) : <span />}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, -1)}>Move Up</Btn>
-                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, 1)}>Move Down</Btn>
-	              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete {isReviewItem ? "Prompt" : "Task"}</Btn>
-              </div>
-	          </div>
+              <label>
+                <input
+                  type="checkbox"
+                  defaultChecked={Boolean(item.safety_sensitive)}
+                  onChange={(event) => handleUpdateTemplateItem(item.id, { safety_sensitive: event.target.checked })}
+                />
+                Safety sensitive
+              </label>
+            </div>
+          ) : <span />}
+          <div className="template-builder-inline-actions">
+            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, -1)}>Move Up</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateItemOrder(item.id, 1)}>Move Down</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateItem(item.id)}>Delete {isReviewItem ? "Prompt" : "Task"}</Btn>
+          </div>
         </div>
-      </Card>
+      </div>
     );
-  }, [handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
+  }, [commitRequiredTemplateTextInput, handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
   const laborEmployeeEditorModal = canEditRoster && showLaborEmployeeEditor && editingLaborEmployeeId ? (
     <Modal
@@ -13247,7 +14948,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		          </label>
 		        </div>
 	        <label style={{ display: "block" }}>
-          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Performance Review PDF Template</span>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Compliance PDF Template</span>
           <CustomSelect
             value={laborEmployeeReviewTemplateRole}
             onChange={setLaborEmployeeReviewTemplateRole}
@@ -13394,6 +15095,148 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Modal>
   ) : null;
 
+  const complianceRequirementEditorModalView = complianceRequirementEditorOpen ? (
+    <Modal title={complianceRequirementEditingRow ? "Edit Compliance Column" : "Add Compliance Column"} onClose={closeComplianceRequirementEditor}>
+      <div style={{ display: "grid", gap: 14, width: "min(100%, 520px)", maxWidth: "100%", minWidth: 0, boxSizing: "border-box" }}>
+        <Inp
+          label="Column Name"
+          value={complianceRequirementTitle}
+          onChange={setComplianceRequirementTitle}
+          placeholder="Example: Handbook acknowledgement"
+          required
+        />
+        <Inp
+          label="Description"
+          type="textarea"
+          rows={3}
+          value={complianceRequirementDescription}
+          onChange={setComplianceRequirementDescription}
+          placeholder="Optional context"
+        />
+        <label style={{ display: "block" }}>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Evidence</span>
+          <CustomSelect
+            value={complianceRequirementEvidencePolicy}
+            onChange={setComplianceRequirementEvidencePolicy}
+            options={[
+              { value: "checkbox_only", label: "Yes/no only" },
+              { value: "file_required", label: "PDF required when completed" },
+            ]}
+          />
+        </label>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+          <Btn variant="ghost" onClick={closeComplianceRequirementEditor} disabled={savingComplianceRequirement}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleSaveComplianceRequirement} disabled={savingComplianceRequirement || !complianceRequirementTitle.trim()}>
+            {savingComplianceRequirement ? "Saving..." : complianceRequirementEditingRow ? "Save Changes" : "Save Column"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
+  const complianceReviewEditorModalView = complianceReviewEditorModal ? (
+    <Modal title="Update Compliance Checkpoint" onClose={closeComplianceReviewEditor}>
+      <div style={{ display: "grid", gap: 14, minWidth: 480, maxWidth: 620 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 15, fontWeight: 950, color: C.text }}>
+            {complianceReviewEditorModal.laborEmployee?.full_name || "Employee"}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut }}>
+            {complianceReviewEditorModal.reviewCycle?.label || complianceReviewEditorModal.reviewInstance?.review_cycle || "Policy checkpoint"}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => setCompletionMode("completed")}
+            className={`labor-view-option${completionMode === "completed" ? " is-active" : ""}`}
+            style={{
+              border: `1.5px solid ${completionMode === "completed" ? C.pri : C.borderLight}`,
+              borderRadius: 8,
+              background: completionMode === "completed" ? C.priLt : "#fff",
+              color: completionMode === "completed" ? C.pri : C.text,
+              padding: "10px 12px",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ display: "block", fontSize: 13, fontWeight: 950 }}>Completed</span>
+            <small style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut, fontWeight: 750 }}>Requires completed date and PDF evidence</small>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCompletionMode("waived");
+              setPerformanceReviewEvidenceError("");
+            }}
+            className={`labor-view-option${completionMode === "waived" ? " is-active" : ""}`}
+            style={{
+              border: `1.5px solid ${completionMode === "waived" ? C.pri : C.borderLight}`,
+              borderRadius: 8,
+              background: completionMode === "waived" ? C.priLt : "#fff",
+              color: completionMode === "waived" ? C.pri : C.text,
+              padding: "10px 12px",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ display: "block", fontSize: 13, fontWeight: 950 }}>Waived</span>
+            <small style={{ display: "block", marginTop: 3, fontSize: 11, color: C.textMut, fontWeight: 750 }}>No evidence file required</small>
+          </button>
+        </div>
+        <Inp label={completionMode === "waived" ? "Waived On" : "Completed On"} type="date" value={performanceReviewCompletedOn} onChange={setPerformanceReviewCompletedOn} required />
+        {completionMode === "completed" && (
+          <>
+            <input
+              ref={performanceReviewEvidenceFileInputRef}
+              type="file"
+              accept={LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT}
+              onChange={handlePerformanceReviewEvidenceFileChange}
+              style={{ display: "none" }}
+            />
+            <div style={{ display: "grid", gap: 7 }}>
+              <div style={{ fontSize: 12, fontWeight: 850, color: C.textSec }}>Evidence PDF</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <Btn variant="secondary" size="sm" icon={<I.FileText />} onClick={() => performanceReviewEvidenceFileInputRef.current?.click()}>
+                  Upload PDF
+                </Btn>
+                {performanceReviewEvidenceFile ? (
+                  <span style={{ fontSize: 12, color: C.textSec, fontWeight: 850 }}>{performanceReviewEvidenceFile.name}</span>
+                ) : (
+                  <span style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>Required before saving completed.</span>
+                )}
+              </div>
+              {performanceReviewEvidenceError && (
+                <div style={{ fontSize: 12, color: C.dan, fontWeight: 800 }}>{performanceReviewEvidenceError}</div>
+              )}
+            </div>
+          </>
+        )}
+        {completionMode === "waived" && performanceReviewEvidenceError ? (
+          <div style={{ fontSize: 12, color: C.dan, fontWeight: 800 }}>{performanceReviewEvidenceError}</div>
+        ) : null}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="ghost" onClick={closeComplianceReviewEditor} disabled={completingReview}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleSaveComplianceReviewCheckpoint} disabled={completingReview || !performanceReviewCompletedOn}>
+            {completingReview ? "Saving..." : "Save Checkpoint"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
+  const complianceTableHeaderStyle = {
+    padding: "9px 12px",
+    fontSize: 11,
+    fontWeight: 900,
+    color: C.textMut,
+    textTransform: "uppercase",
+    letterSpacing: 0,
+    textAlign: "left",
+    background: C.bg,
+    borderBottom: `1px solid ${C.borderLight}`,
+  };
+
   const addHierarchyDraftTitle = useCallback(() => {
     const option = buildLaborPositionOption(newHierarchyTitle);
     if (!option) return;
@@ -13520,29 +15363,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const employeeEmail = readLaborEmployeeContact(selectedLaborEmployeeView, "contact_email");
     const employeeShirtSize = readLaborEmployeeShirtSize(selectedLaborEmployeeView);
     const employeeShirtSizeLabel = getLaborShirtSizeLabel(employeeShirtSize);
-    const reviewCycleRows = [
-      {
-        id: "30_day",
-        label: "30 Day Review",
-        dueDate: selectedLaborEmployeeSnapshot?.review_30_due_date || null,
-        status: selectedLaborEmployeeSnapshot?.review_30_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "30_day") || null,
-      },
-      {
-        id: "60_day",
-        label: "60 Day Review",
-        dueDate: selectedLaborEmployeeSnapshot?.review_60_due_date || null,
-        status: selectedLaborEmployeeSnapshot?.review_60_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "60_day") || null,
-      },
-      {
-        id: "90_day",
-        label: "90 Day Review",
-        dueDate: selectedLaborEmployeeSnapshot?.review_90_due_date || null,
-        status: selectedLaborEmployeeSnapshot?.review_90_status || "not_started",
-        instance: selectedEmployeeReviewInstances.find((instance) => instance?.review_cycle === "90_day") || null,
-      },
-    ];
+    const selectedPolicyEmployee = laborComplianceBoardEmployeeById[selectedLaborEmployeeKey]
+      || selectedLaborEmployeeView.performance_review_policy_employee
+      || selectedLaborEmployeeSnapshot?.performance_review_policy_employee
+      || null;
+    const selectedPerformanceReviewSourceRow = {
+      ...(selectedLaborEmployeeSnapshot || {}),
+      ...(selectedLaborEmployeeView || {}),
+      ...buildPerformanceReviewPolicyFields(selectedPolicyEmployee, activePerformanceReviewCycles),
+      requirements: selectedPolicyEmployee?.requirements || selectedLaborEmployeeView.requirements || selectedLaborEmployeeSnapshot?.requirements || [],
+    };
+    const selectedPerformanceReviewCompliance = getPerformanceReviewCompliance(
+      selectedPerformanceReviewSourceRow,
+      todayStr(),
+      laborCompliancePolicyLoaded ? { policyRequirements: laborCompliancePolicyRequirements } : { cycles: activePerformanceReviewCycles },
+    );
+    const reviewCycleRows = toObjectRows(selectedPerformanceReviewCompliance.cycleRows).map((cycle) => ({
+      ...cycle,
+      instance: selectedEmployeeReviewInstances.find((instance) => reviewCycleMatchesKey(cycle, instance?.review_cycle)) || null,
+    }));
+    const selectedEmployeeComplianceGridRow = {
+      ...selectedPerformanceReviewSourceRow,
+      full_name: selectedLaborEmployeeView.full_name || selectedLaborEmployeeSnapshot?.full_name || "Employee",
+      contact_phone: employeePhone,
+      contact_email: employeeEmail,
+      position_title: selectedLaborEmployeeView.position_title || selectedLaborEmployeeSnapshot?.position_title || "",
+      start_date: selectedLaborEmployeeView.start_date || selectedLaborEmployeeSnapshot?.start_date || "",
+      template: resolvePerformanceReviewTemplate(selectedLaborEmployeeView),
+      performance_review_compliance: selectedPerformanceReviewCompliance,
+      cycles: reviewCycleRows,
+    };
 
     if (selectedReviewInstance) {
       const reviewItemTotal = selectedReviewSections.reduce((sum, section) => sum + section.items.length, 0);
@@ -13554,7 +15404,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         }).length
       ), 0);
       const reviewPercent = reviewItemTotal > 0 ? Math.round((answeredReviewItems / reviewItemTotal) * 100) : 0;
-      const reviewCycleLabel = String(selectedReviewInstance.review_cycle || "").replace(/_/g, " ");
+      const selectedReviewCycle = toObjectRows(activePerformanceReviewCycles)
+        .find((cycle) => reviewCycleMatchesKey(cycle, selectedReviewInstance.review_cycle)) || null;
+      const reviewCycleLabel = selectedReviewCycle?.label
+        || formatReviewWorkflowLabel(String(selectedReviewInstance.review_cycle || "").replace(/_/g, " "))
+        || "Policy checkpoint";
       const reviewStatus = String(selectedReviewInstance.status || "not_started");
       const reviewStatusColor = reviewStatus === "completed"
         ? "success"
@@ -13569,9 +15423,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         && selectedReviewTemplate?.id
         && selectedExpectedReviewTemplate.id !== selectedReviewTemplate.id
       );
-      const selectedDisplayReviewTitle = selectedReviewTemplateMismatch
-        ? selectedExpectedReviewTemplate?.name || `${selectedPerformanceTemplate?.roleLabel || "Paired"} 30 / 60 / 90 Day Review`
-        : selectedReviewTemplate?.name || "Performance Review";
+      const selectedDisplayReviewTitle = `${reviewCycleLabel} Compliance Checkpoint`;
       const selectedRestartTemplate = selectedExpectedReviewTemplate || selectedReviewTemplate;
       const selectedRestartLabel = selectedPerformanceTemplate?.roleLabel || "Paired Template";
       const selectedPerformanceTemplateBadgeLabel = selectedPerformanceTemplate
@@ -13584,9 +15436,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         : selectedPerformanceTemplate
           ? `Auto: ${selectedPerformanceTemplate.roleLabel}`
           : "Auto by position title";
-      const reviewSignature = isObjectRow(selectedReviewInstance.metadata?.signature) ? selectedReviewInstance.metadata.signature : {};
-      const reviewSignatureStatus = String(reviewSignature.status || "");
-      const reviewRestartBlocked = ["sent", "completed"].includes(reviewSignatureStatus);
+      const reviewCompletionEvidence = isObjectRow(selectedReviewInstance.metadata?.completion_evidence) ? selectedReviewInstance.metadata.completion_evidence : {};
+      const reviewCompletionEvidenceFileName = reviewCompletionEvidence.file_name || reviewCompletionEvidence.evidence_label || "";
+      const reviewRestartBlocked = Boolean(selectedReviewInstance.completed_at || reviewCompletionEvidence.document_id);
       const ratingOptions = [
         { value: "", label: "Select rating" },
         { value: "Meets Expectations", label: "Meets Expectations" },
@@ -13697,7 +15549,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       <Badge color="warning">Form mismatch</Badge>
                     </div>
                     <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.55, maxWidth: 820 }}>
-                      Current form: <strong style={{ color: C.textSec }}>{selectedReviewTemplate?.name || "Unknown"}</strong>. Paired form: <strong style={{ color: C.textSec }}>{selectedExpectedReviewTemplate?.name || selectedPerformanceTemplate?.roleLabel || "Unknown"}</strong>.
+                      Current form: <strong style={{ color: C.textSec }}>{formatReviewWorkflowLabel(selectedReviewTemplate?.name) || "Unknown"}</strong>. Paired form: <strong style={{ color: C.textSec }}>{formatReviewWorkflowLabel(selectedExpectedReviewTemplate?.name || selectedPerformanceTemplate?.roleLabel) || "Unknown"}</strong>.
                       Restarting clears this cycle's saved answers and PDF draft fields.
                     </div>
                   </div>
@@ -13713,7 +15565,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </Btn>
                   {reviewRestartBlocked && (
                     <div style={{ gridColumn: "2 / -1", marginTop: -6, fontSize: 12, color: C.dan, fontWeight: 700 }}>
-                      Restart is blocked because a signature request has already been {reviewSignatureStatus}.
+                      Restart is blocked because completion evidence has already been uploaded.
                     </div>
                   )}
                 </div>
@@ -13906,9 +15758,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         : `Save ${unsavedReviewResponseCount} ${unsavedReviewResponseCount === 1 ? "Response" : "Responses"}`}
                     </Btn>
                   )}
-                  <Btn variant="primary" onClick={handleCompleteReviewInstance} disabled={completingReview || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID}>
-                    {completingReview ? "Completing..." : "Complete Review"}
-                  </Btn>
                   <Btn variant="secondary" onClick={handlePreviewPerformanceReviewPdf} disabled={renderingReviewPdf || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}>
                     {renderingReviewPdf ? "Rendering..." : "Preview PDF"}
                   </Btn>
@@ -13929,61 +15778,65 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </div>
                 {reviewRestartBlocked && (
                   <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, lineHeight: 1.45 }}>
-                    Restart is disabled after a signature request is sent.
+                    Restart is disabled after completion evidence is uploaded.
                   </div>
                 )}
               </Card>
 
               <Card style={{ padding: 18 }}>
-                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Employee Signature</div>
+                <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Completion Evidence</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                  <Badge color={reviewSignature.status === "completed" ? "success" : reviewSignature.status === "sent" ? "warning" : "default"}>
-                    {reviewSignature.status ? String(reviewSignature.status).replace(/_/g, " ") : "not sent"}
+                  <Badge color={selectedReviewInstance.completed_at ? "success" : "warning"}>
+                    {selectedReviewInstance.completed_at ? "Review evidence uploaded" : "evidence required"}
                   </Badge>
-                  {reviewSignature.sent_at && <Badge color="default">Sent {formatTrainingTimestamp(reviewSignature.sent_at)}</Badge>}
+                  {selectedReviewInstance.completed_at && <Badge color="default">Completed {formatTrainingTimestamp(selectedReviewInstance.completed_at)}</Badge>}
+                  {reviewCompletionEvidenceFileName && <Badge color="default">{reviewCompletionEvidenceFileName}</Badge>}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-                  {[
-                    { id: "sms", label: "SMS" },
-                    { id: "email", label: "Email" },
-                  ].map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setReviewSignatureDeliveryMethod(option.id)}
-                      style={{
-                        padding: "9px 10px",
-                        borderRadius: 10,
-                        border: `1.5px solid ${reviewSignatureDeliveryMethod === option.id ? C.pri : C.border}`,
-                        background: reviewSignatureDeliveryMethod === option.id ? C.priLt : C.surface,
-                        color: reviewSignatureDeliveryMethod === option.id ? C.pri : C.textSec,
-                        fontWeight: 800,
-                        fontSize: 12,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
+                {!selectedReviewInstance.completed_at && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <Inp label="completed date" type="date" value={performanceReviewCompletedOn} onChange={setPerformanceReviewCompletedOn} required />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>Evidence File</div>
+                      <input
+                        ref={performanceReviewEvidenceFileInputRef}
+                        type="file"
+                        accept={LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT}
+                        onChange={handlePerformanceReviewEvidenceFileChange}
+                        style={{ display: "none" }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => performanceReviewEvidenceFileInputRef.current?.click()}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: `1px dashed ${performanceReviewEvidenceError ? C.dan : C.border}`,
+                          background: performanceReviewEvidenceFile ? C.priLt : C.bg,
+                          color: performanceReviewEvidenceError ? C.dan : performanceReviewEvidenceFile ? C.pri : C.textSec,
+                          fontWeight: 800,
+                          fontSize: 12,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          textAlign: "left",
+                        }}
+                      >
+                        {performanceReviewEvidenceFile?.name || "Upload completed review PDF"}
+                      </button>
+                      {performanceReviewEvidenceError && <div style={{ marginTop: 6, color: C.dan, fontSize: 11, fontWeight: 700 }}>{performanceReviewEvidenceError}</div>}
+                      <div style={{ marginTop: 6, color: C.textMut, fontSize: 11, lineHeight: 1.45 }}>
+                        Upload the completed review PDF evidence. The database links this file to the configured policy checkpoint before marking the review complete.
+                      </div>
+                    </div>
+                    <Btn
+                      variant="primary"
+                      onClick={handleCompleteReviewInstance}
+                      disabled={completingReview || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !performanceReviewEvidenceFile}
+                      style={{ width: "100%", justifyContent: "center" }}
                     >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <Btn
-                  variant="primary"
-                  onClick={handleSendPerformanceReviewSignature}
-                  disabled={sendingReviewSignature || savingReviewItemId === SAVING_ALL_REVIEW_RESPONSES_ID || !selectedPerformanceTemplate}
-                  style={{ width: "100%", justifyContent: "center" }}
-                >
-                  {sendingReviewSignature ? "Sending..." : "Send to Employee"}
-                </Btn>
-                {reviewSignature.embed_src && (
-                  <a
-                    href={reviewSignature.embed_src}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ display: "block", marginTop: 10, fontSize: 12, fontWeight: 800, color: C.pri, textDecoration: "none" }}
-                  >
-                    Open signing link
-                  </a>
+                      {completingReview ? "Completing..." : "Upload Evidence & Complete"}
+                    </Btn>
+                  </div>
                 )}
               </Card>
 
@@ -14011,6 +15864,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           {laborEmployeeEditorModal}
           {employeeNoteEditorModal}
           {attachmentPreviewModal}
+          {complianceReviewEditorModalView}
         </div>
       );
     }
@@ -14032,10 +15886,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       },
       reviewCycleRows,
       attendanceIncidentCount30d: selectedEmployeeAttendanceIncidents30d.length,
-    }).map((metric) => {
-      if (metric.id !== "next_review" || !metric.helper?.startsWith("Due ")) return metric;
-      return { ...metric, helper: `Due ${formatLaborDate(metric.helper.replace("Due ", ""))}` };
-    });
+    }).filter((metric) => metric.id !== "next_review");
     const metricColorByTone = { success: C.suc, warning: C.warn, danger: C.dan, default: C.text };
     const requirementStatusColor = {
       complete: "success",
@@ -14051,7 +15902,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     );
     const employeeRecordTabOptions = [
       { id: "training", label: "Training" },
-      { id: "reviews", label: "Performance" },
+      { id: "reviews", label: "Compliance" },
       { id: "attendance", label: "Attendance" },
       { id: "notes", label: `Notes (${selectedEmployeeNotes.length})` },
       { id: "history", label: "History" },
@@ -14106,7 +15957,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 {contactCardDownloadKey === `single:${selectedLaborEmployeeKey || normalizeEmployeeName(selectedLaborEmployeeView.full_name)}` ? "Downloading..." : "Contact Card"}
               </Btn>
               {canEditRoster && <Btn variant="secondary" size="sm" onClick={() => openLaborEmployeeEditor(selectedLaborEmployeeView)}>Edit Employee</Btn>}
-              {selectedLaborEmployeeSnapshot?.active_training_record_id ? (
+              {employeeRecordTab === "training" && selectedLaborEmployeeSnapshot?.active_training_record_id ? (
                 <Btn
                   variant="primary"
                   size="sm"
@@ -14114,7 +15965,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 >
                   Open Active Training
                 </Btn>
-              ) : canUseLaborTab("training") ? (
+              ) : employeeRecordTab === "training" && canUseLaborTab("training") ? (
                 <Btn
                   variant="primary"
                   size="sm"
@@ -14165,33 +16016,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </div>
         </Card>
 
-        <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surfaceHover, marginBottom: 18, overflowX: "auto" }}>
-          {employeeRecordTabOptions.map((option) => {
-            const selected = employeeRecordTab === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setEmployeeRecordTab(option.id)}
-                style={{
-                  minWidth: 132,
-                  padding: "9px 12px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: selected ? "#fff" : "transparent",
-                  color: selected ? C.text : C.textSec,
-                  boxShadow: selected ? "0 1px 3px rgba(15,23,42,0.10)" : "none",
-                  fontFamily: "inherit",
-                  fontSize: 13,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+        <CompactLaborTabSwitcher
+          options={employeeRecordTabOptions}
+          value={employeeRecordTab}
+          onChange={setEmployeeRecordTab}
+        />
 
         {employeeRecordTab === "training" && (
           <>
@@ -14268,29 +16097,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   ))}
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 14 }}>
-                  <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Active Gaps</div>
-                    {selectedEmployeePctReadinessProfile.gaps.length === 0 ? (
-                      <div style={{ fontSize: 12, color: C.textMut }}>No active gaps.</div>
-                    ) : selectedEmployeePctReadinessProfile.gaps.slice(0, 8).map((row) => (
-                      <div key={`gap-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
-                        <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.item.label}
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Coaching Notes</div>
-                    {selectedEmployeePctReadinessProfile.coachingNotes.length === 0 ? (
-                      <div style={{ fontSize: 12, color: C.textMut }}>No coaching notes on the readiness board.</div>
-                    ) : selectedEmployeePctReadinessProfile.coachingNotes.slice(0, 8).map((row) => (
-                      <div key={`coach-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
-                        <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.cell.latest_note || getPctReadinessStatusPresentation(row.status).label}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
                 <div style={{ maxHeight: 360, overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
@@ -14298,13 +16104,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         <th style={employeeDetailTableHeaderStyle}>Category</th>
                         <th style={employeeDetailTableHeaderStyle}>Task</th>
                         <th style={employeeDetailTableHeaderStyle}>Status</th>
-                        <th style={employeeDetailTableHeaderStyle}>Comment</th>
+                        <th style={employeeDetailTableHeaderStyle}>Actor / Date</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedEmployeePctReadinessProfile.taskRows.map((row) => {
                         const presentation = getPctReadinessStatusPresentation(row.status);
                         const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
+                        const rowActorLine = getReadinessCellActorLine(row.cell, presentation.value);
                         return (
                           <tr key={row.item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                             <td style={{ padding: "10px 12px", fontSize: 12, color: C.text, fontWeight: 800, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
@@ -14315,7 +16122,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               </span>
                             </td>
                             <td style={{ padding: "10px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
-                              {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
+                              {rowActorLine || "-"}
                             </td>
                           </tr>
                         );
@@ -14326,6 +16133,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </Card>
             )}
 
+            {selectedEmployeeTrainingRequirementRows.length > 0 && (
             <Card style={{ padding: 18, marginBottom: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
                 <div>
@@ -14393,6 +16201,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 })}
               </div>
             </Card>
+            )}
 
             <SectionHeader title="Training History" count={employeeTrainingRecords.length} />
             {employeeTrainingRecords.length === 0 ? (
@@ -14432,25 +16241,25 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
         {employeeRecordTab === "reviews" && (
           <>
-            <SectionHeader title="Performance Reviews" count={selectedEmployeeReviewInstances.length} />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 20 }}>
+            <SectionHeader title="Compliance" count={selectedEmployeeReviewInstances.length} />
+            <PerformanceReviewComplianceGridStyles />
+            <div className="employee-compliance-checkpoint-list">
               {reviewCycleRows.map((cycle) => (
-                <Card key={cycle.id} style={{ padding: 18 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 900, color: C.text, marginBottom: 5 }}>{cycle.label}</div>
-                      <div style={{ fontSize: 12, color: C.textMut }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
-                    </div>
-                    <Badge color={cycle.status === "completed" ? "success" : cycle.status === "overdue" ? "danger" : "warning"}>
-                      {String(cycle.status).replace(/_/g, " ")}
-                    </Badge>
+                <div key={cycle.id || cycle.key || cycle.label} className="employee-compliance-checkpoint-row">
+                  <div className="employee-compliance-checkpoint-label">
+                    {cycle.label}
                   </div>
-                  {cycle.instance ? (
-                    <Btn variant="primary" size="sm" onClick={() => setSelectedReviewInstanceId(cycle.instance.id)}>Open Review</Btn>
-                  ) : (
-                    <Btn variant="secondary" size="sm" onClick={() => handleCreateReviewInstance(cycle.id)}>Start Review</Btn>
-                  )}
-                </Card>
+                  <div className="employee-compliance-checkpoint-cell">
+                    <ReviewCycleCell
+                      row={selectedEmployeeComplianceGridRow}
+                      cycle={cycle}
+                      onOpenEvidence={handleOpenComplianceReviewEditor}
+                      onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
+                      formatDate={formatLaborDate}
+                      formatTimestamp={formatTrainingTimestamp}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           </>
@@ -14655,11 +16464,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <Modal title={`Update ${trainingRequirementEditor.label}`} onClose={() => setTrainingRequirementEditor(null)}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Inp label="Completed On" type="date" value={trainingRequirementCompletedOn} onChange={setTrainingRequirementCompletedOn} required />
-              {trainingRequirementEditor.slug === LABOR_TRAINING_REQUIREMENT_SLUGS.CPR && (
-                <>
-                  <Inp label="Expires On" type="date" value={trainingRequirementExpiresOn} onChange={setTrainingRequirementExpiresOn} />
-                  <Inp label="Certification URL" value={trainingRequirementDocumentUrl} onChange={setTrainingRequirementDocumentUrl} />
-                </>
+              {trainingRequirementRequiresRenewalDueDate(trainingRequirementEditor) && (
+                <Inp label="Expires On" type="date" value={trainingRequirementExpiresOn} onChange={setTrainingRequirementExpiresOn} />
+              )}
+              {trainingRequirementAllowsReferenceUrl(trainingRequirementEditor) && (
+                <Inp label="Evidence URL" value={trainingRequirementDocumentUrl} onChange={setTrainingRequirementDocumentUrl} />
               )}
               <input
                 ref={trainingRequirementFileInputRef}
@@ -14697,6 +16506,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         {attachmentPreviewModal}
         {laborEmployeeEditorModal}
         {employeeNoteEditorModal}
+        {complianceReviewEditorModalView}
       </div>
     );
   }
@@ -15232,12 +17042,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     }
     if (tab === "templates" && canManageTemplates) {
       if (previewTemplateId) {
+        const viewingDraft = previewTemplate?.version?.status === "draft";
+        const editButtonLabel = templatePreviewEditButtonLabel;
         return (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Btn variant="secondary" icon={<I.Back />} onClick={() => changeLaborTab("training")}>Training</Btn>
-            <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={savingTemplateAction === "draft"}>
-              {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-            </Btn>
+            {!viewingDraft && (
+              <Btn variant="primary" onClick={handleCreateTemplateDraft} disabled={templateActionPending}>
+                {savingTemplateAction === "draft" ? "Cloning..." : editButtonLabel}
+              </Btn>
+            )}
           </div>
         );
       }
@@ -15328,6 +17142,549 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         @keyframes laborControlSettle {
           0% { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.99); }
           100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+
+        @keyframes templateBuilderRise {
+          0% { opacity: 0; transform: translateY(16px) scale(0.985); filter: blur(6px); }
+          70% { opacity: 1; transform: translateY(-1px) scale(1.002); filter: blur(0); }
+          100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        @keyframes templateBuilderGlow {
+          0% { transform: translateX(-140%) skewX(-16deg); opacity: 0; }
+          28% { opacity: 0.46; }
+          100% { transform: translateX(180%) skewX(-16deg); opacity: 0; }
+        }
+        .template-builder-library-shell,
+        .template-builder-editor-shell {
+          animation: templateBuilderRise 360ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .template-builder-hero,
+        .template-builder-editor-hero {
+          position: relative;
+          overflow: hidden;
+          border: 1px solid rgba(20, 83, 45, 0.16);
+          border-radius: 24px;
+          background: radial-gradient(circle at top left, rgba(34, 197, 94, 0.17), transparent 34%), linear-gradient(135deg, #ffffff 0%, #f8fbff 48%, #f0fdf4 100%);
+          box-shadow: 0 24px 60px rgba(15, 23, 42, 0.10);
+        }
+        .template-builder-hero::after,
+        .template-builder-editor-hero::after {
+          content: "";
+          position: absolute;
+          inset: 0 auto 0 -30%;
+          width: 34%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.62), transparent);
+          animation: templateBuilderGlow 3.8s ease-in-out infinite;
+          pointer-events: none;
+        }
+        .template-builder-hero {
+          display: flex;
+          justify-content: space-between;
+          gap: 22px;
+          padding: 24px;
+          margin-bottom: 18px;
+        }
+        .template-builder-kicker,
+        .template-builder-micro-label {
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.11em;
+          text-transform: uppercase;
+          color: ${C.pri};
+        }
+        .template-builder-hero h2,
+        .template-builder-editor-title {
+          margin: 6px 0 8px;
+          font-size: 26px;
+          line-height: 1.06;
+          color: ${C.text};
+          font-weight: 950;
+          letter-spacing: -0.03em;
+        }
+        .template-builder-hero p,
+        .template-builder-editor-subtitle {
+          margin: 0;
+          color: ${C.textSec};
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.55;
+          max-width: 700px;
+        }
+        .template-builder-hero-stats,
+        .template-builder-metric-strip {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(92px, 1fr));
+          gap: 10px;
+          min-width: 320px;
+        }
+        .template-builder-hero-stats > div,
+        .template-builder-metric {
+          border: 1px solid rgba(20, 83, 45, 0.12);
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.78);
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+          padding: 14px;
+          backdrop-filter: blur(14px);
+        }
+        .template-builder-hero-stats strong,
+        .template-builder-metric strong {
+          display: block;
+          font-size: 24px;
+          color: ${C.text};
+          font-weight: 950;
+          line-height: 1;
+        }
+        .template-builder-hero-stats span,
+        .template-builder-metric span {
+          display: block;
+          margin-top: 5px;
+          color: ${C.textMut};
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .template-builder-toolbar,
+        .template-builder-canvas-toolbar,
+        .template-builder-panel-header,
+        .template-builder-section-summary,
+        .template-builder-item-editor-head,
+        .template-builder-item-footer,
+        .template-builder-version-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .template-builder-toolbar {
+          margin-bottom: 18px;
+          flex-wrap: wrap;
+        }
+        .template-builder-filter-row,
+        .template-builder-inline-actions,
+        .template-builder-chip-row,
+        .template-builder-toggle-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .template-builder-group {
+          margin-bottom: 24px;
+        }
+        .template-builder-group-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .template-builder-group-title {
+          font-size: 16px;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .template-builder-group-subtitle {
+          margin-top: 4px;
+          font-size: 12px;
+          color: ${C.textMut};
+          font-weight: 750;
+        }
+        .template-builder-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+          gap: 14px;
+        }
+        .template-builder-card {
+          position: relative;
+          min-height: 178px;
+          padding: 18px;
+          border: 1px solid #dfe8f2;
+          border-radius: 20px;
+          background: #fff;
+          box-shadow: 0 16px 42px rgba(15, 23, 42, 0.075);
+          cursor: pointer;
+          transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+        }
+        .template-builder-card:hover {
+          transform: translateY(-3px);
+          border-color: rgba(20, 83, 45, 0.28);
+          box-shadow: 0 24px 54px rgba(15, 23, 42, 0.12);
+        }
+        .template-builder-card-title {
+          margin-top: 12px;
+          font-size: 16px;
+          font-weight: 950;
+          color: ${C.text};
+          line-height: 1.24;
+        }
+        .template-builder-card-meta {
+          margin-top: 7px;
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 750;
+        }
+        .template-builder-card-footer {
+          position: absolute;
+          left: 18px;
+          right: 18px;
+          bottom: 16px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+        }
+        .template-builder-editor-hero {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 20px;
+          padding: 24px;
+          margin-bottom: 18px;
+        }
+        .template-builder-editor-hero.is-draft {
+          border-color: rgba(217, 119, 6, 0.28);
+          background: radial-gradient(circle at top left, rgba(251, 191, 36, 0.19), transparent 34%), linear-gradient(135deg, #fff 0%, #fffbeb 46%, #f8fbff 100%);
+        }
+        .template-builder-title-input {
+          width: min(100%, 560px);
+          border: 1px solid rgba(20, 83, 45, 0.22);
+          border-radius: 16px;
+          padding: 12px 14px;
+          background: rgba(255, 255, 255, 0.86);
+          color: ${C.text};
+          font: inherit;
+          font-size: 24px;
+          font-weight: 950;
+          letter-spacing: -0.03em;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84), 0 12px 30px rgba(15, 23, 42, 0.06);
+        }
+        .template-builder-actions {
+          display: flex;
+          align-items: flex-start;
+          justify-content: flex-end;
+          gap: 9px;
+          flex-wrap: wrap;
+          max-width: 420px;
+        }
+        .template-builder-back {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          margin-bottom: 14px;
+          border: 0;
+          background: transparent;
+          color: ${C.pri};
+          font: inherit;
+          font-size: 13px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .template-builder-layout {
+          display: grid;
+          grid-template-columns: minmax(210px, 250px) minmax(0, 1fr) minmax(250px, 310px);
+          gap: 16px;
+          align-items: start;
+        }
+        .template-builder-sidebar,
+        .template-builder-inspector {
+          position: sticky;
+          top: 16px;
+          display: grid;
+          gap: 14px;
+        }
+        .template-builder-panel,
+        .template-builder-canvas,
+        .template-builder-section-card,
+        .template-builder-config-card,
+        .template-builder-item-editor {
+          border: 1px solid #dfe8f2;
+          border-radius: 20px;
+          background: rgba(255, 255, 255, 0.94);
+          box-shadow: 0 16px 42px rgba(15, 23, 42, 0.075);
+        }
+        .template-builder-panel,
+        .template-builder-canvas {
+          padding: 16px;
+        }
+        .template-builder-panel-header {
+          margin-bottom: 12px;
+        }
+        .template-builder-panel-title {
+          font-size: 13px;
+          font-weight: 950;
+          color: ${C.text};
+        }
+        .template-builder-panel-copy {
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+        .template-builder-nav-list,
+        .template-builder-version-list {
+          display: grid;
+          gap: 8px;
+        }
+        .template-builder-nav-item,
+        .template-builder-version-button {
+          width: 100%;
+          border: 1px solid #e5edf5;
+          border-radius: 14px;
+          background: #fff;
+          padding: 10px 11px;
+          text-align: left;
+          font-family: inherit;
+          cursor: pointer;
+          transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+        }
+        .template-builder-nav-item:hover,
+        .template-builder-version-button:hover {
+          transform: translateY(-1px);
+          border-color: rgba(20, 83, 45, 0.24);
+          background: #f8fafc;
+        }
+        .template-builder-version-button.is-selected {
+          border-color: rgba(20, 83, 45, 0.55);
+          background: #f0fdf4;
+        }
+        .template-builder-canvas {
+          min-height: 520px;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        }
+        .template-builder-canvas-toolbar {
+          align-items: flex-start;
+          margin-bottom: 14px;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #e5edf5;
+        }
+        .template-builder-section-card {
+          overflow: hidden;
+          margin-bottom: 14px;
+        }
+        .template-builder-section-summary {
+          width: 100%;
+          border: 0;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+          padding: 16px;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+        .template-builder-section-summary.is-open {
+          background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%);
+        }
+        .template-builder-section-left {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          min-width: 0;
+        }
+        .template-builder-section-index {
+          width: 36px;
+          height: 36px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          flex: 0 0 auto;
+          background: ${C.pri};
+          color: #fff;
+          font-size: 12px;
+          font-weight: 950;
+          box-shadow: 0 12px 22px rgba(20, 83, 45, 0.18);
+        }
+        .template-builder-section-title {
+          color: ${C.text};
+          font-size: 15px;
+          font-weight: 950;
+          line-height: 1.24;
+        }
+        .template-builder-section-description {
+          margin-top: 4px;
+          color: ${C.textMut};
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.45;
+        }
+        .template-builder-section-body {
+          padding: 0 16px 16px;
+        }
+        .template-builder-config-card,
+        .template-builder-item-editor {
+          padding: 14px;
+          margin-top: 12px;
+          background: #fff;
+        }
+        .template-builder-field-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 11px;
+        }
+        .template-builder-field {
+          display: block;
+          min-width: 0;
+        }
+        .template-builder-field.is-wide {
+          grid-column: 1 / -1;
+        }
+        .template-builder-field > span,
+        .template-builder-filter-label {
+          display: block;
+          margin-bottom: 6px;
+          color: ${C.textSec};
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.02em;
+        }
+        .template-builder-field input,
+        .template-builder-field textarea,
+        .template-builder-title-input {
+          box-sizing: border-box;
+        }
+        .template-builder-field input,
+        .template-builder-field textarea {
+          width: 100%;
+          border: 1px solid #dbe5ef;
+          border-radius: 12px;
+          background: #fff;
+          color: ${C.text};
+          padding: 10px 11px;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 750;
+          outline: none;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .template-builder-field textarea {
+          resize: vertical;
+          line-height: 1.45;
+        }
+        .template-builder-field input:focus,
+        .template-builder-field textarea:focus,
+        .template-builder-title-input:focus {
+          border-color: rgba(20, 83, 45, 0.52);
+          box-shadow: 0 0 0 4px rgba(20, 83, 45, 0.09);
+        }
+        .template-builder-item-preview {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 10px 0;
+          border-bottom: 1px solid #edf2f7;
+        }
+        .template-builder-item-grip {
+          width: 8px;
+          height: 8px;
+          margin-top: 5px;
+          border-radius: 999px;
+          background: #cbd5e1;
+          flex: 0 0 auto;
+        }
+        .template-builder-item-copy {
+          flex: 1;
+          min-width: 0;
+        }
+        .template-builder-item-title,
+        .template-builder-item-editor-title {
+          font-size: 13px;
+          font-weight: 850;
+          color: ${C.text};
+        }
+        .template-builder-item-secondary {
+          margin-top: 4px;
+          color: ${C.textSec};
+          font-size: 12px;
+          line-height: 1.45;
+        }
+        .template-builder-item-secondary a {
+          color: ${C.pri};
+          font-weight: 850;
+          text-decoration: none;
+        }
+        .template-builder-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          border-radius: 999px;
+          background: #ecfdf5;
+          color: ${C.pri};
+          padding: 5px 8px;
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }
+        .template-builder-pill.is-muted {
+          background: #f1f5f9;
+          color: ${C.textMut};
+        }
+        .template-builder-drag-handle {
+          color: #94a3b8;
+          font-weight: 950;
+          letter-spacing: -0.16em;
+        }
+        .template-builder-item-footer {
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid #edf2f7;
+        }
+        .template-builder-toggle-row label {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          color: ${C.textSec};
+          font-size: 12px;
+          font-weight: 850;
+        }
+        .template-builder-empty {
+          border: 1px dashed #cbd5e1;
+          border-radius: 20px;
+          padding: 28px;
+          text-align: center;
+          background: #fff;
+        }
+        .template-builder-empty-title {
+          color: ${C.text};
+          font-size: 16px;
+          font-weight: 950;
+        }
+        .template-builder-empty-copy {
+          margin: 6px auto 16px;
+          max-width: 420px;
+          color: ${C.textMut};
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+        .template-builder-readiness-card {
+          border-radius: 16px;
+          padding: 12px;
+          background: #f8fafc;
+          border: 1px solid #e5edf5;
+        }
+        .template-builder-readiness-card.is-ready {
+          background: #f0fdf4;
+          border-color: rgba(20, 83, 45, 0.18);
+        }
+        .template-builder-readiness-card.is-warning {
+          background: #fffbeb;
+          border-color: rgba(217, 119, 6, 0.22);
+        }
+        @media (max-width: 1180px) {
+          .template-builder-layout { grid-template-columns: 1fr; }
+          .template-builder-sidebar,
+          .template-builder-inspector { position: static; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+          .template-builder-editor-hero { grid-template-columns: 1fr; }
+          .template-builder-actions { justify-content: flex-start; max-width: none; }
+        }
+        @media (max-width: 760px) {
+          .template-builder-hero { flex-direction: column; }
+          .template-builder-hero-stats,
+          .template-builder-metric-strip { min-width: 0; grid-template-columns: 1fr; }
+          .template-builder-field-grid { grid-template-columns: 1fr; }
+          .template-builder-card-footer,
+          .template-builder-section-summary,
+          .template-builder-item-footer { align-items: flex-start; flex-direction: column; }
         }
 	        .labor-page-shell {
 	          max-width: 1340px;
@@ -15728,6 +18085,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
+          --labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;
           position: relative;
           display: grid;
           grid-template-columns: repeat(var(--labor-tab-count), minmax(0, 1fr));
@@ -15758,7 +18116,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(135deg, #14532d 0%, #166534 56%, #3f6212 100%);
           box-shadow: 0 14px 34px rgba(20, 83, 45, 0.22), inset 0 1px 0 rgba(255,255,255,0.18);
           transform: translateX(calc(var(--labor-active-index) * 100%));
-          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+          transition: var(--labor-indicator-flat-transition);
           overflow: hidden;
         }
         .labor-tab-indicator::after {
@@ -19035,6 +21393,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        .labor-model-tabs {
           --labor-model-tab-count: 8;
           --labor-model-active-index: 0;
+          --labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;
           position: relative;
           display: grid;
           grid-template-columns: repeat(var(--labor-model-tab-count), minmax(0, 1fr));
@@ -19063,7 +21422,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           background: linear-gradient(135deg, #14532d, #166534 58%, #3f6212);
           box-shadow: 0 14px 32px rgba(20, 83, 45, 0.18), inset 0 1px 0 rgba(255,255,255,0.22);
           transform: translateX(calc(var(--labor-model-active-index) * 100%));
-          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+          transition: var(--labor-indicator-flat-transition);
           overflow: hidden;
         }
         .labor-model-tab-indicator::after {
@@ -20466,6 +22825,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-view-switcher {
           --labor-view-count: 1;
           --labor-view-active-index: 0;
+          --labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;
           position: relative;
           display: grid;
           grid-template-columns: repeat(var(--labor-view-count), minmax(0, 1fr));
@@ -20480,6 +22840,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           overflow: hidden;
           animation: laborControlSettle 260ms cubic-bezier(0.22, 1, 0.36, 1);
         }
+        .labor-view-switcher.is-compact {
+          min-height: 52px;
+          margin-bottom: 14px;
+          padding: 4px;
+          border-radius: 14px;
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
+        }
         .labor-view-switcher-indicator {
           position: absolute;
           top: 6px;
@@ -20493,8 +22860,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border: 1px solid rgba(20, 83, 45, 0.55);
           box-shadow: 0 16px 38px rgba(20, 83, 45, 0.12);
           transform: translateX(calc(var(--labor-view-active-index) * 100%));
-          transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+          transition: var(--labor-indicator-flat-transition);
           z-index: 0;
+        }
+        .labor-view-switcher.is-compact .labor-view-switcher-indicator {
+          top: 4px;
+          bottom: 4px;
+          left: 4px;
+          width: calc((100% - 8px) / var(--labor-view-count));
+          border-radius: 11px;
+          box-shadow: 0 10px 24px rgba(20, 83, 45, 0.11);
         }
         .labor-view-option {
           position: relative;
@@ -20512,6 +22887,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           gap: 4px;
           align-content: center;
           transition: color 200ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease;
+        }
+        .labor-view-switcher.is-compact .labor-view-option {
+          min-height: 42px;
+          padding: 8px 14px;
+          gap: 0;
+          align-content: center;
+          justify-items: center;
+          text-align: center;
         }
         .labor-view-option:hover {
           background: rgba(20, 83, 45, 0.045);
@@ -20895,7 +23278,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       <div
-        key={buildLaborModulePanelKey({ tab, interviewView, attendanceView, capacityPlanningView })}
+        key={buildLaborModulePanelKey({ tab, interviewView, attendanceView, capacityPlanningView, complianceView })}
         className="labor-module-panel"
       >
       {!loading && tab === "home" && canUseLaborTab("home") && (
@@ -21468,6 +23851,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   )}
 	                  {sortedRosterRows.map((row) => {
 	                    const rowEmployeeId = getLaborEmployeeRowId(row);
+	                    const rowName = row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ");
+	                    const rowPosition = formatLaborPositionTitle(row.position_title);
 	                    const rowPhoneDisplay = row.contact_phone ? fmtPhoneInput(row.contact_phone) : "";
 	                    const rowEmailRecipient = buildLaborEmailRecipient(row);
 	                    return (
@@ -21490,10 +23875,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                        }}
 	                      >
 		                        <td className="labor-roster-name-cell">
-		                          <strong>{row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "—"}</strong>
+		                          <strong>
+		                            <LaborRosterCopyValue
+		                              value={rowName}
+		                              displayValue={rowName}
+		                              copied={copiedRosterContactKey === `name:${rowEmployeeId || rowName}`}
+		                              ariaLabel={`Copy name for ${rowName || "employee"}`}
+		                              onCopy={() => handleCopyRosterContact({
+		                                key: `name:${rowEmployeeId || rowName}`,
+		                                value: rowName,
+		                                label: "Name",
+		                              })}
+		                            />
+		                          </strong>
 		                          {!row.is_active && row.end_date ? <small>Inactive since {formatLaborDate(row.end_date)}</small> : null}
 		                        </td>
-		                        <td className="labor-roster-secondary-cell">{formatLaborPositionTitle(row.position_title) || "—"}</td>
+		                        <td className={`labor-roster-secondary-cell${rowPosition ? "" : " is-empty"}`}>
+		                          <LaborRosterCopyValue
+		                            value={rowPosition}
+		                            displayValue={rowPosition}
+		                            copied={copiedRosterContactKey === `position:${rowEmployeeId || rowPosition}`}
+		                            ariaLabel={`Copy position for ${rowName || "employee"}`}
+		                            onCopy={() => handleCopyRosterContact({
+		                              key: `position:${rowEmployeeId || rowPosition}`,
+		                              value: rowPosition,
+		                              label: "Position",
+		                            })}
+		                          />
+		                        </td>
 		                        <td className="labor-roster-secondary-cell is-commitment">
 		                          <LaborCommitmentBadge value={row.employment_commitment} />
 		                        </td>
@@ -21549,8 +23958,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             value={attendanceView}
             onChange={changeAttendanceView}
             options={[
-              { id: "input", label: "Attendance Input", subtitle: "Attendance marks and policy actions" },
-              { id: "summary", label: "Attendance Summary", subtitle: "Summary, history, and reference guidance" },
+              { id: "input", label: "Attendance Input" },
+              { id: "summary", label: "Attendance Summary" },
             ]}
           />
 
@@ -21599,120 +24008,290 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && (
         <div>
+          <LaborViewSwitcher
+            value={complianceView}
+            onChange={changeComplianceView}
+            options={COMPLIANCE_VIEW_OPTIONS}
+          />
           {supportBundleLoading && !supportBundleLoaded ? (
-            <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading performance reviews...</Card>
+            <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading compliance...</Card>
           ) : null}
-          <SectionHeader title="Performance Reviews" count={activePerformanceReviewRows.length}>
-            <LaborSortControl
+          {complianceView === "employees" && (
+            <PerformanceReviewComplianceGrid
+              rows={sortedPerformanceReviewRows}
+              reviewCycles={activePerformanceReviewCycles}
               sort={performanceReviewSort}
-              defaultSort={LABOR_DEFAULT_SORT}
-              columns={LABOR_PERFORMANCE_REVIEW_SORT_COLUMNS}
-              onChange={setPerformanceReviewSort}
+              sortColumns={performanceReviewSortColumns}
+              policyLoaded={laborCompliancePolicyLoaded}
+              onSortChange={setPerformanceReviewSort}
+              getEmployeeId={getLaborEmployeeRowId}
+              formatDate={formatLaborDate}
+              formatTimestamp={formatTrainingTimestamp}
+              formatPhone={fmtPhoneInput}
+              formatPosition={formatLaborPositionTitle}
+              onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
+              onOpenEvidence={handleOpenComplianceReviewEditor}
+              onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
             />
-            <Btn variant="ghost" size="sm" icon={<I.RefreshCw />} onClick={() => refreshLaborData()}>Refresh</Btn>
-          </SectionHeader>
-          {activePerformanceReviewRows.length === 0 ? (
-            <EmptyState icon="Users" title="No active employees" subtitle="Roster load required." />
-          ) : (
-            <>
-              <div className="performance-review-queue-grid">
-                {performanceReviewOverview.map((stat) => (
-                  <div key={stat.label} className="performance-review-queue-stat">
-                    <div style={{ fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 7 }}>
-                      {stat.label}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                      <span style={{ fontSize: 24, fontWeight: 900, color: stat.color }}>{stat.value}</span>
-                      <span style={{ fontSize: 11, fontWeight: 800, color: C.textMut }}>{stat.helper}</span>
-                    </div>
-                  </div>
+          )}
+          {complianceView === "summary" && (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                {performanceReviewOverview.map((item) => (
+                  <Card key={item.label} style={{ padding: 16, borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>{item.label}</div>
+                    <div style={{ fontSize: 25, fontWeight: 950, color: item.color }}>{item.value}</div>
+                    <div style={{ fontSize: 12, color: C.textMut, marginTop: 5, fontWeight: 700 }}>{item.helper}</div>
+                  </Card>
                 ))}
               </div>
-              <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24, borderRadius: 8 }}>
-                <table style={{ width: "100%", minWidth: 1120, borderCollapse: "collapse" }}>
+              <PerformanceReviewComplianceGrid
+                variant="summary"
+                rows={sortedPerformanceReviewRows}
+                reviewCycles={activePerformanceReviewCycles}
+                sort={performanceReviewSort}
+                sortColumns={performanceReviewSortColumns}
+                policyLoaded={laborCompliancePolicyLoaded}
+                onSortChange={setPerformanceReviewSort}
+                getEmployeeId={getLaborEmployeeRowId}
+                formatDate={formatLaborDate}
+                formatTimestamp={formatTrainingTimestamp}
+                formatPhone={fmtPhoneInput}
+                formatPosition={formatLaborPositionTitle}
+                onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
+                onOpenEvidence={handleOpenComplianceReviewEditor}
+                onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
+              />
+            </div>
+          )}
+          {complianceView === "requirements" && (
+            <div style={{ display: "grid", gap: 14 }}>
+              <Card style={{ padding: 18, borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text, marginBottom: 5 }}>Compliance Columns</div>
+                    <div style={{ fontSize: 12, fontWeight: 750, color: C.textMut }}>
+                      {customCompliancePolicyRequirements.length} custom column{customCompliancePolicyRequirements.length === 1 ? "" : "s"} active
+                    </div>
+                  </div>
+                  <Btn
+                    variant="secondary"
+                    size="sm"
+                    disabled={!canManageCompliancePolicy || savingComplianceRequirement}
+                    icon={<I.Plus />}
+                    onClick={() => openComplianceRequirementEditor()}
+                  >
+                    Add Column
+                  </Btn>
+                </div>
+              </Card>
+              <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
-                      <th style={tableHeaderStyle}>Employee</th>
-                      <th style={tableHeaderStyle}>Position</th>
-                      <th style={tableHeaderStyle}>Start Date</th>
-                      <th style={tableHeaderStyle}>Performance Reviews</th>
-                      {PERFORMANCE_REVIEW_CYCLES.map((cycle) => (
-                        <th key={cycle.id} style={tableHeaderStyle}>{cycle.label}</th>
-                      ))}
+                      <th style={complianceTableHeaderStyle}>Column</th>
+                      <th style={complianceTableHeaderStyle}>Evidence</th>
+                      <th style={complianceTableHeaderStyle}>Status</th>
+                      <th style={{ ...complianceTableHeaderStyle, textAlign: "right" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedPerformanceReviewRows.map((row) => {
-                      const employeeId = getLaborEmployeeRowId(row);
-                      return (
-                        <tr key={employeeId || row.full_name} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                          <td style={{ ...rosterCellStyle, minWidth: 180 }}>
-                            <button
-                              type="button"
-                              onClick={() => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
-                              style={{ border: "none", background: "transparent", color: C.pri, padding: 0, fontFamily: "inherit", fontSize: 13, fontWeight: 900, cursor: "pointer", textAlign: "left" }}
+                    {customCompliancePolicyRequirements.map((requirement) => (
+                      <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                        <td style={{ padding: "14px 16px", color: C.text, fontSize: 14, fontWeight: 950 }}>
+                          {normalizeComplianceRequirementLabel(requirement)}
+                          {requirement.description ? (
+                            <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, lineHeight: 1.35, fontWeight: 750 }}>{requirement.description}</div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: "14px 16px", color: C.textSec, fontSize: 12, fontWeight: 850 }}>{formatComplianceRequirementEvidence(requirement)}</td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <Badge color="success">Visible on Employees</Badge>
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                          <div style={{ display: "inline-flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <Btn
+                              variant="ghost"
+                              size="sm"
+                              icon={<I.Pencil />}
+                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                              onClick={() => openComplianceRequirementEditor(requirement)}
                             >
-                              {row.full_name || "Employee"}
-                            </button>
-                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 3 }}>{row.contact_phone ? fmtPhoneInput(row.contact_phone) : row.contact_email || "No contact on file"}</div>
-                          </td>
-                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 170 }}>{formatLaborPositionTitle(row.position_title) || "—"}</td>
-                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatLaborDate(row.start_date)}</td>
-                          <td style={{ ...rosterCellStyle, minWidth: 170 }}>
-                            <Badge color={row.performance_review_compliance?.color || "default"}>
-                              {row.performance_review_compliance?.label || "Needs setup"}
-                            </Badge>
-                            <div style={{ fontSize: 11, color: C.textMut, marginTop: 5 }}>{row.performance_review_compliance?.detail || "No review schedule"}</div>
-                          </td>
-                          {row.cycles.map((cycle) => {
-                            const signature = isObjectRow(cycle.instance?.metadata?.signature) ? cycle.instance.metadata.signature : {};
-                            return (
-                              <td key={cycle.id} style={{ ...rosterCellStyle, minWidth: 150, verticalAlign: "top" }}>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-start" }}>
-                                  <Badge color={String(cycle.status) === "completed" ? "success" : String(cycle.status) === "overdue" || cycle.presentation?.tone === C.dan ? "danger" : "warning"}>
-                                    {String(cycle.status || "not_started").replace(/_/g, " ")}
-                                  </Badge>
-                                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Due {cycle.dueDate ? formatLaborDate(cycle.dueDate) : "—"}</div>
-                                  {signature.status && (
-                                    <div style={{ fontSize: 11, color: signature.status === "completed" ? C.suc : C.warn, fontWeight: 800 }}>
-                                      Signature {String(signature.status).replace(/_/g, " ")}
-                                    </div>
-                                  )}
-                                  {cycle.instance ? (
-                                    <Btn
-                                      variant="secondary"
-                                      size="sm"
-                                      icon={<I.Eye />}
-                                      onClick={() => {
-                                        setSelectedLaborEmployeeId(employeeId);
-                                        setSelectedLaborEmployeeSeed(row);
-                                        setSelectedReviewInstanceId(cycle.instance.id);
-                                      }}
-                                    >
-                                      Open
-                                    </Btn>
-                                  ) : (
-                                    <Btn
-                                      variant="ghost"
-                                      size="sm"
-                                      icon={<I.Plus />}
-                                      onClick={() => handleCreateReviewInstanceForEmployee(row, cycle.id)}
-                                      disabled={!row.template}
-                                    >
-                                      Start
-                                    </Btn>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
+                              Edit
+                            </Btn>
+                            <Btn
+                              variant="danger"
+                              size="sm"
+                              icon={<I.Trash />}
+                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                              onClick={() => handleDeleteComplianceRequirement(requirement)}
+                            >
+                              {deletingComplianceRequirementId === requirement.id ? "Deleting..." : "Delete"}
+                            </Btn>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {customCompliancePolicyRequirements.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
+                          No custom Compliance columns yet. Add one here and it will appear on the Employees grid.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </Card>
-            </>
+              {defaultReviewComplianceRequirements.length > 0 && (
+                <Card style={{ padding: 16, borderRadius: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                    <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Default review checkpoints</div>
+                    <Badge color="default">{defaultReviewComplianceRequirements.length}</Badge>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                    {defaultReviewComplianceRequirements.map((requirement) => (
+                      <div
+                        key={requirement.id || requirement.slug}
+                        style={{
+                          border: `1px solid ${C.borderLight}`,
+                          borderRadius: 8,
+                          padding: "10px 12px",
+                          background: "#fff",
+                          minWidth: 0,
+                        }}
+                      >
+                        <div style={{ color: C.text, fontSize: 13, fontWeight: 950 }}>{normalizeComplianceRequirementLabel(requirement)}</div>
+                        <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementDueRule(requirement)}</div>
+                        <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementEvidence(requirement)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </div>
+          )}
+          {complianceView === "history" && (
+            <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+              <div className="training-history-header">
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Compliance History</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Schedule, update, complete, waive, evidence, and response activity from compliance checkpoints.</div>
+                </div>
+                <div className="training-history-metrics">
+                  <div className="training-history-metric">
+                    <span>Activities logged</span>
+                    <strong>{complianceHistoryDayMetrics.activityCount}</strong>
+                    <em>{formatLaborDate(complianceHistoryDayMetrics.date)}</em>
+                  </div>
+                  <div className="training-history-metric">
+                    <span>Employees with activity</span>
+                    <strong>{complianceHistoryDayMetrics.employeeCount}</strong>
+                    <em>{complianceHistoryFilters.date ? "selected day" : "latest day"}</em>
+                  </div>
+                  <Badge color={filteredComplianceHistoryRows.length > 0 ? "info" : "default"}>
+                    {filteredComplianceHistoryRows.length} shown
+                  </Badge>
+                </div>
+              </div>
+              <div className="training-history-toolbar">
+                <div className="training-history-filter-grid">
+                  <Inp
+                    label="Activity Date"
+                    type="date"
+                    value={complianceHistoryFilters.date}
+                    onChange={(value) => updateComplianceHistoryFilter("date", value)}
+                  />
+                  <div>
+                    <div className="training-history-filter-label">Employee</div>
+                    <CustomSelect
+                      value={complianceHistoryFilters.employee}
+                      onChange={(value) => updateComplianceHistoryFilter("employee", value)}
+                      options={complianceHistoryFilterOptions.employees}
+                      placeholder="All employees"
+                      searchable
+                    />
+                  </div>
+                  <div>
+                    <div className="training-history-filter-label">Checkpoint / Requirement</div>
+                    <CustomSelect
+                      value={complianceHistoryFilters.categoryTask}
+                      onChange={(value) => updateComplianceHistoryFilter("categoryTask", value)}
+                      options={complianceHistoryFilterOptions.categoryTasks}
+                      placeholder="All checkpoints / requirements"
+                      searchable
+                      searchPlaceholder="Search checkpoints"
+                    />
+                  </div>
+                  <div>
+                    <div className="training-history-filter-label">Actor</div>
+                    <CustomSelect
+                      value={complianceHistoryFilters.actor}
+                      onChange={(value) => updateComplianceHistoryFilter("actor", value)}
+                      options={complianceHistoryFilterOptions.actors}
+                      placeholder="All actors"
+                      searchable
+                    />
+                  </div>
+                </div>
+                <div className="training-history-toolbar-actions">
+                  <Btn variant="ghost" size="sm" icon={<I.Calendar />} onClick={() => updateComplianceHistoryFilter("date", todayStr())}>
+                    Today
+                  </Btn>
+                  <Btn variant="ghost" size="sm" onClick={clearComplianceHistoryFilters} disabled={complianceHistoryFilterCount === 0}>
+                    Clear Filters{complianceHistoryFilterCount > 0 ? ` (${complianceHistoryFilterCount})` : ""}
+                  </Btn>
+                </div>
+              </div>
+              {complianceHistoryRows.length === 0 ? (
+                <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No compliance history has been recorded yet.</div>
+              ) : filteredComplianceHistoryRows.length === 0 ? (
+                <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No compliance history matches the current filters.</div>
+              ) : (
+                <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeaderStyle}>When</th>
+                        <th style={tableHeaderStyle}>Employee</th>
+                        <th style={tableHeaderStyle}>Action</th>
+                        <th style={tableHeaderStyle}>Checkpoint / Requirement</th>
+                        <th style={tableHeaderStyle}>Actor</th>
+                        <th style={tableHeaderStyle}>Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredComplianceHistoryRows.map((event) => (
+                        <tr key={event.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{formatTrainingTimestamp(event.created_at)}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 180 }}>{event.employeeName}</td>
+                          <td style={{ ...rosterCellStyle, minWidth: 180 }}>{event.actionLabel}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 280, lineHeight: 1.45 }}>
+                            <div style={{ color: C.text, fontWeight: 850 }}>{event.summary}</div>
+                            {event.statusChange?.nextLabel ? (
+                              <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", color: C.textMut, fontSize: 11, fontWeight: 850 }}>
+                                {event.statusChange.previousLabel ? <span>{event.statusChange.previousLabel}</span> : null}
+                                {event.statusChange.previousLabel ? <span>-&gt;</span> : null}
+                                <Badge color={["complete", "completed", "waived"].includes(event.statusChange.nextStatus) ? "success" : "info"}>
+                                  {event.statusChange.nextLabel}
+                                </Badge>
+                              </div>
+                            ) : null}
+                          </td>
+                          <td style={{ ...rosterSecondaryCellStyle, whiteSpace: "nowrap" }}>{event.actorDisplayName || "Staff"}</td>
+                          <td style={{ ...rosterSecondaryCellStyle, minWidth: 260, lineHeight: 1.5 }}>
+                            {event.detailParts.length > 0 ? (
+                              event.detailParts.map((part) => <div key={part}>{part}</div>)
+                            ) : (
+                              <span>{event.source_table || "Compliance checkpoint event"}</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
           )}
         </div>
       )}
@@ -21859,28 +24438,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         </button>
                       ))}
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 16 }}>
-                      <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
-                        <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Open Gaps</div>
-                        {pctReadinessEmployeeBoardProfile.gaps.length === 0 ? (
-                          <div style={{ fontSize: 12, color: C.textMut }}>No active gaps.</div>
-                        ) : pctReadinessEmployeeBoardProfile.gaps.slice(0, 10).map((row) => (
-                          <div key={`single-gap-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
-                            <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.item.label}
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.bg }}>
-                        <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 8 }}>Coaching / Comments</div>
-                        {pctReadinessEmployeeBoardProfile.coachingNotes.length === 0 ? (
-                          <div style={{ fontSize: 12, color: C.textMut }}>No coaching comments.</div>
-                        ) : pctReadinessEmployeeBoardProfile.coachingNotes.slice(0, 10).map((row) => (
-                          <div key={`single-coach-${row.item.id}`} style={{ fontSize: 12, color: C.textSec, lineHeight: 1.45, marginTop: 7 }}>
-                            <strong style={{ color: C.text }}>{row.section.title}:</strong> {row.cell.latest_note || getPctReadinessStatusPresentation(row.status).label}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                     <div ref={pctReadinessScrollRef} onScroll={handlePctReadinessMatrixScroll} style={{ maxHeight: "62vh", overflow: "auto", border: `1px solid ${C.borderLight}`, borderRadius: 8 }}>
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
@@ -21888,7 +24445,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                             <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Category</th>
                             <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Task / Skill</th>
                             <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Status</th>
-                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Actor / Comment</th>
+                            <th style={pctReadinessEmployeeBoardTableHeaderStyle}>Actor / Date</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -21930,7 +24487,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                 {!collapsed && section.taskRows.map((row) => {
                                   const presentation = getPctReadinessStatusPresentation(row.status);
                                   const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
-                                  const rowActorName = getReadinessCellActorDisplayName(row.cell, presentation.value);
+                                  const rowActorLine = getReadinessCellActorLine(row.cell, presentation.value);
                                   return (
                                     <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
@@ -21939,21 +24496,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                         <button
                                           type="button"
                                           onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
-                                          style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorName ? 124 : undefined, borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                          style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
                                         >
                                           <span style={{ display: "inline-flex", gap: 6, alignItems: "center", lineHeight: 1.1 }}>
                                             <span>{style.icon}</span>
                                             <span>{presentation.label}</span>
                                           </span>
-                                          {rowActorName && (
+                                          {rowActorLine && (
                                             <span style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.15, opacity: 0.78, maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                              {rowActorName}
+                                              {rowActorLine}
                                             </span>
                                           )}
                                         </button>
                                       </td>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.textMut, lineHeight: 1.45, verticalAlign: "top", width: 220 }}>
-                                        {row.cell.latest_note || row.cell.verified_by || row.cell.demonstrated_by || "-"}
+                                        {rowActorLine || "-"}
                                       </td>
                                     </tr>
                                   );
@@ -22174,7 +24731,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                     const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
                                     const presentation = getPctReadinessStatusPresentation(cell.readiness_status || cell.status);
                                     const statusStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
-                                    const cellActorName = getReadinessCellActorDisplayName(cell, presentation.value);
+                                    const cellActorLine = getReadinessCellActorLine(cell, presentation.value);
                                     return (
                                       <td key={`${record.id}:${item.id}`} style={{ padding: 7, minWidth: 156, borderBottom: `1px solid ${C.borderLight}`, background: "#fff", verticalAlign: "top" }}>
                                         <button
@@ -22203,9 +24760,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             <span style={{ minWidth: 20 }}>{statusStyle.icon}</span>
                                             <span>{presentation.label}</span>
                                           </span>
-                                          {(cellActorName || cell.latest_note) && (
+                                          {cellActorLine && (
                                             <span style={{ fontSize: 10.5, color: statusStyle.text, opacity: 0.78, lineHeight: 1.25 }}>
-                                              {cellActorName || "Comment"}
+                                              {cellActorLine}
                                             </span>
                                           )}
                                         </button>
@@ -22230,6 +24787,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
           {trainingView === "records" && (
             <>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button
+                  type="button"
+                  className={`labor-roster-action-button${showTrainingRecordFilterPanel || trainingRecordFilterCount > 0 ? " is-active" : ""}`}
+                  onClick={() => {
+                    setShowTrainingRecordFilterPanel((current) => !current);
+                    setTrainingRecordFilterPickerReady(false);
+                    window.setTimeout(() => setTrainingRecordFilterPickerReady(true), 10);
+                  }}
+                >
+                  <I.Filter /> Filter{trainingRecordFilterCount > 0 ? ` (${trainingRecordFilterCount})` : ""}
+                </button>
+              </div>
+              {showTrainingRecordFilterPanel && (
+                <div style={{ marginBottom: 14, padding: 14, borderRadius: 12, border: `1.5px solid ${C.borderLight}`, background: C.surfaceHover, animation: "filterSlideIn 0.18s ease-out" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, alignItems: "end" }}>
+                    <div style={{ animation: trainingRecordFilterPickerReady ? "filterChipIn 0.18s ease-out both" : "none" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 4 }}>Employee Status</div>
+                      <CustomSelect
+                        value={trainingRecordEmployeeStatusFilter}
+                        onChange={setTrainingRecordEmployeeStatusFilter}
+                        options={TRAINING_RECORD_EMPLOYEE_STATUS_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+                      />
+                    </div>
+                    <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700, animation: trainingRecordFilterPickerReady ? "filterChipIn 0.2s ease-out 0.03s both" : "none" }}>
+                      Default view: {trainingRecordEmployeeStatusLabel}.
+                    </div>
+                  </div>
+                </div>
+              )}
               <SectionHeader title="Active Training Records" count={activeRecords.length}>
                 <LaborSortControl
                   sort={trainingSort}
@@ -22418,59 +25005,105 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {!loading && tab === "templates" && canUseLaborTab("templates") && !previewTemplateId && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                { id: "all", label: "All" },
-                { id: "active", label: "Active" },
-                { id: "inactive", label: "Inactive" },
-              ].map((option) => (
-                <Btn
-                  key={option.id}
-                  variant={templateStatusFilter === option.id ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setTemplateStatusFilter(option.id)}
-                >
-                  {option.label}
-                </Btn>
-              ))}
+        <div className="template-builder-library-shell">
+          <div className="template-builder-hero">
+            <div>
+              <div className="template-builder-kicker">Template Builder</div>
+              <h2>Design training plans, certifications, and 30 / 60 / 90 reviews</h2>
+              <p>Version-safe template management with draft resume, structure editing, publish readiness, and premium builder controls for sections, tasks, questions, and review prompts.</p>
+            </div>
+            <div className="template-builder-hero-stats">
+              <div><strong>{visibleTemplateRows.length}</strong><span>Shown</span></div>
+              <div><strong>{visibleTemplateRows.filter((row) => row.hasDraft).length}</strong><span>Drafts</span></div>
+              <div><strong>{visibleTemplateRows.filter((row) => row.is_active !== false).length}</strong><span>Active</span></div>
+            </div>
+          </div>
+
+          <div className="template-builder-toolbar">
+            <div>
+              <div className="template-builder-filter-label">Template status</div>
+              <div className="template-builder-filter-row">
+                {[
+                  { id: "all", label: "All" },
+                  { id: "active", label: "Active" },
+                  { id: "inactive", label: "Inactive" },
+                ].map((option) => (
+                  <Btn
+                    key={option.id}
+                    variant={templateStatusFilter === option.id ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setTemplateStatusFilter(option.id)}
+                  >
+                    {option.label}
+                  </Btn>
+                ))}
+              </div>
             </div>
             {canManageTemplates && (
               <Btn variant="primary" size="sm" onClick={() => setShowCreateTemplateModal(true)}>New Template</Btn>
             )}
           </div>
+
           {templateGroups.map((group) => (
-            <div key={group.key} style={{ marginBottom: 24 }}>
-              <SectionHeader title={group.label} count={group.rows.length} />
+            <div key={group.key} className="template-builder-group">
+              <div className="template-builder-group-header">
+                <div>
+                  <div className="template-builder-group-title">{group.label}</div>
+                  <div className="template-builder-group-subtitle">{group.rows.length} versioned builder template{group.rows.length === 1 ? "" : "s"}</div>
+                </div>
+                <Badge color="default">{group.rows.reduce((sum, row) => sum + (row.stats.itemCount || 0), 0)} items</Badge>
+              </div>
               {group.rows.length === 0 ? (
-                <EmptyState icon="FileText" title={`No ${group.label.toLowerCase()} yet`} subtitle="Templates will appear here." />
+                <div className="template-builder-empty">
+                  <div className="template-builder-empty-title">No {group.label.toLowerCase()} yet</div>
+                  <div className="template-builder-empty-copy">Create a draft to start composing sections, modules, tasks, and publish-ready template versions.</div>
+                  {canManageTemplates && <Btn variant="primary" size="sm" onClick={() => setShowCreateTemplateModal(true)}>Create Template</Btn>}
+                </div>
               ) : (
-                <Card style={{ padding: 0, overflow: "hidden" }}>
-	                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-	                    <thead><tr>
-	                      <th style={tableHeaderStyle}>Name</th>
-	                    </tr></thead>
-	                    <tbody>
-	                      {group.rows.map((row) => {
-                        return (
-                          <tr
-                            key={`${row.kind}_${row.id}`}
-                            onClick={() => openTemplatePreview(row.id, row.version?.id || null, row.kind)}
-                            style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceHover; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-	                          >
-	                            <td style={{ padding: "12px 14px", fontSize: 13, fontWeight: 700, color: C.pri }}>
-                                {row.name}
-                                {row.is_active === false && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMut, fontWeight: 700 }}>Inactive</span>}
-                              </td>
-	                          </tr>
-	                        );
-	                      })}
-                    </tbody>
-                  </table>
-                </Card>
+                <div className="template-builder-grid">
+                  {group.rows.map((row) => {
+                    const classLabel = row.kind === "review" ? "30 / 60 / 90 Review" : String(row.template_class || "training_template").replace(/_/g, " ");
+                    return (
+                      <div
+                        key={`${row.kind}_${row.id}`}
+                        role="button"
+                        tabIndex={0}
+                        className="template-builder-card"
+                        onClick={() => openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind);
+                          }
+                        }}
+                      >
+                        <div className="template-builder-chip-row">
+                          {row.version?.is_current && <Badge color="info">Current v{row.version.version_no}</Badge>}
+                          {row.hasDraft && <Badge color="warning">Draft v{row.draftVersion.version_no}</Badge>}
+                          {row.is_active === false && <Badge color="default">Inactive</Badge>}
+                        </div>
+                        <div className="template-builder-card-title">{row.name}</div>
+                        <div className="template-builder-card-meta">{classLabel} · {row.role_scopes?.length ? row.role_scopes.join(", ") : "All roles"}</div>
+                        <div className="template-builder-card-footer">
+                          <span className="template-builder-pill is-muted">{row.stats.sectionCount || 0} sections · {row.stats.itemCount || 0} items</span>
+                          {canManageTemplates && (
+                            <Btn
+                              variant={row.hasDraft ? "secondary" : "ghost"}
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openTemplatePreview(row.id, row.draftVersion?.id || row.version?.id || null, row.kind);
+                                setTemplateManageStructure(Boolean(row.draftVersion));
+                              }}
+                            >
+                              {row.hasDraft ? "Resume Draft" : "Edit Template"}
+                            </Btn>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           ))}
@@ -22478,313 +25111,436 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {!loading && tab === "templates" && canUseLaborTab("templates") && previewTemplateId && previewTemplate && (
-        <div>
-          <button onClick={() => { setPreviewTemplateId(null); setPreviewTemplateVersionId(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
-            <I.Back /> Back to Templates
+        <div className="template-builder-editor-shell">
+          <button className="template-builder-back" onClick={() => { setPreviewTemplateId(null); setPreviewTemplateVersionId(null); }}>
+            <I.Back /> Back to Template Library
           </button>
 
-          <Card style={{ padding: 24, marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
-              <div>
-                {canManageTemplates && previewTemplate.version?.status === "draft" ? (
-                  <input
-                    defaultValue={previewTemplate.name}
-                    onBlur={(event) => handleUpdateTemplateName(event.target.value)}
-                    style={{ width: "100%", maxWidth: 420, padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 22, fontWeight: 800, color: C.text, fontFamily: "inherit", marginBottom: 8 }}
-                  />
-	                ) : (
-	                  <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{previewTemplate.name}</div>
-	                )}
-	                {previewTemplate.version && (
-	                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
-	                    <span>Version {previewTemplate.version.version_no}</span>
-	                    {previewTemplate.version.published_at && <span>Published: {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
-	                  </div>
-	                )}
-	              </div>
-	              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-	                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{(templateStats[previewTemplate.id] || {}).sectionCount || 0} sections — {(templateStats[previewTemplate.id] || {}).itemCount || 0} items</div>
-	                {canManageTemplates && (
-	                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div className={`template-builder-editor-hero ${previewTemplate.version?.status === "draft" ? "is-draft" : ""}`}>
+            <div>
+              <div className="template-builder-kicker">{previewTemplate.kind === "review" ? "Review builder" : "Training builder"}</div>
+              {canManageTemplates && previewTemplate.version?.status === "draft" ? (
+                <input
+                  className="template-builder-title-input"
+                  defaultValue={previewTemplate.name}
+                  onBlur={(event) => commitRequiredTemplateTextInput(
+                    event,
+                    previewTemplate.name,
+                    "Template name",
+                    handleUpdateTemplateName
+                  )}
+                />
+              ) : (
+                <div className="template-builder-editor-title">{previewTemplate.name}</div>
+              )}
+              <div className="template-builder-chip-row" style={{ marginTop: 10 }}>
+                {previewTemplate.version && <span className="template-builder-pill">Version {previewTemplate.version.version_no}</span>}
+                {previewTemplate.version?.is_current && <Badge color="info">Current</Badge>}
+                {previewTemplate.version?.status === "draft" && <Badge color="warning">Draft</Badge>}
+                {previewTemplateDraftVersion?.id && previewTemplate.version?.status !== "draft" && <Badge color="warning">Draft available</Badge>}
+                {previewTemplate.is_active === false && <Badge color="default">Inactive</Badge>}
+                {previewTemplate.version?.published_at && <span className="template-builder-pill is-muted">Published {formatTrainingTimestamp(previewTemplate.version.published_at)}</span>}
+              </div>
+            </div>
+            <div className="template-builder-actions">
+              {canManageTemplates && previewTemplate.version?.status !== "draft" && (
+                <Btn variant="primary" size="sm" onClick={handleCreateTemplateDraft} disabled={templateActionPending}>
+                  {savingTemplateAction === "draft" ? "Cloning..." : templatePreviewEditButtonLabel}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <Btn variant="primary" size="sm" onClick={handlePublishTemplateVersion} disabled={templateActionPending || !templatePublishValidation.valid}>
+                  {savingTemplateAction === "publish" ? "Publishing..." : "Publish Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <Btn variant="danger" size="sm" onClick={handleDeleteTemplateDraft} disabled={templateActionPending}>
+                  {savingTemplateAction === "delete-draft" ? "Deleting..." : "Delete Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && previewTemplate.version && previewTemplate.version.status !== "draft" && (
+                <Btn variant="ghost" size="sm" onClick={handleRestoreTemplateVersion} disabled={templateActionPending}>
+                  {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
+                </Btn>
+              )}
+              {canManageTemplates && (
+                <Btn variant="ghost" size="sm" onClick={handleToggleTemplateActive} disabled={templateActionPending}>
+                  {previewTemplate.is_active === false
+                    ? (savingTemplateAction === "activate" ? "Marking Active..." : "Mark Active")
+                    : (savingTemplateAction === "deactivate" ? "Marking Inactive..." : "Mark Inactive")}
+                </Btn>
+              )}
+            </div>
+          </div>
+
+          <div className="template-builder-metric-strip" style={{ marginBottom: 16 }}>
+            <div className="template-builder-metric"><strong>{previewTemplateStats.sectionCount || 0}</strong><span>Sections</span></div>
+            <div className="template-builder-metric"><strong>{previewTemplateStats.itemCount || 0}</strong><span>{previewTemplate.kind === "review" ? "Prompts" : "Tasks"}</span></div>
+            <div className="template-builder-metric"><strong>{previewTemplateVersionHistory.length}</strong><span>Versions</span></div>
+          </div>
+
+          <div className="template-builder-layout">
+            <aside className="template-builder-sidebar">
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Structure Navigator</div>
+                    <div className="template-builder-panel-copy">Jump between expanded builder sections.</div>
+                  </div>
+                  <Badge color="default">{previewTemplate.sections.length}</Badge>
+                </div>
+                <div className="template-builder-nav-list">
+                  {previewTemplate.sections.length === 0 ? (
+                    <div className="template-builder-panel-copy">No sections yet.</div>
+                  ) : previewTemplate.sections.map((section, index) => {
+                    const sectionKey = `${previewTemplate.kind === "review" ? "review" : "tpl"}_${section.id}`;
+                    return (
+                      <button key={section.id} className="template-builder-nav-item" onClick={() => toggleSection(sectionKey)}>
+                        <div style={{ fontSize: 12, fontWeight: 950, color: C.text }}>{index + 1}. {section.title || "Untitled section"}</div>
+                        <div style={{ marginTop: 4, fontSize: 11, color: C.textMut, fontWeight: 750 }}>
+                          {previewTemplate.kind === "review"
+                            ? `${section.items?.length || 0} prompt${section.items?.length === 1 ? "" : "s"}`
+                            : `${section.children?.length || 0} module${section.children?.length === 1 ? "" : "s"} · ${(section.directItems?.length || 0) + toObjectRows(section.children).reduce((sum, child) => sum + toObjectRows(child.items).length, 0)} task${((section.directItems?.length || 0) + toObjectRows(section.children).reduce((sum, child) => sum + toObjectRows(child.items).length, 0)) === 1 ? "" : "s"}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Version Control</div>
+                    <div className="template-builder-panel-copy">Inspect published, current, and draft versions.</div>
+                  </div>
+                </div>
+                <div className="template-builder-version-list">
+                  {previewTemplateVersionHistory.map((version) => {
+                    const selected = previewTemplate.version?.id === version.id;
+                    return (
+                      <button
+                        key={version.id}
+                        className={`template-builder-version-button ${selected ? "is-selected" : ""}`}
+                        onClick={() => setPreviewTemplateVersionId(version.id)}
+                      >
+                        <div className="template-builder-version-row">
+                          <div style={{ fontSize: 13, fontWeight: 950, color: C.text }}>v{version.version_no}</div>
+                          <span className="template-builder-pill is-muted">{version.status}</span>
+                        </div>
+                        <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 750 }}>
+                          {version.is_current ? "Current version · " : ""}{version.published_at ? `Published ${formatTrainingTimestamp(version.published_at)}` : `Created ${formatTrainingTimestamp(version.created_at)}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
+
+            <main className="template-builder-canvas">
+              <div className="template-builder-canvas-toolbar">
+                <div>
+                  <div className="template-builder-kicker">Manage Structure</div>
+                  <div className="template-builder-group-title">{previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"}</div>
+                  <div className="template-builder-group-subtitle">Compose sections, modules, tasks, prompts, question types, and movement rules in one builder canvas.</div>
+                </div>
+                {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                  <div className="template-builder-inline-actions">
+                    <Btn variant={templateManageStructure ? "secondary" : "ghost"} size="sm" onClick={() => setTemplateManageStructure((current) => !current)}>
+                      {templateManageStructure ? "Done Managing" : "Manage Structure"}
+                    </Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
                     <Btn
                       variant="secondary"
                       size="sm"
-                      onClick={handleCreateTemplateDraft}
-                      disabled={savingTemplateAction === "draft"}
+                      onClick={() => {
+                        const targetSection = previewTemplate.kind === "review" ? previewTemplate.sections[0] : (previewTemplate.sections[0]?.children?.[0] || previewTemplate.sections[0]);
+                        if (targetSection?.id) handleAddTemplateItem(targetSection.id);
+                        else handleAddTemplateSection(null);
+                      }}
                     >
-	                      {savingTemplateAction === "draft" ? "Cloning..." : "New Draft"}
-	                    </Btn>
-	                    {previewTemplate.version?.status === "draft" && (
-	                      <Btn
-	                        variant="danger"
-	                        size="sm"
-	                        onClick={handleDeleteTemplateDraft}
-	                        disabled={savingTemplateAction === "delete-draft"}
-	                      >
-	                        {savingTemplateAction === "delete-draft" ? "Deleting..." : "Delete Draft"}
-	                      </Btn>
-	                    )}
-	                    {previewTemplate.version?.status === "draft" && (
-	                      <Btn
-	                        variant="primary"
-                        size="sm"
-                        onClick={handlePublishTemplateVersion}
-                        disabled={savingTemplateAction === "publish"}
-                      >
-                        {savingTemplateAction === "publish" ? "Publishing..." : "Publish Draft"}
-                      </Btn>
-                    )}
-                    {previewTemplate.version && previewTemplate.version.status !== "draft" && (
-                      <Btn
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleRestoreTemplateVersion}
-                        disabled={savingTemplateAction === "restore"}
-                      >
-	                        {savingTemplateAction === "restore" ? "Restoring..." : "Restore To Draft"}
-	                      </Btn>
-	                    )}
-	                    <Btn
-	                      variant="ghost"
-	                      size="sm"
-	                      onClick={handleToggleTemplateActive}
-	                      disabled={savingTemplateAction === "activate" || savingTemplateAction === "deactivate"}
-	                    >
-	                      {previewTemplate.is_active === false
-	                        ? (savingTemplateAction === "activate" ? "Marking Active..." : "Mark Active")
-	                        : (savingTemplateAction === "deactivate" ? "Marking Inactive..." : "Mark Inactive")}
-	                    </Btn>
-	                  </div>
-	                )}
-	              </div>
-            </div>
-          </Card>
-
-          <Card style={{ padding: 16, marginBottom: 16 }}>
-            <SectionHeader title="Version History" count={previewTemplateVersionHistory.length} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {previewTemplateVersionHistory.map((version) => {
-                const selected = previewTemplate.version?.id === version.id;
-                return (
-                  <button
-                    key={version.id}
-                    onClick={() => setPreviewTemplateVersionId(version.id)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      borderRadius: 12,
-                      border: selected ? `1.5px solid ${C.pri}` : `1px solid ${C.borderLight}`,
-                      background: selected ? C.priLt : C.surface,
-                      padding: "12px 14px",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
-                          v{version.version_no} {version.is_current ? "· Current" : ""}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
-                          {version.published_at
-                            ? `Published ${formatTrainingTimestamp(version.published_at)}`
-                            : `Created ${formatTrainingTimestamp(version.created_at)}`}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: version.status === "published" ? C.suc : version.status === "draft" ? C.warn : C.textMut }}>
-                        {version.status}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </Card>
-
-	          <SectionHeader title={previewTemplate.kind === "review" ? "Review Structure" : "Template Structure"} count={previewTemplate.sections.length}>
-	            {canManageTemplates && previewTemplate.version?.status === "draft" && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Btn variant={templateManageStructure ? "secondary" : "ghost"} size="sm" onClick={() => setTemplateManageStructure((current) => !current)}>
-                    {templateManageStructure ? "Done Managing" : "Manage Structure"}
-                  </Btn>
-	                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>
-                </div>
-	            )}
-	          </SectionHeader>
-	          {previewTemplate.kind === "review" ? previewTemplate.sections.map((sec) => {
-	            const isOpen = templateManageStructure || expandedSections[`review_${sec.id}`];
-            const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
-            return (
-              <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
-                <button
-                  onClick={() => toggleSection(`review_${sec.id}`)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{sec.title}</div>
-                      {sec.instructions && <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{sec.instructions}</div>}
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 11, color: C.textMut }}>{sec.items.length} prompt{sec.items.length !== 1 ? "s" : ""}</span>
-                </button>
-
-                {isOpen && (
-                  <div style={{ padding: "0 16px 14px" }}>
-                    {isDraft && (
-                      <Card style={{ padding: 12, marginTop: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          <input
-                            defaultValue={sec.title}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value && value !== sec.title) {
-                                handleUpdateTemplateSection(sec.id, { title: value });
-                              }
-                            }}
-                            placeholder="Section title"
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
-                          />
-                          <textarea
-                            defaultValue={sec.instructions || ""}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value !== (sec.instructions || "")) {
-                                handleUpdateTemplateSection(sec.id, { instructions: value || null });
-                              }
-                            }}
-                            placeholder="Section description"
-                            rows={2}
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                          />
-	                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
-	                          </div>
-                        </div>
-                      </Card>
-                    )}
-                    <div style={{ marginTop: 12 }}>
-                      {sec.items.map((item) => renderTemplatePreviewItem(item, isDraft))}
-                    </div>
+                      {previewTemplate.kind === "review" ? "Add Prompt" : "Add Task"}
+                    </Btn>
                   </div>
                 )}
-              </Card>
-            );
-	          }) : previewTemplate.sections.map(sec => {
-	            const isOpen = templateManageStructure || expandedSections[`tpl_${sec.id}`];
-            const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
-            const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
-            return (
-              <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
-                <button onClick={() => toggleSection(`tpl_${sec.id}`)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.15s" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-                    <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}><I.ChevronRight /></span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sec.title}</div>
-                      {(sec.day_number || sec.time_block_start) && <div style={{ fontSize: 11, color: C.textMut }}>
-                        {formatTrainingTimeRange(sec.time_block_start, sec.time_block_end) || `Day ${sec.day_number}`}
-                      </div>}
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600, flexShrink: 0 }}>
-                    {sec.children.length > 0 ? `${sec.children.length} module${sec.children.length !== 1 ? "s" : ""}` : ""}{sec.children.length > 0 && totalItems > 0 ? " — " : ""}{totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : ""}
-                  </span>
-                </button>
+              </div>
 
-                {isOpen && (
-                  <div style={{ padding: "0 16px 14px" }}>
-                    {isDraft && (
-                      <Card style={{ padding: 12, marginTop: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          <input
-                            defaultValue={sec.title}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value && value !== sec.title) {
-                                handleUpdateTemplateSection(sec.id, { title: value });
-                              }
-                            }}
-                            placeholder="Section title"
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}
-                          />
-                          <textarea
-                            defaultValue={sec.instructions || ""}
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value !== (sec.instructions || "")) {
-                                handleUpdateTemplateSection(sec.id, { instructions: value || null });
-                              }
-                            }}
-                            placeholder="Section description"
-                            rows={2}
-                            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                          />
-	                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
-	                            <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
-	                            <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+              {savingTemplateFieldCount > 0 && (
+                <div className="template-builder-readiness-card is-warning" style={{ marginBottom: 12, fontSize: 12, fontWeight: 900, color: C.warn }}>Saving template edits…</div>
+              )}
+              {previewTemplate.version?.status === "draft" && !templatePublishValidation.valid && (
+                <div className="template-builder-readiness-card is-warning" style={{ marginBottom: 12, fontSize: 12, fontWeight: 850, color: C.warn, lineHeight: 1.5 }}>
+                  Fix before publishing: {templatePublishValidation.errors.join(" ")}
+                </div>
+              )}
+
+              {previewTemplate.sections.length === 0 ? (
+                <div className="template-builder-empty">
+                  <div className="template-builder-empty-title">Start with a section</div>
+                  <div className="template-builder-empty-copy">Drafts become publishable after they contain at least one section and one {previewTemplate.kind === "review" ? "prompt" : "task"}.</div>
+                  {canManageTemplates && previewTemplate.version?.status === "draft" && <Btn variant="primary" size="sm" onClick={() => handleAddTemplateSection(null)}>Add Section</Btn>}
+                </div>
+              ) : previewTemplate.kind === "review" ? previewTemplate.sections.map((sec, index) => {
+                const isOpen = templateManageStructure || expandedSections[`review_${sec.id}`];
+                const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
+                return (
+                  <div key={sec.id} className="template-builder-section-card">
+                    <button className={`template-builder-section-summary ${isOpen ? "is-open" : ""}`} onClick={() => toggleSection(`review_${sec.id}`)}>
+                      <div className="template-builder-section-left">
+                        <div className="template-builder-section-index">{index + 1}</div>
+                        <div>
+                          <div className="template-builder-section-title">{sec.title || "Untitled section"}</div>
+                          {sec.instructions && <div className="template-builder-section-description">{sec.instructions}</div>}
+                        </div>
+                      </div>
+                      <div className="template-builder-chip-row">
+                        <span className="template-builder-pill is-muted">{sec.items.length} prompt{sec.items.length !== 1 ? "s" : ""}</span>
+                        <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="template-builder-section-body">
+                        {isDraft && (
+                          <div className="template-builder-config-card">
+                            <div className="template-builder-field-grid">
+                              <label className="template-builder-field">
+                                <span>Section title</span>
+                                <input
+                                  defaultValue={sec.title}
+                                  onBlur={(event) => commitRequiredTemplateTextInput(
+                                    event,
+                                    sec.title,
+                                    "Section title",
+                                    (value) => handleUpdateTemplateSection(sec.id, { title: value })
+                                  )}
+                                  placeholder="Section title"
+                                />
+                              </label>
+                              <label className="template-builder-field is-wide">
+                                <span>Section description</span>
+                                <textarea
+                                  defaultValue={sec.instructions || ""}
+                                  onBlur={(event) => {
+                                    const value = event.target.value.trim();
+                                    if (value !== (sec.instructions || "")) {
+                                      handleUpdateTemplateSection(sec.id, { instructions: value || null });
+                                    }
+                                  }}
+                                  placeholder="Section description"
+                                  rows={2}
+                                />
+                              </label>
+                            </div>
+                            <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Prompt</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 12 }}>{sec.items.map((item) => renderTemplatePreviewItem(item, isDraft))}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }) : previewTemplate.sections.map((sec, index) => {
+                const isOpen = templateManageStructure || expandedSections[`tpl_${sec.id}`];
+                const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
+                const isDraft = canManageTemplates && previewTemplate.version?.status === "draft";
+                return (
+                  <div key={sec.id} className="template-builder-section-card">
+                    <button className={`template-builder-section-summary ${isOpen ? "is-open" : ""}`} onClick={() => toggleSection(`tpl_${sec.id}`)}>
+                      <div className="template-builder-section-left">
+                        <div className="template-builder-section-index">{index + 1}</div>
+                        <div>
+                          <div className="template-builder-section-title">{sec.title || "Untitled section"}</div>
+                          <div className="template-builder-section-description">
+                            {formatTrainingTimeRange(sec.time_block_start, sec.time_block_end) || (sec.day_number ? `Day ${sec.day_number}` : sec.instructions || "Training section")}
                           </div>
                         </div>
-                      </Card>
-                    )}
-                    {sec.children.map(child => (
-                      <div key={child.id} style={{ marginTop: 12 }}>
-                        {isDraft ? (
-                          <Card style={{ padding: 12, background: C.surface, border: `1px solid ${C.borderLight}` }}>
-                            <div style={{ display: "grid", gap: 10 }}>
-                              <input
-                                defaultValue={child.title}
-                                onBlur={(event) => {
-                                  const value = event.target.value.trim();
-                                  if (value && value !== child.title) {
-                                    handleUpdateTemplateSection(child.id, { title: value });
-                                  }
-                                }}
-                                placeholder="Module title"
-                                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: C.pri }}
-                              />
-                              <textarea
-                                defaultValue={child.instructions || ""}
-                                onBlur={(event) => {
-                                  const value = event.target.value.trim();
-                                  if (value !== (child.instructions || "")) {
-                                    handleUpdateTemplateSection(child.id, { instructions: value || null });
-                                  }
-                                }}
-                                placeholder="Module description"
-                                rows={2}
-                                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
-                              />
-	                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, -1)}>Move Up</Btn>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, 1)}>Move Down</Btn>
-	                                <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
-	                                <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
-	                              </div>
-                              {child.items.map((item) => renderTemplatePreviewItem(item, true))}
-                            </div>
-                          </Card>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{child.title}</div>
-                            {child.items.map((item) => renderTemplatePreviewItem(item))}
-                          </>
-                        )}
                       </div>
-                    ))}
-                    {sec.directItems.map(item => renderTemplatePreviewItem(item, isDraft))}
-                    {!isDraft && sec.instructions && <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontStyle: "italic" }}>{sec.instructions}</div>}
+                      <div className="template-builder-chip-row">
+                        <span className="template-builder-pill is-muted">{sec.children.length} module{sec.children.length !== 1 ? "s" : ""}</span>
+                        <span className="template-builder-pill is-muted">{totalItems} task{totalItems !== 1 ? "s" : ""}</span>
+                        <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}><I.ChevronRight /></span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="template-builder-section-body">
+                        {isDraft && (
+                          <div className="template-builder-config-card">
+                            <div className="template-builder-field-grid">
+                              <label className="template-builder-field">
+                                <span>Section title</span>
+                                <input
+                                  defaultValue={sec.title}
+                                  onBlur={(event) => commitRequiredTemplateTextInput(
+                                    event,
+                                    sec.title,
+                                    "Section title",
+                                    (value) => handleUpdateTemplateSection(sec.id, { title: value })
+                                  )}
+                                  placeholder="Section title"
+                                />
+                              </label>
+                              <label className="template-builder-field is-wide">
+                                <span>Section instructions</span>
+                                <textarea
+                                  defaultValue={sec.instructions || ""}
+                                  onBlur={(event) => {
+                                    const value = event.target.value.trim();
+                                    if (value !== (sec.instructions || "")) {
+                                      handleUpdateTemplateSection(sec.id, { instructions: value || null });
+                                    }
+                                  }}
+                                  placeholder="Section instructions"
+                                  rows={2}
+                                />
+                              </label>
+                            </div>
+                            <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, -1)}>Move Up</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(sec.id, 1)}>Move Down</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(sec.id)}>Add Module</Btn>
+                              <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(sec.id)}>Add Task</Btn>
+                              <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(sec.id)}>Delete Section</Btn>
+                            </div>
+                          </div>
+                        )}
+
+                        {sec.children.map((child) => (
+                          <div key={child.id} className="template-builder-config-card">
+                            {isDraft ? (
+                              <>
+                                <div className="template-builder-field-grid">
+                                  <label className="template-builder-field">
+                                    <span>Module title</span>
+                                    <input
+                                      defaultValue={child.title}
+                                      onBlur={(event) => commitRequiredTemplateTextInput(
+                                        event,
+                                        child.title,
+                                        "Module title",
+                                        (value) => handleUpdateTemplateSection(child.id, { title: value })
+                                      )}
+                                      placeholder="Module title"
+                                    />
+                                  </label>
+                                  <label className="template-builder-field is-wide">
+                                    <span>Module instructions</span>
+                                    <textarea
+                                      defaultValue={child.instructions || ""}
+                                      onBlur={(event) => {
+                                        const value = event.target.value.trim();
+                                        if (value !== (child.instructions || "")) {
+                                          handleUpdateTemplateSection(child.id, { instructions: value || null });
+                                        }
+                                      }}
+                                      placeholder="Module instructions"
+                                      rows={2}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="template-builder-inline-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, -1)}>Move Up</Btn>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleMoveTemplateSection(child.id, 1)}>Move Down</Btn>
+                                  <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateItem(child.id)}>Add Task</Btn>
+                                  <Btn variant="ghost" size="sm" onClick={() => handleDeleteTemplateSection(child.id)}>Delete Module</Btn>
+                                </div>
+                                {child.items.map((item) => renderTemplatePreviewItem(item, true))}
+                              </>
+                            ) : (
+                              <>
+                                <div className="template-builder-section-title" style={{ fontSize: 13 }}>{child.title}</div>
+                                {child.instructions && <div className="template-builder-section-description">{child.instructions}</div>}
+                                {child.items.map((item) => renderTemplatePreviewItem(item))}
+                              </>
+                            )}
+                          </div>
+                        ))}
+                        {sec.directItems.map((item) => renderTemplatePreviewItem(item, isDraft))}
+                        {!isDraft && sec.instructions && <div className="template-builder-section-description" style={{ marginTop: 10 }}>{sec.instructions}</div>}
+                      </div>
+                    )}
                   </div>
-                )}
-              </Card>
-            );
-          })}
+                );
+              })}
+            </main>
+
+            <aside className="template-builder-inspector">
+              <div className="template-builder-panel">
+                <div className="template-builder-panel-header">
+                  <div>
+                    <div className="template-builder-panel-title">Publish Readiness</div>
+                    <div className="template-builder-panel-copy">Validation and save state for this version.</div>
+                  </div>
+                  <Badge color={previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "warning" : "info"}>
+                    {previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "Needs fixes" : "Ready"}
+                  </Badge>
+                </div>
+                <div className={`template-builder-readiness-card ${previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "is-warning" : "is-ready"}`}>
+                  <div style={{ fontSize: 13, fontWeight: 950, color: C.text }}>
+                    {templateActionPending ? "Saving changes" : previewTemplate.version?.status === "draft" && !templatePublishValidation.valid ? "Fix validation messages" : "Publish checks clear"}
+                  </div>
+                  <div className="template-builder-panel-copy" style={{ marginTop: 5 }}>
+                    {templatePublishValidation.errors.length > 0 ? templatePublishValidation.errors.join(" ") : "No blocking issues detected for the selected version."}
+                  </div>
+                </div>
+              </div>
+
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <div className="template-builder-panel">
+                  <div className="template-builder-panel-header">
+                    <div>
+                      <div className="template-builder-panel-title">Bulk Configuration</div>
+                      <div className="template-builder-panel-copy">Apply common settings across every visible {previewTemplate.kind === "review" ? "prompt" : "task"} in this draft.</div>
+                    </div>
+                  </div>
+                  {previewTemplate.kind === "review" ? (
+                    <div className="template-builder-chip-row">
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "long_text", options: null }, "All prompts set to long text")}>Long text</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "short_text", options: null }, "All prompts set to short text")}>Short text</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "rating", options: ["Exceeds Expectations", "Meets Expectations", "Needs Improvement"] }, "All prompts set to rating")}>Rating</Btn>
+                    </div>
+                  ) : (
+                    <div className="template-builder-chip-row">
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: true }, "All tasks marked required")}>All required</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ required: false }, "All tasks marked optional")}>All optional</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ item_type: "checkbox" }, "All tasks set to checklist")}>Checklist</Btn>
+                      <Btn variant="ghost" size="sm" onClick={() => handleBulkUpdateTemplateItems({ completion_mode: "pass_fail" }, "All tasks set to pass / fail")}>Pass / fail</Btn>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {canManageTemplates && previewTemplate.version?.status === "draft" && (
+                <div className="template-builder-panel">
+                  <div className="template-builder-panel-header">
+                    <div>
+                      <div className="template-builder-panel-title">Quick Add</div>
+                      <div className="template-builder-panel-copy">Create structure without losing your place in the canvas.</div>
+                    </div>
+                  </div>
+                  <div className="template-builder-chip-row">
+                    <Btn variant="secondary" size="sm" onClick={() => handleAddTemplateSection(null)}>Section</Btn>
+                    <Btn
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        const targetSection = previewTemplate.kind === "review" ? previewTemplate.sections[0] : (previewTemplate.sections[0]?.children?.[0] || previewTemplate.sections[0]);
+                        if (targetSection?.id) handleAddTemplateItem(targetSection.id);
+                        else handleAddTemplateSection(null);
+                      }}
+                    >
+                      {previewTemplate.kind === "review" ? "Prompt" : "Task"}
+                    </Btn>
+                  </div>
+                </div>
+              )}
+            </aside>
+          </div>
         </div>
       )}
 
@@ -24213,7 +26969,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <Modal title="Labor Settings" onClose={() => setShowHierarchyManager(false)}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-              Approved titles and acronyms drive Labor Management position displays. Drag the list into the default labor-table order. Roster, Training, Performance Reviews, Attendance, and Capacity Planning use this order until a manager chooses another sort.
+              Approved titles and acronyms drive Labor Management position displays. Drag the list into the default labor-table order. Roster, Compliance, Training, Attendance, and Capacity Planning use this order until a manager chooses another sort.
             </div>
             <div className="labor-roster-pdf-settings">
               <div className="labor-roster-pdf-settings-header">
@@ -24473,6 +27229,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {laborEmployeeEditorModal}
       {employeeNoteEditorModal}
       {attachmentPreviewModal}
+      {complianceReviewEditorModalView}
+      {complianceRequirementEditorModalView}
 
       {canAccessEmployeeNotes && showGlobalNoteModal && (
         <Modal title="Add Employee Note" onClose={() => setShowGlobalNoteModal(false)}>
@@ -24519,7 +27277,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   onChange={(value) => setCreateTemplateKind(value || "training")}
                   options={[
                     { value: "training", label: "Training Template" },
-                    { value: "review", label: "30 / 60 / 90 Review Template" },
+                    { value: "review", label: "Policy Review Template" },
                   ]}
                 />
               </div>
@@ -24540,11 +27298,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 </div>
               ) : (
                 <div style={{ paddingTop: 24, fontSize: 12, color: C.textMut }}>
-                  Review templates open directly into the full-page 30 / 60 / 90 workflow.
+                  Review templates open directly into the full-page policy checkpoint workflow.
                 </div>
               )}
             </div>
-            <Inp label="Template Name" value={createTemplateName} onChange={setCreateTemplateName} placeholder={createTemplateKind === "review" ? "Assistant Manager 30 / 60 / 90 Day Review" : "Bathing Certification"} />
+            <Inp label="Template Name" value={createTemplateName} onChange={setCreateTemplateName} placeholder={createTemplateKind === "review" ? "Assistant Manager Policy Review" : "Bathing Certification"} />
             <Inp
               label="Role Scopes"
               value={createTemplateRoleScopesText}

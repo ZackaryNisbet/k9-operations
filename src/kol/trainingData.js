@@ -433,42 +433,7 @@ export const LABOR_TRAINING_REQUIREMENT_SLUGS = {
 
 export const LABOR_TRAINING_REQUIREMENT_PDF_ACCEPT = "application/pdf";
 
-export const LABOR_TRAINING_REQUIREMENT_DEFINITIONS = [
-  {
-    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE,
-    label: "Incite Modules",
-    helper: "Manual completion with uploaded PDF evidence.",
-    evidenceMode: "pdf",
-    frequency: "one_time",
-    order: 10,
-  },
-  {
-    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.CPR,
-    label: "CPR Certification",
-    helper: "Annual certification with a PDF upload or certificate link.",
-    evidenceMode: "pdf_or_url",
-    frequency: "annual",
-    order: 20,
-  },
-  {
-    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_1,
-    label: "PPBC Level 1",
-    helper: "Online certification required for non-PCT and non-CSR positions.",
-    evidenceMode: "pdf",
-    frequency: "one_time",
-    ppbcOnly: true,
-    order: 30,
-  },
-  {
-    slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_2,
-    label: "PPBC Level 2",
-    helper: "Online certification required for non-PCT and non-CSR positions.",
-    evidenceMode: "pdf",
-    frequency: "one_time",
-    ppbcOnly: true,
-    order: 40,
-  },
-];
+export const LABOR_TRAINING_REQUIREMENT_DEFINITIONS = [];
 
 export function isUuid(value) {
   return UUID_RE.test(String(value || "").trim());
@@ -536,18 +501,220 @@ export function normalizeLaborTrainingPosition(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeLaborPolicyToken(value = "") {
+  return normalizeLaborTrainingPosition(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function humanizeLaborPolicySlug(value = "") {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+}
+
+function isDynamicLaborComplianceRequirementRow(row = {}) {
+  if (!row || typeof row !== "object") return false;
+  return String(row.requirement_kind || "") === "training"
+    || Object.prototype.hasOwnProperty.call(row, "evidence_policy")
+    || Object.prototype.hasOwnProperty.call(row, "display_order")
+    || Object.prototype.hasOwnProperty.call(row, "display_group")
+    || Object.prototype.hasOwnProperty.call(row, "due_rule")
+    || Object.prototype.hasOwnProperty.call(row, "role_applicability")
+    || Object.prototype.hasOwnProperty.call(row, "roleApplicability");
+}
+
+function readLaborPolicyDueRule(row = {}) {
+  const dueRule = row?.due_rule || row?.dueRule || row?.metadata?.due_rule || row?.metadata?.dueRule || {};
+  return dueRule && typeof dueRule === "object" ? dueRule : {};
+}
+
+function mapLaborPolicyEvidenceMode(row = {}) {
+  const explicit = String(row.evidenceMode || row.evidence_mode || row.metadata?.evidenceMode || row.metadata?.evidence_mode || "").trim();
+  if (explicit) return explicit;
+
+  const policy = String(row.evidence_policy || row.evidencePolicy || row.metadata?.evidence_policy || row.metadata?.evidencePolicy || "").trim();
+  switch (policy) {
+    case "file_required":
+      return "pdf";
+    case "url_or_reference":
+      return "pdf_or_url";
+    case "checkbox_only":
+      return "none";
+    case "internal_module":
+      return "internal_module";
+    default:
+      return "pdf";
+  }
+}
+
+function readLaborPolicyFrequency(row = {}) {
+  const dueRule = readLaborPolicyDueRule(row);
+  return String(
+    row.frequency
+    || row.renewal_frequency
+    || row.metadata?.frequency
+    || dueRule.frequency
+    || dueRule.renewal_frequency
+    || (row.renewal_due_date_required ? "renewing" : "one_time")
+  ).trim() || "one_time";
+}
+
+function getLaborPolicyApplicabilityRows(row = {}) {
+  const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  return [
+    row.role_applicability,
+    row.roleApplicability,
+    row.applicable_roles,
+    row.applicableRoles,
+    row.applicable_role_keys,
+    row.applicableRoleKeys,
+    row.position_titles,
+    row.positionTitles,
+    metadata.role_applicability,
+    metadata.roleApplicability,
+    metadata.applicable_roles,
+    metadata.applicableRoles,
+    metadata.applicable_role_keys,
+    metadata.applicableRoleKeys,
+    metadata.position_titles,
+    metadata.positionTitles,
+  ]
+    .flatMap((value) => (Array.isArray(value) ? value : value ? [value] : []))
+    .filter((value) => value !== null && value !== undefined && value !== "");
+}
+
+function getLaborEmployeeRoleTokens(employee = {}) {
+  const values = [
+    employee?.position_title,
+    employee?.position,
+    employee?.target_role,
+    employee?.role,
+    employee?.role_key,
+    employee?.position_group,
+    employee?.metadata?.position_title,
+    employee?.metadata?.position,
+    employee?.metadata?.target_role,
+    employee?.metadata?.role,
+    employee?.metadata?.role_key,
+    employee?.metadata?.position_group,
+  ].filter(Boolean);
+
+  const tokens = new Set();
+  values.forEach((value) => {
+    const text = normalizeLaborTrainingPosition(value).toLowerCase();
+    const token = normalizeLaborPolicyToken(value);
+    if (text) tokens.add(text);
+    if (token) tokens.add(token);
+  });
+  return tokens;
+}
+
+function laborApplicabilityEntryValue(entry) {
+  if (entry && typeof entry === "object") {
+    return entry.position_title
+      || entry.positionTitle
+      || entry.role_title
+      || entry.roleTitle
+      || entry.role_key
+      || entry.roleKey
+      || entry.position_group
+      || entry.positionGroup
+      || entry.applies_to
+      || entry.appliesTo
+      || entry.value
+      || entry.name
+      || "";
+  }
+  return entry;
+}
+
+function laborApplicabilityEntryIsApplicable(entry) {
+  if (!entry || typeof entry !== "object") return true;
+  if (entry.is_applicable === false || entry.isApplicable === false) return false;
+  if (entry.applies === false || entry.required === false) return false;
+  if (entry.exclude === true || entry.excluded === true || entry.is_excluded === true || entry.isExcluded === true) return false;
+  return true;
+}
+
+function laborApplicabilityEntryMatchesEmployee(entry, employeeTokens) {
+  const rawValue = laborApplicabilityEntryValue(entry);
+  const text = normalizeLaborTrainingPosition(rawValue).toLowerCase();
+  const token = normalizeLaborPolicyToken(rawValue);
+  if (!text && !token) return false;
+  if (["*", "all", "any", "all_roles", "all_positions"].includes(text) || ["all", "any", "all_roles", "all_positions"].includes(token)) {
+    return true;
+  }
+  return employeeTokens.has(text) || employeeTokens.has(token);
+}
+
+function isLaborPolicyRequirementApplicableToEmployee(row = {}, employee = {}) {
+  const applicabilityRows = getLaborPolicyApplicabilityRows(row);
+  if (applicabilityRows.length === 0) return true;
+
+  const employeeTokens = getLaborEmployeeRoleTokens(employee);
+  const matchingRows = applicabilityRows.filter((entry) => laborApplicabilityEntryMatchesEmployee(entry, employeeTokens));
+  if (matchingRows.some((entry) => !laborApplicabilityEntryIsApplicable(entry))) return false;
+
+  const requiredRows = applicabilityRows.filter((entry) => laborApplicabilityEntryIsApplicable(entry));
+  if (requiredRows.length === 0) return true;
+  return matchingRows.some((entry) => laborApplicabilityEntryIsApplicable(entry));
+}
+
+function getDynamicLaborPolicyRequirementRows({ policyRequirements = null, requirements = [] } = {}) {
+  const explicitRows = (Array.isArray(policyRequirements) ? policyRequirements : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => !row.requirement_kind || String(row.requirement_kind) === "training");
+  if (explicitRows.length > 0) return explicitRows;
+
+  const dynamicRows = (Array.isArray(requirements) ? requirements : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => isDynamicLaborComplianceRequirementRow(row))
+    .filter((row) => !row.requirement_kind || String(row.requirement_kind) === "training");
+  return dynamicRows;
+}
+
+export function buildLaborTrainingRequirementDefinitionsFromPolicy(policyRequirements = [], employee = {}) {
+  return (Array.isArray(policyRequirements) ? policyRequirements : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => !row.requirement_kind || String(row.requirement_kind) === "training")
+    .filter((row) => row.is_active !== false && row.active !== false)
+    .filter((row) => isLaborPolicyRequirementApplicableToEmployee(row, employee))
+    .map((row, index) => {
+      const slug = String(row.slug || row.requirement_slug || row.key || row.id || "").trim();
+      const dueRule = readLaborPolicyDueRule(row);
+      const order = Number(row.display_order ?? row.displayOrder ?? row.order ?? row.metadata?.display_order ?? row.metadata?.displayOrder ?? index);
+      return {
+        slug,
+        label: String(row.label || row.display_label || row.displayLabel || row.name || row.title || humanizeLaborPolicySlug(slug) || "Training Requirement").trim(),
+        helper: String(row.helper || row.help_text || row.helpText || row.description || row.metadata?.helper || row.metadata?.description || "").trim(),
+        evidenceMode: mapLaborPolicyEvidenceMode(row),
+        evidencePolicy: row.evidence_policy || row.evidencePolicy || row.metadata?.evidence_policy || row.metadata?.evidencePolicy || null,
+        frequency: readLaborPolicyFrequency(row),
+        dueRule,
+        order: Number.isFinite(order) ? order : index,
+        requirement: row,
+        requirementId: row.id || row.requirement_id || null,
+        policyRequirement: row,
+      };
+    })
+    .filter((definition) => definition.slug)
+    .sort((a, b) => a.order - b.order || String(a.label).localeCompare(String(b.label)));
+}
+
 export function requiresPpbcTrainingForPosition(positionTitle = "") {
   const normalized = normalizeLaborTrainingPosition(positionTitle);
   if (!normalized) return false;
   return !/(pet\s*care\s*technician|\bpct\b|customer\s*service\s*representative|\bcsr\b)/i.test(normalized);
 }
 
-export function getLaborTrainingRequirementDefinitionsForEmployee(employee = {}) {
-  const positionTitle = employee?.position_title || employee?.position || employee?.target_role || "";
-  const ppbcRequired = requiresPpbcTrainingForPosition(positionTitle);
-  return LABOR_TRAINING_REQUIREMENT_DEFINITIONS
-    .filter((definition) => !definition.ppbcOnly || ppbcRequired)
-    .sort((a, b) => a.order - b.order);
+export function getLaborTrainingRequirementDefinitionsForEmployee(employee = {}, policyRequirements = null) {
+  const hasDynamicPolicyRequirements = Array.isArray(policyRequirements) && policyRequirements.length > 0;
+  const dynamicDefinitions = buildLaborTrainingRequirementDefinitionsFromPolicy(policyRequirements || [], employee);
+  if (hasDynamicPolicyRequirements) return dynamicDefinitions;
+  return [];
 }
 
 export function inferLaborTrainingRequirementEvidenceMimeType(file = {}) {
@@ -694,7 +861,7 @@ function findCertificationForRequirement(certifications = [], requirement = {}, 
   return matchingRows[0] || null;
 }
 
-function findRequirementDocument({ certification = {}, documents = [], requirementSlug = "" } = {}) {
+function findRequirementDocument({ certification = {}, documents = [], requirementSlug = "", requirementId = null } = {}) {
   const rows = (Array.isArray(documents) ? documents : []).filter((document) => !isLaborEmployeeDocumentDeleted(document));
   if (certification?.labor_employee_document_id) {
     const directMatch = rows.find((document) => document?.id === certification.labor_employee_document_id);
@@ -705,37 +872,67 @@ function findRequirementDocument({ certification = {}, documents = [], requireme
     .filter((document) => {
       if (!document || typeof document !== "object") return false;
       if (String(document.document_type || "") !== "training_requirement_evidence") return false;
-      return String(document.metadata?.requirement_slug || "") === requirementSlug;
+      const metadata = document.metadata && typeof document.metadata === "object" ? document.metadata : {};
+      if (requirementId && [
+        metadata.labor_compliance_requirement_id,
+        metadata.policy_requirement_id,
+        metadata.requirement_id,
+      ].some((value) => String(value || "") === String(requirementId))) {
+        return true;
+      }
+      return String(metadata.requirement_slug || "") === requirementSlug;
     })
     .sort((a, b) => new Date(b.uploaded_at || 0) - new Date(a.uploaded_at || 0))[0] || null;
+}
+
+function laborTrainingRequirementHasEvidence({ definition = {}, certification = {}, evidenceDocument = null } = {}) {
+  const externalUrl = String(certification?.external_document_url || certification?.reference_url || certification?.metadata?.external_document_url || "").trim();
+  const hasDocumentEvidence = Boolean(evidenceDocument);
+  if (definition.evidenceMode === "pdf_or_url") return Boolean(hasDocumentEvidence || externalUrl);
+  if (definition.evidenceMode === "pdf" || definition.evidenceMode === "file_required") return hasDocumentEvidence;
+  return true;
 }
 
 export function buildEmployeeTrainingRequirementRows({
   employee = {},
   certifications = [],
   requirements = [],
+  policyRequirements = null,
   documents = [],
   today = new Date(),
 } = {}) {
   const todayKey = getIsoDateKey(today) || getIsoDateKey(new Date());
+  const dynamicPolicyRequirements = getDynamicLaborPolicyRequirementRows({ policyRequirements, requirements });
+  const requirementRows = [
+    ...(Array.isArray(requirements) ? requirements : []),
+    ...(Array.isArray(policyRequirements) ? policyRequirements : []),
+  ].filter((requirement) => requirement && typeof requirement === "object");
   const requirementRowsBySlug = Object.fromEntries(
-    (Array.isArray(requirements) ? requirements : []).map((requirement) => [requirement.slug, requirement])
+    requirementRows.map((requirement) => [requirement.slug, requirement])
+  );
+  const requirementRowsById = Object.fromEntries(
+    requirementRows
+      .filter((requirement) => requirement.id || requirement.requirement_id)
+      .map((requirement) => [String(requirement.id || requirement.requirement_id), requirement])
   );
 
-  return getLaborTrainingRequirementDefinitionsForEmployee(employee).map((definition) => {
-    const requirement = requirementRowsBySlug[definition.slug] || null;
+  return getLaborTrainingRequirementDefinitionsForEmployee(employee, dynamicPolicyRequirements).map((definition) => {
+    const requirement = definition.requirement
+      || (definition.requirementId ? requirementRowsById[String(definition.requirementId)] : null)
+      || requirementRowsBySlug[definition.slug]
+      || null;
+    const requirementId = definition.requirementId || requirement?.id || requirement?.requirement_id || null;
     const certification = findCertificationForRequirement(certifications, requirement, definition);
     const evidenceDocument = findRequirementDocument({
       certification,
       documents,
       requirementSlug: definition.slug,
+      requirementId,
     });
-    const externalUrl = String(certification?.external_document_url || "").trim();
-    const hasDocumentEvidence = Boolean(evidenceDocument);
-    const hasEvidence = definition.evidenceMode === "pdf_or_url"
-      ? Boolean(hasDocumentEvidence || externalUrl)
-      : hasDocumentEvidence;
-    const isExpired = Boolean(certification?.expires_on && getIsoDateKey(certification.expires_on) < todayKey);
+    const externalUrl = String(certification?.external_document_url || certification?.reference_url || certification?.metadata?.external_document_url || "").trim();
+    const hasEvidence = laborTrainingRequirementHasEvidence({ definition, certification, evidenceDocument });
+    const expirationDate = certification?.expires_on || certification?.renewal_due_date || certification?.metadata?.renewal_due_date || null;
+    const isExpired = Boolean(expirationDate && getIsoDateKey(expirationDate) < todayKey);
     const isComplete = Boolean(certification?.completed_on && hasEvidence && !isExpired);
     const status = isComplete
       ? "complete"
@@ -748,7 +945,7 @@ export function buildEmployeeTrainingRequirementRows({
     return {
       ...definition,
       requirement,
-      requirementId: requirement?.id || null,
+      requirementId,
       certification,
       evidenceDocument,
       externalUrl,

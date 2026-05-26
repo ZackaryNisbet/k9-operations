@@ -9,6 +9,7 @@ import { Btn, CalendarPicker } from "../../shared/ui";
 import { supabase } from "../../supabaseClient";
 import { buildSchedulingDateRange, useSchedulingData } from "../../hooks/useSchedulingData";
 import { useWeatherData } from "../../hooks/useWeatherData";
+import { useWeatherDisplaySettings } from "../../hooks/useWeatherDisplaySettings";
 import {
   TASK_COLORS,
   SHIFT_POSITION_OPTIONS,
@@ -1787,6 +1788,7 @@ function getInitialSchedulingTab() {
 
 export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const locationId = profile?.location_id;
+  const { showSchedulingWeather } = useWeatherDisplaySettings(locationId || "cherry-hill");
   const today = todayStr();
   const [viewStartDate, setViewStartDate] = useState(getMondayStart(today));
   const [matrixRangeMode, setMatrixRangeMode] = useState("week");
@@ -2108,16 +2110,17 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
     demandRangeDates.length <= 370 ? demandRange.startDate : visibleWeatherRange.startDate,
     demandRangeDates.length <= 370 ? demandRange.endDate : visibleWeatherRange.endDate,
     {
-      enabled: activeSchedulingTab === "volume" && Boolean(visibleWeatherRange.startDate && visibleWeatherRange.endDate),
+      enabled: showSchedulingWeather && activeSchedulingTab === "volume" && Boolean(visibleWeatherRange.startDate && visibleWeatherRange.endDate),
     },
   );
   const weatherRowsByDate = useMemo(() => {
+    if (!showSchedulingWeather) return new Map();
     return new Map((weatherRows || []).map((row) => [String(row.weather_date || "").slice(0, 10), row]));
-  }, [weatherRows]);
+  }, [showSchedulingWeather, weatherRows]);
   const attachWeatherToDay = useCallback((day) => ({
     ...day,
-    weather: weatherRowsByDate.get(String(day?.date || "").slice(0, 10)) || null,
-  }), [weatherRowsByDate]);
+    weather: showSchedulingWeather ? weatherRowsByDate.get(String(day?.date || "").slice(0, 10)) || null : null,
+  }), [showSchedulingWeather, weatherRowsByDate]);
   const visibleMatrixDaysWithWeather = useMemo(() => (visibleMatrixDays || []).map(attachWeatherToDay), [attachWeatherToDay, visibleMatrixDays]);
   const workbookDaysWithWeather = useMemo(() => (workbookDays || []).map(attachWeatherToDay), [attachWeatherToDay, workbookDays]);
   const selectedDay = workbookDays[selectedDayIdx] || workbookDays[0];
@@ -2129,7 +2132,10 @@ export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
   const narrativeDays = matrixRangeMode === "week" ? workbookDays : visibleMatrixDays;
   const schedulingNarrativeText = useMemo(() => buildSchedulingNarrative(narrativeDays), [narrativeDays]);
   const schedulingNarrativeHtml = useMemo(() => buildSchedulingNarrativeHtml(narrativeDays), [narrativeDays]);
-  const matrixRowGroups = useMemo(() => buildDemandMatrixRowGroups(visibleMatrixDaysWithWeather), [visibleMatrixDaysWithWeather]);
+  const matrixRowGroups = useMemo(() => {
+    const groups = buildDemandMatrixRowGroups(visibleMatrixDaysWithWeather);
+    return showSchedulingWeather ? groups : groups.filter((group) => group.section !== "Weather Data");
+  }, [showSchedulingWeather, visibleMatrixDaysWithWeather]);
   const allMatrixGroupsExpanded = matrixRowGroups.length > 0 && matrixRowGroups.every((group) => expandedMatrixGroups.has(group.section));
   useEffect(() => {
     if (appliedDefaultMatrixGroupsRef.current) return;

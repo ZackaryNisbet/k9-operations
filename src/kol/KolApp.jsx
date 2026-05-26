@@ -145,7 +145,7 @@ LITE_SLUG_TO_PAGE["client-management"] = "client-management";
 const LITE_LABOR_TAB_SLUGS = {
   home: "roster",
   training: "training",
-  "performance-reviews": "performance-reviews",
+  "performance-reviews": "compliance",
   templates: "templates",
   attendance: "attendance",
   interviews: "interviews",
@@ -157,6 +157,7 @@ const LITE_LABOR_SLUG_TO_TAB = {
   home: "home",
   roster: "home",
   training: "training",
+  compliance: "performance-reviews",
   "performance-reviews": "performance-reviews",
   templates: "templates",
   attendance: "attendance",
@@ -184,6 +185,9 @@ function buildLiteUrl(locSlug, pg, prms, dataRef) {
     }
     if (laborTab === "training" && prms?.trainingRecordId) {
       return `${laborBase}/training/${encodeURIComponent(prms.trainingRecordId)}`;
+    }
+    if (laborTab === "performance-reviews" && prms?.complianceView && prms.complianceView !== "employees") {
+      return `${laborBase}/compliance/${encodeURIComponent(prms.complianceView)}`;
     }
     if (laborTab === "attendance" && prms?.attendanceView === "summary") return `${laborBase}/attendance/summary`;
     if (laborTab === "hour-analysis" && prms?.capacityPlanningView === "labor-model") return `${laborBase}/capacity-planning/labor-model`;
@@ -268,6 +272,9 @@ function parseLiteUrl(pathname, dataRef) {
     }
     if (laborTab === "attendance" && parts[3] === "summary") {
       params.attendanceView = "summary";
+    }
+    if (laborTab === "performance-reviews" && parts[3]) {
+      params.complianceView = parts[3];
     }
     if (laborTab === "hour-analysis") {
       params.capacityPlanningView = parts[3] === "labor-model" || tabSlug === "labor-model" ? "labor-model" : "staffing-capacity";
@@ -426,7 +433,7 @@ const PAGE_PERMISSION_MAP = {
 const LABOR_TAB_PERMISSION_MAP = {
   home: "Labor Roster",
   training: "Labor Roster",
-  "performance-reviews": "Labor Performance Reviews",
+  "performance-reviews": "Labor Compliance View",
   templates: "Labor Templates",
   attendance: "Labor Attendance",
   interviews: "Labor Interviews",
@@ -467,6 +474,10 @@ function canAccessLitePage(profile, page, params = {}) {
   if (page === "training" && !params?.laborTab) {
     return hasEveryLeanPermission(profile, ["Labor Management"])
       && hasAnyLeanPermission(profile, Object.values(LABOR_TAB_PERMISSION_MAP));
+  }
+  if (page === "training" && params?.laborTab === "performance-reviews") {
+    return hasEveryLeanPermission(profile, ["Labor Management"])
+      && (hasLeanPermission(profile, "Labor Compliance View") || hasLeanPermission(profile, "Labor Performance Reviews"));
   }
   return hasEveryLeanPermission(profile, getPagePermissionRequirements(page, params));
 }

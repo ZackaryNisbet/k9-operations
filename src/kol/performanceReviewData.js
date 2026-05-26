@@ -269,8 +269,97 @@ export function resolvePerformanceReviewTemplate(employeeOrPosition) {
   return PERFORMANCE_REVIEW_TEMPLATES[normalizePerformanceReviewRole(position)] || null;
 }
 
-export function getPerformanceReviewCycle(cycleId) {
-  return PERFORMANCE_REVIEW_CYCLES.find((cycle) => cycle.id === cycleId) || PERFORMANCE_REVIEW_CYCLES[0];
+function humanizeReviewPolicySlug(value = "") {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+}
+
+function readReviewPolicyDueRule(row = {}) {
+  const dueRule = row?.due_rule || row?.dueRule || row?.metadata?.due_rule || row?.metadata?.dueRule || {};
+  return dueRule && typeof dueRule === "object" ? dueRule : {};
+}
+
+function isReviewCheckpointPolicyRow(row = {}) {
+  if (!row || typeof row !== "object") return false;
+  return String(row.requirement_kind || row.kind || "") === "review_checkpoint"
+    || Object.prototype.hasOwnProperty.call(row, "due_rule")
+    || Object.prototype.hasOwnProperty.call(row, "dueRule");
+}
+
+function normalizeReviewPolicyKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function reviewBaseKeyForPolicyRow(row = {}, offsetDays = null, slug = "") {
+  const explicitBase = row.base_key || row.baseKey || row.metadata?.base_key || row.metadata?.baseKey;
+  if (explicitBase) return normalizeReviewPolicyKey(explicitBase);
+  if (Number.isFinite(offsetDays)) return `review_${offsetDays}`;
+  const normalizedSlug = normalizeReviewPolicyKey(slug);
+  return normalizedSlug.replace(/_day$/, "");
+}
+
+export function buildPerformanceReviewCyclesFromPolicy(policyRequirements = []) {
+  return (Array.isArray(policyRequirements) ? policyRequirements : [])
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => (row.requirement_kind ? String(row.requirement_kind) === "review_checkpoint" : isReviewCheckpointPolicyRow(row)))
+    .filter((row) => row.is_active !== false && row.active !== false)
+    .map((row, index) => {
+      const dueRule = readReviewPolicyDueRule(row);
+      const rawOffsetDays = Number(row.offset_days ?? row.offsetDays ?? dueRule.offset_days ?? dueRule.offsetDays);
+      const offsetDays = Number.isFinite(rawOffsetDays) ? rawOffsetDays : null;
+      const slug = String(row.slug || row.requirement_slug || row.key || (offsetDays ? `review_${offsetDays}_day` : row.id) || "").trim();
+      const id = String(row.cycle_id || row.cycleId || row.review_cycle || row.reviewCycle || slug || row.id || "").trim();
+      const baseKey = reviewBaseKeyForPolicyRow(row, offsetDays, slug || id);
+      const legacyCycle = offsetDays
+        ? PERFORMANCE_REVIEW_CYCLES.find((cycle) => Number(cycle.shortLabel) === offsetDays)
+        : null;
+      const order = Number(row.display_order ?? row.displayOrder ?? row.order ?? row.metadata?.display_order ?? row.metadata?.displayOrder ?? offsetDays ?? index);
+      const shortLabel = String(row.short_label || row.shortLabel || row.metadata?.short_label || row.metadata?.shortLabel || offsetDays || "").trim();
+      const evidencePolicy = row.evidence_policy || row.evidencePolicy || "checkbox_only";
+      return {
+        id,
+        slug: normalizeReviewPolicyKey(slug || id),
+        label: String(row.label || row.display_label || row.displayLabel || row.name || row.title || (offsetDays ? `${offsetDays} Day` : humanizeReviewPolicySlug(slug || id)) || "Review").trim(),
+        shortLabel,
+        baseKey,
+        sectionKey: row.section_key || row.sectionKey || legacyCycle?.sectionKey || normalizeReviewPolicyKey(slug || id),
+        dueDateKey: row.due_date_key || row.dueDateKey || row.metadata?.due_date_key || row.metadata?.dueDateKey || `${baseKey}_due_date`,
+        statusKey: row.status_key || row.statusKey || row.metadata?.status_key || row.metadata?.statusKey || `${baseKey}_status`,
+        completedDateKey: row.completed_date_key || row.completedDateKey || row.metadata?.completed_date_key || row.metadata?.completedDateKey || `${baseKey}_completed_on`,
+        order: Number.isFinite(order) ? order : index,
+        requirementId: row.id || row.requirement_id || null,
+        policyKey: row.policy_key || row.policyKey || row.parent_requirement_id || row.id || id,
+        requirement: row,
+        evidencePolicy,
+        requiresEvidence: ["file_required", "url_or_reference"].includes(evidencePolicy),
+        dueRule,
+      };
+    })
+    .filter((cycle) => cycle.id)
+    .sort((a, b) => a.order - b.order || String(a.label).localeCompare(String(b.label)));
+}
+
+export function resolvePerformanceReviewCycles(options = {}) {
+  if (Array.isArray(options?.cycles)) return options.cycles;
+  const hasExplicitPolicy = Array.isArray(options)
+    || Object.prototype.hasOwnProperty.call(options || {}, "policyRequirements")
+    || Object.prototype.hasOwnProperty.call(options || {}, "requirements");
+  const policyRows = Array.isArray(options)
+    ? options
+    : (options?.policyRequirements || options?.requirements || []);
+  const policyCycles = buildPerformanceReviewCyclesFromPolicy(policyRows);
+  return hasExplicitPolicy ? policyCycles : (policyCycles.length > 0 ? policyCycles : PERFORMANCE_REVIEW_CYCLES);
+}
+
+export function getPerformanceReviewCycle(cycleId, options = {}) {
+  const cycles = resolvePerformanceReviewCycles(options);
+  return cycles.find((cycle) => cycle.id === cycleId || cycle.slug === cycleId) || cycles[0] || PERFORMANCE_REVIEW_CYCLES[0];
 }
 
 function parseDateOnly(value) {
@@ -286,26 +375,139 @@ function isPastDue(dateValue, todayValue = null) {
   return date < today;
 }
 
-function isReviewDone(status) {
-  return ["complete", "completed", "current", "signed"].includes(String(status || "").toLowerCase());
+export function normalizePerformanceReviewStatus(value = "") {
+  const raw = String(value || "not_started").trim().toLowerCase();
+  if (["complete", "completed", "current", "signed"].includes(raw)) return "complete";
+  if (["completed_late", "complete_late", "late_complete"].includes(raw)) return "complete";
+  if (["waived", "waiver", "manager_waived"].includes(raw)) return "waived";
+  return raw || "not_started";
 }
 
-export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = null) {
-  const cycle = getPerformanceReviewCycle(cycleId);
-  const dueDate = parseDateOnly(row?.[cycle.dueDateKey]);
-  const status = String(row?.[cycle.statusKey] || "not_started").toLowerCase();
-  const overdue = !isReviewDone(status) && (status === "overdue" || isPastDue(dueDate, todayValue));
+function isReviewDone(status) {
+  return ["complete", "waived"].includes(normalizePerformanceReviewStatus(status));
+}
+
+function isReviewLateStatus(status) {
+  return ["completed_late", "complete_late", "late_complete"].includes(String(status || "").trim().toLowerCase());
+}
+
+function findPerformanceReviewRequirementStatus(row = {}, cycle = {}) {
+  const requirements = Array.isArray(row?.requirements) ? row.requirements : [];
+  const keys = new Set([
+    cycle.id,
+    cycle.slug,
+    cycle.requirementId,
+    cycle.policyKey,
+  ].filter(Boolean).map((value) => normalizeReviewPolicyKey(value)));
+
+  return requirements.find((requirement) => {
+    if (String(requirement.requirement_kind || requirement.kind || "") !== "review_checkpoint") return false;
+    return [
+      requirement.id,
+      requirement.requirement_id,
+      requirement.parent_requirement_id,
+      requirement.policy_key,
+      requirement.slug,
+    ].some((value) => keys.has(normalizeReviewPolicyKey(value)));
+  }) || null;
+}
+
+export function normalizePerformanceReviewEvidence(source = {}) {
+  const rawEvidence = [
+    ...(Array.isArray(source.evidence) ? source.evidence : []),
+    ...(Array.isArray(source.evidence_files) ? source.evidence_files : []),
+    ...(Array.isArray(source.documents) ? source.documents : []),
+    ...(Array.isArray(source.attachments) ? source.attachments : []),
+  ];
+
+  if (source.labor_employee_document_id) {
+    rawEvidence.push({
+      id: source.labor_employee_document_id,
+      labor_employee_document_id: source.labor_employee_document_id,
+      file_name: source.evidence_label || source.file_name || source.document_file_name || "",
+      uploaded_at: source.uploaded_at || source.evidence_uploaded_at || source.document_uploaded_at || "",
+      uploaded_by_name: source.uploaded_by_name || source.evidence_uploaded_by_name || source.document_uploaded_by_name || "",
+    });
+  }
+
+  return rawEvidence
+    .filter((item) => item && !item.deleted_at)
+    .map((item) => ({
+      id: item.id || item.labor_employee_document_id || item.document_id || "",
+      documentId: item.labor_employee_document_id || item.document_id || item.id || "",
+      fileName: item.file_name || item.name || item.evidence_label || "",
+      uploadedAt: item.uploaded_at || item.uploadedAt || "",
+      uploadedByName: item.uploaded_by_name || item.uploadedByName || "",
+      uploadedByUserId: item.uploaded_by_user_id || item.uploadedByUserId || "",
+      storagePath: item.storage_path || item.storagePath || "",
+      url: item.public_url || item.url || item.external_evidence_url || "",
+    }))
+    .sort((a, b) => String(b.uploadedAt || "").localeCompare(String(a.uploadedAt || "")));
+}
+
+export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = null, options = {}) {
+  const cycle = cycleId && typeof cycleId === "object"
+    ? cycleId
+    : getPerformanceReviewCycle(cycleId, options);
+  const requirementStatus = findPerformanceReviewRequirementStatus(row, cycle);
+  const rawStatus = String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
+  const status = normalizePerformanceReviewStatus(rawStatus);
+  const dueDate = parseDateOnly(requirementStatus?.due_date || requirementStatus?.dueDate || row?.[cycle.dueDateKey]);
+  const completedDate = parseDateOnly(
+    requirementStatus?.completed_on
+      || requirementStatus?.completed_at
+      || requirementStatus?.completedDate
+      || row?.[cycle.completedDateKey]
+      || row?.[`${cycle.baseKey || ""}_completed_at`]
+  );
+  const evidencePolicy = requirementStatus?.evidence_policy || requirementStatus?.evidencePolicy || cycle.evidencePolicy || "checkbox_only";
+  const evidenceRequired = ["file_required", "url_or_reference"].includes(evidencePolicy);
+  const evidence = normalizePerformanceReviewEvidence(requirementStatus || row);
+  const hasReferenceEvidence = Boolean(
+    requirementStatus?.external_evidence_url
+      || requirementStatus?.externalEvidenceUrl
+      || requirementStatus?.source_note
+      || requirementStatus?.sourceNote
+  );
+  const hasEvidence = evidence.length > 0 || hasReferenceEvidence;
+  const evidenceMissing = status === "complete" && evidenceRequired && !hasEvidence;
+  const completed = isReviewDone(status) && !evidenceMissing;
+  const completedLate = status === "complete" && (isReviewLateStatus(rawStatus) || Boolean(dueDate && completedDate && completedDate > dueDate));
+  const overdue = !completed && (normalizePerformanceReviewStatus(rawStatus) === "overdue" || rawStatus === "overdue" || isPastDue(dueDate, todayValue));
+
   return {
     ...cycle,
     dueDate,
+    completedDate,
+    evidence,
+    evidencePolicy,
+    evidenceRequired,
+    hasEvidence,
+    evidenceMissing,
+    evidenceUploadedAt: evidence[0]?.uploadedAt || "",
+    evidenceUploadedByName: evidence[0]?.uploadedByName || "",
+    rawStatus,
     status,
     overdue,
-    completed: isReviewDone(status),
+    completed,
+    completedLate,
   };
 }
 
-export function getPerformanceReviewCompliance(row = {}, todayValue = null) {
-  const cycleRows = PERFORMANCE_REVIEW_CYCLES.map((cycle) => getPerformanceReviewCycleStatus(row, cycle.id, todayValue));
+export function getPerformanceReviewCompliance(row = {}, todayValue = null, options = {}) {
+  const cycles = resolvePerformanceReviewCycles(options);
+  const cycleRows = cycles.map((cycle) => getPerformanceReviewCycleStatus(row, cycle, todayValue, { cycles }));
+  if (cycleRows.length === 0) {
+    return {
+      label: "No checkpoints configured",
+      color: "default",
+      tone: "default",
+      detail: "Enterprise/location policy has no active review checkpoints",
+      overdueCount: 0,
+      cycleRows,
+    };
+  }
+
   const overdueRows = cycleRows.filter((cycle) => cycle.overdue);
   const hasAnyDueDate = cycleRows.some((cycle) => cycle.dueDate);
 

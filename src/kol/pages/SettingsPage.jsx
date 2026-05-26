@@ -30,6 +30,7 @@ import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
+import WeatherDisplaySettingsTab from "../settings/WeatherDisplaySettingsTab";
 import WeatherLocationSettingsTab from "../settings/WeatherLocationSettingsTab";
 import GingrIconsTab from "../settings/GingrIconsTab";
 import SchedulingCapacitySettingsTab from "../settings/SchedulingCapacitySettingsTab";
@@ -345,6 +346,7 @@ const ANALYTICS_ONLY_SETTINGS = new Set([
 
 const SETTINGS_CARD_PERMISSIONS = {
   "dashboard-refresh": ["Permissions Management"],
+  "weather-display": ["Gingr Integration"],
   gingr: ["Gingr Integration"],
   "gingr-icons": ["Gingr Integration"],
   "api-overview": ["Gingr Integration"],
@@ -376,6 +378,7 @@ export function buildSettingsSections({ analyticsMode = false } = {}) {
       label: "Dashboard",
       cards: [
         { id: "dashboard-refresh", label: "Dashboard Refresh", desc: "Configure refresh interval and business hours for automatic data updates" },
+        { id: "weather-display", label: "Weather Display", desc: "Show or hide weather on Home, Dashboard, and Scheduling" },
       ],
     },
     {
@@ -480,6 +483,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast, analyticsMode = 
     switch (tab) {
       case "dashboard-refresh":
         return <DashboardRefreshTab />;
+      case "weather-display":
+        return <WeatherDisplaySettingsTab addGlobalToast={addGlobalToast} />;
       case "gingr":
         return <GingrIntegrationTab />;
       case "gingr-icons":

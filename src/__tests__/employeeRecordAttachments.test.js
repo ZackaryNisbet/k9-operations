@@ -10,7 +10,6 @@ import {
   getNextEmployeeReviewCycle,
   isLaborEmployeeNoteDeleted,
   isLaborEmployeeDocumentDeleted,
-  LABOR_TRAINING_REQUIREMENT_SLUGS,
   groupLaborEmployeeDocumentsByNote,
   requiresPpbcTrainingForPosition,
   sanitizeLaborAttachmentFilename,
@@ -149,10 +148,26 @@ describe("employee record attachment helpers", () => {
 
 describe("employee training requirement helpers", () => {
   const requirements = [
-    { id: "req-incite", slug: LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE },
-    { id: "req-cpr", slug: LABOR_TRAINING_REQUIREMENT_SLUGS.CPR },
-    { id: "req-ppbc-1", slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_1 },
-    { id: "req-ppbc-2", slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_2 },
+    {
+      id: "req-handbook",
+      slug: "handbook_acknowledgement",
+      requirement_kind: "training",
+      label: "Handbook Acknowledgement",
+      helper: "Employee confirms the current handbook.",
+      evidence_policy: "checkbox_only",
+      display_order: 10,
+      role_applicability: [],
+    },
+    {
+      id: "req-manager-key",
+      slug: "manager_key_control",
+      requirement_kind: "training",
+      label: "Manager Key Control",
+      helper: "Manager confirms key-control policy.",
+      evidence_policy: "file_required",
+      display_order: 20,
+      role_applicability: [{ position_title: "Supervisor", is_applicable: true }],
+    },
   ];
 
   it("requires PPBC only outside PCT and CSR positions", () => {
@@ -165,17 +180,17 @@ describe("employee training requirement helpers", () => {
     expect(
       buildLaborEmployeeRequirementEvidencePath({
         laborEmployeeId: EMPLOYEE_ID,
-        requirementSlug: "PPBC Level 1",
+        requirementSlug: "Manager Key Control",
         randomId: "evidence-1",
-        fileName: "Level 1 certificate.pdf",
+        fileName: "Key control certificate.pdf",
       })
-    ).toBe(`${EMPLOYEE_ID}/requirements/ppbc-level-1/evidence-1-Level-1-certificate.pdf`);
+    ).toBe(`${EMPLOYEE_ID}/requirements/manager-key-control/evidence-1-Key-control-certificate.pdf`);
 
     expect(validateLaborTrainingRequirementEvidenceFile({ name: "proof.pdf", type: "application/pdf", size: 128 }).error).toBe("");
     expect(validateLaborTrainingRequirementEvidenceFile({ name: "proof.png", type: "image/png", size: 128 }).error).toBe("proof.png must be a PDF file.");
   });
 
-  it("orders Incite, CPR, and role-specific PPBC requirements", () => {
+  it("uses policy-defined requirements instead of legacy fallback cards", () => {
     const rows = buildEmployeeTrainingRequirementRows({
       employee: { position_title: "Supervisor" },
       requirements,
@@ -185,10 +200,8 @@ describe("employee training requirement helpers", () => {
     });
 
     expect(rows.map((row) => row.slug)).toEqual([
-      LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE,
-      LABOR_TRAINING_REQUIREMENT_SLUGS.CPR,
-      LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_1,
-      LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_2,
+      "handbook_acknowledgement",
+      "manager_key_control",
     ]);
 
     const pctRows = buildEmployeeTrainingRequirementRows({
@@ -198,23 +211,16 @@ describe("employee training requirement helpers", () => {
       documents: [],
       today: "2026-04-17",
     });
-    expect(pctRows.map((row) => row.slug)).toEqual([
-      LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE,
-      LABOR_TRAINING_REQUIREMENT_SLUGS.CPR,
-    ]);
+    expect(pctRows.map((row) => row.slug)).toEqual(["handbook_acknowledgement"]);
   });
 
   it("summarizes compliance from completed requirements and evidence", () => {
     const documents = [
-      { id: "doc-incite", document_type: "training_requirement_evidence", metadata: { requirement_slug: LABOR_TRAINING_REQUIREMENT_SLUGS.INCITE }, uploaded_at: "2026-04-17T10:00:00Z" },
-      { id: "doc-ppbc-1", document_type: "training_requirement_evidence", metadata: { requirement_slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_1 }, uploaded_at: "2026-04-17T10:00:00Z" },
-      { id: "doc-ppbc-2", document_type: "training_requirement_evidence", metadata: { requirement_slug: LABOR_TRAINING_REQUIREMENT_SLUGS.PPBC_LEVEL_2 }, uploaded_at: "2026-04-17T10:00:00Z" },
+      { id: "doc-manager-key", document_type: "training_requirement_evidence", metadata: { requirement_slug: "manager_key_control" }, uploaded_at: "2026-04-17T10:00:00Z" },
     ];
     const certifications = [
-      { requirement_id: "req-incite", completed_on: "2026-04-01", labor_employee_document_id: "doc-incite" },
-      { requirement_id: "req-cpr", completed_on: "2026-04-01", expires_on: "2027-04-01", external_document_url: "https://example.com/cpr.pdf" },
-      { requirement_id: "req-ppbc-1", completed_on: "2026-04-01", labor_employee_document_id: "doc-ppbc-1" },
-      { requirement_id: "req-ppbc-2", completed_on: "2026-04-01", labor_employee_document_id: "doc-ppbc-2" },
+      { requirement_id: "req-handbook", completed_on: "2026-04-01" },
+      { requirement_id: "req-manager-key", completed_on: "2026-04-01", labor_employee_document_id: "doc-manager-key" },
     ];
 
     const rows = buildEmployeeTrainingRequirementRows({

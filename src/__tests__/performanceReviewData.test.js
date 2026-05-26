@@ -1,9 +1,12 @@
 import { PDFDocument } from "pdf-lib";
+import { describe, expect, it } from "vitest";
 import {
   buildPerformanceReviewAreaResponseSummaries,
   buildDocuSealPerformanceReviewFields,
+  buildPerformanceReviewCyclesFromPolicy,
   buildPerformanceReviewPdfFileName,
   fillPerformanceReviewPdfBytes,
+  getPerformanceReviewCycleStatus,
   getPerformanceReviewTemplateOverrideKey,
   getPerformanceReviewCompliance,
   PERFORMANCE_REVIEW_TEMPLATES,
@@ -32,6 +35,132 @@ describe("performance review compliance", () => {
     expect(result.label).toBe("Non-compliant");
     expect(result.overdueCount).toBe(1);
     expect(result.detail).toContain("60 Day");
+  });
+
+  it("derives compliance columns from arbitrary resolved review checkpoint policy", () => {
+    const policyRequirements = [
+      {
+        id: "policy-review-90",
+        slug: "review_90_day",
+        requirement_kind: "review_checkpoint",
+        label: "90 Day",
+        due_rule: { offset_days: 90 },
+        display_order: 90,
+      },
+      {
+        id: "policy-review-45",
+        slug: "review_45_day",
+        requirement_kind: "review_checkpoint",
+        label: "45 Day",
+        due_rule: { offset_days: 45 },
+        display_order: 45,
+      },
+    ];
+
+    expect(buildPerformanceReviewCyclesFromPolicy(policyRequirements)).toEqual([
+      expect.objectContaining({
+        id: "review_45_day",
+        label: "45 Day",
+        shortLabel: "45",
+        dueDateKey: "review_45_due_date",
+        statusKey: "review_45_status",
+      }),
+      expect.objectContaining({
+        id: "review_90_day",
+        label: "90 Day",
+        shortLabel: "90",
+        dueDateKey: "review_90_due_date",
+        statusKey: "review_90_status",
+      }),
+    ]);
+
+    const result = getPerformanceReviewCompliance({
+      review_45_due_date: "2026-02-14",
+      review_45_status: "scheduled",
+      review_90_due_date: "2026-04-01",
+      review_90_status: "scheduled",
+    }, "2026-02-15", { policyRequirements });
+
+    expect(result.label).toBe("Non-compliant");
+    expect(result.detail).toContain("45 Day");
+    expect(result.cycleRows.map((cycle) => cycle.id)).toEqual(["review_45_day", "review_90_day"]);
+    expect(result.cycleRows.some((cycle) => cycle.id === "30_day" || cycle.id === "60_day")).toBe(false);
+  });
+
+  it("does not fall back to legacy review columns when resolved policy has no checkpoints", () => {
+    const result = getPerformanceReviewCompliance({}, "2026-02-15", { policyRequirements: [] });
+
+    expect(result.cycleRows).toEqual([]);
+    expect(result.label).toBe("No checkpoints configured");
+    expect(result.overdueCount).toBe(0);
+  });
+
+  it("treats completed-late review cells as complete with lateness metadata", () => {
+    const cycle = buildPerformanceReviewCyclesFromPolicy([
+      {
+        id: "req-review-45",
+        slug: "review_45_day",
+        requirement_kind: "review_checkpoint",
+        title: "45 Day",
+        evidence_policy: "file_required",
+        due_rule: { offset_days: 45 },
+      },
+    ])[0];
+
+    const status = getPerformanceReviewCycleStatus({
+      requirements: [
+        {
+          requirement_id: "req-review-45",
+          slug: "review_45_day",
+          requirement_kind: "review_checkpoint",
+          status: "completed_late",
+          due_date: "2026-02-14",
+          completed_on: "2026-02-16",
+          evidence_policy: "file_required",
+          evidence: [{ id: "doc-1", uploaded_at: "2026-02-20T10:00:00Z", uploaded_by_name: "Ari Manager" }],
+        },
+      ],
+    }, cycle, "2026-02-21");
+
+    expect(status.status).toBe("complete");
+    expect(status.rawStatus).toBe("completed_late");
+    expect(status.completed).toBe(true);
+    expect(status.overdue).toBe(false);
+    expect(status.completedLate).toBe(true);
+    expect(status.completedDate).toBe("2026-02-16");
+    expect(status.evidenceUploadedAt).toBe("2026-02-20T10:00:00Z");
+  });
+
+  it("blocks file-required completed reviews that are missing evidence", () => {
+    const cycle = buildPerformanceReviewCyclesFromPolicy([
+      {
+        id: "req-review-45",
+        slug: "review_45_day",
+        requirement_kind: "review_checkpoint",
+        title: "45 Day",
+        evidence_policy: "file_required",
+        due_rule: { offset_days: 45 },
+      },
+    ])[0];
+
+    const status = getPerformanceReviewCycleStatus({
+      requirements: [
+        {
+          requirement_id: "req-review-45",
+          slug: "review_45_day",
+          requirement_kind: "review_checkpoint",
+          status: "complete",
+          due_date: "2026-02-14",
+          completed_on: "2026-02-10",
+          evidence_policy: "file_required",
+        },
+      ],
+    }, cycle, "2026-02-21");
+
+    expect(status.evidenceRequired).toBe(true);
+    expect(status.hasEvidence).toBe(false);
+    expect(status.evidenceMissing).toBe(true);
+    expect(status.completed).toBe(false);
   });
 
   it("keeps employees compliant when no review checkpoint is overdue", () => {
