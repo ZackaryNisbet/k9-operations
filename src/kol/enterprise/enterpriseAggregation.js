@@ -12,6 +12,7 @@ import {
   PERFORMANCE_REVIEW_CYCLES,
   getPerformanceReviewCompliance,
   getPerformanceReviewCycleStatus,
+  getLaborComplianceCellState,
 } from "../performanceReviewData";
 import {
   buildDemandMatrixRowGroups,
@@ -251,6 +252,9 @@ export function buildPerformanceComplianceRows({ locations = [], laborEmployees 
     const employees = laborEmployees.filter((employee) => employee.location_id === location.id && isEnterpriseLaborEmployeeActive(employee));
     const completedEmployees = employees.filter(hasCompletedReview);
     const complianceRows = employees.map((employee) => getPerformanceReviewCompliance(employee, todayValue));
+    // Labor compliance now routes through the single canonical getLaborComplianceCellState (via
+    // the updated getPerformanceReviewCycleStatus labor fast-path) when the employee rows carry
+    // board-enriched requirements (status + exception_kind). Raw legacy calls still work.
     const cycleStatuses = employees.flatMap((employee) => (
       PERFORMANCE_REVIEW_CYCLES.map((cycle) => getPerformanceReviewCycleStatus(employee, cycle.id, todayValue))
     ));

@@ -194,17 +194,14 @@ describe("TrainingPage configurable compliance integration", () => {
   });
 
   it("does not infer a waived cell from a generic completed date", () => {
-    expect(reviewGridSource).toContain("const isPolicyWaiver = normalizeText(cycle.exceptionKind || cycle.exception_kind) === \"waived\"");
-    expect(reviewGridSource).toContain("const completionMode = normalizeText(");
-    expect(reviewGridSource).toContain("instanceMetadata.completion_mode");
-    expect(reviewGridSource).toContain("policyMetadata.completion_mode");
-    expect(reviewGridSource).toContain("const hasExplicitWaiver = completionMode === \"waived\"");
-    expect(reviewGridSource).toContain("const hasExplicitCompletion = completionMode === \"completed\"");
-    expect(reviewGridSource).toContain("if (hasExplicitWaiver)");
-    expect(reviewGridSource).toContain("if (hasExplicitCompletion || (completed && status !== \"waived\"))");
-    expect(reviewGridSource).not.toContain("waivedOn: cycle.waivedOn || cycle.completedDate || waiver.waived_on");
-    expect(performanceReviewDataSource).toContain("isWaivedPerformanceReviewRequirementStatus(requirementStatus)");
-    expect(performanceReviewDataSource).toContain('sourceNote === "waived in compliance grid"');
+    // After unification, the grid now imports and uses the canonical helper.
+    expect(reviewGridSource).toContain("isWaivedLaborComplianceState");
+    expect(reviewGridSource).toContain("from \"../performanceReviewData\"");
+    // The old duplicated local logic should no longer be the decision maker.
+    expect(reviewGridSource).not.toContain("const hasExplicitWaiver = completionMode === \"waived\"");
+    // The data layer still exports the legacy wrapper for minimal churn.
+    expect(performanceReviewDataSource).toContain("isWaivedLaborComplianceState");
+    expect(performanceReviewDataSource).toContain("isWaivedPerformanceReviewRequirementStatus");
   });
 
   it("saves custom Compliance cells directly instead of creating legacy review instances", () => {

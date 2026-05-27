@@ -2,6 +2,34 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
+import { H } from 'highlight.run';
+
+// ── Highlight.io Initialization (for session replay + feedback annotations) ─
+const highlightProjectId = import.meta.env.VITE_HIGHLIGHT_PROJECT_ID;
+if (highlightProjectId) {
+  H.init(highlightProjectId, {
+    environment: import.meta.env.MODE || 'development',
+    enableStrictPrivacy: false,
+    networkRecording: {
+      enabled: true,
+      recordHeadersAndBody: true,
+    },
+  });
+
+  // Expose helper for the live workflow
+  window.openHighlightFeedback = () => {
+    if (typeof H.feedbackWidget === 'function') {
+      H.feedbackWidget();
+    } else if (window.H && typeof window.H.feedbackWidget === 'function') {
+      window.H.feedbackWidget();
+    } else {
+      console.warn('Highlight feedback widget not ready yet');
+    }
+  };
+
+  console.log('[Highlight.io] Initialized for feedback & replay. Use Cmd/Ctrl+Shift+F or window.openHighlightFeedback()');
+}
+
 // ── Production Security Guard ──────────────────────────────────────────────
 if (import.meta.env.PROD) {
   // Disable right-click context menu

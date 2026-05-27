@@ -288,6 +288,31 @@ function isReviewCheckpointPolicyRow(row = {}) {
     || Object.prototype.hasOwnProperty.call(row, "dueRule");
 }
 
+function isDefaultReviewPolicyRow(row = {}) {
+  if (!row || typeof row !== "object") return false;
+  if (String(row.requirement_kind || "") !== "review_checkpoint") return false;
+  const group = String(row.display_group || "").toLowerCase();
+  if (group === "reviews") return true;
+  if (group === "custom") return false;
+  const slug = String(row.slug || row.requirement_slug || "").toLowerCase();
+  if (slug.startsWith("review_")) return true;
+  if (slug.startsWith("custom_")) return false;
+  // Fallback: classic offset days for the 30/60/90 reviews
+  const dueRule = row.due_rule || row.dueRule || row.metadata?.due_rule || {};
+  const od = Number(row.offset_days ?? row.offsetDays ?? dueRule.offset_days ?? dueRule.offsetDays);
+  return Number.isFinite(od) && (od === 30 || od === 60 || od === 90);
+}
+
+function getOffsetDaysForPolicyRow(row = {}) {
+  const dueRule = row.due_rule || row.dueRule || row.metadata?.due_rule || row.metadata?.dueRule || {};
+  const candidates = [row.offset_days, row.offsetDays, dueRule.offset_days, dueRule.offsetDays];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
 function normalizeReviewPolicyKey(value = "") {
   return String(value || "")
     .trim()
@@ -305,53 +330,89 @@ function reviewBaseKeyForPolicyRow(row = {}, offsetDays = null, slug = "") {
 }
 
 export function buildPerformanceReviewCyclesFromPolicy(policyRequirements = []) {
-  return (Array.isArray(policyRequirements) ? policyRequirements : [])
+  const inputRows = (Array.isArray(policyRequirements) ? policyRequirements : [])
     .filter((row) => row && typeof row === "object")
     .filter((row) => (row.requirement_kind ? String(row.requirement_kind) === "review_checkpoint" : isReviewCheckpointPolicyRow(row)))
-    .filter((row) => row.is_active !== false && row.active !== false)
-    .map((row, index) => {
-      const dueRule = readReviewPolicyDueRule(row);
-      const rawOffsetDays = Number(row.offset_days ?? row.offsetDays ?? dueRule.offset_days ?? dueRule.offsetDays);
-      const offsetDays = Number.isFinite(rawOffsetDays) ? rawOffsetDays : null;
-      const slug = String(row.slug || row.requirement_slug || row.key || (offsetDays ? `review_${offsetDays}_day` : row.id) || "").trim();
-      const id = String(row.cycle_id || row.cycleId || row.review_cycle || row.reviewCycle || slug || row.id || "").trim();
-      const baseKey = reviewBaseKeyForPolicyRow(row, offsetDays, slug || id);
-      const legacyCycle = offsetDays
-        ? PERFORMANCE_REVIEW_CYCLES.find((cycle) => Number(cycle.shortLabel) === offsetDays)
-        : null;
-      const order = Number(row.display_order ?? row.displayOrder ?? row.order ?? row.metadata?.display_order ?? row.metadata?.displayOrder ?? offsetDays ?? index);
-      const shortLabel = String(row.short_label || row.shortLabel || row.metadata?.short_label || row.metadata?.shortLabel || offsetDays || "").trim();
-      const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
-      const evidencePolicy = row.evidence_policy || row.evidencePolicy || "checkbox_only";
-      const legacyReviewCycle = row.legacy_review_cycle
-        || row.legacyReviewCycle
-        || row.review_cycle
-        || row.reviewCycle
-        || metadata.legacy_review_cycle
-        || null;
-      return {
-        id,
-        slug: normalizeReviewPolicyKey(slug || id),
-        label: String(row.label || row.display_label || row.displayLabel || row.name || row.title || (offsetDays ? `${offsetDays} Day` : humanizeReviewPolicySlug(slug || id)) || "Review").trim(),
-        shortLabel,
-        baseKey,
-        sectionKey: row.section_key || row.sectionKey || legacyCycle?.sectionKey || normalizeReviewPolicyKey(slug || id),
-        dueDateKey: row.due_date_key || row.dueDateKey || row.metadata?.due_date_key || row.metadata?.dueDateKey || `${baseKey}_due_date`,
-        statusKey: row.status_key || row.statusKey || row.metadata?.status_key || row.metadata?.statusKey || `${baseKey}_status`,
-        completedDateKey: row.completed_date_key || row.completedDateKey || row.metadata?.completed_date_key || row.metadata?.completedDateKey || `${baseKey}_completed_on`,
-        order: Number.isFinite(order) ? order : index,
-        requirementId: row.id || row.requirement_id || null,
-        policyKey: row.policy_key || row.policyKey || row.parent_requirement_id || row.id || id,
-        requirement: row,
-        evidencePolicy,
-        requiresEvidence: ["file_required", "url_or_reference"].includes(evidencePolicy),
-        legacyReviewCycle,
-        isDirectComplianceRequirement: Boolean(row.id || row.requirement_id) && !legacyReviewCycle,
-        dueRule,
-      };
-    })
-    .filter((cycle) => cycle.id)
-    .sort((a, b) => a.order - b.order || String(a.label).localeCompare(String(b.label)));
+    .filter((row) => row.is_active !== false && row.active !== false);
+
+  const mapped = inputRows.map((row, index) => {
+    const dueRule = readReviewPolicyDueRule(row);
+    const rawOffsetDays = Number(row.offset_days ?? row.offsetDays ?? dueRule.offset_days ?? dueRule.offsetDays);
+    const offsetDays = Number.isFinite(rawOffsetDays) ? rawOffsetDays : null;
+    const slug = String(row.slug || row.requirement_slug || row.key || (offsetDays ? `review_${offsetDays}_day` : row.id) || "").trim();
+    const id = String(row.cycle_id || row.cycleId || row.review_cycle || row.reviewCycle || slug || row.id || "").trim();
+    const baseKey = reviewBaseKeyForPolicyRow(row, offsetDays, slug || id);
+    const legacyCycle = offsetDays
+      ? PERFORMANCE_REVIEW_CYCLES.find((cycle) => Number(cycle.shortLabel) === offsetDays)
+      : null;
+    const rawOrder = row.display_order ?? row.displayOrder ?? row.order ?? row.metadata?.display_order ?? row.metadata?.displayOrder;
+    const order = Number.isFinite(Number(rawOrder)) ? Number(rawOrder) : (offsetDays ?? index);
+    const shortLabel = String(row.short_label || row.shortLabel || row.metadata?.short_label || row.metadata?.shortLabel || offsetDays || "").trim();
+    const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    const evidencePolicy = row.evidence_policy || row.evidencePolicy || "checkbox_only";
+    const legacyReviewCycle = row.legacy_review_cycle
+      || row.legacyReviewCycle
+      || row.review_cycle
+      || row.reviewCycle
+      || metadata.legacy_review_cycle
+      || null;
+    return {
+      id,
+      slug: normalizeReviewPolicyKey(slug || id),
+      label: String(row.label || row.display_label || row.displayLabel || row.name || row.title || (offsetDays ? `${offsetDays} Day` : humanizeReviewPolicySlug(slug || id)) || "Review").trim(),
+      shortLabel,
+      baseKey,
+      sectionKey: row.section_key || row.sectionKey || legacyCycle?.sectionKey || normalizeReviewPolicyKey(slug || id),
+      dueDateKey: row.due_date_key || row.dueDateKey || row.metadata?.due_date_key || row.metadata?.dueDateKey || `${baseKey}_due_date`,
+      statusKey: row.status_key || row.statusKey || row.metadata?.status_key || row.metadata?.statusKey || `${baseKey}_status`,
+      completedDateKey: row.completed_date_key || row.completedDateKey || row.metadata?.completed_date_key || row.metadata?.completedDateKey || `${baseKey}_completed_on`,
+      order: Number.isFinite(order) ? order : index,
+      requirementId: row.id || row.requirement_id || null,
+      policyKey: row.policy_key || row.policyKey || row.parent_requirement_id || row.id || id,
+      requirement: row,
+      evidencePolicy,
+      requiresEvidence: ["file_required", "url_or_reference"].includes(evidencePolicy),
+      legacyReviewCycle,
+      isDirectComplianceRequirement: Boolean(row.id || row.requirement_id) && !legacyReviewCycle,
+      dueRule,
+    };
+  }).filter((cycle) => cycle.id);
+
+  // Canonical column order for the Employees grid (and any consumer of the cycles):
+  // 30/60/90 default review checkpoints FIRST (sorted by offset_days asc),
+  // THEN custom requirements in the order they were added (created_at asc).
+  // This guarantees stable left-to-right columns: 30 → 60 → 90 → [customs oldest to newest].
+  const defaultCycles = [];
+  const customCycles = [];
+  for (const cycle of mapped) {
+    const src = cycle.requirement || {};
+    if (isDefaultReviewPolicyRow(src)) {
+      defaultCycles.push(cycle);
+    } else {
+      customCycles.push(cycle);
+    }
+  }
+
+  defaultCycles.sort((a, b) => {
+    const da = getOffsetDaysForPolicyRow(a.requirement || {}) ?? 9999;
+    const db = getOffsetDaysForPolicyRow(b.requirement || {}) ?? 9999;
+    if (da !== db) return da - db;
+    return String(a.label).localeCompare(String(b.label));
+  });
+
+  customCycles.sort((a, b) => {
+    const srcA = a.requirement || {};
+    const srcB = b.requirement || {};
+    const ca = srcA.created_at || srcA.createdAt || srcA.metadata?.created_at || "";
+    const cb = srcB.created_at || srcB.createdAt || srcB.metadata?.created_at || "";
+    if (ca && cb) {
+      const c = ca.localeCompare(cb);
+      if (c !== 0) return c;
+    }
+    return String(a.label).localeCompare(String(b.label));
+  });
+
+  return [...defaultCycles, ...customCycles];
 }
 
 export function resolvePerformanceReviewCycles(options = {}) {
@@ -400,13 +461,109 @@ function isReviewLateStatus(status) {
   return ["completed_late", "complete_late", "late_complete"].includes(String(status || "").trim().toLowerCase());
 }
 
+/**
+ * DEPRECATED: Old multi-signal waiver detector (dual logic that caused the
+ * "waived still shows Overdue" bugs). Kept as a thin delegator during the
+ * green-field simplification so external imports do not explode.
+ *
+ * ALL new and refactored code MUST use getLaborComplianceCellState instead.
+ * This will be fully removed after Phase 3 consumers are updated.
+ */
+export function isWaivedLaborComplianceState(source = {}, attachedInstance = null, recentAuditEvents = []) {
+  // Delegate to the single canonical (best effort for old call sites during transition)
+  const canonical = getLaborComplianceCellState(source || {}, { reviewInstance: attachedInstance, recentAuditEvents });
+  return canonical.key === "waived";
+}
+
+// Legacy wrapper (also deprecated)
 function isWaivedPerformanceReviewRequirementStatus(requirementStatus = {}) {
-  const exceptionKind = String(requirementStatus?.exception_kind || requirementStatus?.exceptionKind || "").trim().toLowerCase();
-  if (exceptionKind === "waived") return true;
-  const metadata = requirementStatus?.metadata && typeof requirementStatus.metadata === "object" ? requirementStatus.metadata : {};
-  if (String(metadata.completion_mode || "").trim().toLowerCase() === "waived") return true;
-  const sourceNote = String(requirementStatus?.source_note || requirementStatus?.sourceNote || "").trim().toLowerCase();
-  return sourceNote === "waived in compliance grid";
+  return isWaivedLaborComplianceState(requirementStatus);
+}
+
+/**
+ * SINGLE SOURCE OF TRUTH for any labor compliance cell state (green-field redesign).
+ *
+ * Input: a requirement object exactly as returned inside
+ * get_labor_compliance_board(...).employees[].requirements[]
+ * (or the equivalent policyEmployee.requirements shape from the support bundle).
+ *
+ * Legacy review instances are attached only for *content* (the actual review form
+ * data: ratings, notes, signatures). State is taken directly from the board-computed
+ * fields (status + exception_kind) that the server already derived with correct
+ * waived precedence.
+ *
+ * This is the ONLY function that may return the UI descriptor { key, label, icon, detail, isCompliant, color }.
+ * Grid cells, Summary counts, enterprise rollups, filters, and everything else must go through here.
+ *
+ * No audits, no instance.metadata peeking for state, no 7-priority fallbacks.
+ * The server (status_rows CASE + latest_exceptions/evidence joins) already solved it.
+ */
+export function getLaborComplianceCellState(boardReq = {}, context = {}) {
+  const r = boardReq || {};
+  const status = String(r.status || r.compliance_status || "").toLowerCase().trim();
+  const exceptionKind = String(r.exception_kind || r.exceptionKind || "").toLowerCase().trim();
+  const completedOn = r.completed_on || r.completedOn || r.completed_at;
+  const dueDate = r.due_date || r.adjusted_due_date || r.original_due_date;
+  const today = context.today || new Date().toISOString().slice(0, 10);
+
+  // Waived wins (server already guarantees via CASE WHEN exception_kind = 'waived')
+  if (exceptionKind === "waived" || status === "waived") {
+    return {
+      key: "waived",
+      label: "Waived",
+      icon: "W",
+      detail: r.exception_reason || r.reason || r.exceptionReason || "Manager override",
+      isCompliant: true,
+      color: "neutral",
+      source: "board",
+    };
+  }
+
+  if (status === "complete" || status === "completed" || completedOn) {
+    return {
+      key: "completed",
+      label: "Complete",
+      icon: "OK",
+      detail: completedOn ? `Completed ${String(completedOn).slice(0, 10)}` : "Evidence uploaded",
+      isCompliant: true,
+      color: "success",
+      source: "board",
+    };
+  }
+
+  if (status === "overdue" || (dueDate && String(dueDate).slice(0, 10) < today)) {
+    return {
+      key: "overdue",
+      label: "Overdue",
+      icon: "!",
+      detail: dueDate ? `Due ${String(dueDate).slice(0, 10)}` : "Past due",
+      isCompliant: false,
+      color: "danger",
+      source: "board",
+    };
+  }
+
+  if (status === "in_progress" || status === "scheduled") {
+    return {
+      key: "in_progress",
+      label: "In Progress",
+      icon: "O",
+      detail: dueDate ? `Due ${String(dueDate).slice(0, 10)}` : "Checkpoint started",
+      isCompliant: false,
+      color: "info",
+      source: "board",
+    };
+  }
+
+  return {
+    key: "not_started",
+    label: "Not Started",
+    icon: "O",
+    detail: dueDate ? `Due ${String(dueDate).slice(0, 10)}` : "No checkpoint",
+    isCompliant: false,
+    color: "default",
+    source: "board",
+  };
 }
 
 function findPerformanceReviewRequirementStatus(row = {}, cycle = {}) {
@@ -468,9 +625,18 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
     ? cycleId
     : getPerformanceReviewCycle(cycleId, options);
   const requirementStatus = findPerformanceReviewRequirementStatus(row, cycle);
-  const rawStatus = isWaivedPerformanceReviewRequirementStatus(requirementStatus)
-    ? "waived"
-    : String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
+  // Labor policy path (board data): trust the pre-computed server status via the single canonical.
+  // Legacy pure review cycles still go through the old normalize for now (gated below).
+  const isLaborPolicyItem = Boolean(requirementStatus?.requirement_id || requirementStatus?.id || cycle.requirementId || cycle.isDirectComplianceRequirement);
+  let rawStatus;
+  if (isLaborPolicyItem) {
+    // Trust the canonical board-derived state for labor policy requirements (including 90-day mapped ones).
+    // This ensures overdue is respected even after "not started", and waived/completed win correctly.
+    const canonical = getLaborComplianceCellState(requirementStatus, { recentAuditEvents: options?.recentAuditEvents || [] });
+    rawStatus = canonical.key; // waived | overdue | completed | not_started | in_progress | ...
+  } else {
+    rawStatus = String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
+  }
   const status = normalizePerformanceReviewStatus(rawStatus);
   const dueDate = parseDateOnly(requirementStatus?.due_date || requirementStatus?.dueDate || row?.[cycle.dueDateKey]);
   const completedDate = parseDateOnly(
@@ -544,7 +710,10 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
 
 export function getPerformanceReviewCompliance(row = {}, todayValue = null, options = {}) {
   const cycles = resolvePerformanceReviewCycles(options);
-  const cycleRows = cycles.map((cycle) => getPerformanceReviewCycleStatus(row, cycle, todayValue, { cycles }));
+  const cycleRows = cycles.map((cycle) => getPerformanceReviewCycleStatus(row, cycle, todayValue, { 
+    cycles, 
+    recentAuditEvents: options?.recentAuditEvents || [] 
+  }));
   if (cycleRows.length === 0) {
     return {
       label: "No checkpoints configured",
