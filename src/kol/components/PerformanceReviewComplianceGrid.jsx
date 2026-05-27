@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { I } from "../../shared/icons";
+import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 
 const defaultFormatter = (value) => value || "-";
 const identity = (value) => value;
@@ -77,18 +78,6 @@ export function getCompletionEvidence(cycle = {}) {
   };
 }
 
-function getCompletionWaiver(cycle = {}) {
-  const waiver = cycle.instance?.metadata?.completion_waiver && typeof cycle.instance.metadata.completion_waiver === "object"
-    ? cycle.instance.metadata.completion_waiver
-    : {};
-  const isPolicyWaiver = normalizeText(cycle.exceptionKind || cycle.exception_kind) === "waived"
-    || normalizeText(cycle.rawStatus || cycle.status) === "waived";
-  return {
-    waivedOn: cycle.waivedOn || waiver.waived_on || (isPolicyWaiver ? cycle.completedDate || String(cycle.instance?.completed_at || "").slice(0, 10) : "") || "",
-    actorName: waiver.actor_name || cycle.instance?.reviewer_name || "",
-  };
-}
-
 function getCycleDueDate(cycle = {}) {
   return cycle.dueDate || cycle.instance?.due_date || cycle.policyDueDate || "";
 }
@@ -98,10 +87,69 @@ function formatCellDate(value, formatDate = defaultFormatter) {
   return text ? formatDate(text.slice(0, 10)) : "-";
 }
 
-function getCycleState(cycle = {}) {
+/**
+ * LABOR COMPLIANCE CELL STATE — SINGLE CANONICAL (green-field simplification complete)
+ *
+ * All labor compliance cells (dynamic policy + legacy 30/60/90 mapped via board)
+ * delegate exclusively to getLaborComplianceCellState on the board requirement shape.
+ * Waived wins, server-computed status is trusted, legacy instances are content only.
+ * Old dual isWaived / getCycleState waiver branches for labor items deleted.
+ */
+function getCycleState(cycle = {}, recentAuditEvents = []) {
+  // Broader detection for labor-backed cells, including fixed 30/60/90 that are mapped
+  // to labor policy requirements (they often carry policyCell/requirementStatus from the board
+  // even if they don't have requirementId on the cycle object itself).
+  const hasLaborSignals = Boolean(
+    cycle.boardRequirement ||
+    cycle.policyCell ||
+    cycle.requirementStatus ||
+    cycle.exceptionKind ||
+    cycle.exception_kind
+  );
+  const isLaborComplianceItem = hasLaborSignals || Boolean(cycle.requirementId || cycle.isDirectComplianceRequirement);
+
+  if (isLaborComplianceItem) {
+    // Labor compliance cells (including legacy 30/60/90 mapped via labor policy) are now 100% driven
+    // by the single canonical getLaborComplianceCellState projecting the board requirement shape
+    // (status + exception_kind from get_labor_compliance_board). Legacy instance is content only.
+    // Old dual waiver detection deleted.
+    const boardReq = cycle.boardRequirement || cycle.policyCell || cycle.requirementStatus || cycle;
+    const canonical = getLaborComplianceCellState(boardReq, {
+      reviewInstance: cycle.instance,
+      recentAuditEvents,
+    });
+
+    // Safety net for overdue: if the canonical says not-started/in-progress but we have a past due date
+    // on the cycle (common for 90-day after "Not Started" actions), force overdue. This matches user expectation.
+    let finalState = canonical;
+    const due = cycle.dueDate || boardReq?.due_date || boardReq?.dueDate;
+    if ((canonical.key === "not-started" || canonical.key === "in_progress" || canonical.key === "not_started") && due) {
+      const dueStr = String(due).slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      if (dueStr < today) {
+        finalState = {
+          key: "overdue",
+          label: "Overdue",
+          icon: "!",
+          detail: `Due ${dueStr}`,
+          isCompliant: false,
+          color: "danger",
+        };
+      }
+    }
+
+    return {
+      key: finalState.key,
+      icon: finalState.icon,
+      label: finalState.label,
+      detail: finalState.detail,
+    };
+  }
+
+  // Non-labor pure legacy performance review items (rare; most reviews now under labor policy board).
+  // Kept for backward compat only. Labor items never reach this branch.
   const status = normalizeText(cycle.rawStatus || cycle.status || cycle.instance?.status);
   const evidence = getCompletionEvidence(cycle);
-  const waiver = getCompletionWaiver(cycle);
   const instanceMetadata = cycle.instance?.metadata && typeof cycle.instance.metadata === "object" ? cycle.instance.metadata : {};
   const policyMetadata = cycle.requirementStatus?.metadata && typeof cycle.requirementStatus.metadata === "object"
     ? cycle.requirementStatus.metadata
@@ -116,17 +164,14 @@ function getCycleState(cycle = {}) {
   );
   const completed = Boolean(cycle.completed || cycle.instance?.completed_at || evidence.completedOn);
   const hasCompletionEvidence = Boolean(evidence.completedOn || evidence.documentId || evidence.fileName || evidence.uploadedAt);
-  const hasExplicitWaiver = completionMode === "waived"
-    || status === "waived"
-    || normalizeText(cycle.exceptionKind || cycle.exception_kind || cycle.policyCell?.exception_kind || cycle.requirementStatus?.exception_kind) === "waived"
-    || Boolean(waiver.waivedOn || instanceMetadata.completion_waiver?.waived_on || policyMetadata.completion_waiver?.waived_on);
+  const hasExplicitWaiver = isWaivedLaborComplianceState(cycle, cycle.instance, recentAuditEvents);
   const hasCompleteStatus = ["complete", "completed", "completed_late", "complete_late", "late_complete"].includes(status);
   const hasExplicitCompletion = completionMode === "completed"
     || hasCompleteStatus
     || (completed && hasCompletionEvidence && !hasExplicitWaiver);
 
   if (hasExplicitWaiver) {
-    return { key: "waived", icon: "W", label: "Waived", detail: waiver.actorName || evidence.uploadedByName || "Manager override" };
+    return { key: "waived", icon: "W", label: "Waived", detail: evidence.uploadedByName || "Manager override" };
   }
   if (hasExplicitCompletion || (completed && status !== "waived")) {
     return {
@@ -275,12 +320,32 @@ export function ReviewCycleCell({
   canViewPdfs = false,
   formatDate = defaultFormatter,
   formatTimestamp = defaultFormatter,
+  recentAuditEvents = [],
 }) {
-  const state = getCycleState(cycle);
+  const state = getCycleState(cycle, recentAuditEvents);
   const evidence = getCompletionEvidence(cycle);
-  const waiver = getCompletionWaiver(cycle);
+
+  // Minimal extraction for display dates only (the old getCompletionWaiver was deleted
+  // because state decisions no longer use it). Prefer board data when present.
+  const waiver = (() => {
+    const br = cycle.boardRequirement || {};
+    const instWaiver = cycle.instance?.metadata?.completion_waiver || {};
+    return {
+      waivedOn: cycle.waivedOn ||
+                br.completed_on ||
+                br.waived_on ||
+                instWaiver.waived_on ||
+                instWaiver.waivedOn ||
+                "",
+      actorName: instWaiver.actor_name || instWaiver.actorName || cycle.instance?.reviewer_name || "",
+    };
+  })();
+
   const hasCheckpoint = Boolean(cycle.instance?.id);
   const isDirectRequirement = Boolean(cycle.isDirectComplianceRequirement || (cycle.requirementId && !cycle.legacyReviewCycle));
+
+  // NOTE: State (including waived) is decided by getLaborComplianceCellState via getCycleState.
+  // The waiver object below is only for display dates in the cell.
   const action = state.key === "waived"
     ? { label: "Date waived", value: waiver.waivedOn }
     : state.key === "completed" || state.key === "completed-late"
@@ -306,6 +371,7 @@ export function ReviewCycleCell({
       : state.detail;
 
   return (
+
     <button
       type="button"
       className={joinClassNames("review-cycle-cell", `is-${state.key}`)}
@@ -343,6 +409,7 @@ export function ReviewCycleCell({
         <span className="review-cycle-cell-detail">{actionLabel}</span>
       ) : null}
     </button>
+
   );
 }
 

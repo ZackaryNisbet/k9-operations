@@ -83,6 +83,8 @@ import {
   getPerformanceReviewTemplateOptions,
   getPerformanceReviewTemplateOverrideKey,
   getPerformanceReviewCompliance,
+  getLaborComplianceCellState,
+  isWaivedLaborComplianceState,
   PERFORMANCE_REVIEW_CYCLES,
   PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY,
   normalizePerformanceReviewTemplateRoleKey,
@@ -3026,6 +3028,23 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
       || metadata.legacy_review_cycle
       || String(row.slug || "").startsWith("review_")
     );
+}
+
+export function getOffsetDaysForRequirement(row = {}) {
+  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : (isObjectRow(row.dueRule) ? row.dueRule : {});
+  const candidates = [
+    row.offset_days,
+    row.offsetDays,
+    dueRule.offset_days,
+    dueRule.offsetDays,
+    row.metadata && isObjectRow(row.metadata) ? row.metadata.offset_days : null,
+    row.metadata && isObjectRow(row.metadata) ? row.metadata.offsetDays : null,
+  ];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
 }
 
 export function formatComplianceRequirementDueRule(row = {}) {
@@ -6196,11 +6215,29 @@ function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
 }
 
 function compareCompliancePolicyRequirements(left = {}, right = {}) {
-  const groupCompare = String(left.display_group || "").localeCompare(String(right.display_group || ""), undefined, { sensitivity: "base" });
-  if (groupCompare !== 0) return groupCompare;
-  const leftOrder = Number(left.display_order ?? left.displayOrder ?? left.metadata?.display_order ?? 0);
-  const rightOrder = Number(right.display_order ?? right.displayOrder ?? right.metadata?.display_order ?? 0);
-  if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) return leftOrder - rightOrder;
+  const leftDefault = isDefaultReviewComplianceRequirement(left);
+  const rightDefault = isDefaultReviewComplianceRequirement(right);
+  if (leftDefault !== rightDefault) {
+    return leftDefault ? -1 : 1; // 30/60/90 (defaults) always before custom columns
+  }
+  if (leftDefault && rightDefault) {
+    const ld = getOffsetDaysForRequirement(left) ?? 9999;
+    const rd = getOffsetDaysForRequirement(right) ?? 9999;
+    if (ld !== rd) return ld - rd; // 30 then 60 then 90
+    return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
+  }
+  // Custom requirements: sort strictly by created_at (order they were added), oldest first.
+  // This makes new columns appear to the right of older ones (and to the right of the 30/60/90 block).
+  const lc = left.created_at || left.createdAt || (left.metadata && isObjectRow(left.metadata) ? left.metadata.created_at : "") || "";
+  const rc = right.created_at || right.createdAt || (right.metadata && isObjectRow(right.metadata) ? right.metadata.created_at : "") || "";
+  if (lc && rc) {
+    const c = lc.localeCompare(rc);
+    if (c !== 0) return c;
+  }
+  // Fallback for rows without created_at (pre-existing data or optimistic before refresh): use any legacy display_order, then label
+  const lo = Number(left.display_order ?? left.displayOrder ?? (left.metadata && isObjectRow(left.metadata) ? left.metadata.display_order : null) ?? 0);
+  const ro = Number(right.display_order ?? right.displayOrder ?? (right.metadata && isObjectRow(right.metadata) ? right.metadata.display_order : null) ?? 0);
+  if (Number.isFinite(lo) && Number.isFinite(ro) && lo !== ro) return lo - ro;
   return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
 }
 
@@ -8409,6 +8446,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setLaborCompliancePolicyRequirements(resolvedPolicyRequirements);
       setLaborComplianceBoardEmployees(resolvedPolicyEmployees);
       setLaborComplianceAuditEvents(complianceAuditRes?.error ? [] : complianceAuditRows);
+      // Expose for the compliance grid components during UAT/debugging when console access is limited.
+      if (typeof window !== 'undefined') {
+        window.__laborComplianceAuditEvents = complianceAuditRes?.error ? [] : complianceAuditRows;
+      }
       setLaborComplianceNotes(complianceNoteRes?.error ? [] : complianceNoteRows);
       setLaborCompliancePolicyLoaded(Boolean(complianceBoard));
       setAllTrainingNotes(trainingNoteRows);
@@ -9488,6 +9529,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .filter(isDefaultReviewComplianceRequirement)
       .sort(compareCompliancePolicyRequirements)
   ), [laborCompliancePolicyRequirements]);
+
+  // Combined ordered list for the Requirements tab (defaults + customs), respecting display_order
+  const allComplianceReviewRequirements = useMemo(() => {
+    const defaults = toObjectRows(laborCompliancePolicyRequirements).filter(isDefaultReviewComplianceRequirement);
+    const customs = toObjectRows(laborCompliancePolicyRequirements).filter(isCustomComplianceRequirement);
+    return [...defaults, ...customs].sort(compareCompliancePolicyRequirements);
+  }, [laborCompliancePolicyRequirements]);
   const complianceRequirementEditingRow = useMemo(() => (
     customCompliancePolicyRequirements.find((requirement) => requirement.id === complianceRequirementEditingId) || null
   ), [complianceRequirementEditingId, customCompliancePolicyRequirements]);
@@ -12180,7 +12228,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const waiver = isObjectRow(metadata.completion_waiver) ? metadata.completion_waiver : null;
     const policyWaiver = reviewCycle?.status === "waived" || reviewCycle?.exceptionKind === "waived" || policyCell.exception_kind === "waived";
     const rawStatus = String(reviewCycle?.rawStatus || reviewCycle?.status || policyCell.status || reviewInstance?.status || "").trim().toLowerCase();
-    const currentMode = (waiver || policyWaiver || rawStatus === "waived")
+
+    // Use the canonical helper for consistency with the grid and summary.
+    // This helps ensure the editor opens in the correct mode (waived vs completed) even if local state was slightly stale.
+    const isCanonicalWaived = isWaivedLaborComplianceState(reviewCycle, reviewInstance);
+
+    const currentMode = (waiver || policyWaiver || rawStatus === "waived" || isCanonicalWaived)
       ? "waived"
       : (reviewCycle?.completed || reviewInstance?.completed_at || ["complete", "completed"].includes(rawStatus))
         ? "completed"
@@ -12340,6 +12393,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           p_actor_name: actorName || null,
         });
         if (error) throw error;
+
+        // Optimistic patch for "not started" so the cell immediately reflects the reset
+        // (the canonical will still apply overdue logic based on due_date if past due).
+        setLaborComplianceBoardEmployees((prev) => {
+          const employeeKey = laborEmployeeId;
+          return toObjectRows(prev).map((emp) => {
+            if ((emp.labor_employee_id || emp.id) !== employeeKey) return emp;
+            const reqs = Array.isArray(emp.requirements) ? emp.requirements : [];
+            const updatedReqs = reqs.map((req) => {
+              if (req.id !== requirementId && req.requirement_id !== requirementId) return req;
+              return {
+                ...req,
+                exception_kind: null,
+                status: "not_started",
+                completed_on: null,
+              };
+            });
+            return { ...emp, requirements: updatedReqs };
+          });
+        });
+
         await refreshLaborSupportData();
         closeComplianceReviewEditor();
         addGlobalToast("Compliance checkpoint reset to Not Started", "success");
@@ -12384,6 +12458,51 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         });
         if (error) throw error;
 
+        // Light optimistic update for the labor completed path.
+        // Prevents the flip where "mark as completed" briefly or persistently shows as "waived".
+        // Complements the canonical waiver detection in isWaivedLaborComplianceState.
+        if (reviewInstanceIdForRpc) {
+          setReviewInstances((prev) => toObjectRows(prev).map((instance) => (
+            instance.id === reviewInstanceIdForRpc
+              ? {
+                  ...instance,
+                  status: "completed",
+                  completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+                  reviewer_user_id: actorUserId,
+                  reviewer_name: actorName,
+                  metadata: {
+                    ...(instance.metadata || {}),
+                    completion_mode: "completed",
+                  },
+                }
+              : instance
+          )));
+        }
+
+        // Optimistic patch on board employees to immediately clear any waived state
+        // for this requirement when completing.
+        setLaborComplianceBoardEmployees((prev) => {
+          const employeeKey = laborEmployeeId;
+          return toObjectRows(prev).map((emp) => {
+            if ((emp.labor_employee_id || emp.id) !== employeeKey) return emp;
+            const reqs = Array.isArray(emp.requirements) ? emp.requirements : [];
+            const updatedReqs = reqs.map((req) => {
+              if (req.id !== requirementId && req.requirement_id !== requirementId) return req;
+              const meta = { ...(req.metadata || {}) };
+              delete meta.completion_waiver;
+              meta.completion_mode = "completed";
+              return {
+                ...req,
+                exception_kind: null,
+                status: "completed",
+                completed_on: performanceReviewCompletedOn,
+                metadata: meta,
+              };
+            });
+            return { ...emp, requirements: updatedReqs };
+          });
+        });
+
         await refreshLaborSupportData();
         closeComplianceReviewEditor();
         addGlobalToast(selectedCompletionMode === "waived" ? "Compliance checkpoint waived" : "Compliance checkpoint completed", "success");
@@ -12403,6 +12522,97 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           p_actor_name: actorName || null,
         });
         if (error) throw error;
+
+        // Optimistic patch on the labor board employees (primary source for compliance cells).
+        // Sets the exact fields (status + exception_kind) that the single canonical
+        // getLaborComplianceCellState now projects for instant correct rendering in grid + Summary.
+        // The full refresh is still called as safety net. Old instance-metadata hacks removed for labor cells.
+        if (reviewInstanceIdForRpc) {
+          const waiverMetadata = {
+            completion_mode: "waived",
+            completion_waiver: {
+              waived_on: performanceReviewCompletedOn,
+              waived_at: new Date().toISOString(),
+              actor_user_id: actorUserId,
+              actor_name: actorName,
+              review_cycle: reviewCycle?.id || reviewCycle?.slug || null,
+            },
+          };
+
+          setReviewInstances((prev) => toObjectRows(prev).map((instance) => (
+            instance.id === reviewInstanceIdForRpc
+              ? {
+                  ...instance,
+                  status: "completed",
+                  completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+                  reviewer_user_id: actorUserId,
+                  reviewer_name: actorName,
+                  metadata: waiverMetadata,
+                }
+              : instance
+          )));
+        }
+
+        // Broader optimistic patch for review instances by labor_employee + review_cycle key.
+        // This helps legacy 30/60/90 reviews that are mapped as labor compliance requirements
+        // (e.g. the 90-day cases), where reviewInstanceIdForRpc may be null or the direct id match fails.
+        const legacyKey = legacyReviewCycle || reviewCycle?.id || reviewCycle?.slug || reviewCycle?.review_cycle || null;
+        if (laborEmployeeId && legacyKey) {
+          setReviewInstances((prev) => toObjectRows(prev).map((instance) => {
+            if (instance.labor_employee_id !== laborEmployeeId) return instance;
+            const instCycle = String(instance.review_cycle || instance.legacy_review_cycle || "").toLowerCase();
+            const targetKey = String(legacyKey).toLowerCase();
+            if (instCycle === targetKey || instCycle.includes(targetKey) || targetKey.includes(instCycle)) {
+              const waiverMetadata = {
+                completion_mode: "waived",
+                completion_waiver: {
+                  waived_on: performanceReviewCompletedOn,
+                  waived_at: new Date().toISOString(),
+                  actor_user_id: actorUserId,
+                  actor_name: actorName,
+                },
+              };
+              return {
+                ...instance,
+                status: "completed",
+                completed_at: `${performanceReviewCompletedOn}T12:00:00Z`,
+                reviewer_user_id: actorUserId,
+                reviewer_name: actorName,
+                metadata: waiverMetadata,
+              };
+            }
+            return instance;
+          }));
+        }
+
+        // Optimistic patch on the labor compliance board employees so that
+        // the policyRequirements-driven rows (the primary source for dynamic
+        // labor compliance columns) immediately reflect "waived".
+        setLaborComplianceBoardEmployees((prev) => {
+          const employeeKey = laborEmployeeId;
+          return toObjectRows(prev).map((emp) => {
+            if ((emp.labor_employee_id || emp.id) !== employeeKey) return emp;
+            const reqs = Array.isArray(emp.requirements) ? emp.requirements : [];
+            const updatedReqs = reqs.map((req) => {
+              if (req.id !== requirementId && req.requirement_id !== requirementId) return req;
+              return {
+                ...req,
+                exception_kind: "waived",
+                status: "waived",
+                completed_on: performanceReviewCompletedOn,
+                metadata: {
+                  ...(req.metadata || {}),
+                  completion_mode: "waived",
+                  completion_waiver: {
+                    waived_on: performanceReviewCompletedOn,
+                    actor_name: actorName,
+                  },
+                },
+              };
+            });
+            return { ...emp, requirements: updatedReqs };
+          });
+        });
 
         await refreshLaborSupportData();
         closeComplianceReviewEditor();
@@ -12603,6 +12813,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
       updated_by_user_id: actorUserId || null,
     };
+    const nowIso = new Date().toISOString();
     const createPayload = {
       requirement_kind: "review_checkpoint",
       scope_type: "location",
@@ -12619,6 +12830,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         created_from: "compliance_requirements_page",
       },
       created_by_user_id: actorUserId || null,
+      created_at: nowIso,
     };
 
     setSavingComplianceRequirement(true);
@@ -14800,16 +15012,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         const compliance = getPerformanceReviewCompliance(
           sourceRow,
           todayStr(),
-          laborCompliancePolicyLoaded ? { policyRequirements: laborCompliancePolicyRequirements } : { cycles: activePerformanceReviewCycles },
+          laborCompliancePolicyLoaded 
+            ? { policyRequirements: laborCompliancePolicyRequirements, recentAuditEvents: laborComplianceAuditEvents } 
+            : { cycles: activePerformanceReviewCycles, recentAuditEvents: laborComplianceAuditEvents },
         );
         return {
           ...row,
           performance_review_compliance: compliance,
           template: resolvePerformanceReviewTemplate(row),
-          cycles: compliance.cycleRows.map((cycle) => ({
-            ...cycle,
-            instance: employeeInstances.find((instance) => reviewInstanceMatchesReviewCycle(instance, cycle)) || null,
-          })),
+          cycles: compliance.cycleRows.map((cycle) => {
+            // For labor policy items, attach the authoritative board requirement (already has server-computed status + exception_kind)
+            // so getLaborComplianceCellState (and the grid) can use the thin projector. The legacy instance is attached
+            // for *content only* (the actual review form data when the editor opens).
+            const boardReq = (row.performance_review_policy_employee?.requirements || row.requirements || [])
+              .find((r) => String(r.requirement_id || r.id || "") === String(cycle.requirementId || cycle.id || cycle.policyKey || "")) || null;
+            return {
+              ...cycle,
+              boardRequirement: boardReq,
+              instance: employeeInstances.find((instance) => reviewInstanceMatchesReviewCycle(instance, cycle)) || null,
+            };
+          }),
         };
       });
   }, [activePerformanceReviewCycles, laborCompliancePolicyLoaded, laborCompliancePolicyRequirements, preparedRosterRows, reviewInstances]);
@@ -15674,13 +15896,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           />
         </div>
 	        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 0.8fr 0.75fr", gap: 12 }}>
-            <HourAnalysisAnimatedPicker
-              label="Position Title"
-              value={formatLaborPositionTitle(laborEmployeeRole)}
-              onChange={setLaborEmployeeRole}
-              options={getLaborPositionOptionsWithCurrent(laborEmployeeRole)}
-              placeholder="Choose approved title"
-            />
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Position Title</span>
+              <CustomSelect
+                value={laborEmployeeRole}
+                onChange={setLaborEmployeeRole}
+                options={getLaborPositionOptionsWithCurrent(laborEmployeeRole)}
+                placeholder="Choose approved title"
+              />
+            </label>
 	          <label style={{ display: "block" }}>
 	            <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: C.textSec }}>Commitment</span>
 	            <CustomSelect
@@ -17040,75 +17264,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               </Card>
             )}
 
-            {selectedEmployeeTrainingRequirementRows.length > 0 && (
-            <Card style={{ padding: 18, marginBottom: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: C.text, marginBottom: 6 }}>Training Requirements</div>
-                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 700 }}>{selectedEmployeeTrainingRequirementSummary.helper}</div>
-                </div>
-                <Badge color={selectedEmployeeTrainingRequirementSummary.color}>{selectedEmployeeTrainingRequirementSummary.label}</Badge>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {selectedEmployeeTrainingRequirementRows.map((requirementRow) => {
-                  const externalDocument = requirementRow.externalUrl
-                    ? {
-                        id: `requirement-url-${requirementRow.slug}-${requirementRow.certification?.id || "external"}`,
-                        file_name: `${requirementRow.label} link`,
-                        external_url: requirementRow.externalUrl,
-                        mime_type: "application/pdf",
-                      }
-                    : null;
-                  const statusLabel = requirementRow.status === "needs_evidence"
-                    ? "Needs Evidence"
-                    : requirementRow.status === "missing"
-                      ? "Missing"
-                      : requirementRow.status === "expired"
-                        ? "Expired"
-                        : "Complete";
-                  return (
-                    <div
-                      key={requirementRow.slug}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(190px, 1.1fr) minmax(150px, 0.8fr) minmax(220px, 1fr) auto",
-                        gap: 12,
-                        alignItems: "center",
-                        padding: "13px 14px",
-                        borderRadius: 8,
-                        border: `1px solid ${C.borderLight}`,
-                        background: "#fff",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{requirementRow.label}</div>
-                        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 650, marginTop: 3 }}>{requirementRow.helper}</div>
-                      </div>
-                      <div>
-                        <Badge color={requirementStatusColor[requirementRow.status] || "default"}>{statusLabel}</Badge>
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 5, fontWeight: 650 }}>
-                          {requirementRow.certification?.completed_on ? `Completed ${formatLaborDate(requirementRow.certification.completed_on)}` : "No completion date"}
-                          {requirementRow.certification?.expires_on ? ` · Expires ${formatLaborDate(requirementRow.certification.expires_on)}` : ""}
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-                        {requirementRow.evidenceDocument ? renderEmployeeDocumentButton(requirementRow.evidenceDocument) : null}
-                        {externalDocument ? renderEmployeeDocumentButton(externalDocument) : null}
-                        {!requirementRow.evidenceDocument && !externalDocument ? (
-                          <span style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                            Evidence required
-                          </span>
-                        ) : null}
-                      </div>
-                      <Btn variant="secondary" size="sm" onClick={() => openTrainingRequirementEditor(requirementRow)}>
-                        Update
-                      </Btn>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-            )}
+
 
             <SectionHeader title="Training History" count={employeeTrainingRecords.length} />
             {employeeTrainingRecords.length === 0 ? (
@@ -17163,6 +17319,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       onOpenEvidence={handleOpenComplianceReviewEditor}
                       onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
                       canViewPdfs={canViewCompliancePdfs}
+                      recentAuditEvents={laborComplianceAuditEvents}
                       formatDate={formatLaborDate}
                       formatTimestamp={formatTrainingTimestamp}
                     />
@@ -25086,6 +25243,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </tbody>
                 </table>
               </Card>
+
               {defaultReviewComplianceRequirements.length > 0 && (
                 <Card style={{ padding: 16, borderRadius: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
