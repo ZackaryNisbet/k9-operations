@@ -123,7 +123,9 @@ describe("performance review compliance", () => {
     }, cycle, "2026-02-21");
 
     expect(status.status).toBe("complete");
-    expect(status.rawStatus).toBe("completed_late");
+    // New canonical + labor fast-path normalizes completed_late (with evidence) to the simple completed state.
+    // Lateness metadata is still computed downstream; rawStatus is now the canonical projection.
+    expect(status.rawStatus).toBe("completed");
     expect(status.completed).toBe(true);
     expect(status.overdue).toBe(false);
     expect(status.completedLate).toBe(true);
@@ -216,15 +218,18 @@ describe("performance review compliance", () => {
       },
     ])[0];
 
+    // Modern board shape (what get_labor_compliance_board actually returns after a waive via the RPC).
+    // exception_kind or status="waived" on the requirement is the canonical signal (server already computed it).
     const status = getPerformanceReviewCycleStatus({
       requirements: [
         {
           requirement_id: "req-training-packet",
           slug: "training_packet",
           requirement_kind: "review_checkpoint",
-          status: "complete",
+          status: "waived",
+          exception_kind: "waived",
+          exception_reason: "Manager override for training packet",
           completed_on: "2026-05-26",
-          source_note: "Waived in Compliance grid",
           evidence_policy: "file_required",
           evidence_link_id: "link-training-packet",
         },
@@ -233,7 +238,7 @@ describe("performance review compliance", () => {
 
     expect(status.rawStatus).toBe("waived");
     expect(status.status).toBe("waived");
-    expect(status.completed).toBe(true);
+    expect(status.completed).toBe(true); // waived is treated as compliant (isCompliant true)
     expect(status.overdue).toBe(false);
     expect(status.evidenceMissing).toBe(false);
     expect(status.evidenceLinkId).toBe("link-training-packet");
