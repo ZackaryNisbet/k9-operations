@@ -7214,6 +7214,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const routeInterviewId = typeof params?.interviewId === "string" ? params.interviewId : "";
   const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : "";
   const [tab, setTab] = useState(routeLaborTab);
+  const [tabSearchSlot, setTabSearchSlot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
   const [trainingBundleLoading, setTrainingBundleLoading] = useState(false);
@@ -24871,24 +24872,35 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <div className="labor-header-action-slot">{headerAction}</div>
       </div>
 
-      {/* Roster search bar — lives ABOVE the tabs to match the Grassroots layout (search over tabs). Only shown on the Roster tab, the one it filters. */}
-      {!loading && tab === "home" && canUseLaborTab("home") && (
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
-            <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={rosterSearch ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input value={rosterSearch} onChange={(e) => setRosterSearch(e.target.value)} placeholder="Search name, position, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
-              {rosterSearch && <button onClick={() => setRosterSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>}
-              <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
-                {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
-                  const on = rosterStatusPill === pill.id;
-                  return <button key={pill.id} onClick={() => setRosterStatusPill(pill.id)} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{pill.label}</button>;
-                })}
+      {/* Search region directly above the tabs. Holds the active tab's search bar
+          so it sits over the tabs (like Roster), with a constant min-height so the
+          tabs never shift as you switch tabs. Roster renders here directly;
+          Attendance, Compliance, and Interviews portal their search bar into the
+          slot (passed down as searchSlot), so the bar swaps in place without the
+          region collapsing or the search disappearing/reappearing. */}
+      <div className="labor-search-region" style={{ minHeight: 84, marginBottom: 8 }}>
+        {!loading && tab === "home" && canUseLaborTab("home") && (
+          <div>
+            <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+              <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={rosterSearch ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                <input value={rosterSearch} onChange={(e) => setRosterSearch(e.target.value)} placeholder="Search name, position, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+                {rosterSearch && <button onClick={() => setRosterSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>}
+                <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                  {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
+                    const on = rosterStatusPill === pill.id;
+                    return <button key={pill.id} onClick={() => setRosterStatusPill(pill.id)} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{pill.label}</button>;
+                  })}
+                </div>
               </div>
             </div>
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Your team roster. Filter by status or search; use the gear (top right) to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
+      </div>
 
       {visibleTabs.length > 0 && (
         <div
@@ -25207,12 +25219,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           )}
 
-          {/* Roster search + status pills were moved ABOVE the module tabs (Grassroots-style: search over tabs). The explainer stays here as the roster intro. */}
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
-              Your team roster. Filter by status or search; use the gear (top right) to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
-            </div>
-          </div>
+          {/* Roster search bar + status pills + intro now live in the search region above the module tabs. */}
 	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
@@ -25551,6 +25558,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             tabPreset={attendanceView}
             canLogAttendance={canLogAttendance}
             laborPositionOrder={positionHierarchyRows.map((row) => row.position_title)}
+            searchSlot={tabSearchSlot}
           />
         </div>
       )}
@@ -25580,6 +25588,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             onViewChange={changeInterviewView}
             onRecordChange={handleInterviewRecordRouteChange}
             onDetailChange={setInterviewDetailOpen}
+            searchSlot={tabSearchSlot}
           />
         </div>
       )}
@@ -25612,6 +25621,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               onOpenEvidence={handleOpenComplianceReviewEditor}
               onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
               canViewPdfs={canViewCompliancePdfs}
+              searchSlot={tabSearchSlot}
             />
           )}
           {complianceView === "summary" && (
