@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
@@ -2122,7 +2123,7 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
   );
 }
 
-function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
+function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null }) {
   const [q, setQ] = useState("");
   if (records.length === 0) {
     return (
@@ -2145,6 +2146,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
     : records;
   return (
     <div className="interview-roster-shell">
+      {(() => { const __searchBlock = (
       <div className="interview-search-block">
         <div className="interview-search-bar">
           <svg
@@ -2181,6 +2183,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
           {filtered.length} of {records.length} interview{records.length === 1 ? "" : "s"}. Search to filter, or open a row to review the transcript, scorecard, and recommendation.
         </div>
       </div>
+      ); return searchSlot ? createPortal(__searchBlock, searchSlot) : __searchBlock; })()}
       <div className="interview-table-shell">
       <div className="interview-roster-table" style={{ minWidth: 900 }}>
         <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "9px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
@@ -4442,7 +4445,7 @@ function QuestionReviewModal({
   );
 }
 
-export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", canManage = true, onViewChange = null, onRecordChange = null, onDetailChange = null }) {
+export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", canManage = true, onViewChange = null, onRecordChange = null, onDetailChange = null, searchSlot = null }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
   const locationRef = profile?.location_id || data?.locationId || "";
@@ -6792,7 +6795,7 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
       )}
 
       {view === "records" && !selectedRecord && (
-        <InterviewRoster records={records} onOpen={setSelectedRecordId} onAdd={() => setShowNewInterview(true)} canAdd={canManage && templateOptions.length > 0} />
+        <InterviewRoster records={records} onOpen={setSelectedRecordId} onAdd={() => setShowNewInterview(true)} canAdd={canManage && templateOptions.length > 0} searchSlot={searchSlot} />
       )}
 
       {view === "records" && selectedRecord && (
