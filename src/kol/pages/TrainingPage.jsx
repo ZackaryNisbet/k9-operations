@@ -8637,7 +8637,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         trainingRealtimeRefreshTimerRef.current = null;
         try {
           await refreshLaborData({ includeTraining: true, includeSupport: true });
-          setPctReadinessLoaded(false);
+          // Do NOT reset pctReadinessLoaded here. loadPctReadinessBoard(true) forces
+          // the refetch anyway, and blanking "loaded" flips the matrix into its
+          // "Loading…" branch — which reads as a jarring full-page refresh on every
+          // cell update. Keep the board on screen and reconcile data in place.
           if (trainingView === "board") {
             await loadPctReadinessBoard(true);
           }
