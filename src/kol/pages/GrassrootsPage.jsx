@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, MiniDatePicker, Modal } from "../../shared/ui";
+import { Btn, CalendarPicker, Card, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -945,13 +945,15 @@ function FieldEditor({ field, value, onChange }) {
     );
   }
 
+  const isNumber = field.type === "number";
   return (
     <label style={{ display: "block" }}>
       <Label>{field.label}</Label>
       <input
-        type={field.type === "number" ? "number" : field.type === "email" ? "email" : "text"}
+        type={field.type === "email" ? "email" : "text"}
+        inputMode={isNumber ? "decimal" : undefined}
         value={value ?? ""}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(isNumber ? event.target.value.replace(/[^0-9.]/g, "") : event.target.value)}
         placeholder={field.placeholder || field.label}
         style={INPUT_STYLE}
       />
@@ -1959,13 +1961,10 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
                 return displayDates.map((d, idx) => {
                   const isOptional = idx > 0;
                   return (
-                    <div key={d.id || idx} style={{ marginBottom: 6 }}>
-                      <input
-                        type="date"
+                    <div key={d.id || idx} style={{ marginBottom: 6, opacity: isOptional && !d.event_date ? 0.6 : 1 }}>
+                      <CalendarPicker
                         value={d.event_date || ""}
-                        placeholder={isOptional ? "Additional date (optional)" : ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
+                        onChange={(val) => {
                           let next = [...dates];
                           if (idx < next.length) {
                             next[idx] = { ...(next[idx] || {}), event_date: val };
@@ -1976,17 +1975,6 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
                             next.pop();
                           }
                           onChange("event_dates", next);
-                          e.target.blur();
-                        }}
-                        style={{
-                          width: "100%",
-                          padding: "8px 10px",
-                          border: `1px solid ${C.border}`,
-                          borderRadius: 8,
-                          fontSize: 14,
-                          fontFamily: "inherit",
-                          opacity: isOptional && !d.event_date ? 0.55 : 1,
-                          background: isOptional && !d.event_date ? "#f8fafc" : undefined,
                         }}
                       />
                     </div>
@@ -2106,12 +2094,7 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
             </div>
           </FormSection>
 
-          <FormSection title="Notes">
-            <FieldEditor
-              field={{ key: "proposal", label: "Notes", type: "textarea", placeholder: "Notes about this event" }}
-              value={draft.proposal}
-              onChange={(value) => onChange("proposal", value)}
-            />
+          <FormSection title="Links">
             <EventLinksEditor draft={draft} onChange={onChange} />
           </FormSection>
         </div>
@@ -2850,23 +2833,10 @@ function DenseGrassrootsTable({
                       <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                         Next Follow-Up Date *
                       </div>
-                      <input
-                        type="date"
+                      <CalendarPicker
                         value={inlineLogNextDate || ""}
                         min={today}
-                        onChange={(e) => {
-                          onInlineLogNextDateChange(e.target.value);
-                          e.target.blur(); // auto-close native picker immediately, matching New Event creation behavior
-                        }}
-                        style={{
-                          padding: "5px 8px",
-                          border: `1px solid ${C.border}`,
-                          borderRadius: 6,
-                          fontSize: 12,
-                          fontFamily: "inherit",
-                          background: C.surface,
-                          maxWidth: 158,
-                        }}
+                        onChange={(val) => onInlineLogNextDateChange(val)}
                       />
                     </div>
 
@@ -3212,11 +3182,10 @@ function LogActivityModal({
             <div className="grassroots-log-grid">
               <div>
                 <Label>Activity Date</Label>
-                <MiniDatePicker
+                <CalendarPicker
                   value={activityDate}
                   onChange={onActivityDateChange}
-                  recommendedDate={todayStr()}
-                  recommendedHint="Use today unless you are backfilling field notes."
+                  extraContent={<div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Use today unless you are backfilling field notes.</div>}
                 />
               </div>
               <label>
@@ -3259,11 +3228,10 @@ function LogActivityModal({
             {followUpPriority && (
               <div className="grassroots-log-followup-date">
                 <Label>Follow-Up Date Optional</Label>
-                <MiniDatePicker
+                <CalendarPicker
                   value={nextDate}
                   onChange={onNextDateChange}
-                  recommendedDate={addDays(todayStr(), 7)}
-                  recommendedHint="Set this only when there is a specific follow-up window."
+                  extraContent={<div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Set this only when there is a specific follow-up window.</div>}
                 />
               </div>
             )}
@@ -3294,10 +3262,9 @@ function LogActivityModal({
 
               <div style={{ marginTop: 14 }}>
                 <Label>Next Follow-Up Date *</Label>
-                <MiniDatePicker
+                <CalendarPicker
                   value={nextDate}
                   onChange={onNextDateChange}
-                  // No recommended +X hint for Grassroots per user request
                 />
               </div>
             </>
@@ -5969,11 +5936,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                                 </div>
                               ) : field.type === "date" && filter.op !== "inLastDays" ? (
                                 <div style={{ maxWidth: 260 }}>
-                                  <MiniDatePicker
+                                  <CalendarPicker
                                     value={filter.val}
                                     onChange={(value) => updateFilter(key, "val", value)}
-                                    recommendedDate={todayStr()}
-                                    recommendedHint="Use today unless you are filtering around a specific follow-up date."
+                                    extraContent={<div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Use today unless you are filtering around a specific follow-up date.</div>}
                                   />
                                   <div style={{ marginTop: 8 }}>
                                     <button type="button" onClick={() => setConfiguringFilterKey(null)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
