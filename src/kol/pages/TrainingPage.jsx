@@ -24892,6 +24892,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           </div>
         )}
+        {!loading && tab === "training" && canUseLaborTab("training") && (
+          <LaborSearchBar value={pctReadinessFilters.task} onChange={(value) => updatePctReadinessFilter("task", value)} placeholder="Search tasks or categories…" />
+        )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
       </div>
 
@@ -26137,14 +26140,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       options={TEAM_READINESS_TEMPLATE_OPTIONS}
                     />
                   </div>
-                  <div style={{ minWidth: 260, flex: "1 1 340px" }}>
-                    <Inp
-                      label="Search Training Board"
-                      value={pctReadinessFilters.task}
-                      onChange={(value) => updatePctReadinessFilter("task", value)}
-                      placeholder="Search tasks or categories"
-                    />
-                  </div>
+                  {/* Board task/category search now lives in the standardized search bar above the module tabs. */}
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                     <Btn
                       variant={showPctReadinessFilterPanel || pctReadinessFilterCount > 0 ? "secondary" : "ghost"}
