@@ -95,7 +95,7 @@ function formatCellDate(value, formatDate = defaultFormatter) {
  * Waived wins, server-computed status is trusted, legacy instances are content only.
  * Old dual isWaived / getCycleState waiver branches for labor items deleted.
  */
-function getCycleState(cycle = {}, recentAuditEvents = []) {
+export function getCycleState(cycle = {}, recentAuditEvents = []) {
   // Broader detection for labor-backed cells, including fixed 30/60/90 that are mapped
   // to labor policy requirements (they often carry policyCell/requirementStatus from the board
   // even if they don't have requirementId on the cycle object itself).
@@ -113,7 +113,15 @@ function getCycleState(cycle = {}, recentAuditEvents = []) {
     // by the single canonical getLaborComplianceCellState projecting the board requirement shape
     // (status + exception_kind from get_labor_compliance_board). Legacy instance is content only.
     // Old dual waiver detection deleted.
-    const boardReq = cycle.boardRequirement || cycle.policyCell || cycle.requirementStatus || cycle;
+    const boardReq = cycle.boardRequirement || cycle.policyCell || cycle.requirementStatus || null;
+    // If there is no board requirement for this employee+checkpoint, the requirement is not
+    // applicable to their role (get_labor_compliance_board omits it). Do NOT fabricate Overdue
+    // from a start-date-derived due date — render Not Applicable. Fixes role-restricted reviews
+    // (e.g. 30/60/90) showing Overdue for roles they don't apply to, while a stale waiver shows
+    // in the detail. (See diagnose: server is correct; the grid was inventing the Overdue.)
+    if (!boardReq) {
+      return { key: "not-applicable", icon: "–", label: "Not Applicable", detail: "Not required for this role" };
+    }
     const canonical = getLaborComplianceCellState(boardReq, {
       reviewInstance: cycle.instance,
       recentAuditEvents,
