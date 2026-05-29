@@ -323,9 +323,10 @@ export function parseGooglePlaceAddress(place) {
     };
   }
 
-  // Fallback
+  // Fallback: no structured components, but still carry the place id through if
+  // one was supplied (place_id from the legacy API, id from the new Places lib).
   const fallback = parseFreeformGrassrootsAddress(place?.formattedAddress || place?.formatted_address || "");
-  return fallback;
+  return { ...fallback, google_place_id: place?.place_id || place?.id || fallback.google_place_id || "" };
 }
 
 function looksLikeGoogleAddressTail(value) {

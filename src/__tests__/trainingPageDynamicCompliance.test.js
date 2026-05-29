@@ -95,7 +95,7 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).not.toContain("filterChips.map");
     expect(reviewGridSource).not.toContain("statusColumn");
     expect(reviewGridSource).not.toContain("@chenglou/pretext");
-    expect(reviewGridSource).toContain("labor-roster-action-bar");
+    expect(reviewGridSource).toContain("compliance-search-bar");
     expect(reviewGridSource).toContain("labor-roster-table");
     expect(reviewGridSource).toContain("labor-roster-header-button");
     expect(reviewGridSource).toContain('active ? (direction === "desc" ? "↓" : "↑") : "↕"');
@@ -255,17 +255,19 @@ describe("TrainingPage configurable compliance integration", () => {
 
   it("turns the Requirements subpage into a custom Compliance column manager", () => {
     expect(source).toContain('complianceView === "requirements"');
-    expect(source).toContain("Compliance Columns");
+    // Requirements is now a position matrix (one row per requirement, one column
+    // per roster position) rather than the old "Compliance Columns" list.
+    expect(source).toContain("compliancePositionColumns");
     expect(source).toContain("customCompliancePolicyRequirements");
     expect(source).toContain("defaultReviewComplianceRequirements");
-    expect(source).toContain("Default review checkpoints");
+    expect(source).toContain("Evidence Required?");
     expect(source).toContain("canManageCompliancePolicy");
-    expect(source).toContain("Add Column");
+    expect(source).toContain("Add Requirement");
     expect(source).toContain("Edit Compliance Column");
     expect(source).toContain("handleDeleteComplianceRequirement");
     expect(source).toContain("isCustomComplianceRequirement");
     expect(source).toContain("Only custom Compliance columns can be deleted here");
-    expect(source).toContain("Visible on Employees");
+    expect(source).toContain("labor_compliance_role_applicability");
     expect(source).toContain("complianceRequirementEditorOpen");
     expect(source).toContain("complianceRequirementEditingRow");
     expect(source).toContain('from("labor_compliance_requirements")');
@@ -274,7 +276,6 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('display_group: "custom"');
     expect(source).toContain('ui_kind: "custom_yes_no"');
     expect(source).not.toContain("Review policy");
-    expect(source).not.toContain("Add Requirement");
     expect(source).not.toContain("Franchisor Training Guide");
     expect(source).not.toContain("Dog CPR Certification");
     expect(source).not.toContain("PPBC Level 1");
