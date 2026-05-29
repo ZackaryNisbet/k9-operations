@@ -7565,6 +7565,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
   const [positionAcronyms, setPositionAcronyms] = useState({});
   const [rosterFilters, setRosterFilters] = useState(DEFAULT_ROSTER_FILTERS);
+  const [rosterSearch, setRosterSearch] = useState("");
+  const [rosterStatusPill, setRosterStatusPill] = useState("active"); // active | inactive | all
   const [rosterDraftFilters, setRosterDraftFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [savedRosterViews, setSavedRosterViews] = useState([]);
   const [activeRosterViewId, setActiveRosterViewId] = useState(null);
@@ -14941,8 +14943,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
 	  const visibleRosterRows = useMemo(() => {
-	    return filteredRosterRows;
-	  }, [filteredRosterRows]);
+	    let list = filteredRosterRows;
+	    if (rosterStatusPill === "active") list = list.filter((row) => isLaborEmployeeActive(row));
+	    else if (rosterStatusPill === "inactive") list = list.filter((row) => !isLaborEmployeeActive(row));
+	    const q = rosterSearch.trim().toLowerCase();
+	    if (q) {
+	      list = list.filter((row) => [row.full_name, row.first_name, row.last_name, row.position_title, row.contact_email, row.contact_phone]
+	        .some((value) => String(value || "").toLowerCase().includes(q)));
+	    }
+	    return list;
+	  }, [filteredRosterRows, rosterStatusPill, rosterSearch]);
   useEffect(() => {
     if (showHierarchyManager) {
       setHierarchyDraft(positionHierarchyRows.map((row) => ({ ...row })));
@@ -18887,9 +18897,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          color: #fff;
 	        }
 	        .labor-roster-table-card {
-	          border-radius: 8px;
-	          border: 1px solid #e1e8f0;
-	          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.055);
+	          border-radius: 10px;
+	          border: 1.5px solid #DFE2E8;
+	          box-shadow: none;
 	        }
 	        .labor-roster-table {
 	          width: 100%;
@@ -18899,27 +18909,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        }
 	        .labor-roster-table-heading {
 	          padding: 0;
-	          border-bottom: 1px solid #dce5ee;
-	          background: #f8fafc;
+	          border-bottom: 1px solid rgb(226,232,240);
+	          background: #fff;
 	          text-align: left;
 	          vertical-align: middle;
 	        }
 	        .labor-roster-header-button {
 	          width: 100%;
-	          min-height: 38px;
+	          min-height: 28px;
 	          display: inline-flex;
 	          align-items: center;
 	          justify-content: space-between;
 	          gap: 8px;
 	          border: none;
 	          background: transparent;
-	          padding: 10px 14px;
-	          color: ${C.textMut};
+	          padding: 6px 14px;
+	          color: rgb(71,85,105);
 	          font-family: inherit;
 	          font-size: 10px;
-	          font-weight: 950;
+	          font-weight: 700;
 	          text-transform: uppercase;
-	          letter-spacing: 0;
+	          letter-spacing: 0.06em;
 	          cursor: pointer;
 	        }
 	        .labor-roster-header-button:hover,
@@ -18940,10 +18950,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        }
 	        .labor-roster-name-cell,
 	        .labor-roster-secondary-cell {
-	          padding: 11px 14px;
+	          padding: 6px 14px;
 	          border-bottom: 1px solid ${C.borderLight};
 	          vertical-align: middle;
-	          line-height: 1.35;
+	          line-height: 1.3;
 	        }
 	        .labor-roster-name-cell {
 	          min-width: 180px;
@@ -24736,6 +24746,38 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               ))}
             </div>
           </SectionHeader>
+	          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+	            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+	              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 240px", minWidth: 200, background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: "7px 12px" }}>
+	                <span style={{ display: "inline-flex", color: rosterSearch ? C.pri : C.textMut, flexShrink: 0 }}><I.Search /></span>
+	                <input
+	                  value={rosterSearch}
+	                  onChange={(event) => setRosterSearch(event.target.value)}
+	                  placeholder="Search name, position, phone, or email…"
+	                  style={{ border: "none", outline: "none", flex: 1, minWidth: 0, fontSize: 13, fontFamily: "inherit", background: "transparent", color: C.text }}
+	                />
+	                {rosterSearch && (
+	                  <button type="button" onClick={() => setRosterSearch("")} aria-label="Clear search" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 0, display: "inline-flex" }}><I.X /></button>
+	                )}
+	              </div>
+	              {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
+	                const active = rosterStatusPill === pill.id;
+	                return (
+	                  <button
+	                    key={pill.id}
+	                    type="button"
+	                    onClick={() => setRosterStatusPill(pill.id)}
+	                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${active ? C.pri : C.borderLight}`, background: active ? C.pri : "#fff", color: active ? "#fff" : C.text, fontSize: 12, fontWeight: active ? 900 : 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+	                  >
+	                    {pill.label}
+	                  </button>
+	                );
+	              })}
+	            </div>
+	            <div style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "linear-gradient(135deg, #E6EEF655, #ffffff)", fontSize: 12, lineHeight: 1.5, color: C.textMut, fontWeight: 600 }}>
+	              Your team roster. Filter by employment status or search; use the gear to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
+	            </div>
+	          </div>
 	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
@@ -24974,19 +25016,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                        }}
 	                      >
 		                        <td className="labor-roster-name-cell">
-		                          <strong>
-		                            <LaborRosterCopyValue
-		                              value={rowName}
-		                              displayValue={rowName}
-		                              copied={copiedRosterContactKey === `name:${rowEmployeeId || rowName}`}
-		                              ariaLabel={`Copy name for ${rowName || "employee"}`}
-		                              onCopy={() => handleCopyRosterContact({
-		                                key: `name:${rowEmployeeId || rowName}`,
-		                                value: rowName,
-		                                label: "Name",
-		                              })}
-		                            />
-		                          </strong>
+		                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+		                            <strong>
+		                              <LaborRosterCopyValue
+		                                value={rowName}
+		                                displayValue={rowName}
+		                                copied={copiedRosterContactKey === `name:${rowEmployeeId || rowName}`}
+		                                ariaLabel={`Copy name for ${rowName || "employee"}`}
+		                                onCopy={() => handleCopyRosterContact({
+		                                  key: `name:${rowEmployeeId || rowName}`,
+		                                  value: rowName,
+		                                  label: "Name",
+		                                })}
+		                              />
+		                            </strong>
+		                            {(() => {
+		                              const active = isLaborEmployeeActive(row);
+		                              return (
+		                                <span style={{ display: "inline-block", fontSize: 9, fontWeight: 800, padding: "1px 7px", borderRadius: 999, letterSpacing: "0.02em", whiteSpace: "nowrap", background: active ? "#DCFCE7" : "#FEE2E2", color: active ? "#166534" : "#991B1B" }}>{active ? "Active" : "Inactive"}</span>
+		                              );
+		                            })()}
+		                          </div>
 		                          {!row.is_active && row.end_date ? <small>Inactive since {formatLaborDate(row.end_date)}</small> : null}
 		                        </td>
 		                        <td className={`labor-roster-secondary-cell${rowPosition ? "" : " is-empty"}`}>
