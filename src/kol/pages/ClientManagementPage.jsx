@@ -7,9 +7,19 @@ import { hasLeanPermission } from "../../shared/permissions";
 import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingData";
 import {
   CLIENT_CASE_TYPE_OPTIONS,
+  countIncidentsInRange,
   getClientCaseTypeLabel,
   getClientCaseStatusLabel,
+  getIncidentReportingPeriodRange,
+  INCIDENT_REPORTING_PERIODS,
 } from "../clientManagementData";
+
+function formatRangeLabel(start, end) {
+  if (!start && !end) return "All recorded incidents";
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  if (start && end) return `${fmt(start)} – ${fmt(end)}`;
+  return end ? `Through ${fmt(end)}` : `Since ${fmt(start)}`;
+}
 
 const INCIDENT_DOC_BUCKET = "incident-documents";
 
@@ -74,15 +84,6 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-function MiniStat({ label, value, color = C.text }) {
-  return (
-    <Card style={{ padding: "14px 16px" }}>
-      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color }}>{value}</div>
-    </Card>
-  );
-}
-
 const TABLE_GRID = "176px 104px minmax(160px, 1fr) 122px 128px 110px 40px";
 
 export default function ClientManagementPage({ data, profile, addGlobalToast = () => {} }) {
@@ -92,6 +93,8 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [period, setPeriod] = useState("ytd");
+  const [activeDogCounts, setActiveDogCounts] = useState(null);
 
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -117,14 +120,25 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         setLoading(false);
         return;
       }
-      const { data: rows, error } = await supabase
-        .from("client_incident_cases")
-        .select("*")
-        .eq("location_id", locationId)
-        .order("incident_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setIncidentCases(rows || []);
+      const [casesRes, dogCountsRes] = await Promise.all([
+        supabase
+          .from("client_incident_cases")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("incident_date", { ascending: false })
+          .order("created_at", { ascending: false }),
+        supabase.rpc("incident_active_dog_counts", { p_location_id: locationId, p_as_of: todayStr() }),
+      ]);
+      if (casesRes.error) throw casesRes.error;
+      setIncidentCases(casesRes.data || []);
+      if (dogCountsRes.error) {
+        console.warn("incident_active_dog_counts RPC failed:", dogCountsRes.error.message);
+        setActiveDogCounts({});
+      } else {
+        const counts = {};
+        (dogCountsRes.data || []).forEach((row) => { counts[row.period_id] = Number(row.active_dogs) || 0; });
+        setActiveDogCounts(counts);
+      }
     } catch (error) {
       console.error("Incidents load error:", error);
       addGlobalToast(`Failed to load incidents: ${error.message || "Unknown error"}`, "error");
@@ -136,31 +150,56 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
     loadData();
   }, [loadData]);
 
-  // ─── Incident rate = incidents ÷ dogs ──────────────────────────────────────
-  // Denominator is the dog population on file for this location (synced from
-  // Gingr). The full arithmetic is shown in the hero card so it is obvious how
-  // the rate was derived.
-  const dogCount = (data?.dogs || []).length;
+  // ─── Incident rate by reporting period ─────────────────────────────────────
+  // Rate = incidents in the window ÷ ACTIVE dogs in the window (unique dogs with
+  // a countable stay overlapping it — the population at risk), normalized per
+  // 1,000 dogs. Incident counts come from the cases loaded here; the active-dog
+  // denominators come from the incident_active_dog_counts RPC, which aggregates
+  // the full reservation history server-side (the browser only holds a recent
+  // slice, so historical windows can't be counted client-side).
+  const asOf = useMemo(() => new Date(), []);
   const totalIncidents = incidentCases.length;
-  const ratePerDog = dogCount > 0 ? totalIncidents / dogCount : 0;
-  const ratePer1000 = ratePerDog * 1000;
-  const ratePercent = ratePerDog * 100;
+  const dogCountsReady = activeDogCounts !== null;
+
+  const periodRates = useMemo(() => {
+    const counts = activeDogCounts || {};
+    return INCIDENT_REPORTING_PERIODS.map((option) => {
+      const { start, end } = getIncidentReportingPeriodRange(option.id, asOf);
+      const incidents = countIncidentsInRange(incidentCases, start, end);
+      const activeDogs = counts[option.id] ?? 0;
+      const ratePerDog = activeDogs > 0 ? incidents / activeDogs : null;
+      return {
+        ...option,
+        start,
+        end,
+        incidents,
+        activeDogs,
+        ratePerDog,
+        ratePer1000: ratePerDog === null ? null : ratePerDog * 1000,
+        ratePercent: ratePerDog === null ? null : ratePerDog * 100,
+      };
+    });
+  }, [incidentCases, activeDogCounts, asOf]);
+  const selectedRate = useMemo(
+    () => periodRates.find((entry) => entry.id === period) || periodRates[0],
+    [periodRates, period],
+  );
 
   const openCount = useMemo(() => incidentCases.filter((row) => row.status !== "closed").length, [incidentCases]);
-  const seriousCount = useMemo(
-    () => incidentCases.filter((row) => row.case_type === "serious_animal_event" || row.severity === "critical").length,
-    [incidentCases],
-  );
 
   const filteredCases = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const { start, end } = getIncidentReportingPeriodRange(period, asOf);
     return incidentCases.filter((row) => {
+      const incidentDate = row.incident_date ? new Date(`${row.incident_date}T12:00:00`) : null;
+      if (start && (!incidentDate || incidentDate < start)) return false;
+      if (end && (!incidentDate || incidentDate > end)) return false;
       if (typeFilter && row.case_type !== typeFilter) return false;
       if (!query) return true;
       return [row.subject_name, row.summary, getClientCaseTypeLabel(row.case_type)]
         .some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [incidentCases, search, typeFilter]);
+  }, [incidentCases, search, typeFilter, period, asOf]);
 
   const resetModal = useCallback(() => {
     setNewType("animal_incident");
@@ -298,7 +337,9 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
     addGlobalToast("Incident deleted", "success");
   }, [addGlobalToast, canManage, loadData]);
 
-  const rateBig = dogCount > 0 ? ratePer1000.toFixed(1) : "—";
+  const rateBig = !dogCountsReady
+    ? "…"
+    : (selectedRate && selectedRate.ratePer1000 !== null ? selectedRate.ratePer1000.toFixed(1) : "—");
 
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 16px" }}>
@@ -313,17 +354,39 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         </Btn>
       </div>
 
-      {/* ─── Incident Rate hero — the headline metric, math shown in full ─── */}
-      <Card style={{ padding: 0, marginBottom: 16, overflow: "hidden", border: `1.5px solid ${C.pri}33` }}>
+      {/* Reporting-period selector (industry-standard windows) */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {periodRates.map((entry) => {
+          const on = entry.id === period;
+          return (
+            <button
+              key={entry.id}
+              onClick={() => setPeriod(entry.id)}
+              title={entry.description}
+              style={{ padding: "6px 13px", borderRadius: 9, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+            >
+              {entry.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ─── Incident Rate hero — selected period, math shown in full ─── */}
+      <Card style={{ padding: 0, marginBottom: 14, overflow: "hidden", border: `1.5px solid ${C.pri}33` }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch" }}>
           <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.pri}, ${C.pri}cc)`, color: "#fff", minWidth: 240, flex: "1 1 240px" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", opacity: 0.9 }}>Incident Rate</div>
+            <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", opacity: 0.9 }}>Incident Rate · {selectedRate?.label}</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 8 }}>
               <span style={{ fontSize: 46, fontWeight: 900, lineHeight: 1 }}>{rateBig}</span>
               <span style={{ fontSize: 14, fontWeight: 700, opacity: 0.95 }}>per 1,000 dogs</span>
             </div>
             <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8, opacity: 0.95 }}>
-              {dogCount > 0 ? `${ratePercent.toFixed(2)}% of dogs on file` : "Waiting for dog data from Gingr"}
+              {!dogCountsReady
+                ? "Calculating active dogs…"
+                : (selectedRate && selectedRate.ratePercent !== null ? `${selectedRate.ratePercent.toFixed(2)}% of active dogs` : "No active dogs in this window yet")}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 6, opacity: 0.85 }}>
+              {selectedRate?.description} · {formatRangeLabel(selectedRate?.start, selectedRate?.end)}
             </div>
           </div>
 
@@ -331,41 +394,65 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
             <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>How this is calculated</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 14, color: C.text }}>
               <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: `${C.dan}12`, border: `1px solid ${C.dan}33`, minWidth: 92 }}>
-                <span style={{ fontSize: 22, fontWeight: 900, color: C.dan }}>{totalIncidents.toLocaleString()}</span>
+                <span style={{ fontSize: 22, fontWeight: 900, color: C.dan }}>{(selectedRate?.incidents ?? 0).toLocaleString()}</span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>incidents</span>
               </span>
               <span style={{ fontSize: 24, fontWeight: 800, color: C.textMut }}>÷</span>
               <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: `${C.pri}10`, border: `1px solid ${C.pri}33`, minWidth: 92 }}>
-                <span style={{ fontSize: 22, fontWeight: 900, color: C.pri }}>{dogCount.toLocaleString()}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>dogs on file</span>
+                <span style={{ fontSize: 22, fontWeight: 900, color: C.pri }}>{!dogCountsReady ? "…" : (selectedRate?.activeDogs ?? 0).toLocaleString()}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>active dogs</span>
               </span>
               <span style={{ fontSize: 24, fontWeight: 800, color: C.textMut }}>=</span>
               <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, minWidth: 110 }}>
-                <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{dogCount > 0 ? ratePerDog.toFixed(4) : "—"}</span>
+                <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{!dogCountsReady ? "…" : (selectedRate && selectedRate.ratePerDog !== null ? selectedRate.ratePerDog.toFixed(4) : "—")}</span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>per dog</span>
               </span>
             </div>
             <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-              {dogCount > 0 ? (
+              {!dogCountsReady ? (
+                "Counting unique dogs with a stay in this window across the full reservation history…"
+              ) : selectedRate && selectedRate.ratePerDog !== null ? (
                 <>
-                  {ratePerDog.toFixed(4)} × 1,000 = <strong style={{ color: C.text }}>{ratePer1000.toFixed(1)} incidents per 1,000 dogs</strong>
-                  {" "}({totalIncidents.toLocaleString()} incident{totalIncidents === 1 ? "" : "s"} across {dogCount.toLocaleString()} dogs on file).
+                  {selectedRate.ratePerDog.toFixed(4)} × 1,000 = <strong style={{ color: C.text }}>{selectedRate.ratePer1000.toFixed(1)} incidents per 1,000 dogs</strong>
+                  {" "}({selectedRate.incidents.toLocaleString()} incident{selectedRate.incidents === 1 ? "" : "s"} across {selectedRate.activeDogs.toLocaleString()} active dog{selectedRate.activeDogs === 1 ? "" : "s"} in {selectedRate.label}).
                 </>
               ) : (
-                "Once dogs are synced from Gingr the rate fills in automatically."
+                "No dogs had a stay in this window yet, so the rate can’t be computed."
               )}
             </div>
           </div>
         </div>
       </Card>
 
-      {/* Supporting stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
-        <MiniStat label="Total Incidents" value={totalIncidents.toLocaleString()} color={C.text} />
-        <MiniStat label="Open" value={openCount.toLocaleString()} color={C.warn} />
-        <MiniStat label="Serious Events" value={seriousCount.toLocaleString()} color={C.dan} />
-        <MiniStat label="Dogs On File" value={dogCount.toLocaleString()} color={C.pri} />
-      </div>
+      {/* All reporting periods at a glance — click a row to select it */}
+      <Card style={{ padding: 0, marginBottom: 18, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <div>Period</div>
+          <div style={{ textAlign: "right" }}>Incidents</div>
+          <div style={{ textAlign: "right" }}>Active Dogs</div>
+          <div style={{ textAlign: "right" }}>Rate /1k</div>
+          <div style={{ textAlign: "right" }}>%</div>
+        </div>
+        {periodRates.map((entry) => {
+          const on = entry.id === period;
+          return (
+            <button
+              key={entry.id}
+              onClick={() => setPeriod(entry.id)}
+              style={{ width: "100%", display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", padding: "9px 14px", border: "none", borderBottom: `1px solid ${C.borderLight}`, background: on ? `${C.pri}0c` : "transparent", cursor: "pointer", fontFamily: "inherit", alignItems: "center" }}
+            >
+              <div style={{ textAlign: "left", fontSize: 12, color: on ? C.pri : C.text }}>
+                <span style={{ fontWeight: on ? 800 : 700 }}>{entry.label}</span>
+                <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}> · {entry.description}</span>
+              </div>
+              <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: C.text }}>{entry.incidents.toLocaleString()}</div>
+              <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!dogCountsReady ? "…" : entry.activeDogs.toLocaleString()}</div>
+              <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.pri }}>{!dogCountsReady ? "…" : (entry.ratePer1000 !== null ? entry.ratePer1000.toFixed(1) : "—")}</div>
+              <div style={{ textAlign: "right", fontSize: 12, color: C.textMut }}>{!dogCountsReady ? "…" : (entry.ratePercent !== null ? `${entry.ratePercent.toFixed(2)}%` : "—")}</div>
+            </button>
+          );
+        })}
+      </Card>
 
       {/* Search + type filter pills (above the table, Grassroots-style) */}
       <div style={{ marginBottom: 8 }}>
@@ -412,6 +499,14 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
 
       {/* ─── Incident table (Grassroots Events style) ─── */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+            Incident log <span style={{ color: C.textMut, fontWeight: 600 }}>· {selectedRate?.label}</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut }}>
+            Showing {filteredCases.length.toLocaleString()} of {totalIncidents.toLocaleString()} total incident{totalIncidents === 1 ? "" : "s"}
+          </div>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: TABLE_GRID, columnGap: 8, padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
           <div>Type</div>
           <div>Date</div>
