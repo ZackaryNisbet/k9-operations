@@ -182,12 +182,12 @@ export const LABOR_MANAGEMENT_TABS = [
   { id: "performance-reviews", label: "Compliance" },
   { id: "training", label: "Training" },
   { id: "interviews", label: "Interviews" },
-  { id: "notes", label: "Notes" },
   { id: "hour-analysis", label: "Capacity Planning" },
 ];
 
 const HIDDEN_LABOR_TABS = [
   { id: "templates", label: "Templates" },
+  { id: "notes", label: "Notes" }, // hidden from the module nav per request (still routable)
 ];
 const TABS = LABOR_MANAGEMENT_TABS;
 
@@ -233,11 +233,32 @@ export function buildLaborModulePanelKey({ tab, interviewView, attendanceView, c
   return parts.join(":");
 }
 
-function LaborViewSwitcher({ options = [], value, onChange }) {
+function LaborViewSwitcher({ options = [], value, onChange, variant }) {
   const visibleOptions = options.filter(Boolean);
   const activeIndex = Math.max(0, visibleOptions.findIndex((option) => option.id === value));
   const hasSubtitles = visibleOptions.some((option) => option.subtitle);
   if (!visibleOptions.length) return null;
+  if (variant === "tabs") {
+    return (
+      <div className="labor-view-tabs" role="tablist">
+        {visibleOptions.map((option) => {
+          const active = option.id === value;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`labor-view-tab${active ? " is-active" : ""}`}
+              onClick={() => onChange(option.id)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       className={`labor-view-switcher${hasSubtitles ? "" : " is-compact"}`}
@@ -18092,7 +18113,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ];
   const headerAction = (() => {
     if (tab === "home") {
-      return null;
+      return (
+        <div className="labor-roster-action-bar">
+          {canEditRoster && (
+            <button type="button" className="labor-roster-action-button is-icon" title="Labor settings" aria-label="Labor settings" onClick={() => setShowHierarchyManager(true)}>
+              <I.Settings />
+            </button>
+          )}
+          <button type="button" className="labor-roster-action-button" onClick={() => handlePrintRoster()} disabled={generatingRosterPdf}>
+            <I.Download />
+            <span>{generatingRosterPdf ? "Generating PDF..." : "Roster PDF"}</span>
+          </button>
+          <button type="button" className={`labor-roster-action-button${copiedRosterContactKey === "all-emails" ? " is-copied" : ""}`} onClick={handleCopyAllRosterEmails} disabled={activeRosterEmailRecipientCount === 0} title={activeRosterEmailRecipientCount > 0 ? `Copy ${activeRosterEmailRecipientCount} active email recipients` : "No active email recipients"}>
+            {copiedRosterContactKey === "all-emails" ? <I.Check /> : <I.Clipboard />}
+            <span>{copiedRosterContactKey === "all-emails" ? "Copied Emails" : "Copy All Emails"}</span>
+          </button>
+          <LaborSortControl sort={rosterSort} defaultSort={LABOR_DEFAULT_SORT} columns={LABOR_ROSTER_SORT_COLUMNS} onChange={setRosterSort} />
+          <button type="button" className={`labor-roster-action-button${showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? " is-active" : ""}`} onClick={() => setShowRosterFilterPanel((current) => !current)}>
+            <I.Search />
+            <span>Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}</span>
+          </button>
+          <button type="button" className="labor-roster-action-button" onClick={handleDownloadActiveLaborContactCards} disabled={contactCardDownloadKey === "bulk" || activeContactCardEmployees.length === 0}>
+            <I.FileText />
+            <span>{contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}</span>
+          </button>
+          {canEditRoster && (showInlineLaborEmployeeComposer ? (
+            <button type="button" className="labor-roster-action-button" onClick={() => closeInlineLaborEmployeeComposer()}>
+              <I.X /><span>Cancel Add</span>
+            </button>
+          ) : (
+            <button type="button" className="labor-roster-action-button is-primary" onClick={openInlineLaborEmployeeComposer}>
+              <I.Plus /><span>Add Employee</span>
+            </button>
+          ))}
+        </div>
+      );
     }
     if (tab === "training") {
       return (
@@ -18814,14 +18869,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 0;
+          flex-shrink: 0;
         }
         .labor-module-title span {
           font-size: 22px;
-          font-weight: 900;
+          font-weight: 800;
           color: ${C.text};
-          letter-spacing: 0;
+          letter-spacing: -0.01em;
           line-height: 1.1;
+          white-space: nowrap;
         }
         .labor-header-action-slot {
           min-width: 178px;
@@ -19194,71 +19250,55 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
-          --labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;
           position: relative;
           display: grid;
           grid-template-columns: repeat(var(--labor-tab-count), minmax(0, 1fr));
-          align-items: center;
-          min-height: 50px;
-          margin-bottom: 22px;
-          padding: 5px;
-          border: 1px solid rgba(226, 232, 240, 0.95);
-          border-radius: 16px;
-          background:
-            linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92)),
-            #fff;
-          box-shadow: 0 16px 44px rgba(15, 23, 42, 0.055);
+          align-items: stretch;
+          gap: 2px;
+          margin-bottom: 14px;
+          padding: 0 4px;
+          border: none;
+          border-bottom: 1px solid ${C.borderLight};
+          border-radius: 0;
+          background: ${C.bg};
+          box-shadow: none;
           overflow-x: auto;
           overflow-y: hidden;
           scrollbar-width: none;
-          isolation: isolate;
         }
         .labor-module-tabs::-webkit-scrollbar { display: none; }
-        .labor-tab-indicator {
-          position: absolute;
-          top: 5px;
-          bottom: 5px;
-          left: 5px;
-          z-index: 0;
-          width: calc((100% - 10px) / var(--labor-tab-count));
-          border-radius: 12px;
-          background: linear-gradient(135deg, #14532d 0%, #166534 56%, #3f6212 100%);
-          box-shadow: 0 14px 34px rgba(20, 83, 45, 0.22), inset 0 1px 0 rgba(255,255,255,0.18);
-          transform: translateX(calc(var(--labor-active-index) * 100%));
-          transition: var(--labor-indicator-flat-transition);
-          overflow: hidden;
-        }
-        .labor-tab-indicator::after {
-          content: "";
-          position: absolute;
-          inset: -30% auto -30% 0;
-          width: 46%;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
-          animation: laborTabLightSweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-        }
+        .labor-tab-indicator { display: none; }
         .labor-tab-button {
           position: relative;
           z-index: 1;
-          height: 40px;
           border: none;
-          border-radius: 12px;
+          border-bottom: 3px solid transparent;
+          border-radius: 0;
           background: transparent;
           color: ${C.textSec};
           cursor: pointer;
           font-family: inherit;
           font-size: 13px;
-          font-weight: 850;
+          font-weight: 600;
           letter-spacing: 0;
           white-space: nowrap;
-          transition: color 220ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease;
+          padding: 10px 14px;
+          margin-bottom: -1px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          transition: color 0.15s ease;
         }
         .labor-tab-button:hover {
           color: ${C.pri};
-          background: rgba(20, 83, 45, 0.055);
+          background: transparent;
         }
         .labor-tab-button.is-active {
-          color: #fff;
-          transform: translateY(-1px);
+          color: ${C.text};
+          font-weight: 700;
+          border-bottom: 3px solid ${C.pri};
+          transform: none;
         }
         .labor-template-gear-button {
           width: 40px;
@@ -23931,6 +23971,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 11px;
           font-weight: 950;
         }
+        .labor-view-tabs {
+          display: flex;
+          gap: 2px;
+          padding: 0 4px;
+          margin-bottom: 12px;
+          background: ${C.bg};
+          border-bottom: 1.5px solid ${C.borderLight};
+        }
+        .labor-view-tab {
+          flex: 1 1 0;
+          min-width: 0;
+          border: none;
+          background: transparent;
+          border-bottom: 3px solid transparent;
+          padding: 10px 14px;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          color: ${C.textSec};
+          cursor: pointer;
+          transition: color 150ms ease, border-color 150ms ease;
+        }
+        .labor-view-tab:hover { color: ${C.text}; }
+        .labor-view-tab.is-active {
+          color: ${C.text};
+          font-weight: 700;
+          border-bottom: 3px solid ${C.pri};
+        }
         .labor-view-switcher {
           --labor-view-count: 1;
           --labor-view-active-index: 0;
@@ -24351,7 +24419,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	      `}</style>
 	      <div className="labor-module-header">
         <div className="labor-module-title">
-          <I.GraduationCap />
           <span>Labor Management</span>
         </div>
         <div className="labor-header-action-slot">{headerAction}</div>
@@ -24674,110 +24741,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           )}
 
-          <SectionHeader title="Roster" count={sortedRosterRows.length}>
-            <div className="labor-roster-action-bar">
-              {canEditRoster && (
-                <button
-                  type="button"
-                  className="labor-roster-action-button is-icon"
-                  title="Labor settings"
-                  aria-label="Labor settings"
-                  onClick={() => setShowHierarchyManager(true)}
-                >
-                  <I.Settings />
-                </button>
-              )}
-              <button
-                type="button"
-                className="labor-roster-action-button"
-                onClick={() => handlePrintRoster()}
-                disabled={generatingRosterPdf}
-              >
-                <I.Download />
-                <span>{generatingRosterPdf ? "Generating PDF..." : "Roster PDF"}</span>
-              </button>
-              <button
-                type="button"
-                className={`labor-roster-action-button${copiedRosterContactKey === "all-emails" ? " is-copied" : ""}`}
-                onClick={handleCopyAllRosterEmails}
-                disabled={activeRosterEmailRecipientCount === 0}
-                title={activeRosterEmailRecipientCount > 0 ? `Copy ${activeRosterEmailRecipientCount} active email recipients` : "No active email recipients"}
-              >
-                {copiedRosterContactKey === "all-emails" ? <I.Check /> : <I.Clipboard />}
-                <span>{copiedRosterContactKey === "all-emails" ? "Copied Emails" : "Copy All Emails"}</span>
-              </button>
-              <LaborSortControl
-                sort={rosterSort}
-                defaultSort={LABOR_DEFAULT_SORT}
-                columns={LABOR_ROSTER_SORT_COLUMNS}
-                onChange={setRosterSort}
-              />
-              <button
-                type="button"
-                className={`labor-roster-action-button${showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? " is-active" : ""}`}
-                onClick={() => setShowRosterFilterPanel((current) => !current)}
-              >
-                <I.Search />
-                <span>
-                Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="labor-roster-action-button"
-                onClick={handleDownloadActiveLaborContactCards}
-                disabled={contactCardDownloadKey === "bulk" || activeContactCardEmployees.length === 0}
-              >
-                <I.FileText />
-                <span>
-                {contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}
-                </span>
-              </button>
-	              {canEditRoster && (showInlineLaborEmployeeComposer ? (
-                <button type="button" className="labor-roster-action-button" onClick={() => closeInlineLaborEmployeeComposer()}>
-                  <I.X />
-                  <span>Cancel Add</span>
-                </button>
-              ) : (
-                <button type="button" className="labor-roster-action-button is-primary" onClick={openInlineLaborEmployeeComposer}>
-                  <I.Plus />
-                  <span>Add Employee</span>
-                </button>
-              ))}
+          <div style={{ marginBottom: 8 }}>
+            {/* Search bar — exact Grassroots wireframe (borderBottom + SVG + inline pills) */}
+            <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+              <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={rosterSearch ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                <input value={rosterSearch} onChange={(e) => setRosterSearch(e.target.value)} placeholder="Search name, position, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+                {rosterSearch && <button onClick={() => setRosterSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>}
+                <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                  {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
+                    const on = rosterStatusPill === pill.id;
+                    return <button key={pill.id} onClick={() => setRosterStatusPill(pill.id)} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{pill.label}</button>;
+                  })}
+                </div>
+              </div>
             </div>
-          </SectionHeader>
-	          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
-	            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-	              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 240px", minWidth: 200, background: "#fff", border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: "7px 12px" }}>
-	                <span style={{ display: "inline-flex", color: rosterSearch ? C.pri : C.textMut, flexShrink: 0 }}><I.Search /></span>
-	                <input
-	                  value={rosterSearch}
-	                  onChange={(event) => setRosterSearch(event.target.value)}
-	                  placeholder="Search name, position, phone, or email…"
-	                  style={{ border: "none", outline: "none", flex: 1, minWidth: 0, fontSize: 13, fontFamily: "inherit", background: "transparent", color: C.text }}
-	                />
-	                {rosterSearch && (
-	                  <button type="button" onClick={() => setRosterSearch("")} aria-label="Clear search" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 0, display: "inline-flex" }}><I.X /></button>
-	                )}
-	              </div>
-	              {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
-	                const active = rosterStatusPill === pill.id;
-	                return (
-	                  <button
-	                    key={pill.id}
-	                    type="button"
-	                    onClick={() => setRosterStatusPill(pill.id)}
-	                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${active ? C.pri : C.borderLight}`, background: active ? C.pri : "#fff", color: active ? "#fff" : C.text, fontSize: 12, fontWeight: active ? 900 : 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
-	                  >
-	                    {pill.label}
-	                  </button>
-	                );
-	              })}
-	            </div>
-	            <div style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "linear-gradient(135deg, #E6EEF655, #ffffff)", fontSize: 12, lineHeight: 1.5, color: C.textMut, fontWeight: 600 }}>
-	              Your team roster. Filter by employment status or search; use the gear to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
-	            </div>
-	          </div>
+            {/* One-line explainer — exact Grassroots gradient */}
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Your team roster. Filter by status or search; use the gear (top right) to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
+            </div>
+          </div>
 	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
@@ -25016,27 +24999,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                        }}
 	                      >
 		                        <td className="labor-roster-name-cell">
-		                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-		                            <strong>
-		                              <LaborRosterCopyValue
-		                                value={rowName}
-		                                displayValue={rowName}
-		                                copied={copiedRosterContactKey === `name:${rowEmployeeId || rowName}`}
-		                                ariaLabel={`Copy name for ${rowName || "employee"}`}
-		                                onCopy={() => handleCopyRosterContact({
-		                                  key: `name:${rowEmployeeId || rowName}`,
-		                                  value: rowName,
-		                                  label: "Name",
-		                                })}
-		                              />
-		                            </strong>
-		                            {(() => {
-		                              const active = isLaborEmployeeActive(row);
-		                              return (
-		                                <span style={{ display: "inline-block", fontSize: 9, fontWeight: 800, padding: "1px 7px", borderRadius: 999, letterSpacing: "0.02em", whiteSpace: "nowrap", background: active ? "#DCFCE7" : "#FEE2E2", color: active ? "#166534" : "#991B1B" }}>{active ? "Active" : "Inactive"}</span>
-		                              );
-		                            })()}
-		                          </div>
+		                          <strong>
+		                            <LaborRosterCopyValue
+		                              value={rowName}
+		                              displayValue={rowName}
+		                              copied={copiedRosterContactKey === `name:${rowEmployeeId || rowName}`}
+		                              ariaLabel={`Copy name for ${rowName || "employee"}`}
+		                              onCopy={() => handleCopyRosterContact({
+		                                key: `name:${rowEmployeeId || rowName}`,
+		                                value: rowName,
+		                                label: "Name",
+		                              })}
+		                            />
+		                          </strong>
 		                          {!row.is_active && row.end_date ? <small>Inactive since {formatLaborDate(row.end_date)}</small> : null}
 		                        </td>
 		                        <td className={`labor-roster-secondary-cell${rowPosition ? "" : " is-empty"}`}>
@@ -25104,6 +25079,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={attendanceView}
             onChange={changeAttendanceView}
             options={[
@@ -25131,6 +25107,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <div>
           {!interviewDetailOpen && (
             <LaborViewSwitcher
+              variant="tabs"
               value={interviewView}
               onChange={changeInterviewView}
               options={[
@@ -25158,6 +25135,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={complianceView}
             onChange={changeComplianceView}
             options={COMPLIANCE_VIEW_OPTIONS}
