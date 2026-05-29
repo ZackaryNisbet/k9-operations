@@ -608,4 +608,57 @@ function LaborSearchBar({ value = "", onChange = () => {}, placeholder = "Search
 }
 
 
-export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields, LaborSearchBar };
+// Editable intro/header line shown under a Labor search bar. Shows `prefix`
+// (e.g. a live count, not editable) + the intro text. Location admins (canEdit)
+// get an inline editor; onSave(newText) persists it, onSave("") resets to default.
+function LaborIntro({ value = "", defaultValue = "", prefix = null, canEdit = false, onSave = null }) {
+  const override = typeof value === "string" ? value.trim() : "";
+  const text = override || defaultValue;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [saving, setSaving] = useState(false);
+  const barStyle = { padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec };
+
+  const persist = async (next) => {
+    if (!onSave) { setEditing(false); return; }
+    setSaving(true);
+    try { await onSave(next); } finally { setSaving(false); setEditing(false); }
+  };
+
+  if (editing) {
+    return (
+      <div style={{ ...barStyle, display: "flex", flexDirection: "column", gap: 8 }}>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          autoFocus
+          placeholder={defaultValue}
+          style={{ width: "100%", boxSizing: "border-box", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.5, fontFamily: "inherit", color: C.text, background: "#fff", outline: "none", resize: "vertical" }}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button type="button" onClick={() => persist((draft || "").trim())} disabled={saving} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Save"}</button>
+          <button type="button" onClick={() => { setDraft(text); setEditing(false); }} disabled={saving} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          {override ? (
+            <button type="button" onClick={() => persist("")} disabled={saving} style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: "none", background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Reset to default</button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...barStyle, display: "flex", alignItems: "flex-start", gap: 8 }}>
+      <span style={{ flex: 1, minWidth: 0 }}>{prefix}{text}</span>
+      {canEdit && onSave ? (
+        <button type="button" onClick={() => { setDraft(text); setEditing(true); }} title="Edit this text" style={{ flexShrink: 0, border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 2, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, fontFamily: "inherit" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+          Edit
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+
+export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields, LaborSearchBar, LaborIntro };
