@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, todayStr } from "../../shared/theme";
-import { Badge, Btn, CustomSelect, Inp, Modal } from "../../shared/ui";
+import { Badge, Btn, CustomSelect, Inp, Modal, LaborSearchBar } from "../../shared/ui";
 import {
   buildInterviewAudioPath,
   buildInterviewArtifactPath,
@@ -2138,37 +2138,11 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null }) 
     <div className="interview-roster-shell">
       {(() => { const __searchBlock = (
       <div className="interview-search-block">
-        <div className="interview-search-bar">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke={q ? C.pri : "#94a3b8"}
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder="Search candidate, position, or contact…"
-            aria-label="Search interviews"
-            className="interview-search-field"
-          />
-          {q ? (
-            <button type="button" className="interview-search-clear" aria-label="Clear search" onClick={() => setQ("")}>
-              ×
-            </button>
-          ) : null}
+        <LaborSearchBar value={q} onChange={setQ} placeholder="Search candidate, position, or contact…">
           {canAdd ? (
             <Btn variant="primary" size="sm" onClick={onAdd}>Add New Interview</Btn>
           ) : null}
-        </div>
+        </LaborSearchBar>
         <div className="interview-explainer">
           {filtered.length} of {records.length} interview{records.length === 1 ? "" : "s"}. Search to filter, or open a row to review the transcript, scorecard, and recommendation.
         </div>
