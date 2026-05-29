@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { I } from "../../shared/icons";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 
@@ -427,6 +428,7 @@ export default function PerformanceReviewComplianceGrid({
   sort = { key: "hierarchy", direction: "asc" },
   sortColumns = [],
   variant = "grid",
+  searchSlot = null,
   onSortChange = () => {},
   onOpenEmployee = () => {},
   onOpenEvidence = () => {},
@@ -565,6 +567,7 @@ export default function PerformanceReviewComplianceGrid({
   return (
     <section className="performance-review-compliance-grid-shell" aria-label={variant === "summary" ? "Compliance summary table" : "Compliance employee grid"}>
       <PerformanceReviewComplianceGridStyles />
+      {(() => { const __searchRow = (
       <div className="compliance-search-row">
         <div className="compliance-search-bar">
           <svg
@@ -613,6 +616,7 @@ export default function PerformanceReviewComplianceGrid({
           </div>
         ) : null}
       </div>
+      ); return searchSlot ? createPortal(__searchRow, searchSlot) : __searchRow; })()}
 
       {filterOpen ? (
         <div className="compliance-filter-panel">

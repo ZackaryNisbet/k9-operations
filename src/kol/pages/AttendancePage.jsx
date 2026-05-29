@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal } from "../../shared/ui";
@@ -227,7 +228,7 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [] }) {
+export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [], searchSlot = null }) {
   const [tab, setTab] = useState("roster");
   const [loading, setLoading] = useState(true);
   const [resolvedLocationId, setResolvedLocationId] = useState("");
@@ -1468,7 +1469,8 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
 
       {tab === "log" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ marginBottom: 14 }}>
+          {(() => { const __searchHeader = (
+          <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px 10px", borderBottom: `1.5px solid ${C.borderLight}`, flexWrap: "wrap" }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={markSearch ? C.pri : "#94a3b8"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
@@ -1519,6 +1521,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"}. Tap a mark type to filter, search by employee or note, use Filter for advanced conditions, or open Attendance Summary above for trends.
             </div>
           </div>
+          ); return searchSlot ? createPortal(__searchHeader, searchSlot) : __searchHeader; })()}
 
           {showMarkFilterPanel && (
             <div style={{ marginBottom: 16, borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.bg, boxShadow: "0 8px 40px rgba(0,0,0,0.08)", overflow: "hidden", animation: "attendanceFilterSlideIn 0.22s ease-out" }}>
