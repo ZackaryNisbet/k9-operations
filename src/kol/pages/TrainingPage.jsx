@@ -21071,6 +21071,94 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           border: 0;
           white-space: nowrap;
         }
+        .staffing-capacity-position-table-wrap {
+          margin-top: 18px;
+        }
+        .staffing-capacity-position-table-title {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: ${C.textMut};
+          margin-bottom: 8px;
+        }
+        .staffing-capacity-position-table-scroll {
+          border: 1.5px solid ${C.border};
+          border-radius: 10px;
+          overflow: hidden;
+          overflow-x: auto;
+          background: ${C.surface};
+        }
+        .staffing-capacity-position-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+        }
+        .staffing-capacity-position-table thead th {
+          text-align: left;
+          background: ${C.surface};
+          border-bottom: 1px solid ${C.border};
+          padding: 8px 14px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: ${C.textMut};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table thead th.num,
+        .staffing-capacity-position-table td.num {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+        }
+        .staffing-capacity-position-table tbody th[scope="row"] {
+          text-align: left;
+          padding: 6px 14px;
+          font-weight: 700;
+          color: ${C.text};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table td {
+          padding: 6px 14px;
+          border-top: 1px solid ${C.borderLight};
+          color: ${C.textSec};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table tbody tr:first-child td,
+        .staffing-capacity-position-table tbody tr:first-child th {
+          border-top: none;
+        }
+        .staffing-capacity-position-table tbody tr:hover td,
+        .staffing-capacity-position-table tbody tr:hover th {
+          background: ${C.surfaceHover || "#F8FAFC"};
+        }
+        .staffing-capacity-position-status {
+          display: inline-block;
+          padding: 2px 8px;
+          border-radius: 999px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          background: ${C.borderLight};
+          color: ${C.textSec};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-status.is-danger,
+        .staffing-capacity-position-status.is-short {
+          background: rgba(220, 38, 38, 0.10);
+          color: #B91C1C;
+        }
+        .staffing-capacity-position-status.is-warning,
+        .staffing-capacity-position-status.is-surplus {
+          background: rgba(217, 119, 6, 0.12);
+          color: #B45309;
+        }
+        .staffing-capacity-position-status.is-success,
+        .staffing-capacity-position-status.is-healthy,
+        .staffing-capacity-position-status.is-even {
+          background: rgba(22, 163, 74, 0.10);
+          color: #15803D;
+        }
         .hour-analysis-hire-list {
           display: grid;
           gap: 8px;
@@ -26973,6 +27061,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                  ))}
 	                </tbody>
 	              </table>
+	              <div className="staffing-capacity-position-table-wrap">
+	                <div className="staffing-capacity-position-table-title">Expected Hours by Position</div>
+	                <div className="staffing-capacity-position-table-scroll">
+	                  <table className="staffing-capacity-position-table">
+	                    <thead>
+	                      <tr>
+	                        <th>Position</th>
+	                        <th className="num">Expected</th>
+	                        <th className="num">Demand</th>
+	                        <th className="num">Δ vs demand</th>
+	                        <th>Buffer range</th>
+	                        <th>Status</th>
+	                      </tr>
+	                    </thead>
+	                    <tbody>
+	                      {staffingCapacityBarChartModel.rows.map((visual) => (
+	                        <tr key={`${visual.key}-visible-row`}>
+	                          <th scope="row">{visual.roleLabel}</th>
+	                          <td className="num">{formatHourAnalysisHours(visual.expected)}</td>
+	                          <td className="num">{formatHourAnalysisHours(visual.demand)}</td>
+	                          <td className="num">
+	                            <span className={`staffing-capacity-role-delta is-${visual.delta.tone}`}>{visual.delta.value}</span>
+	                          </td>
+	                          <td>{visual.hasTargetRange ? `${formatHourAnalysisHours(visual.targetLow)}–${formatHourAnalysisHours(visual.targetHigh)}` : "None"}</td>
+	                          <td>
+	                            <span className={`staffing-capacity-position-status is-${visual.tone}`} title={visual.statusDetail}>{visual.statusLabel}</span>
+	                          </td>
+	                        </tr>
+	                      ))}
+	                    </tbody>
+	                  </table>
+	                </div>
+	              </div>
 	            </div>
 	            )}
 	          </div>
