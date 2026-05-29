@@ -53,12 +53,12 @@ import { normalizeOptionalUuid } from "../trainingData";
 const INPUT_STYLE = {
   width: "100%",
   boxSizing: "border-box",
-  padding: "11px 12px",
-  borderRadius: 12,
+  padding: "8px 10px",
+  borderRadius: 8,
   border: `1.5px solid ${C.border}`,
   background: "#fff",
   color: C.text,
-  fontSize: 14,
+  fontSize: 12,
   fontFamily: "inherit",
   outline: "none",
 };
@@ -270,22 +270,62 @@ function parseNumberField(value) {
 }
 
 export function parseGooglePlaceAddress(place) {
-  const components = Array.isArray(place?.address_components) ? place.address_components : [];
-  const read = (type, mode = "long_name") => components.find((component) => component.types?.includes(type))?.[mode] || "";
-  const streetNumber = read("street_number");
-  const route = read("route");
-  const postalCode = [read("postal_code"), read("postal_code_suffix")].filter(Boolean).join("-");
-  const fallback = parseFreeformGrassrootsAddress(place?.formatted_address || "");
-  return {
-    address: place?.formatted_address || fallback.address || "",
-    address_line_1: [streetNumber, route].filter(Boolean).join(" ").trim() || fallback.address_line_1,
-    address_line_2: "",
-    address_city: read("locality") || read("postal_town") || read("sublocality") || read("administrative_area_level_3") || fallback.address_city,
-    address_state: read("administrative_area_level_1", "short_name") || fallback.address_state,
-    address_postal_code: postalCode || fallback.address_postal_code,
-    address_country: read("country", "short_name") || fallback.address_country,
-    google_place_id: place?.place_id || "",
-  };
+  // Legacy Autocomplete shape
+  if (place?.address_components) {
+    const components = Array.isArray(place.address_components) ? place.address_components : [];
+    const read = (type, mode = "long_name") => components.find((component) => component.types?.includes(type))?.[mode] || "";
+    const streetNumber = read("street_number");
+    const route = read("route");
+    const postalCode = [read("postal_code"), read("postal_code_suffix")].filter(Boolean).join("-");
+    const fallback = parseFreeformGrassrootsAddress(place?.formatted_address || "");
+    return {
+      address: place?.formatted_address || fallback.address || "",
+      address_line_1: [streetNumber, route].filter(Boolean).join(" ").trim() || fallback.address_line_1,
+      address_line_2: "",
+      address_city: read("locality") || read("postal_town") || read("sublocality") || read("administrative_area_level_3") || fallback.address_city,
+      address_state: read("administrative_area_level_1", "short_name") || fallback.address_state,
+      address_postal_code: postalCode || fallback.address_postal_code,
+      address_country: read("country", "short_name") || fallback.address_country,
+      google_place_id: place?.place_id || "",
+    };
+  }
+
+  // New Places Library shape (addressComponents as array of objects with longText/shortText)
+  if (place?.addressComponents) {
+    const components = place.addressComponents;
+    const find = (type) => components.find((c) => c.types?.includes(type));
+
+    const streetNumber = find("street_number")?.longText || "";
+    const route = find("route")?.longText || "";
+    const postal = find("postal_code")?.longText || "";
+    const postalSuffix = find("postal_code_suffix")?.longText || "";
+    const postalCode = [postal, postalSuffix].filter(Boolean).join("-");
+
+    const city = find("locality")?.longText ||
+                 find("postal_town")?.longText ||
+                 find("sublocality")?.longText ||
+                 find("administrative_area_level_3")?.longText || "";
+
+    const state = find("administrative_area_level_1")?.shortText || "";
+    const country = find("country")?.shortText || "";
+
+    const line1 = [streetNumber, route].filter(Boolean).join(" ").trim();
+
+    return {
+      address: place.formattedAddress || "",
+      address_line_1: line1,
+      address_line_2: "",
+      address_city: city,
+      address_state: state,
+      address_postal_code: postalCode,
+      address_country: country,
+      google_place_id: place.id || "",
+    };
+  }
+
+  // Fallback
+  const fallback = parseFreeformGrassrootsAddress(place?.formattedAddress || place?.formatted_address || "");
+  return fallback;
 }
 
 function looksLikeGoogleAddressTail(value) {
@@ -412,24 +452,56 @@ export function parseFreeformGrassrootsAddress(value) {
     google_place_id: "",
   };
   if (!address) return blank;
+
+  // First try the structured comma split
   const parts = address.split(",").map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 3) return blank;
-  const countryRaw = parts.at(-1) || "";
-  const country = /^u\.?s\.?a?\.?$/i.test(countryRaw) || /^united states/i.test(countryRaw) ? "US" : countryRaw;
-  const statePostal = parts.at(-2) || "";
-  const statePostalMatch = statePostal.match(/^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
-  const postalOnlyMatch = statePostal.match(/(\d{5}(?:-\d{4})?)$/);
-  const state = statePostalMatch?.[1]?.toUpperCase() || "";
-  const postalCode = statePostalMatch?.[2] || postalOnlyMatch?.[1] || "";
-  const city = parts.at(-3) || "";
-  const line1 = parts.slice(0, -3).join(", ");
+  let postalCode = "";
+  let state = "";
+  let city = "";
+  let line1 = "";
+
+  if (parts.length >= 3) {
+    const countryRaw = parts.at(-1) || "";
+    const country = /^u\.?s\.?a?\.?$/i.test(countryRaw) || /^united states/i.test(countryRaw) ? "US" : countryRaw;
+    const statePostal = parts.at(-2) || "";
+    const statePostalMatch = statePostal.match(/^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
+    const postalOnlyMatch = statePostal.match(/(\d{5}(?:-\d{4})?)$/);
+    state = statePostalMatch?.[1]?.toUpperCase() || "";
+    postalCode = statePostalMatch?.[2] || postalOnlyMatch?.[1] || "";
+    city = parts.at(-3) || "";
+    line1 = parts.slice(0, -3).join(", ");
+
+    if (postalCode) {
+      return {
+        ...blank,
+        address_line_1: line1,
+        address_city: city,
+        address_state: state,
+        address_postal_code: postalCode,
+        address_country: country,
+      };
+    }
+  }
+
+  // Aggressive fallback: hunt for any 5-digit ZIP anywhere in the string
+  const zipMatch = address.match(/\b(\d{5})(?:-\d{4})?\b/);
+  if (zipMatch) {
+    postalCode = zipMatch[1];
+  }
+
+  // Try to extract state if still missing
+  if (!state) {
+    const stateMatch = address.match(/\b([A-Z]{2})\b/);
+    if (stateMatch) state = stateMatch[1];
+  }
+
   return {
     ...blank,
-    address_line_1: line1,
+    address_line_1: line1 || address,
     address_city: city,
     address_state: state,
     address_postal_code: postalCode,
-    address_country: country,
+    address_country: "US",
   };
 }
 
@@ -891,69 +963,215 @@ function looksLikeCompleteGrassrootsAddress(value) {
 }
 
 function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceSelect, placeholder = "Start typing an address" }) {
-  const inputRef = useRef(null);
-  const autocompleteRef = useRef(null);
-  const appliedAddressRef = useRef("");
-  const applyAddressValue = useCallback((rawValue, options = {}) => {
-    const address = String(rawValue || "").trim();
-    if (!address || appliedAddressRef.current === address) return;
-    if (!options.force && !looksLikeCompleteGrassrootsAddress(address)) return;
-    const parsedAddress = parseFreeformGrassrootsAddress(address);
-    if (!parsedAddress.address_line_1 || !parsedAddress.address_city) return;
-    appliedAddressRef.current = address;
-    onPlaceSelect?.({ ...parsedAddress, address });
-  }, [onPlaceSelect]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
+  const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  const fetchSuggestions = async (inputValue) => {
+    const q = (inputValue || "").trim();
+    if (!q || q.length < 3) {
+      setSuggestions([]);
+      setIsOpen(false);
+      return;
+    }
+
+    try {
+      const ready = await loadGooglePlacesScript();
+      const hasNewAPI = !!(window.google?.maps?.places?.AutocompleteSuggestion);
+      if (!ready || !hasNewAPI) {
+        setSuggestions([]);
+        setIsOpen(false);
+        return;
+      }
+
+      const request = {
+        input: q,
+        locationBias: { center: { lat: 39.9, lng: -74.95 }, radius: 50000 },
+        includedRegionCodes: ["us"],
+      };
+
+      const { suggestions: results = [] } = await window.google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+
+      setSuggestions(results);
+      setIsOpen(results.length > 0);
+      setActiveIndex(-1);
+    } catch (err) {
+      console.error("AutocompleteSuggestion fetch failed", err);
+      setSuggestions([]);
+      setIsOpen(false);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const val = e.target.value || "";
+    onChange(val);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchSuggestions(val), 260);
+  };
+
+  const selectSuggestion = async (suggestion) => {
+    const prediction = suggestion.placePrediction;
+    const placeId = prediction?.placeId;
+
+    if (!prediction || !placeId) {
+      setIsOpen(false);
+      setSuggestions([]);
+      return;
+    }
+
+    setIsOpen(false);
+    setSuggestions([]);
+    setActiveIndex(-1);
+
+    try {
+      // Modern Places API (New): resolve the prediction to a Place and fetch its
+      // address components (incl. postal_code) and formatted address.
+      const place = prediction.toPlace();
+      await place.fetchFields({ fields: ['addressComponents', 'formattedAddress'] });
+
+      const parsed = parseGooglePlaceAddress(place);
+      const visible = getGrassrootsVisibleAddressLine(parsed) || place.formattedAddress || "";
+
+      onChange(visible);
+      onPlaceSelect?.({ ...parsed, address: visible });
+    } catch (err) {
+      console.error("Place.fetchFields selection failed", err);
+    }
+  };
+
+  // Close dropdown on outside click
   useEffect(() => {
-    let cancelled = false;
-    loadGooglePlacesScript().then((ready) => {
-      if (cancelled || !ready || !inputRef.current || !window.google?.maps?.places) return;
-      autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
-        fields: ["address_components", "formatted_address", "name", "place_id"],
-        types: ["address"],
-        componentRestrictions: { country: "us" },
-      });
-      autocompleteRef.current.addListener("place_changed", () => {
-        const place = autocompleteRef.current?.getPlace?.();
-        const address = place?.formatted_address || inputRef.current?.value || "";
-        const parsedAddress = parseGooglePlaceAddress(place);
-        const visibleAddressLine = getGrassrootsVisibleAddressLine(parsedAddress) || address;
-        appliedAddressRef.current = address;
-        onChange(visibleAddressLine);
-        onPlaceSelect?.({ ...parsedAddress, address: visibleAddressLine });
-      });
-    });
-    return () => {
-      cancelled = true;
-      if (autocompleteRef.current && window.google?.maps?.event) {
-        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
+    const handleClickOutside = (event) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target)
+      ) {
+        setIsOpen(false);
+        setActiveIndex(-1);
       }
     };
-  }, [onChange, onPlaceSelect]);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (!isOpen || suggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((prev) => Math.min(prev + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      e.preventDefault();
+      selectSuggestion(suggestions[activeIndex]);
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+      setActiveIndex(-1);
+    }
+  };
 
   return (
-    <label style={{ display: "block" }}>
-      <Label>{label}</Label>
-      <input
-        ref={inputRef}
-        value={value || ""}
-        onChange={(event) => {
-          const nextValue = event.target.value;
-          onChange(nextValue);
-          applyAddressValue(nextValue);
-        }}
-        onBlur={(event) => applyAddressValue(event.target.value, { force: true })}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === "Tab") applyAddressValue(event.currentTarget.value, { force: true });
-        }}
-        placeholder={placeholder}
-        autoComplete="off"
-        data-1p-ignore="true"
-        data-lpignore="true"
-        data-form-type="other"
-        style={{ ...INPUT_STYLE, background: C.bg }}
-      />
-    </label>
+    <div style={{ position: "relative" }}>
+      <label style={{ display: "block" }}>
+        <Label>{label}</Label>
+        <input
+          ref={inputRef}
+          value={value || ""}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          onFocus={() => suggestions.length > 0 && setIsOpen(true)}
+          placeholder={placeholder}
+          autoComplete="off"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-form-type="other"
+          style={{ ...INPUT_STYLE, background: C.bg }}
+        />
+      </label>
+
+      {isOpen && suggestions.length > 0 && (
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            background: "#fff",
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+            marginTop: 2,
+            maxHeight: 300,
+            overflowY: "auto",
+            fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          }}
+        >
+          {suggestions.map((s, index) => {
+            const pred = s.placePrediction;
+            const main = pred?.text?.text || "";
+            const secondary = pred?.structuredFormat?.secondaryText?.text || "";
+
+            return (
+              <div
+                key={index}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  selectSuggestion(s);
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  selectSuggestion(s);
+                }}
+                onMouseEnter={() => setActiveIndex(index)}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  background: index === activeIndex ? "#F3F4F6" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {main}
+                  </div>
+                  {secondary && (
+                    <div style={{ fontSize: 12, color: "#6B7280", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {secondary}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{
+            padding: "4px 12px",
+            fontSize: 10,
+            color: "#9CA3AF",
+            background: "#F9FAFB",
+            borderTop: `1px solid ${C.borderLight}`,
+            textAlign: "right",
+          }}>
+            Suggestions powered by Google
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1660,7 +1878,7 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], attachme
 function FormSection({ title, children }) {
   return (
     <section className="grassroots-event-form-section">
-      <div style={{ fontSize: 12, fontWeight: 900, color: C.pri, textTransform: "uppercase", marginBottom: 12 }}>
+      <div className="grassroots-event-form-section-title">
         {title}
       </div>
       {children}
@@ -1674,6 +1892,9 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
     onChange("status", status);
     onChange("is_active", status === "abandoned" ? false : true);
   };
+
+  // No custom date popover state needed for quick capture — we use CalendarPicker directly.
+
   const applyPlaceAddress = (parts) => {
     Object.entries(parts || {}).forEach(([key, value]) => onChange(key, value || ""));
   };
@@ -1687,15 +1908,156 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onCancel]);
 
+  // Quick capture mode for new events (minimal, clean, fast)
+  if (draft.isDraft) {
+    const dates = Array.isArray(draft.event_dates) ? draft.event_dates : [];
+
+    return (
+      <div className="grassroots-event-inline-editor grassroots-event-dense">
+        <div className="grassroots-event-inline-header" style={{ background: 'transparent', borderBottom: `1px solid ${C.borderLight}` }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              New Event
+            </div>
+          </div>
+          <button type="button" onClick={onCancel} aria-label="Close" title="Close" className="grassroots-event-inline-close">
+            <I.X />
+          </button>
+        </div>
+
+        <div style={{ padding: "14px 16px 8px" }}>
+          {/* Consistent 3-column grid for both rows so everything lines up */}
+          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "12px", marginBottom: "14px" }}>
+            {/* Event Name */}
+            <div style={{ gridColumn: "1 / 2" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Event Name
+              </div>
+              <input
+                type="text"
+                value={draft.name || ""}
+                onChange={(e) => onChange("name", e.target.value)}
+                placeholder="Event name"
+                style={{ width: "100%", padding: "9px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 15, fontWeight: 500, fontFamily: "inherit", outline: "none" }}
+                autoFocus
+              />
+            </div>
+
+            {/* Progressive optional dates for quick capture (no multi-day toggle).
+                One required date. As you fill dates, additional grayed-out optional fields appear. */}
+            <div style={{ gridColumn: "2 / 4" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Date(s)
+              </div>
+
+              {(() => {
+                let displayDates = [...(dates.length ? dates : [{ id: "d1", event_date: "" }])];
+                if (displayDates.length === 0 || displayDates[displayDates.length - 1].event_date) {
+                  displayDates.push({ id: `d${displayDates.length + 1}`, event_date: "" });
+                }
+                return displayDates.map((d, idx) => {
+                  const isOptional = idx > 0;
+                  return (
+                    <div key={d.id || idx} style={{ marginBottom: 6 }}>
+                      <input
+                        type="date"
+                        value={d.event_date || ""}
+                        placeholder={isOptional ? "Additional date (optional)" : ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          let next = [...dates];
+                          if (idx < next.length) {
+                            next[idx] = { ...(next[idx] || {}), event_date: val };
+                          } else {
+                            next.push({ id: `d${next.length + 1}`, event_date: val });
+                          }
+                          while (next.length > 1 && !next[next.length - 1].event_date) {
+                            next.pop();
+                          }
+                          onChange("event_dates", next);
+                          e.target.blur();
+                        }}
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 8,
+                          fontSize: 14,
+                          fontFamily: "inherit",
+                          opacity: isOptional && !d.event_date ? 0.55 : 1,
+                          background: isOptional && !d.event_date ? "#f8fafc" : undefined,
+                        }}
+                      />
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Row 2: Organizer / Contact */}
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Organizer / Contact
+              </div>
+              <input
+                type="text"
+                value={draft.organizer || ""}
+                onChange={(e) => onChange("organizer", e.target.value)}
+                placeholder="Name (optional)"
+                style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}
+              />
+            </div>
+
+            {/* Row 2: Phone */}
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Phone
+              </div>
+              <input
+                type="text"
+                value={draft.contact_phone || ""}
+                onChange={(e) => onChange("contact_phone", e.target.value)}
+                placeholder="(optional)"
+                style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}
+              />
+            </div>
+
+            {/* Row 2: Email */}
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Email
+              </div>
+              <input
+                type="email"
+                value={draft.contact_email || ""}
+                onChange={(e) => onChange("contact_email", e.target.value)}
+                placeholder="(optional)"
+                style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}
+              />
+            </div>
+          </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 16px", borderTop: `1px solid ${C.borderLight}` }}>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+          <Btn variant="primary" onClick={onSave} disabled={saving || !draft.name?.trim()}>
+            {saving ? "Saving..." : "Save"}
+          </Btn>
+        </div>
+      </div>
+      </div>
+    );
+  }
+
+  // Full edit mode for existing events (richer details)
   return (
-    <div className="grassroots-event-inline-editor">
+    <div className="grassroots-event-inline-editor grassroots-event-dense">
         <div className="grassroots-event-inline-header">
           <div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              {draft.isDraft ? "New Event" : "Edit Event"}
+            <div style={{ fontSize: 9, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Edit Event
             </div>
-            <div style={{ marginTop: 3, fontSize: 13, color: C.textMut }}>
-              {draft.isDraft ? "Create and return to the tracker" : "Update the event without leaving the tracker"}
+            <div style={{ marginTop: 1, fontSize: 10, color: C.textMut }}>
+              Update without leaving the tracker
             </div>
           </div>
           <button type="button" onClick={onCancel} aria-label="Close event editor" title="Close" className="grassroots-event-inline-close">
@@ -1750,33 +2112,14 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
               onChange={(value) => onChange("proposal", value)}
             />
             <EventLinksEditor draft={draft} onChange={onChange} />
-            {!draft.isDraft && (
-              <div className="grassroots-event-commentary">
-                <div className="grassroots-event-commentary-header">
-                  <Label>Comments</Label>
-                  <button type="button" onClick={onLog} disabled={!canLog} className="grassroots-comment-add-button">
-                    <I.MessageSquare /> Log comment
-                  </button>
-                </div>
-                <ActivityList
-                  activities={activities}
-                  categoryConfig={getGrassrootsCategoryConfig("events")}
-                  attachmentsByActivity={attachmentsByActivity}
-                  onPreviewAttachment={onPreviewAttachment}
-                  previewingAttachmentId={previewingAttachmentId}
-                />
-              </div>
-            )}
           </FormSection>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingTop: 18, borderTop: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 6, flexWrap: "wrap", paddingTop: 6, borderTop: `1px solid ${C.borderLight}` }}>
           <div>
-            {!draft.isDraft && (
-              <Btn variant="ghost" size="sm" icon={<I.Trash />} onClick={onDelete} style={{ color: C.dan }}>
-                Delete
-              </Btn>
-            )}
+            <Btn variant="ghost" size="sm" icon={<I.Trash />} onClick={onDelete} style={{ color: C.dan }}>
+              Delete
+            </Btn>
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
@@ -2021,6 +2364,545 @@ const HEADER_CELL_STYLE = {
   whiteSpace: "nowrap",
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DENSE GRASSROOTS TABLE — Exact tight styling the user loves from Clients lifecycle
+// (Replaces the loose category card + wide tracker rows with a super-dense table)
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-category column configuration for the shared dense table. The Events shape
+// is the default; other categories map their own data into the same standard
+// columns (Organizer / Event / Date / Status / Notes / Follow-Up / Updates) so the
+// "All" view can stack every category in one table. `get.*` are optional getters
+// (target, activities) -> value; when absent the built-in Events derivation is used.
+function getGrassrootsColumnMap(categoryId, subview = null) {
+  const lastActivityDate = (t, acts = []) => {
+    const d = [...acts].map((a) => a.activity_date || a.created_at).filter(Boolean).sort().pop();
+    return d ? fmtDate(d) : "—";
+  };
+  const events = {
+    headers: { organizer: "Organizer", event: "Event", eventDate: "Event Date", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+    show: { event: true, eventDate: true, status: true, notes: true, followUp: true },
+    sortable: { eventDate: true, followUp: true },
+    statusVariant: "pill",
+    updatesMode: "log",
+    allowEventLink: true,
+    emptyText: "No events match. Add one or clear filters.",
+    get: {},
+  };
+  if (categoryId === "all") {
+    // Cross-category view: each row maps itself using its own category's config.
+    return {
+      headers: { organizer: "Organizer / Business", event: "Event / Category", eventDate: "Date", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: true, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: true,
+      emptyText: "No grassroots targets match this view.",
+      get: {
+        organizer: (t, acts) => {
+          const m = getGrassrootsColumnMap(t.category);
+          return m.get.organizer ? m.get.organizer(t, acts) : (t.organizer || [t.first_name, t.last_name].filter(Boolean).join(" ") || t.name || t.contact_source || "—");
+        },
+        event: (t, acts) => {
+          const m = getGrassrootsColumnMap(t.category);
+          const val = m.show.event ? (m.get.event ? m.get.event(t, acts) : (t.name || "")) : "";
+          const typeLabel = t.category === "drops" ? "Visit" : t.category === "events" ? "Event" : null;
+          if (!typeLabel) return val;
+          return val ? `${typeLabel}: ${val}` : typeLabel;
+        },
+        eventDate: (t, acts) => {
+          const m = getGrassrootsColumnMap(t.category);
+          if (!m.show.eventDate) return "";
+          if (m.get.eventDate) return m.get.eventDate(t, acts);
+          const d = getGrassrootsPrimaryEventDate(t);
+          return d ? fmtDate(d) : "";
+        },
+      },
+    };
+  }
+  if (categoryId === "drops" && subview === "activity") {
+    return {
+      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "Outcome", notes: "Summary", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: true, status: true, notes: true, followUp: false },
+      sortable: { eventDate: false, followUp: false },
+      statusVariant: "text",
+      updatesMode: "edit",
+      allowEventLink: false,
+      emptyText: "No visit activity matches this view.",
+      get: {
+        organizer: (r) => r.businessName || "—",
+        event: (r) => r.businessCategory || "—",
+        eventDate: (r) => (r.activityDate ? fmtDate(r.activityDate) : "—"),
+        statusText: (r) => r.outcome || "",
+        notes: (r) => r.notes || r.personSpokenWith || "",
+      },
+    };
+  }
+  if (categoryId === "drops") {
+    return {
+      headers: { organizer: "Business", event: "Category", eventDate: "Last Visit", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: true, status: false, notes: false, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No visit businesses match this view.",
+      get: {
+        organizer: (t) => t.name || "—",
+        event: (t) => t.business_category || "—",
+        eventDate: (t, acts) => lastActivityDate(t, acts),
+      },
+    };
+  }
+  if (categoryId === "corporatePartnerships" || categoryId === "corporate_partnerships") {
+    return {
+      headers: { organizer: "Corporation", event: "Employees", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No corporate partnerships match this view.",
+      get: {
+        organizer: (t) => t.name || "—",
+        event: (t) => {
+          const loc = t.local_employees, us = t.us_employees;
+          if (!loc && !us) return "—";
+          return [loc ? `${loc} local` : null, us ? `${us} US` : null].filter(Boolean).join(" · ");
+        },
+        eventDate: () => "",
+      },
+    };
+  }
+  if (categoryId === "apartments") {
+    return {
+      headers: { organizer: "Apartment Complex", event: "", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: false, eventDate: false, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No apartments match this view.",
+      get: { organizer: (t) => t.name || "—", eventDate: () => "" },
+    };
+  }
+  if (categoryId === "petProfessionalPartnerships" || categoryId === "pet_professional_partnerships") {
+    return {
+      headers: { organizer: "Business", event: "Category", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No pet professional partnerships match this view.",
+      get: {
+        organizer: (t) => t.name || "—",
+        event: (t) => t.business_category || "—",
+        eventDate: () => "",
+      },
+    };
+  }
+  return events;
+}
+
+function DenseGrassrootsTable({
+  targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
+  expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, onShowFollowUpInfo,
+  inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
+  savingLog
+}) {
+  const C = { bg: "#F5F6F8", surface: "#fff", border: "#DFE2E8", borderLight: "#ECEEF2", text: "#1A1D23", textSec: "#5A6170", textMut: "#959BA8", pri: "#003462", priLt: "#E6EEF6", acc: "#AF8D54", suc: "#0D7A56", dan: "#C42B2B" };
+
+  // Column configuration — Events shape by default; other categories map their data into the same columns.
+  const cm = columnMap || getGrassrootsColumnMap("events");
+
+  // 7-col dense grid — Follow-up placed immediately left of Updates (per request).
+  // Tuned widths for better visual balance and tighter overall spacing.
+  const grid = "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [hoveredLinkId, setHoveredLinkId] = useState(null);
+  const [copiedLinkId, setCopiedLinkId] = useState(null);
+
+  const copyLink = (href, id) => {
+    navigator.clipboard.writeText(href).then(() => {
+      setCopiedLinkId(id);
+      setTimeout(() => setCopiedLinkId(null), 1200);
+    }).catch(() => {});
+  };
+
+  // Stable per-row handler (completes Round 2 perf hoisting for the count button)
+  const handleCountClick = useCallback((id, e) => {
+    e.stopPropagation();
+    onToggleUpdates && onToggleUpdates(id);
+  }, [onToggleUpdates]);
+
+  const STATUS_STYLES = {
+    identified: { bg: "#FEF3C7", fg: "#92400E" },
+    corresponding: { bg: "#DBEAFE", fg: "#1E40AF" },
+    booked: { bg: "#DCFCE7", fg: "#166534" },
+    abandoned: { bg: "#FEE2E2", fg: "#991B1B" },
+    default: { bg: "#E5E7EB", fg: "#374151" },
+  };
+
+  const formatShortDate = (d) => {
+    if (!d) return "";
+    try { return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }); } catch { return d; }
+  };
+
+  return (
+    <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+      {/* Exact clients-style dense header — tightened per variant 1 choice */}
+      <div style={{ display: "grid", gridTemplateColumns: grid, columnGap: "8px", padding: "6px 12px", background: "rgb(255,255,255)", borderBottom: "1px solid rgb(226,232,240)", fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.headers.organizer}</div>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.event ? cm.headers.event : ""}</div>
+        <div
+          onClick={cm.sortable.eventDate ? onToggleEventDateSort : undefined}
+          style={{ cursor: cm.sortable.eventDate ? "pointer" : "default", userSelect: "none", color: (cm.sortable.eventDate && eventDateSortDirection) ? "#003462" : "rgb(71,85,105)", fontWeight: (cm.sortable.eventDate && eventDateSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
+          title={cm.sortable.eventDate ? "Sort by event date" : undefined}
+        >
+          {cm.show.eventDate ? cm.headers.eventDate : ""}{cm.sortable.eventDate && eventDateSortDirection === "asc" ? " ▲" : cm.sortable.eventDate && eventDateSortDirection === "desc" ? " ▼" : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.status ? cm.headers.status : ""}</div>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.notes ? cm.headers.notes : ""}</div>
+        <div
+          onClick={cm.sortable.followUp ? onToggleFollowUpSort : undefined}
+          style={{ cursor: cm.sortable.followUp ? "pointer" : "default", userSelect: "none", color: (cm.sortable.followUp && followUpSortDirection) ? "#003462" : "rgb(71,85,105)", fontWeight: (cm.sortable.followUp && followUpSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
+          title={cm.sortable.followUp ? "Sort by follow-up date" : undefined}
+        >
+          {cm.headers.followUp}{cm.sortable.followUp && followUpSortDirection === "asc" ? " ▲" : cm.sortable.followUp && followUpSortDirection === "desc" ? " ▼" : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.headers.updates}</div>
+      </div>
+
+      {targets.length === 0 && (
+        <div style={{ padding: "32px 14px", textAlign: "center", color: C.textSec, fontSize: 13 }}>
+          {cm.emptyText}
+        </div>
+      )}
+
+      {targets.map((target) => {
+        const targetActivities = activitiesByTarget[target.id] || [];
+        const latestActivity = [...targetActivities].sort((a, b) => String(b.activity_date || b.created_at || "").localeCompare(String(a.activity_date || a.created_at || "")))[0];
+        const latestNote = latestActivity ? (latestActivity.notes || latestActivity.description || "") : "";
+        const notePreview = cm.get.notes ? cm.get.notes(target, targetActivities) : (latestNote ? `${formatShortDate(latestActivity.activity_date || latestActivity.created_at)}: ${latestNote}` : (target.proposal || "—"));
+
+        const followUp = target.next_contact_date || "";
+        const isOverdue = !!followUp && followUp < todayStr();
+        const isToday = !!followUp && followUp === todayStr();
+
+        const statusKey = normalizeGrassrootsStatus(target.status);
+        const st = STATUS_STYLES[statusKey] || STATUS_STYLES.default;
+
+        const eventDate = getGrassrootsPrimaryEventDate(target);
+        const eventDateStr = cm.get.eventDate ? cm.get.eventDate(target, targetActivities) : (eventDate ? fmtDate(eventDate) : "—");
+
+        const baseOrganizer = target.organizer || [target.first_name, target.last_name].filter(Boolean).join(" ") || target.contact_source || "—";
+        const organizer = cm.get.organizer ? cm.get.organizer(target, targetActivities) : baseOrganizer;
+        const eventName = cm.get.event ? cm.get.event(target, targetActivities) : (target.name || categoryConfig.emptyName || "Untitled event");
+        const cStatusText = cm.get.statusText ? cm.get.statusText(target, targetActivities) : null;
+
+        const primaryLinkRaw = (Array.isArray(target.details?.links) ? target.details.links : [])
+          .map((l) => l?.url || l?.href || "")
+          .find((u) => String(u).trim()) || target.link || target.event_link || "";
+        const primaryHref = getSafeEventLinkHref(primaryLinkRaw);
+
+        const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
+
+        return (
+          <div key={target.id}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: grid,
+                columnGap: "8px",
+                padding: "4px 10px",
+                borderBottom: `1px solid ${C.borderLight}`,
+                fontSize: 12,
+                alignItems: "start",
+              }}
+            >
+              {/* Organizer */}
+              <div style={{ fontWeight: 700, color: C.pri, wordBreak: "break-word", fontSize: 12, lineHeight: 1.25 }} title={organizer}>
+                {organizer}
+              </div>
+
+              {/* Event name — hyperlink to the stored link (if any). On hover: explicit Copy + Open icons. */}
+              <div 
+                style={{ 
+                  fontWeight: 600, 
+                  color: C.text, 
+                  wordBreak: "break-word",
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+                onMouseEnter={() => primaryHref && setHoveredLinkId(target.id)}
+                onMouseLeave={() => setHoveredLinkId(null)}
+              >
+                {(cm.allowEventLink && primaryHref) ? (
+                  <a
+                    href={primaryHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: "inherit", textDecoration: "none" }}
+                    title={primaryHref}
+                  >
+                    {eventName}
+                  </a>
+                ) : (
+                  eventName
+                )}
+
+                {cm.allowEventLink && primaryHref && hoveredLinkId === target.id && (
+                  <span style={{ display: 'inline-flex', gap: 1, opacity: 0.75, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(eventName).then(() => {
+                          setCopiedLinkId(target.id);
+                          setTimeout(() => setCopiedLinkId(null), 1200);
+                        }).catch(() => {});
+                      }}
+                      style={{ 
+                        padding: 1, 
+                        border: 'none', 
+                        background: 'transparent', 
+                        cursor: 'pointer', 
+                        color: C.textSec,
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}
+                      title="Copy event name"
+                    >
+                      <span style={{ width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ transform: 'scale(0.65)', transformOrigin: 'center' }}>
+                          {copiedLinkId === target.id ? <I.CheckCircle /> : <I.Clipboard />}
+                        </span>
+                      </span>
+                    </button>
+                    <a
+                      href={primaryHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ 
+                        padding: 1, 
+                        color: C.textSec,
+                        display: 'flex',
+                        alignItems: 'center',
+                        textDecoration: 'none'
+                      }}
+                      title="Open link"
+                    >
+                      <span style={{ width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ transform: 'scale(0.65)', transformOrigin: 'center' }}>
+                          <I.Link />
+                        </span>
+                      </span>
+                    </a>
+                  </span>
+                )}
+              </div>
+
+              {/* Event Date (sortable) */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
+                {eventDateStr}
+              </div>
+
+              {/* Status — status pill (default), plain-text chip (e.g. Drops Outcome), or hidden */}
+              <div>
+                {!cm.show.status ? null : cm.statusVariant === "text" ? (
+                  cStatusText
+                    ? <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: "#E5E7EB", color: "#374151", whiteSpace: "nowrap", letterSpacing: "0.02em", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} title={cStatusText}>{cStatusText}</span>
+                    : <span style={{ color: C.textMut, fontSize: 11 }}>—</span>
+                ) : (
+                  <span style={{
+                    display: "inline-block",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: "1px 8px",
+                    borderRadius: 999,
+                    background: st.bg,
+                    color: st.fg,
+                    whiteSpace: "nowrap",
+                    letterSpacing: "0.02em",
+                  }}>
+                    {getGrassrootsStatusLabel(target.status)}
+                  </span>
+                )}
+              </div>
+
+              {/* Notes — 3-line wrap */}
+              <div
+                style={{
+                  fontSize: 11,
+                  color: C.textSec,
+                  lineHeight: 1.35,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+                title={cm.show.notes ? notePreview : undefined}
+              >
+                {cm.show.notes ? notePreview : null}
+              </div>
+
+              {/* Follow-Up — click shows "set/created" timestamp popover (exact reference behavior from Customer Lifecycle created field) */}
+              {cm.show.followUp ? (
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onShowFollowUpInfo) onShowFollowUpInfo(target, e.clientX, e.clientY);
+                  }}
+                  style={{ cursor: "pointer", fontSize: 11, fontWeight: 800, color: followUp ? C.pri : C.text, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, whiteSpace: "nowrap" }}
+                  title="Click to see when this follow-up was set (edit via Log button)"
+                >
+                  <span>{followUp ? fmtDate(followUp) : "—"}</span>
+                  {isOverdue && <span style={{ fontSize: 9, fontWeight: 800, color: C.dan, background: `${C.dan}18`, padding: "0 3px", borderRadius: 3, letterSpacing: "0.02em", alignSelf: "flex-start" }}>OVERDUE</span>}
+                  {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.suc, background: `${C.suc}18`, padding: "0 3px", borderRadius: 3, letterSpacing: "0.02em", alignSelf: "flex-start" }}>TODAY</span>}
+                </div>
+              ) : (
+                <div style={{ color: C.textMut, fontSize: 11 }}>—</div>
+              )}
+
+              {/* Updates: Edit-only (e.g. Drops activity rows) or full count + Log + Edit */}
+              {cm.updatesMode === "edit" ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                  {onEdit && (
+                    <button
+                      onClick={() => onEdit(target)}
+                      style={{ padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                <button
+                  onClick={(e) => handleCountClick(target.id, e)}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", background: targetActivities.length > 0 ? `${C.acc}20` : C.bg, color: targetActivities.length > 0 ? C.acc : C.textMut }}
+                  title={`${targetActivities.length} updates — click to expand`}
+                >
+                  {targetActivities.length}
+                </button>
+
+                {/* Hide Log button while the inline composer is open for this row */}
+                {inlineLoggingId !== target.id && (
+                  <button
+                    onClick={() => onLog(target)}
+                    style={{ padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Log
+                  </button>
+                )}
+
+                {onEdit && (
+                  <button
+                    onClick={() => onEdit(target)}
+                    style={{ padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              )}
+            </div>
+
+            {/* Expanded area: composer (when logging) + history */}
+            {cm.updatesMode !== "edit" && (isExp || inlineLoggingId === target.id) && (
+              <div style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}` }}>
+                {/* Inline Log Composer — dominant textarea + date picker right underneath (no big modal) */}
+                {inlineLoggingId === target.id && (
+                  <div style={{ padding: "12px 14px", borderBottom: targetActivities.length > 0 ? `1px solid ${C.borderLight}` : "none" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Log Update
+                    </div>
+
+                    <textarea
+                      value={inlineLogNotes}
+                      onChange={(e) => onInlineLogNotesChange(e.target.value)}
+                      placeholder="Notes about this outreach / development..."
+                      rows={5}
+                      style={{
+                        width: "100%",
+                        minHeight: 110,
+                        padding: "10px 12px",
+                        border: `1.5px solid ${C.pri}`,
+                        borderRadius: 6,
+                        fontSize: 13,
+                        fontFamily: "inherit",
+                        resize: "vertical",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                      autoFocus
+                    />
+
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Next Follow-Up Date *
+                      </div>
+                      <input
+                        type="date"
+                        value={inlineLogNextDate || ""}
+                        min={today}
+                        onChange={(e) => {
+                          onInlineLogNextDateChange(e.target.value);
+                          e.target.blur(); // auto-close native picker immediately, matching New Event creation behavior
+                        }}
+                        style={{
+                          padding: "5px 8px",
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontFamily: "inherit",
+                          background: C.surface,
+                          maxWidth: 158,
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+                      <button onClick={onCancelInlineLog}
+                        style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                        Cancel
+                      </button>
+                      <button onClick={onSaveInlineLog} disabled={savingLog}
+                        style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: savingLog ? "default" : "pointer", fontFamily: "inherit", opacity: savingLog ? 0.7 : 1 }}>
+                        {savingLog ? "Saving..." : "Save Log"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Existing history entries */}
+                {targetActivities.length > 0 && (
+                  <div style={{ padding: "8px 14px 4px" }}>
+                    {[...targetActivities].sort((a, b) => String(b.created_at || b.activity_date || "").localeCompare(String(a.created_at || a.activity_date || ""))).map((act, idx, arr) => (
+                      <div key={act.id} style={{ marginBottom: idx === arr.length - 1 ? 0 : 6, paddingBottom: idx === arr.length - 1 ? 0 : 6, borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{activityActorName(act)} — {fmtDate(act.activity_date || act.created_at)}</div>
+                        <div style={{ fontSize: 11, color: C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{act.notes || "—"}</div>
+                        {act.next_contact_date && <div style={{ fontSize: 9, color: C.textSec, marginTop: 1 }}>Follow-up: {fmtDate(act.next_contact_date)}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TrackerRow({ target, index, categoryConfig, activities, attachmentsByActivity = {}, isExpanded, isFresh = false, canLog, canEdit, onToggleUpdates, onLog, onMove, onEdit, onPreviewAttachment, previewingAttachmentId }) {
   const activityCount = getGrassrootsActivityCount(target, { [target.id]: activities });
   const nextDate = getGrassrootsNextDate(target, { [target.id]: activities });
@@ -2036,13 +2918,13 @@ function TrackerRow({ target, index, categoryConfig, activities, attachmentsByAc
 
   return (
     <Card style={{ padding: 0, overflow: "hidden", borderRadius: 12, position: "relative", animation: isFresh ? "grassrootsFreshRow 1.8s ease-out both" : undefined }}>
-      <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 10, padding: "10px 14px", minHeight: 58, boxSizing: "border-box" }}>
+      <div style={{ display: "grid", gridTemplateColumns: gridColumns, alignItems: "center", gap: 8, padding: "5px 12px", minHeight: 44, boxSizing: "border-box" }}>
         <div style={{ width: 30, height: 30, borderRadius: 10, display: "grid", placeItems: "center", background: target.is_active === false ? C.bg : C.pri, color: target.is_active === false ? C.textMut : "#fff", fontSize: 12, fontWeight: 900 }}>
           {index + 1}
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 900, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
-          <div style={{ marginTop: 3, fontSize: 11, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta || categoryConfig.singular}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+          <div style={{ marginTop: 2, fontSize: 10, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta || categoryConfig.singular}</div>
         </div>
         {usesBusinessCategoryColumn(categoryConfig) && <BusinessCategoryBadge value={getGrassrootsBusinessCategory(target)} />}
         {categoryConfig.usesStatus !== false && <StatusBadge status={target.status} />}
@@ -2287,7 +3169,7 @@ function LogActivityModal({
       ? [getGrassrootsBusinessCategory(businessDraft), businessDraft.address].filter(Boolean).join(" · ")
       : "";
   const title = isDropLog
-    ? isEditingLog ? "Edit Drop Activity" : "Log Drop Activity"
+    ? isEditingLog ? "Edit Visit" : "Log Visit"
     : getGrassrootsCategoryConfig(logModal?.target?.category).id === "events" ? "Log Event Comment" : "Log Development";
   const saveLabel = isEditingLog ? "Save Changes" : "Save Activity";
 
@@ -2298,7 +3180,7 @@ function LogActivityModal({
             <div className="grassroots-log-section-title">Business</div>
             {logModal?.target ? (
               <div className="grassroots-log-selected-business">
-                <strong>{logModal.target.name || "Drop business"}</strong>
+                <strong>{logModal.target.name || "Visit business"}</strong>
                 <span>{selectedSummary || "Existing K9 business"}</span>
               </div>
             ) : (
@@ -2388,25 +3270,52 @@ function LogActivityModal({
         )}
 
         <section className="grassroots-log-section">
-          <div className="grassroots-log-section-title">{isDropLog ? "Visit Notes" : "Update"}</div>
-          <textarea
-            value={notes}
-            onChange={(event) => onNotesChange(event.target.value)}
-            placeholder={isDropLog ? "What happened during this visit?" : "Comment or development..."}
-            rows={4}
-            style={{ ...INPUT_STYLE, minHeight: 108, resize: "vertical" }}
-            autoFocus={!isDropLog}
-          />
-          {!isDropLog && (
-            <div style={{ marginTop: 12 }}>
-              <Label>Follow-Up Date Optional</Label>
-              <MiniDatePicker
-                value={nextDate}
-                onChange={onNextDateChange}
-                recommendedDate={addDays(todayStr(), 2)}
-                recommendedHint="Optional: set only if this needs follow-up."
+          <div className="grassroots-log-section-title">{isDropLog ? "Visit Notes" : "Update / Outreach Log"}</div>
+
+          {/* For Events (Grassroots development): larger, prominent note area + Next Follow-Up Date below it (per user request) */}
+          {!isDropLog ? (
+            <>
+              {/* Light formatting toolbar kept for convenience */}
+              <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "**bold**")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontWeight: 700 }} title="Append bold">B</button>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "*italic*")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontStyle: "italic" }} title="Append italic">I</button>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "\n- ")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer" }} title="Append bullet">•</button>
+              </div>
+
+              <textarea
+                value={notes}
+                onChange={(event) => onNotesChange(event.target.value)}
+                placeholder="Notes about this outreach / development..."
+                rows={6}
+                style={{ ...INPUT_STYLE, minHeight: 140, resize: "vertical" }}
+                autoFocus
               />
-            </div>
+
+              <div style={{ marginTop: 14 }}>
+                <Label>Next Follow-Up Date *</Label>
+                <MiniDatePicker
+                  value={nextDate}
+                  onChange={onNextDateChange}
+                  // No recommended +X hint for Grassroots per user request
+                />
+              </div>
+            </>
+          ) : (
+            // Drops keep the existing more structured layout
+            <>
+              <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "**bold**")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontWeight: 700 }} title="Append bold">B</button>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "*italic*")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontStyle: "italic" }} title="Append italic">I</button>
+                <button type="button" onClick={() => onNotesChange((notes || "") + "\n- ")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer" }} title="Append bullet">•</button>
+              </div>
+              <textarea
+                value={notes}
+                onChange={(event) => onNotesChange(event.target.value)}
+                placeholder="What happened during this visit?"
+                rows={4}
+                style={{ ...INPUT_STYLE, minHeight: 108, resize: "vertical" }}
+              />
+            </>
           )}
         </section>
 
@@ -2515,10 +3424,24 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [loading, setLoading] = useState(true);
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [saveState, setSaveState] = useState("idle");
+  // New lifecycle-style tab system (matching the old Customer Lifecycle layout the user loves)
+  const [activeLifecycleTab, setActiveLifecycleTab] = useState("events"); // events | drops | corporate | apartments | ppp | all
+
+  // Keep the old activeCategory alive during the transition.
+  // The entire content rendering below (activeConfig, DenseGrassrootsTable, Drop logic, etc.)
+  // still depends on it. We sync the two states in the new tab bar.
   const [activeCategory, setActiveCategory] = useState("events");
+
+  // Filters for the new header (Events tab uses status pills)
+  const [lifecycleSearch, setLifecycleSearch] = useState("");
+  const [eventsStatusFilter, setEventsStatusFilter] = useState(null); // identified | corresponding | booked | abandoned
+  const [showPastEvents, setShowPastEvents] = useState(false);
+
+  // For Drops: Activity vs Business view (controlled by pill in the new header)
   const [dropSubview, setDropSubview] = useState("activity");
   const [dropActivityCategory, setDropActivityCategory] = useState("All");
   const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
+  const [followUpSortDirection, setFollowUpSortDirection] = useState(null);
   const [targets, setTargets] = useState([]);
   const [activities, setActivities] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
@@ -2531,6 +3454,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [expandedDropActivities, setExpandedDropActivities] = useState(new Set());
   const [logModal, setLogModal] = useState(null);
   const [movePopover, setMovePopover] = useState(null);
+  const [followUpInfo, setFollowUpInfo] = useState(null); // {targetId, followUpDate, setOn, x, y} — positioned from real click coords now
   const [logNotes, setLogNotes] = useState("");
   const [logDate, setLogDate] = useState("");
   const [logActivityDate, setLogActivityDate] = useState(todayStr());
@@ -2545,6 +3469,46 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [logFiles, setLogFiles] = useState([]);
   const [logFileErrors, setLogFileErrors] = useState([]);
   const [savingLog, setSavingLog] = useState(false);
+
+  // Inline log composer (preferred over big full-screen modal per user feedback)
+  const [inlineLoggingId, setInlineLoggingId] = useState(null);
+  const [inlineLogNotes, setInlineLogNotes] = useState("");
+  const [inlineLogNextDate, setInlineLogNextDate] = useState("");
+  // Hold the actual target object the composer was opened for, so saving never
+  // depends on re-finding it by id in a list that may be filtered/derived.
+  const inlineLogTargetRef = useRef(null);
+
+  // Stable handlers (perf nit fix for dense table + sort headers — prevents fresh arrow fns every render)
+  const toggleUpdates = useCallback((id) => {
+    setExpandedUpdates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Start inline log composer inside the row's expansion area (no big modal)
+  const startInlineLog = useCallback((target) => {
+    inlineLogTargetRef.current = target;
+    setInlineLoggingId(target.id);
+    setInlineLogNotes("");
+    setInlineLogNextDate(target.next_contact_date || "");
+    // Make sure the updates section is open so the composer is visible
+    setExpandedUpdates((prev) => {
+      const next = new Set(prev);
+      next.add(target.id);
+      return next;
+    });
+  }, []);
+  const toggleEventDateSort = useCallback(() => {
+    setFollowUpSortDirection(null);
+    setEventDateSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+  }, []);
+  const toggleFollowUpSort = useCallback(() => {
+    setEventDateSortDirection("asc");
+    setFollowUpSortDirection((current) => (current === "asc" ? "desc" : current === "desc" ? null : "asc"));
+  }, []);
   const [freshActivityId, setFreshActivityId] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [previewingAttachmentId, setPreviewingAttachmentId] = useState(null);
@@ -2578,8 +3542,62 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const sortedVisibleTargets = useMemo(() => {
     if (activeConfig.id !== "events") return visibleTargets;
     const today = todayStr();
-    return [...visibleTargets].sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
-  }, [activeConfig.id, eventDateSortDirection, visibleTargets]);
+    let list = [...visibleTargets];
+    if (followUpSortDirection) {
+      list.sort((a, b) => {
+        const da = a.next_contact_date || "";
+        const db = b.next_contact_date || "";
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        const cmp = followUpSortDirection === "desc" ? db.localeCompare(da) : da.localeCompare(db);
+        return cmp || (a.name || "").localeCompare(b.name || "");
+      });
+    } else {
+      list.sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
+    }
+    return list;
+  }, [activeConfig.id, eventDateSortDirection, followUpSortDirection, visibleTargets]);
+
+  // Apply the literal-port header filters (search, status pills, Past Events) on top of the category/sorted list.
+  // This makes the ported Customer Lifecycle chrome actually drive the table (Events tab primary).
+  const lifecycleDisplayTargets = useMemo(() => {
+    let list = sortedVisibleTargets || [];
+    const q = (lifecycleSearch || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter(t =>
+        String(t.organizer || t.name || t.first_name || t.last_name || "").toLowerCase().includes(q) ||
+        String(t.notes || t.proposal || t.address || "").toLowerCase().includes(q)
+      );
+    }
+    if (activeLifecycleTab === 'events' && eventsStatusFilter) {
+      list = list.filter(t => normalizeGrassrootsStatus(t.status) === eventsStatusFilter);
+    }
+    if (showPastEvents && activeLifecycleTab === 'events') {
+      const td = todayStr();
+      list = list.filter(t => {
+        const d = getGrassrootsPrimaryEventDate(t);
+        return d && d < td;
+      });
+    }
+    return list;
+  }, [sortedVisibleTargets, lifecycleSearch, eventsStatusFilter, showPastEvents, activeLifecycleTab]);
+
+  // "Activity" tab — what's legit/confirmed: booked Events + all Visits, in one feed.
+  // Strategic/long-term categories (Corporate, Apartments, PPP) stay in their own tabs.
+  const allTabTargets = useMemo(() => {
+    let list = targets.filter((t) => t.category === "drops" || (t.category === "events" && normalizeGrassrootsStatus(t.status) === "booked"));
+    const q = (lifecycleSearch || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter((t) =>
+        String(t.organizer || t.name || t.first_name || t.last_name || "").toLowerCase().includes(q) ||
+        String(t.notes || t.proposal || t.address || "").toLowerCase().includes(q)
+      );
+    }
+    list.sort((a, b) => String(a.name || a.organizer || "").localeCompare(String(b.name || b.organizer || "")));
+    return list;
+  }, [targets, lifecycleSearch]);
+
   const eventMetrics = useMemo(() => buildGrassrootsEventMetrics(targets, todayStr()), [targets]);
   const dropMetrics = useMemo(() => buildGrassrootsDropMetrics(targets, activities, todayStr()), [activities, targets]);
   const dropTargets = useMemo(() => targets.filter((target) => getGrassrootsCategoryConfig(target.category).id === "drops"), [targets]);
@@ -2781,7 +3799,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return;
     }
     setEditDraft(null);
-    setNewDraft(makeBlankGrassrootsTarget(activeCategory));
+    const blank = makeBlankGrassrootsTarget(activeCategory);
+    // Quick capture defaults
+    blank.status = "corresponding";
+    blank.is_active = true;
+    setNewDraft(blank);
   };
 
   const closeEditor = () => {
@@ -2929,7 +3951,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (logSelectedTarget?.id) return logSelectedTarget;
     const name = String(logBusinessDraft?.name || logBusinessQuery || "").trim();
     if (!name) throw new Error("Business is required");
-    if (!canEditTargets) throw new Error("You do not have permission to create drop businesses");
+    if (!canEditTargets) throw new Error("You do not have permission to create visit businesses");
 
     const draft = {
       ...makeBlankGrassrootsTarget("drops"),
@@ -3134,6 +4156,91 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
     toast(`Moved to ${nextConfig.label}`);
+  };
+
+  const updateFollowUpDate = async (target, newDate) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit follow-up dates", "error");
+      return;
+    }
+    // Stricter validation (re-review Round 2): reject not only shape but invalid calendar dates (e.g. 2026-99-99, 2026-02-30)
+    if (newDate != null) {
+      const s = String(newDate).trim();
+      if (s) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+          toast("Follow-up date must be YYYY-MM-DD or blank", "error");
+          return;
+        }
+        const d = new Date(s + "T12:00:00");
+        const [y, m, day] = s.split("-").map(Number);
+        if (d.getFullYear() !== y || d.getMonth() + 1 !== m || d.getDate() !== day) {
+          toast("Invalid calendar date for follow-up", "error");
+          return;
+        }
+      }
+    }
+    setSaveState("saving");
+    const { error } = await supabase
+      .from("grassroots_targets")
+      .update({
+        next_contact_date: newDate || null,
+        updated_by_user_id: actor.userId,
+        updated_by_name: actor.name,
+      })
+      .eq("id", target.id);
+    if (error) {
+      setSaveState("error");
+      toast(error.message || "Failed to update follow-up", "error");
+      window.setTimeout(() => setSaveState("idle"), 800);
+      return;
+    }
+    setTargets((prev) => prev.map((row) => (row.id === target.id ? { ...row, next_contact_date: newDate || null } : row)));
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 900);
+    toast(newDate ? "Follow-up date updated" : "Follow-up cleared");
+  };
+
+  // small helper (hoisted for use in export below)
+  function formatShortDateForExport(d) {
+    if (!d) return "";
+    try { return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }); } catch { return String(d); }
+  }
+
+  const exportVisibleToCSV = () => {
+    const rows = sortedVisibleTargets.length ? sortedVisibleTargets : visibleTargets;
+    if (!rows.length) {
+      toast("Nothing to export", "error");
+      return;
+    }
+    const headers = ["Organizer", "Event", "Event Date", "Status", "Follow-Up", "Latest Update", "Notes / Proposal"];
+    const escape = (v) => `"${String(v || "").replace(/"/g, '""')}"`;
+    const csvLines = [headers.join(",")];
+    rows.forEach((t) => {
+      const acts = activitiesByTarget[t.id] || [];
+      const latest = [...acts].sort((a, b) => String(b.activity_date || b.created_at || "").localeCompare(String(a.activity_date || a.created_at || "")))[0];
+      const latestTxt = latest ? `${formatShortDateForExport(latest.activity_date || latest.created_at)}: ${latest.notes || latest.description || ""}` : "";
+      const org = t.organizer || [t.first_name, t.last_name].filter(Boolean).join(" ") || t.contact_source || "";
+      const ed = getGrassrootsPrimaryEventDate(t) || "";
+      csvLines.push([
+        escape(org),
+        escape(t.name || ""),
+        escape(ed ? fmtDate(ed) : ""),
+        escape(getGrassrootsStatusLabel(t.status)),
+        escape(t.next_contact_date || ""),
+        escape(latestTxt),
+        escape(t.proposal || ""),
+      ].join(","));
+    });
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `grassroots-${activeConfig.id}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Exported ${rows.length} rows`);
   };
 
   const saveLog = async () => {
@@ -3353,9 +4460,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const saveTone = saveState === "saving" ? C.info : saveState === "saved" ? C.suc : saveState === "error" ? C.dan : C.textMut;
   const metricCards = activeConfig.id === "drops"
     ? [
-      { label: "Drop Visits Last 30", value: dropMetrics.dropVisitsLast30, color: C.pri },
+      { label: "Visits Last 30", value: dropMetrics.dropVisitsLast30, color: C.pri },
       { label: "Businesses Visited Last 30", value: dropMetrics.businessesVisitedLast30, color: C.suc },
-      { label: `Drop Visits ${dropMetrics.year} YTD`, value: dropMetrics.dropVisitsYtd, color: C.info },
+      { label: `Visits ${dropMetrics.year} YTD`, value: dropMetrics.dropVisitsYtd, color: C.info },
       { label: `Businesses Visited ${dropMetrics.year} YTD`, value: dropMetrics.businessesVisitedYtd, color: "#7C3AED" },
     ]
     : [
@@ -3459,10 +4566,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-event-inline-editor {
           position: relative;
           overflow: hidden;
-          border-radius: 14px;
+          border-radius: 10px;
           border: 1.5px solid ${C.border};
           background: ${C.surface};
-          box-shadow: 0 14px 36px rgba(15,23,42,0.12);
+          box-shadow: 0 8px 24px rgba(15,23,42,0.10);
           animation: grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1) both;
         }
         .grassroots-event-inline-header {
@@ -3471,8 +4578,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 14px;
-          padding: 14px 16px;
+          gap: 8px;
+          padding: 8px 12px;
           border-bottom: 1px solid ${C.borderLight};
           background: linear-gradient(135deg, ${C.priLt} 0%, #fff 72%);
         }
@@ -3494,37 +4601,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           gap: 12px;
           margin-bottom: 16px;
         }
-        .grassroots-category-tabs {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-bottom: 14px;
-        }
-        .grassroots-category-tab {
-          position: relative;
-          border: 1.5px solid ${C.border};
-          border-radius: 999px;
-          background: #fff;
-          color: ${C.text};
-          padding: 8px 14px;
-          font-family: inherit;
-          font-size: 12px;
-          font-weight: 800;
-          cursor: pointer;
-          transform: translateZ(0);
-          transition: transform 0.22s cubic-bezier(0.16,1,0.3,1), background 0.22s cubic-bezier(0.16,1,0.3,1), border-color 0.22s cubic-bezier(0.16,1,0.3,1), color 0.22s cubic-bezier(0.16,1,0.3,1), box-shadow 0.22s cubic-bezier(0.16,1,0.3,1);
-        }
-        .grassroots-category-tab:hover {
-          transform: translateY(-1px);
-          border-color: ${C.pri}70;
-          box-shadow: 0 8px 18px rgba(15,23,42,0.08);
-        }
-        .grassroots-category-tab.is-active {
-          background: ${C.pri};
-          border-color: ${C.pri};
-          color: #fff;
-          box-shadow: 0 12px 24px rgba(20,83,45,0.18);
-        }
         .grassroots-category-stage {
           animation: grassrootsCategoryCycle 0.34s cubic-bezier(0.16,1,0.3,1) both;
           transform-origin: top center;
@@ -3532,12 +4608,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-new-draft-anchor {
           scroll-margin-top: 96px;
         }
-        .grassroots-event-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
-        .grassroots-target-inline-body { position: relative; z-index: 1; padding: 14px; background: ${C.bg}; }
+        .grassroots-event-inline-body { position: relative; z-index: 1; padding: 8px; background: ${C.bg}; }
+        .grassroots-target-inline-body { position: relative; z-index: 1; padding: 8px; background: ${C.bg}; }
+        /* density scoped to events editor only (prevents side-effect on TargetEditor for drops etc.) */
         .grassroots-target-form-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(340px, 0.85fr);
-          gap: 14px;
+          gap: 8px;
           align-items: stretch;
         }
         .grassroots-event-type-picker {
@@ -4070,22 +5147,24 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           align-items: start;
         }
         .grassroots-drop-activity-header {
-          padding: 11px 16px;
-          background: ${C.bg};
-          border-bottom: 1px solid ${C.borderLight};
-          color: ${C.textMut};
+          padding: 8px 12px;
+          background: rgb(255,255,255);
+          border-bottom: 1px solid rgb(226,232,240);
+          color: rgb(71,85,105);
           font-size: 10px;
-          font-weight: 950;
-          letter-spacing: 0.08em;
+          font-weight: 700;
+          letter-spacing: 0.06em;
           text-transform: uppercase;
         }
         .grassroots-drop-activity-list {
           display: grid;
         }
         .grassroots-drop-activity-row {
-          padding: 13px 16px;
+          padding: 5px 12px;
           border-bottom: 1px solid ${C.borderLight};
           transition: background 0.16s ease, box-shadow 0.16s ease;
+          font-size: 12px;
+          align-items: start;
         }
         .grassroots-drop-activity-row:last-child {
           border-bottom: 0;
@@ -4108,8 +5187,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-drop-activity-business strong,
         .grassroots-drop-activity-summary strong {
           color: ${C.text};
-          font-size: 13px;
-          font-weight: 950;
+          font-size: 12px;
+          font-weight: 700;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -4119,9 +5198,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .grassroots-drop-activity-summary span,
         .grassroots-drop-activity-detail-footer {
           color: ${C.textMut};
-          font-size: 12px;
-          font-weight: 700;
-          line-height: 1.35;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.3;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -4449,63 +5528,104 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         }
         .pac-container {
           z-index: 10050 !important;
-          margin-top: 8px;
-          padding: 6px;
-          border-radius: 14px;
-          border: 1px solid ${C.border};
-          background: #fff;
-          box-shadow: 0 10px 22px rgba(15,23,42,0.10), 0 1px 2px rgba(15,23,42,0.06);
-          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-          overflow: visible;
-          width: min(760px, calc(100vw - 32px)) !important;
-          max-width: min(760px, calc(100vw - 32px));
+          margin-top: 2px !important;
+          padding: 0 !important;
+          border-radius: 8px !important;
+          border: 1px solid #E5E7EB !important;
+          background: #fff !important;
+          box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1) !important;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+          overflow: hidden !important;
+          width: auto !important;
+          max-width: 460px !important;
         }
+
+        /* Perplexity-style tight single-line items */
         .pac-container .pac-item {
-          border-top: 0;
-          border-radius: 10px;
-          padding: 10px 12px 10px 8px;
-          color: ${C.textMut};
-          cursor: pointer;
-          font-size: 12px;
-          line-height: 1.4;
-          overflow: visible;
-          text-overflow: clip;
-          white-space: normal;
+          display: flex !important;
+          align-items: center !important;
+          padding: 6px 12px !important;
+          font-size: 13px !important;
+          line-height: 1.3 !important;
+          color: #374151 !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          border-radius: 0 !important;
         }
+
         .pac-container .pac-item:hover,
         .pac-container .pac-item-selected {
-          background: ${C.priLt};
-          color: ${C.text};
+          background: #F3F4F6 !important;
+          color: #111827 !important;
         }
+
+        /* Thin left accent bar like Perplexity on selected */
+        .pac-container .pac-item-selected::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 0;
+          bottom: 0;
+          width: 3px;
+          background: #111827;
+        }
+
+        /* Bold main address part */
         .pac-container .pac-item-query {
-          display: block;
-          margin-bottom: 2px;
-          color: ${C.text};
-          font-size: 13px;
-          font-weight: 900;
-          white-space: normal;
+          font-weight: 600 !important;
+          color: #111827 !important;
+          white-space: nowrap !important;
+          flex-shrink: 0;
         }
+
         .pac-container .pac-matched {
-          color: ${C.pri};
-          font-weight: 900;
+          font-weight: 600 !important;
+          color: #14532D !important; /* subtle brand green for matches */
         }
+
+        /* Secondary location text on same line, muted */
+        .pac-container .pac-item > span:not(.pac-icon):not(.pac-item-query) {
+          color: #6B7280 !important;
+          margin-left: 6px !important;
+          font-weight: 400 !important;
+          white-space: nowrap !important;
+        }
+
+        /* Smaller, properly aligned pin icon */
         .pac-container .pac-icon {
-          margin-top: 1px;
-          margin-right: 10px;
-          opacity: 0.48;
+          width: 16px !important;
+          height: 16px !important;
+          margin-right: 8px !important;
+          margin-left: 2px !important;
+          opacity: 0.6 !important;
+          flex-shrink: 0;
+          display: inline-flex !important;
+          align-items: center !important;
         }
-        .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 14px; align-items: start; }
-        .grassroots-event-form-section { border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 16px; background: ${C.surface}; }
-        .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
-        .grassroots-event-wide-field { grid-column: 1 / -1; }
-        .grassroots-event-date-row { display: grid; grid-template-columns: minmax(190px, 1.4fr) minmax(112px, 0.7fr) minmax(112px, 0.7fr) 36px; gap: 8px; align-items: end; }
+
+        /* Powered by Google text */
+        .pac-container .pac-logo {
+          padding: 4px 12px !important;
+          font-size: 10px !important;
+          color: #9CA3AF !important;
+          background: #F9FAFB !important;
+        }
+        .grassroots-event-dense .grassroots-event-form-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 10px; align-items: start; }
+        .grassroots-event-dense .grassroots-event-form-section { border: none; padding: 0 0 4px; background: transparent; }
+        .grassroots-event-dense .grassroots-event-form-section-title { font-size: 9px; font-weight: 700; color: ${C.textMut}; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+        .grassroots-event-dense .grassroots-event-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; align-items: start; }
+        .grassroots-event-dense .grassroots-event-wide-field { grid-column: 1 / -1; }
+        .grassroots-event-date-row { display: grid; grid-template-columns: minmax(190px, 1.4fr) minmax(112px, 0.7fr) minmax(112px, 0.7fr) 36px; gap: 6px; align-items: end; }
         .grassroots-event-date-row > button { margin-bottom: 1px; }
         @media (max-width: 880px) {
           .grassroots-event-form-grid { grid-template-columns: 1fr; }
           .grassroots-target-form-grid { grid-template-columns: 1fr; }
+          .grassroots-event-dense .grassroots-event-form-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 680px) {
           .grassroots-event-field-grid { grid-template-columns: 1fr; }
+          .grassroots-event-dense .grassroots-event-field-grid { grid-template-columns: 1fr; }
           .grassroots-event-date-row { grid-template-columns: 1fr; padding: 12px; border: 1px solid ${C.borderLight}; border-radius: 12px; background: ${C.bg}; }
           .grassroots-event-date-row > button { margin-bottom: 0; width: 100% !important; }
           .grassroots-event-link-row { grid-template-columns: 1fr 34px; }
@@ -4529,102 +5649,251 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           .grassroots-drop-toolbar-copy { width: 100%; justify-content: flex-start; }
         }
       `}</style>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 16,
-        marginBottom: 20,
-        padding: "16px 18px",
-        borderRadius: 16,
-        border: `1px solid ${C.border}`,
-        background: `linear-gradient(135deg, ${C.priLt} 0%, #ffffff 62%)`,
-        boxShadow: "0 12px 28px rgba(15,23,42,0.06)",
-      }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
-            Tracker controls
-          </div>
-          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: C.text }}>Grassroots Tracking</h1>
+      {/* Clean clients-style header (no green gradient, tight, exact match to what user loves) */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>Grassroots Tracking</h1>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saveState !== "idle" && (
-            <div style={{ minWidth: 116, padding: "7px 11px", borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: saveTone, fontSize: 12, fontWeight: 900, textAlign: "center" }}>
+            <div style={{ minWidth: 96, padding: "5px 10px", borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: saveTone, fontSize: 11, fontWeight: 800, textAlign: "center" }}>
               {saveLabel}
             </div>
           )}
-          <Btn
-            variant={showHistoryPanel ? "secondary" : "ghost"}
-            size="lg"
-            icon={<I.Clock />}
-            onClick={() => setShowHistoryPanel((current) => !current)}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            History{categoryHistory.length > 0 ? ` (${categoryHistory.length})` : ""}
+
+          {/* Nicer pill-style segmented controls for History + Filter (matching old customer lifecycle feel) */}
+          <div style={{ display: "inline-flex", borderRadius: 999, border: `1px solid ${C.border}`, overflow: "hidden", background: "#fff" }}>
+            <button
+              onClick={() => setShowHistoryPanel((current) => !current)}
+              style={{
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                border: "none",
+                background: showHistoryPanel ? C.pri : "transparent",
+                color: showHistoryPanel ? "#fff" : C.text,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <I.Clock /> History{categoryHistory.length > 0 ? ` (${categoryHistory.length})` : ""}
+            </button>
+            <div style={{ width: 1, background: C.border, alignSelf: "stretch" }} />
+            <button
+              onClick={() => setShowFilterPanel((current) => !current)}
+              style={{
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                border: "none",
+                background: showFilterPanel ? C.pri : "transparent",
+                color: showFilterPanel ? "#fff" : C.text,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <FilterIcon /> Filter{filterCount > 0 ? ` (${filterCount})` : ""}
+            </button>
+          </div>
+
+          <Btn variant="ghost" size="md" onClick={exportVisibleToCSV}>
+            Export
           </Btn>
-          <Btn
-            variant={showFilterPanel || filterCount > 0 ? "secondary" : "ghost"}
-            size="lg"
-            icon={<FilterIcon />}
-            onClick={() => setShowFilterPanel((current) => !current)}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            Filter{filterCount > 0 ? ` (${filterCount})` : ""}
-          </Btn>
+
           {activeConfig.id === "drops" ? (
             <>
-              <Btn variant="secondary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ whiteSpace: "nowrap" }}>
+              <Btn variant="secondary" size="md" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft}>
                 Add Business
               </Btn>
-              <Btn variant="primary" size="lg" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ minWidth: 142, justifyContent: "center" }}>
+              <Btn variant="primary" size="md" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity}>
                 Log Activity
               </Btn>
             </>
           ) : (
-            <Btn variant="primary" size="lg" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ minWidth: 142, justifyContent: "center" }}>
-              Add {activeConfig.singular}
+            <Btn 
+              variant="primary" 
+              size="sm" 
+              icon={<I.Plus />} 
+              onClick={openNewDraft} 
+              disabled={!canEditTargets || !!newDraft || !!editDraft}
+              style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
+            >
+              New {activeConfig.singular}
             </Btn>
           )}
         </div>
       </div>
 
-      <div className="grassroots-event-metrics">
-        {metricCards.map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} color={metric.color} />
-        ))}
-      </div>
+      {/* Metrics cards removed per feedback — they were adding too much visual weight and whitespace */}
 
-      <div className="grassroots-category-tabs">
-        {GRASSROOTS_CATEGORY_CONFIGS.map((category) => {
-          const active = category.id === activeCategory;
-          const count = targets.filter((target) => target.category === category.dbValue).length;
-          return (
-            <button
-              key={category.id}
-              type="button"
-              onClick={() => setActiveCategory(category.id)}
-              className={active ? "grassroots-category-tab is-active" : "grassroots-category-tab"}
-            >
-              {category.label} ({count})
-            </button>
-          );
-        })}
-      </div>
-
-      {activeConfig.id === "drops" && (
-        <div className="grassroots-drop-toolbar">
-          <DropSubviewTabs
-            value={dropSubview}
-            onChange={setDropSubview}
-            activityCount={dropActivityRows.length}
-            businessCount={dropTargets.length}
-          />
-          <div className="grassroots-drop-toolbar-copy">
-            <strong>{dropSubview === "activity" ? "Raw activity" : "Business rollup"}</strong>
-            <span>{dropSubview === "activity" ? "One row per logged visit." : "One row per unique business."}</span>
+      {/* ═══ LITERAL PORT of Customer Lifecycle header from ClientsPage — search bar + pills + connected tabs + banner (not a recreation) ═══ */}
+      <div style={{ marginBottom: 8 }}>
+        {/* Search Bar — exact structure, padding, SVG, input, pills placement, | separator, and pill styles copied from ClientsPage.jsx:1428 */}
+        <div style={{borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg,transition:"border-color 0.15s"}}
+          onFocus={e=>e.currentTarget.style.borderBottomColor=C.pri} onBlur={e=>e.currentTarget.style.borderBottomColor=C.borderLight}>
+          <div style={{display:"flex",alignItems:"center",padding:"0 16px"}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={lifecycleSearch?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input value={lifecycleSearch} onChange={e=>setLifecycleSearch(e.target.value)}
+              placeholder="Search organizers, events, or notes…"
+              className="no-focus-ring"
+              style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
+            {lifecycleSearch && <button onClick={()=>setLifecycleSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+            {/* Filter pills area — exact layout/placement from reference */}
+            <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
+              {activeLifecycleTab === 'events' && ['Identified','Corresponding','Booked','Abandoned'].map(label => {
+                const val = label.toLowerCase();
+                const on = eventsStatusFilter === val;
+                const col = val==='identified'?C.acc : val==='corresponding'?'#1E40AF' : val==='booked'?C.suc : C.dan;
+                return <button key={val} onClick={()=>setEventsStatusFilter(on?null:val)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?col:C.border}`,background:on?col:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label}</button>;
+              })}
+              {/* Drops: business category filters (All + types with counts) + | + Business toggle (user spec) */}
+              {activeLifecycleTab === 'drops' && (
+                <>
+                  {['All', ...GRASSROOTS_BUSINESS_CATEGORY_OPTIONS].map(cat => {
+                    const on = dropActivityCategory === cat || (cat === 'All' && dropActivityCategory === 'All');
+                    const cnt = cat === 'All' ? (dropCategoryCounts?.total || 0) : (dropCategoryCounts?.[cat] || 0);
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => {
+                          setDropActivityCategory(cat === 'All' ? 'All' : cat);
+                          if (dropSubview !== 'activity') setDropSubview('activity');
+                        }}
+                        style={{
+                          padding: '4px 9px',
+                          borderRadius: 8,
+                          border: `1.5px solid ${on ? C.pri : C.border}`,
+                          background: on ? C.priLt : 'transparent',
+                          color: on ? C.pri : C.textMut,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {cat} {cnt}
+                      </button>
+                    );
+                  })}
+                  <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
+                  <button
+                    onClick={() => setDropSubview('business')}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 8,
+                      border: `1.5px solid ${dropSubview === 'business' ? C.pri : C.border}`,
+                      background: dropSubview === 'business' ? C.priLt : 'transparent',
+                      color: dropSubview === 'business' ? C.pri : C.textMut,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Business
+                  </button>
+                </>
+              )}
+              {/* Past Events only makes sense on Events tab (user feedback) */}
+              {activeLifecycleTab === 'events' && (
+                <>
+                  <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
+                  <button onClick={()=>setShowPastEvents(v=>!v)}
+                    style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showPastEvents?C.dan:C.border}`,background:showPastEvents?`${C.dan}12`:"transparent",color:showPastEvents?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                    Past Events
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      )}
+
+        {/* Tab bar — reverted to the compact left-aligned underline + count pill style you liked before the strict Clients port */}
+        <div style={{ display: 'flex', gap: 2, borderBottom: `1px solid ${C.borderLight}`, background: C.bg, padding: '0 4px' }}>
+          {[
+            { id: 'events', label: 'Events', color: C.pri },
+            { id: 'drops', label: 'Visits', color: C.pri },
+            { id: 'corporate', label: 'Corporate Partnerships', color: C.pri },
+            { id: 'apartments', label: 'Apartments', color: C.pri },
+            { id: 'ppp', label: 'Pet Professional Partnerships', color: C.pri },
+            { id: 'all', label: 'Activity', color: C.pri },
+          ].map(tab => {
+            const active = tab.id === activeLifecycleTab;
+            const count = tab.id === 'all'
+              ? targets.filter(t => t.category === 'drops' || (t.category === 'events' && normalizeGrassrootsStatus(t.status) === 'booked')).length
+              : targets.filter(t => {
+                  if (tab.id === 'events') return t.category === 'events';
+                  if (tab.id === 'drops') return t.category === 'drops';
+                  if (tab.id === 'corporate') return t.category === 'corporate_partnerships';
+                  if (tab.id === 'apartments') return t.category === 'apartments';
+                  if (tab.id === 'ppp') return t.category === 'pet_professional_partnerships';
+                  return false;
+                }).length;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveLifecycleTab(tab.id);
+                  const map = { events: 'events', drops: 'drops', corporate: 'corporatePartnerships', apartments: 'apartments', ppp: 'petProfessionalPartnerships', all: 'events' };
+                  setActiveCategory(map[tab.id] || 'events');
+                  if (tab.id !== 'events') setEventsStatusFilter(null);
+                }}
+                style={{
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  fontWeight: active ? 700 : 600,
+                  color: active ? C.text : C.textSec,
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: active ? `3px solid ${C.pri}` : '3px solid transparent',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  marginBottom: -1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {tab.label}
+                <span style={{
+                  background: active ? C.pri : '#E5E7EB',
+                  color: active ? '#fff' : C.textSec,
+                  padding: '1px 7px',
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  lineHeight: 1.1,
+                  minWidth: 18,
+                  textAlign: 'center',
+                }}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Explainer Banner — exact structure + gradient + padding from ClientsPage.jsx:1523 (static text for Grassroots; full editable banners not needed here) */}
+        <div style={{padding:"10px 18px",borderBottom:`1px solid ${C.borderLight}`,background:`linear-gradient(135deg, ${C.priLt||C.pri+"08"}40, ${C.surface})`,fontSize:12,lineHeight:1.6,color:C.textSec}}>
+          {activeLifecycleTab === 'events' && "Track daily outreach, follow-ups, and next steps for local events and activations. Use Log to record contact and set manual follow-up dates."}
+          {activeLifecycleTab === 'drops' && "Logged visits by business category. Use the category pills in the header (All / Veterinarian / Groomer / ...). Switch to the Business rollup after the vertical bar."}
+          {activeLifecycleTab === 'corporate' && "Corporate partnership targets. Filter by status and log follow-ups. Past events toggle shows completed outreach."}
+          {activeLifecycleTab === 'apartments' && "Apartment complex outreach and partnerships. Same status + follow-up workflow as other categories."}
+          {activeLifecycleTab === 'ppp' && "Pet professional and service partner pipeline. Full status filtering and manual next-contact control."}
+          {activeLifecycleTab === 'all' && "What's legit — booked events and logged visits in one feed. The longer-term partnership pipelines (Corporate, Apartments, Pet Professional) live in their own tabs."}
+        </div>
+      </div>
+
+      {/* Drop subview pills now live inside the literal ported search bar row when activeLifecycleTab === 'drops' (no duplicate toolbar) */}
 
       {showHistoryPanel && <HistoryPanel items={categoryHistory} categoryConfig={activeConfig} />}
 
@@ -4805,150 +6074,250 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
       ) : (
         <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
-          {canEditTargets && newDraft && activeConfig.id !== "events" && (
-            <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor">
-              <TargetEditor
-                draft={newDraft}
-                categoryConfig={activeConfig}
-                saving={savingDraft}
-                attachmentsByActivity={attachmentsByActivity}
-                canLog={canLogActivity}
-                onChange={updateDraft}
-                onSave={saveDraft}
-                onCancel={closeEditor}
-                onPreviewAttachment={previewGrassrootsAttachment}
-                previewingAttachmentId={previewingAttachmentId}
-              />
-            </div>
-          )}
-
-          {activeConfig.id === "drops" && isDropLogActive && (
-            <div ref={logComposerScrollRef} className="grassroots-new-draft-anchor">
-              {logActivityEditor}
-            </div>
-          )}
-
-          {activeConfig.id === "drops" && dropSubview === "activity" && (
-            <DropCategoryFilter
-              counts={dropCategoryCounts}
-              value={dropActivityCategory}
-              onChange={setDropActivityCategory}
-            />
-          )}
-
-          {activeConfig.id === "drops" && dropSubview === "activity" ? (
-            <DropActivityView
-              rows={filteredDropActivityRows}
-              canLog={canLogActivity}
-              canEdit={canLogActivity}
-              onLog={openLogModal}
-              onEdit={openEditDropActivity}
-              onPreviewAttachment={previewGrassrootsAttachment}
-              previewingAttachmentId={previewingAttachmentId}
-              freshActivityId={freshActivityId}
-              expandedIds={expandedDropActivities}
-              onToggleExpanded={toggleDropActivityExpanded}
-              totalRows={dropActivityRows.length}
-              categoryFilter={dropActivityCategory}
-            />
-          ) : visibleTargets.length === 0 && !newDraft ? (
-            <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
-              <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
-              {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add {activeConfig.singular}</Btn>}
-            </Card>
-          ) : (
-            <>
-              <TrackerHeader
-                categoryConfig={activeConfig}
-                eventDateSortDirection={eventDateSortDirection}
-                onToggleEventDateSort={() => setEventDateSortDirection((current) => (current === "asc" ? "desc" : "asc"))}
-              />
-              {canEditTargets && newDraft && activeConfig.id === "events" && (
+              {canEditTargets && newDraft && activeConfig.id !== "events" && (
                 <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor">
-                  <EventTargetInlineEditor
-                    key="new-event-draft"
+                  <TargetEditor
                     draft={newDraft}
+                    categoryConfig={activeConfig}
                     saving={savingDraft}
+                    attachmentsByActivity={attachmentsByActivity}
+                    canLog={canLogActivity}
                     onChange={updateDraft}
                     onSave={saveDraft}
                     onCancel={closeEditor}
+                    onPreviewAttachment={previewGrassrootsAttachment}
+                    previewingAttachmentId={previewingAttachmentId}
                   />
                 </div>
               )}
-              {sortedVisibleTargets.map((target, index) => {
-                const rowActivities = activitiesByTarget[target.id] || [];
-                if (canEditTargets && activeConfig.id === "events" && editDraft?.id === target.id) {
-                  return (
-                    <EventTargetInlineEditor
-                      key={target.id}
-                      draft={editDraft}
-                      saving={savingDraft}
-                      activities={rowActivities}
-                      attachmentsByActivity={attachmentsByActivity}
-                      canLog={canLogActivity}
-                      onChange={updateDraft}
-                      onSave={saveDraft}
-                      onCancel={closeEditor}
-                      onDelete={() => deleteTarget(editDraft)}
-                      onLog={() => openLogModal(target)}
-                      onPreviewAttachment={previewGrassrootsAttachment}
-                      previewingAttachmentId={previewingAttachmentId}
-                    />
-                  );
-                }
-                if (canEditTargets && activeConfig.id !== "events" && editDraft?.id === target.id) {
-                  return (
-                    <TargetEditor
-                      key={target.id}
-                      draft={editDraft}
-                      categoryConfig={activeConfig}
-                      saving={savingDraft}
-                      activities={rowActivities}
-                      attachmentsByActivity={attachmentsByActivity}
-                      canLog={canLogActivity}
-                      onChange={updateDraft}
-                      onSave={saveDraft}
-                      onCancel={closeEditor}
-                      onDelete={() => deleteTarget(editDraft)}
-                      onLog={() => openLogModal(target)}
-                      onPreviewAttachment={previewGrassrootsAttachment}
-                      previewingAttachmentId={previewingAttachmentId}
-                    />
-                  );
-                }
-                return (
-                  <TrackerRow
-                    key={target.id}
-                    target={target}
-                    index={index}
-                    categoryConfig={activeConfig}
-                    activities={rowActivities}
-                    attachmentsByActivity={attachmentsByActivity}
-                    isExpanded={expandedUpdates.has(target.id)}
-                    isFresh={freshTargetId === target.id}
-                    canLog={canLogActivity}
-                    canEdit={canEditTargets}
-                    onToggleUpdates={() => setExpandedUpdates((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(target.id)) next.delete(target.id);
-                      else next.add(target.id);
-                      return next;
-                    })}
-                    onLog={() => openLogModal(target)}
-                    onMove={(event) => openMovePopover(target, event)}
-                    onPreviewAttachment={previewGrassrootsAttachment}
-                    previewingAttachmentId={previewingAttachmentId}
-                    onEdit={() => {
-                      setNewDraft(null);
-                      setEditDraft(buildEditorDraft(target));
-                    }}
-                  />
-                );
-              })}
-            </>
-          )}
-        </div>
+
+              {activeConfig.id === "drops" && isDropLogActive && (
+                <div ref={logComposerScrollRef} className="grassroots-new-draft-anchor">
+                  {logActivityEditor}
+                </div>
+              )}
+
+              {/* Category filters now live in the top header pills area for Drops (per spec). Old component suppressed to avoid duplicate UI. */}
+
+              {activeLifecycleTab === "all" ? (
+                <DenseGrassrootsTable
+                  targets={allTabTargets}
+                  activitiesByTarget={activitiesByTarget}
+                  categoryConfig={activeConfig}
+                  columnMap={getGrassrootsColumnMap("all")}
+                  onLog={openLogModal}
+                  onEdit={(t) => {
+                    const tabMap = { events: "events", drops: "drops", corporate_partnerships: "corporate", apartments: "apartments", pet_professional_partnerships: "ppp" };
+                    const cfg = getGrassrootsCategoryConfig(t.category);
+                    if (t.category === "drops") setDropSubview("business");
+                    setActiveLifecycleTab(tabMap[t.category] || "events");
+                    setActiveCategory(cfg.id);
+                    setNewDraft(null);
+                    setEditDraft(buildEditorDraft(t));
+                  }}
+                  onToggleUpdates={toggleUpdates}
+                  expandedUpdates={expandedUpdates}
+                  followUpSortDirection={followUpSortDirection}
+                  onToggleFollowUpSort={toggleFollowUpSort}
+                  onShowFollowUpInfo={(target, clickX, clickY) => {
+                    const setOn = target.created_at ? fmtDate(target.created_at) : "—";
+                    setFollowUpInfo({ targetId: target.id, followUpDate: target.next_contact_date, setOn, x: (clickX ?? 420) + 12, y: (clickY ?? 260) + 8 });
+                  }}
+                />
+              ) : activeConfig.id === "drops" && dropSubview === "activity" ? (
+                <DenseGrassrootsTable
+                  targets={filteredDropActivityRows}
+                  activitiesByTarget={{}}
+                  categoryConfig={activeConfig}
+                  columnMap={getGrassrootsColumnMap("drops", "activity")}
+                  onEdit={openEditDropActivity}
+                  expandedUpdates={new Set()}
+                />
+              ) : visibleTargets.length === 0 && !newDraft ? (
+                <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
+                  <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
+                  {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add {activeConfig.singular}</Btn>}
+                </Card>
+              ) : (
+                <>
+                  {activeConfig.id === "events" ? (
+                    <>
+                      {/* New event inline editor (kept for full functionality) */}
+                      {canEditTargets && newDraft && (
+                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
+                          <EventTargetInlineEditor
+                            key="new-event-draft"
+                            draft={newDraft}
+                            saving={savingDraft}
+                            onChange={updateDraft}
+                            onSave={saveDraft}
+                            onCancel={closeEditor}
+                          />
+                        </div>
+                      )}
+                      {/* Edit event inline editor (lifted when editing via dense row) */}
+                      {canEditTargets && editDraft && activeConfig.id === "events" && (
+                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
+                          <EventTargetInlineEditor
+                            key={editDraft.id}
+                            draft={editDraft}
+                            saving={savingDraft}
+                            activities={activitiesByTarget[editDraft.id] || []}
+                            attachmentsByActivity={attachmentsByActivity}
+                            canLog={canLogActivity}
+                            onChange={updateDraft}
+                            onSave={saveDraft}
+                            onCancel={closeEditor}
+                            onDelete={() => deleteTarget(editDraft)}
+                            onLog={() => openLogModal(editDraft)}
+                            onPreviewAttachment={previewGrassrootsAttachment}
+                            previewingAttachmentId={previewingAttachmentId}
+                          />
+                        </div>
+                      )}
+                      {/* THE DENSE CLIENTS-STYLE TABLE for Events — exact whitespace, columns, follow-up + log behavior */}
+                      <DenseGrassrootsTable
+                        targets={lifecycleDisplayTargets}
+                        activitiesByTarget={activitiesByTarget}
+                        categoryConfig={activeConfig}
+                        onLog={startInlineLog}
+                        onEdit={(t) => { setNewDraft(null); setEditDraft(buildEditorDraft(t)); }}
+                        onUpdateFollowUp={updateFollowUpDate}
+                        onToggleUpdates={toggleUpdates}
+                        expandedUpdates={expandedUpdates}
+                        eventDateSortDirection={eventDateSortDirection}
+                        onToggleEventDateSort={toggleEventDateSort}
+                        followUpSortDirection={followUpSortDirection}
+                        onToggleFollowUpSort={toggleFollowUpSort}
+                        onShowFollowUpInfo={(target, clickX, clickY) => {
+                          const targetActivities = activitiesByTarget[target.id] || [];
+                          const latestFollowUpActivity = [...targetActivities]
+                            .filter(a => a.notes && a.notes.toLowerCase().includes('follow'))
+                            .sort((a, b) => String(b.created_at || b.activity_date).localeCompare(String(a.created_at || a.activity_date)))[0];
+                          const setOn = latestFollowUpActivity 
+                            ? fmtDate(latestFollowUpActivity.activity_date || latestFollowUpActivity.created_at)
+                            : (target.created_at ? fmtDate(target.created_at) : "—");
+
+                          // Use real click position instead of hardcoded values.
+                          // Offset a bit so the popover appears near (but not directly on top of) the clicked Follow-Up cell.
+                          const x = (clickX ?? 420) + 12;
+                          const y = (clickY ?? 260) + 8;
+
+                          setFollowUpInfo({ targetId: target.id, followUpDate: target.next_contact_date, setOn, x, y });
+                        }}
+                        inlineLoggingId={inlineLoggingId}
+                        inlineLogNotes={inlineLogNotes}
+                        inlineLogNextDate={inlineLogNextDate}
+                        onStartInlineLog={startInlineLog}
+                        onInlineLogNotesChange={setInlineLogNotes}
+                        onInlineLogNextDateChange={setInlineLogNextDate}
+                        savingLog={savingLog}
+                        onSaveInlineLog={async () => {
+                          const target = inlineLogTargetRef.current
+                            || lifecycleDisplayTargets.find(t => t.id === inlineLoggingId)
+                            || targets.find(t => t.id === inlineLoggingId);
+                          if (!target) {
+                            toast("Could not find the row to log against", "error");
+                            return;
+                          }
+
+                          const notes = (inlineLogNotes || "").trim();
+                          const nextDate = inlineLogNextDate || null;
+
+                          setSavingLog(true);
+                          try {
+                            const activityId = createGrassrootsClientUuid ? createGrassrootsClientUuid() : crypto.randomUUID();
+
+                            // Insert the activity (same pattern as the big log modal for Events)
+                            const { error: insertErr } = await supabase.from("grassroots_activity").insert({
+                              id: activityId,
+                              location_id: locationId,
+                              target_id: target.id,
+                              activity_type: "event",
+                              activity_date: todayStr(),
+                              notes: notes || "Logged",
+                              next_contact_date: nextDate,
+                              created_by_user_id: actor.userId,
+                              created_by_name: actor.name,
+                            });
+
+                            if (insertErr) throw insertErr;
+
+                            // If a follow-up date was set in the composer, update the target
+                            if (nextDate && nextDate !== target.next_contact_date) {
+                              await updateFollowUpDate(target, nextDate);
+                            }
+
+                            // Refresh
+                            const fresh = await loadGrassrootsData();
+                            if (fresh?.targets) setTargets(fresh.targets);
+                            if (fresh?.activities) setActivities(fresh.activities);
+
+                            // Clear composer, keep the row expanded so the new log appears in history
+                            setInlineLoggingId(null);
+                            setInlineLogNotes("");
+                            setInlineLogNextDate("");
+                            toast("Log saved");
+                          } catch (err) {
+                            console.error("inline log save failed", err);
+                            toast(err?.message || "Failed to save log", "error");
+                          } finally {
+                            setSavingLog(false);
+                          }
+                        }}
+                        onCancelInlineLog={() => {
+                          setInlineLoggingId(null);
+                          setInlineLogNotes("");
+                          setInlineLogNextDate("");
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      {/* Non-events edit editor — rendered above the unified table (matches the Events pattern) */}
+                      {canEditTargets && editDraft && (
+                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
+                          <TargetEditor
+                            key={editDraft.id}
+                            draft={editDraft}
+                            categoryConfig={activeConfig}
+                            saving={savingDraft}
+                            activities={activitiesByTarget[editDraft.id] || []}
+                            attachmentsByActivity={attachmentsByActivity}
+                            canLog={canLogActivity}
+                            onChange={updateDraft}
+                            onSave={saveDraft}
+                            onCancel={closeEditor}
+                            onDelete={() => deleteTarget(editDraft)}
+                            onLog={() => openLogModal(editDraft)}
+                            onPreviewAttachment={previewGrassrootsAttachment}
+                            previewingAttachmentId={previewingAttachmentId}
+                          />
+                        </div>
+                      )}
+                      {/* Unified dense table — same component as Events, mapped per category via columnMap */}
+                      <DenseGrassrootsTable
+                        targets={sortedVisibleTargets}
+                        activitiesByTarget={activitiesByTarget}
+                        categoryConfig={activeConfig}
+                        columnMap={getGrassrootsColumnMap(activeConfig.id, activeConfig.id === "drops" ? dropSubview : null)}
+                        onLog={openLogModal}
+                        onEdit={(t) => { setNewDraft(null); setEditDraft(buildEditorDraft(t)); }}
+                        onToggleUpdates={toggleUpdates}
+                        expandedUpdates={expandedUpdates}
+                        followUpSortDirection={followUpSortDirection}
+                        onToggleFollowUpSort={toggleFollowUpSort}
+                        onShowFollowUpInfo={(target, clickX, clickY) => {
+                          const setOn = target.created_at ? fmtDate(target.created_at) : "—";
+                          setFollowUpInfo({ targetId: target.id, followUpDate: target.next_contact_date, setOn, x: (clickX ?? 420) + 12, y: (clickY ?? 260) + 8 });
+                        }}
+                      />
+                    </>
+                  )}
+                </>
+              )}
+            </div>
       )}
 
       {canEditTargets && movePopover && (
@@ -5001,6 +6370,41 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                   </button>
                 ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Small "set/created" info popover for Follow-up column — matches Customer Lifecycle reference click behavior (no direct edit prompt) */}
+      {followUpInfo && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9998 }} onClick={() => setFollowUpInfo(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              // Better viewport-aware positioning so it doesn't fly off to the left or off-screen
+              left: Math.max(8, Math.min(
+                (followUpInfo.x || 380),
+                (typeof window !== 'undefined' ? window.innerWidth : 1400) - 280
+              )),
+              top: Math.max(8, Math.min(
+                (followUpInfo.y || 240),
+                (typeof window !== 'undefined' ? window.innerHeight : 900) - 140
+              )),
+              zIndex: 9999,
+              minWidth: 260,
+              background: C.surface,
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 10,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.12)",
+              padding: "12px 14px",
+              fontSize: 12,
+            }}
+          >
+            <div style={{ fontWeight: 700, color: C.pri, marginBottom: 6 }}>Follow-up date</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>{followUpInfo.followUpDate ? fmtDate(followUpInfo.followUpDate) : "—"}</div>
+            <div style={{ fontSize: 11, color: C.textSec }}>Set on: <span style={{ fontWeight: 700, color: C.text }}>{followUpInfo.setOn || "—"}</span></div>
+            <div style={{ marginTop: 10, fontSize: 10, color: C.textMut }}>Use the Log button on this row to change the next follow-up date.</div>
+            <button onClick={() => setFollowUpInfo(null)} style={{ position: "absolute", top: 6, right: 8, border: "none", background: "transparent", color: C.textMut, fontSize: 14, cursor: "pointer" }}>×</button>
           </div>
         </div>
       )}
