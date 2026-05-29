@@ -557,22 +557,53 @@ export default function PerformanceReviewComplianceGrid({
   return (
     <section className="performance-review-compliance-grid-shell" aria-label={variant === "summary" ? "Compliance summary table" : "Compliance employee grid"}>
       <PerformanceReviewComplianceGridStyles />
-      <div className="labor-roster-action-bar">
-        <input
-          aria-label="Search compliance employees"
-          className="compliance-search-input"
-          value={searchText}
-          onChange={(event) => setSearchText(event.target.value)}
-          placeholder="Search employees"
-        />
-        <button
-          type="button"
-          className={joinClassNames("labor-roster-action-button", activeFilterCount > 0 && "is-active")}
-          onClick={toggleFilterPanel}
-        >
-          <I.Search />
-          <span>Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</span>
-        </button>
+      <div className="compliance-search-row">
+        <div className="compliance-search-bar">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={searchText ? "#14532D" : "#94a3b8"}
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            aria-label="Search compliance employees"
+            className="compliance-search-field"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Search employees by name or position…"
+          />
+          {searchText ? (
+            <button
+              type="button"
+              className="compliance-search-clear"
+              aria-label="Clear search"
+              onClick={() => setSearchText("")}
+            >
+              ×
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={joinClassNames("compliance-filter-button", activeFilterCount > 0 && "is-active")}
+            onClick={toggleFilterPanel}
+          >
+            <I.Search />
+            <span>Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</span>
+          </button>
+        </div>
+        {variant !== "summary" ? (
+          <div className="compliance-explainer">
+            Every active employee and their review cadence. Search by name or position, use Filter for advanced views &amp; saved filters, or open a row for the full record. Each column maps to a required review or packet.
+          </div>
+        ) : null}
       </div>
 
       {filterOpen ? (
@@ -889,32 +920,84 @@ export function PerformanceReviewComplianceGridStyles() {
   flex-direction: column;
   gap: 12px;
 }
-.compliance-search-input {
-  height: 34px;
-  min-width: 240px;
+.compliance-search-row {
+  display: flex;
+  flex-direction: column;
+}
+.compliance-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  background: #F8FAFC;
+  border-bottom: 1.5px solid #F1F5F9;
+}
+.compliance-search-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1A1D23;
+  padding: 12px 4px;
+}
+.compliance-search-field::placeholder {
+  color: #94a3b8;
+  font-family: inherit;
+  font-weight: 500;
+  opacity: 1;
+}
+.compliance-search-clear {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.compliance-search-clear:hover {
+  color: #475569;
+}
+.compliance-filter-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
   border: 1.5px solid #d9e2ec;
   border-radius: 8px;
   background: #fff;
-  color: #0f172a;
+  color: #475569;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 650;
-  line-height: 1;
-  padding: 0 11px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.045);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
-.compliance-search-input::placeholder {
-  color: #64748b;
-  font-family: inherit;
+.compliance-filter-button svg {
+  width: 14px;
+  height: 14px;
+}
+.compliance-filter-button:hover {
+  border-color: #14532D;
+  color: #14532D;
+}
+.compliance-filter-button.is-active {
+  border-color: #14532D;
+  background: rgba(20, 83, 45, 0.06);
+  color: #14532D;
+}
+.compliance-explainer {
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(20, 83, 45, 0.06), #ffffff);
   font-size: 12px;
-  font-weight: 650;
-  opacity: 1;
-}
-.compliance-search-input:focus {
-  border-color: rgba(20, 83, 45, 0.38);
-  box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.08);
-  outline: none;
+  line-height: 1.6;
+  color: #475569;
 }
 .compliance-filter-panel {
   border: 1.5px solid #d9e2ec;
@@ -1461,12 +1544,11 @@ export function PerformanceReviewComplianceGridStyles() {
   to { opacity: 1; transform: translateX(0) scale(1); }
 }
 @media (max-width: 760px) {
-  .labor-roster-action-bar {
-    align-items: stretch;
-    flex-direction: column;
+  .compliance-search-bar {
+    flex-wrap: wrap;
   }
-  .compliance-search-input {
-    width: 100%;
+  .compliance-filter-button {
+    margin-left: auto;
   }
   .employee-compliance-checkpoint-row {
     grid-template-columns: 1fr;
