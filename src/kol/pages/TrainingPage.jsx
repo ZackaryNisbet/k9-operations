@@ -7573,6 +7573,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessEditorVerifiedBy, setPctReadinessEditorVerifiedBy] = useState("");
   const [pctReadinessEditorComment, setPctReadinessEditorComment] = useState("");
   const [savingPctReadinessCell, setSavingPctReadinessCell] = useState(false);
+  // Multi-select bulk status update on the board. Click collects cells (keyed
+  // recordId:itemId -> {record,item,section}); a floating bar opens a modal to
+  // apply one status to the whole selection in a single batched, scroll-safe save.
+  const [pctReadinessSelection, setPctReadinessSelection] = useState({});
+  const [pctReadinessBulkOpen, setPctReadinessBulkOpen] = useState(false);
+  const [pctReadinessBulkStatus, setPctReadinessBulkStatus] = useState("verified");
+  const [pctReadinessBulkComment, setPctReadinessBulkComment] = useState("");
+  const [savingPctReadinessBulk, setSavingPctReadinessBulk] = useState(false);
   const [showPctReadinessNewRecord, setShowPctReadinessNewRecord] = useState(false);
   const [newPctReadinessEmployeeId, setNewPctReadinessEmployeeId] = useState("");
   const [creatingPctReadinessRecord, setCreatingPctReadinessRecord] = useState(false);
@@ -7644,6 +7652,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const previousEditingLaborCapacityModelIdRef = useRef(editingLaborCapacityModelId);
   const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
+  // When set, the board re-applies this scroll position on every re-render until
+  // the deadline. Survives the realtime refresh that otherwise remounts the
+  // matrix after a cell update and snaps the user back to the top.
+  const pctReadinessPendingScrollRef = useRef(null);
   const trainingRealtimeRefreshTimerRef = useRef(null);
   const lastRouteTrainingRecordIdRef = useRef(routeTrainingRecordId);
 
@@ -8571,14 +8583,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setActivePctReadinessSectionId("");
   }, [laborLocationRef]);
 
+  // Sync the visible board to its latest data. This fires on every cell update
+  // (optimistic patches mutate readinessSummaryBoards), so it must NOT reset any
+  // view state — doing so re-layouts the matrix and throws away the user's scroll
+  // position mid-update (the team's "it jumps back to the top" complaint).
   useEffect(() => {
     setPctReadinessBoard(readinessSummaryBoards[selectedReadinessTemplateSlug] || null);
     setPctReadinessLoaded(Boolean(readinessSummaryBoards[selectedReadinessTemplateSlug]));
+  }, [readinessSummaryBoards, selectedReadinessTemplateSlug]);
+
+  // Re-apply a pending scroll position after the board re-renders (optimistic
+  // patch + the realtime refresh that follows), so cell updates never jump to top.
+  useLayoutEffect(() => {
+    const pending = pctReadinessPendingScrollRef.current;
+    if (!pending) return;
+    const el = pctReadinessScrollRef.current;
+    if (el) {
+      el.scrollTop = pending.top;
+      el.scrollLeft = pending.left;
+    }
+    if (typeof window !== "undefined" && pending.winY != null) {
+      window.scrollTo({ top: pending.winY, left: 0, behavior: "auto" });
+    }
+    if (Date.now() >= pending.until) pctReadinessPendingScrollRef.current = null;
+  }, [pctReadinessBoard]);
+
+  // Reset board view state (collapsed sections, active jump, selected record)
+  // only when the template actually changes, not on every data refresh.
+  useEffect(() => {
     setNewPctReadinessEmployeeId("");
     setSelectedPctReadinessRecordId("");
     setActivePctReadinessSectionId("");
     setPctReadinessCollapsedSections({});
-  }, [readinessSummaryBoards, selectedReadinessTemplateSlug]);
+  }, [selectedReadinessTemplateSlug]);
 
   useEffect(() => {
     if (tab === "training" || tab === "performance-reviews" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
@@ -11777,6 +11814,141 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPctReadinessEditorComment("");
     setSavingPctReadinessCell(false);
   }, []);
+
+  // ── Board multi-select + bulk status apply ────────────────────────────────
+  const togglePctReadinessSelection = useCallback((record, item, section) => {
+    if (!record?.id || !item?.id) return;
+    const key = `${record.id}:${item.id}`;
+    setPctReadinessSelection((current) => {
+      const next = { ...current };
+      if (next[key]) delete next[key];
+      else next[key] = { record, item, section };
+      return next;
+    });
+  }, []);
+
+  const clearPctReadinessSelection = useCallback(() => {
+    setPctReadinessSelection({});
+  }, []);
+
+  const openPctReadinessBulkModal = useCallback(() => {
+    setPctReadinessSelection((current) => {
+      const keys = Object.keys(current);
+      if (keys.length === 0) return current;
+      // Preselect the shared status when the whole selection already agrees.
+      const statuses = new Set(keys.map((key) => normalizePctReadinessStatus(
+        pctReadinessCells[key]?.readiness_status || pctReadinessCells[key]?.status,
+      )));
+      setPctReadinessBulkStatus(statuses.size === 1 ? [...statuses][0] : "verified");
+      setPctReadinessBulkComment("");
+      setPctReadinessBulkOpen(true);
+      return current;
+    });
+  }, [pctReadinessCells]);
+
+  const handleApplyPctReadinessBulk = useCallback(async () => {
+    const entries = Object.entries(pctReadinessSelection);
+    if (entries.length === 0) return;
+    const status = normalizePctReadinessStatus(pctReadinessBulkStatus);
+    const comment = entries.length === 1 ? String(pctReadinessBulkComment || "").trim() : "";
+    // Capture scroll so a board update never yanks the user back to the top, and
+    // arm the restore guard immediately (covers a realtime refresh mid-flight too).
+    const scrollEl = pctReadinessScrollRef.current;
+    const savedScrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    const savedScrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
+    const savedWindowY = typeof window !== "undefined" ? window.scrollY : 0;
+    pctReadinessPendingScrollRef.current = { top: savedScrollTop, left: savedScrollLeft, winY: savedWindowY, until: Date.now() + 4000 };
+    setSavingPctReadinessBulk(true);
+    try {
+      const savedAt = new Date().toISOString();
+      await Promise.all(entries.map(async ([, sel]) => {
+        const args = buildPctReadinessCellUpdateArgs({
+          recordId: sel.record.id,
+          templateItemId: sel.item.id,
+          readinessStatus: status,
+          comment,
+          actorUserId,
+          actorName,
+        });
+        const templateSlug = sel.record.template_slug || selectedReadinessTemplateSlug;
+        const { error } = await supabase.rpc("update_training_readiness_cell", args);
+        if (error) {
+          if (templateSlug === PCT_READINESS_TEMPLATE_SLUG && isMissingTeamReadinessRpcError(error)) {
+            const { error: legacyError } = await supabase.rpc("update_pct_readiness_cell", args);
+            if (legacyError) throw legacyError;
+          } else {
+            throw error;
+          }
+        }
+      }));
+      const nextCells = {};
+      entries.forEach(([key, sel]) => {
+        const previousCell = pctReadinessCells[key] || {};
+        const nextMetadata = {
+          ...(isObjectRow(previousCell.metadata) ? previousCell.metadata : {}),
+          last_updated_by_name: actorName || previousCell.metadata?.last_updated_by_name || "",
+          last_updated_at: savedAt,
+        };
+        if (status === "demonstrated") {
+          nextMetadata.demonstrated_by_name = actorName || previousCell.demonstrated_by || "";
+          nextMetadata.demonstrated_at = savedAt;
+        }
+        if (status === "verified" || status === "waived") {
+          nextMetadata.verified_by_name = actorName || previousCell.verified_by || "";
+          nextMetadata.verified_at = savedAt;
+        }
+        nextCells[key] = {
+          ...previousCell,
+          record_id: sel.record.id,
+          template_item_id: sel.item.id,
+          template_section_id: sel.section?.id || previousCell.template_section_id,
+          readiness_status: status,
+          status,
+          demonstrated_by: status === "demonstrated" ? nextMetadata.demonstrated_by_name : previousCell.demonstrated_by,
+          verified_by: (status === "verified" || status === "waived") ? nextMetadata.verified_by_name : previousCell.verified_by,
+          completed_by_name: (status === "verified" || status === "waived") ? nextMetadata.verified_by_name : previousCell.completed_by_name,
+          completed_at: (status === "verified" || status === "waived") ? savedAt : previousCell.completed_at,
+          updated_at: savedAt,
+          latest_status_actor_name: actorName || previousCell.latest_status_actor_name || "",
+          latest_status_actor_at: savedAt,
+          latest_note: comment || previousCell.latest_note || "",
+          latest_note_actor_name: comment ? (actorName || previousCell.latest_note_actor_name || "") : previousCell.latest_note_actor_name,
+          latest_note_at: comment ? savedAt : previousCell.latest_note_at,
+          metadata: nextMetadata,
+        };
+      });
+      const patchBoard = (board) => {
+        if (!board || !isObjectRow(board)) return board;
+        const cells = isObjectRow(board.cells) ? board.cells : {};
+        return { ...board, cells: { ...cells, ...nextCells } };
+      };
+      setPctReadinessBoard((current) => patchBoard(current));
+      setReadinessSummaryBoards((current) => {
+        const slug = selectedReadinessTemplateSlug;
+        return { ...current, [slug]: patchBoard(current[slug]) };
+      });
+      // Hold the scroll position through the optimistic patch AND the realtime
+      // refresh that follows (which can land up to ~1s later).
+      pctReadinessPendingScrollRef.current = { top: savedScrollTop, left: savedScrollLeft, winY: savedWindowY, until: Date.now() + 1600 };
+      setPctReadinessBulkOpen(false);
+      setPctReadinessSelection({});
+      setPctReadinessBulkComment("");
+      addGlobalToast?.(`Updated ${entries.length} cell${entries.length === 1 ? "" : "s"}`, "success");
+    } catch (error) {
+      console.error("Bulk readiness update error:", error);
+      addGlobalToast?.(error?.message || "Failed to update readiness cells", "error");
+    } finally {
+      setSavingPctReadinessBulk(false);
+    }
+  }, [pctReadinessSelection, pctReadinessBulkStatus, pctReadinessBulkComment, pctReadinessCells, actorUserId, actorName, selectedReadinessTemplateSlug, addGlobalToast]);
+
+  // Drop any pending board selection when the user leaves the board surface.
+  useEffect(() => {
+    if (tab !== "training" || trainingView !== "board") {
+      setPctReadinessSelection((current) => (Object.keys(current).length ? {} : current));
+      setPctReadinessBulkOpen(false);
+    }
+  }, [tab, trainingView]);
 
   const handleSavePctReadinessCell = useCallback(async () => {
     if (!pctReadinessCellEditor?.record?.id || !pctReadinessCellEditor?.item?.id) return;
@@ -16584,6 +16756,68 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <Btn variant="ghost" onClick={closePctReadinessCellEditor}>Cancel</Btn>
           <Btn variant="primary" onClick={handleSavePctReadinessCell} disabled={savingPctReadinessCell}>
             {savingPctReadinessCell ? "Saving..." : "Save Cell"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
+  const pctReadinessSelectionCount = Object.keys(pctReadinessSelection).length;
+
+  const pctReadinessSelectionBar = (canUseLaborTab("training") && tab === "training" && trainingView === "board" && pctReadinessSelectionCount > 0 && !pctReadinessBulkOpen) ? (
+    <div style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 8000, display: "flex", alignItems: "center", gap: 14, padding: "9px 10px 9px 18px", borderRadius: 999, background: C.surface, border: `1px solid ${C.border}`, boxShadow: "0 14px 40px rgba(15,40,25,0.22)" }}>
+      <span style={{ fontSize: 13, fontWeight: 800, color: C.text, whiteSpace: "nowrap" }}>
+        {pctReadinessSelectionCount} cell{pctReadinessSelectionCount === 1 ? "" : "s"} selected
+      </span>
+      <button type="button" onClick={clearPctReadinessSelection} style={{ border: "none", background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+      <Btn variant="primary" size="sm" onClick={openPctReadinessBulkModal}>Set status</Btn>
+    </div>
+  ) : null;
+
+  const pctReadinessBulkModal = (canUseLaborTab("training") && pctReadinessBulkOpen) ? (
+    <Modal title={`Set status for ${pctReadinessSelectionCount} cell${pctReadinessSelectionCount === 1 ? "" : "s"}`} onClose={() => setPctReadinessBulkOpen(false)}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>
+          Applies one status to every selected cell across all people and domains, stamped as <strong style={{ color: C.text }}>{actorName}</strong>.
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>Status</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+            {PCT_READINESS_STATUS_OPTIONS.map((option) => {
+              const st = PCT_READINESS_STATUS_STYLES[option.value] || PCT_READINESS_STATUS_STYLES.not_started;
+              const on = pctReadinessBulkStatus === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPctReadinessBulkStatus(option.value)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : st.border}`, background: st.bg, color: st.text, fontFamily: "inherit", fontSize: 12, fontWeight: 800, cursor: "pointer", textAlign: "left", boxShadow: on ? `0 0 0 2px ${C.pri}` : "none" }}
+                >
+                  <span style={{ minWidth: 18 }}>{st.icon}</span>
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {pctReadinessSelectionCount === 1 ? (
+          <Inp
+            label="Comment"
+            type="textarea"
+            rows={3}
+            value={pctReadinessBulkComment}
+            onChange={setPctReadinessBulkComment}
+            placeholder="Optional coaching note or context"
+          />
+        ) : (
+          <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600, lineHeight: 1.45 }}>
+            Comments aren&apos;t applied in a bulk update. Select a single cell to add a note.
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <Btn variant="ghost" onClick={() => setPctReadinessBulkOpen(false)}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleApplyPctReadinessBulk} disabled={savingPctReadinessBulk}>
+            {savingPctReadinessBulk ? "Applying..." : `Apply to ${pctReadinessSelectionCount} cell${pctReadinessSelectionCount === 1 ? "" : "s"}`}
           </Btn>
         </div>
       </div>
@@ -25643,6 +25877,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "training" && canUseLaborTab("training") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={trainingView}
             onChange={setTrainingView}
             options={TRAINING_VIEW_OPTIONS}
@@ -25832,6 +26067,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                   const presentation = getPctReadinessStatusPresentation(row.status);
                                   const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
                                   const rowActorLine = getReadinessCellActorLine(row.cell, presentation.value);
+                                  const singleSelKey = `${pctReadinessEmployeeBoardProfile.record?.id}:${row.item.id}`;
+                                  const singleSelected = !!pctReadinessSelection[singleSelKey];
                                   return (
                                     <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
@@ -25839,9 +26076,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                       <td style={{ padding: "9px 12px", verticalAlign: "top", width: 190 }}>
                                         <button
                                           type="button"
-                                          onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
-                                          style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                          onClick={() => togglePctReadinessSelection(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
+                                          aria-pressed={singleSelected}
+                                          style={{ position: "relative", display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${singleSelected ? C.pri : style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", boxShadow: singleSelected ? `0 0 0 2px ${C.pri}` : "none" }}
                                         >
+                                          {singleSelected && (
+                                            <span style={{ position: "absolute", top: 3, right: 3, width: 14, height: 14, borderRadius: 4, background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                                          )}
                                           <span style={{ display: "inline-flex", gap: 6, alignItems: "center", lineHeight: 1.1 }}>
                                             <span>{style.icon}</span>
                                             <span>{presentation.label}</span>
@@ -26072,17 +26313,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                     {item.label}
                                   </td>
                                   {filteredPctReadinessRecords.map((record) => {
-                                    const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+                                    const cellSelKey = `${record.id}:${item.id}`;
+                                    const cell = pctReadinessCells[cellSelKey] || {};
                                     const presentation = getPctReadinessStatusPresentation(cell.readiness_status || cell.status);
                                     const statusStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
                                     const cellActorLine = getReadinessCellActorLine(cell, presentation.value);
+                                    const selected = !!pctReadinessSelection[cellSelKey];
                                     return (
                                       <td key={`${record.id}:${item.id}`} style={{ padding: 7, minWidth: 156, borderBottom: `1px solid ${C.borderLight}`, background: "#fff", verticalAlign: "top" }}>
                                         <button
                                           type="button"
-                                          onClick={() => openPctReadinessCellEditor(record, item, section)}
-                                          title={`${record.employee_full_name || "Employee"} - ${item.label}`}
+                                          onClick={() => togglePctReadinessSelection(record, item, section)}
+                                          aria-pressed={selected}
+                                          title={`${record.employee_full_name || "Employee"} - ${item.label}${selected ? " (selected)" : ""}`}
                                           style={{
+                                            position: "relative",
                                             width: "100%",
                                             minHeight: 54,
                                             display: "flex",
@@ -26090,7 +26335,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             alignItems: "flex-start",
                                             justifyContent: "center",
                                             gap: 4,
-                                            border: `1px solid ${statusStyle.border}`,
+                                            border: `1px solid ${selected ? C.pri : statusStyle.border}`,
                                             borderRadius: 8,
                                             background: statusStyle.bg,
                                             color: statusStyle.text,
@@ -26098,8 +26343,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             padding: "7px 8px",
                                             cursor: "pointer",
                                             textAlign: "left",
+                                            boxShadow: selected ? `0 0 0 2px ${C.pri}` : "none",
                                           }}
                                         >
+                                          {selected && (
+                                            <span style={{ position: "absolute", top: 4, right: 4, width: 15, height: 15, borderRadius: 4, background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                                          )}
                                           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 900, lineHeight: 1.1 }}>
                                             <span style={{ minWidth: 20 }}>{statusStyle.icon}</span>
                                             <span>{presentation.label}</span>
@@ -28549,6 +28798,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {pctReadinessCellEditorModal}
+      {pctReadinessSelectionBar}
+      {pctReadinessBulkModal}
 
       {canUseLaborTab("training") && showNewRecord && (
         <Modal title="New Training Record" onClose={() => { setShowNewRecord(false); resetNewRecordForm(); }}>
