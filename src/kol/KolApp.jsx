@@ -1472,10 +1472,10 @@ function LeanAppInner() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 12,
+                  gap: sbExpanded ? 12 : 0,
                   width: "100%",
-                  padding: "10px 18px",
-                  justifyContent: "flex-start",
+                  padding: sbExpanded ? "10px 18px" : "10px 0",
+                  justifyContent: sbExpanded ? "flex-start" : "center",
                   border: "none",
                   borderRadius: 0,
                   background: act ? SIDEBAR.active : "transparent",
@@ -1494,7 +1494,7 @@ function LeanAppInner() {
                 <div style={{ flexShrink: 0, width: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {IconComp && <IconComp />}
                 </div>
-                <span style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s" }}>{item.label}</span>
+                <span style={{ overflow: "hidden", maxWidth: sbExpanded ? "none" : 0, opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s" }}>{item.label}</span>
               </button>
             );
           })}
