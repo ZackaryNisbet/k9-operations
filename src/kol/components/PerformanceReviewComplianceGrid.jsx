@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { I } from "../../shared/icons";
+import { LaborSearchBar } from "../../shared/ui";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 
 const defaultFormatter = (value) => value || "-";
@@ -569,38 +570,7 @@ export default function PerformanceReviewComplianceGrid({
       <PerformanceReviewComplianceGridStyles />
       {(() => { const __searchRow = (
       <div className="compliance-search-row">
-        <div className="compliance-search-bar">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke={searchText ? "#14532D" : "#94a3b8"}
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            aria-label="Search compliance employees"
-            className="compliance-search-field"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Search employees by name or position…"
-          />
-          {searchText ? (
-            <button
-              type="button"
-              className="compliance-search-clear"
-              aria-label="Clear search"
-              onClick={() => setSearchText("")}
-            >
-              ×
-            </button>
-          ) : null}
+        <LaborSearchBar value={searchText} onChange={setSearchText} placeholder="Search employees by name or position…">
           <button
             type="button"
             className={joinClassNames("compliance-filter-button", activeFilterCount > 0 && "is-active")}
@@ -609,7 +579,7 @@ export default function PerformanceReviewComplianceGrid({
             <I.Search />
             <span>Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</span>
           </button>
-        </div>
+        </LaborSearchBar>
         {variant !== "summary" ? (
           <div className="compliance-explainer">
             Every active employee and their review cadence. Search by name or position, use Filter for advanced views &amp; saved filters, or open a row for the full record. Each column maps to a required review or packet.

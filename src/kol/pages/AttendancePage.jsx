@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
-import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal } from "../../shared/ui";
+import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar } from "../../shared/ui";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
@@ -1475,38 +1475,22 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         <Card style={{ padding: 18 }}>
           {(() => { const __searchHeader = (
           <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px 10px", borderBottom: `1.5px solid ${C.borderLight}`, flexWrap: "wrap" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={markSearch ? C.pri : "#94a3b8"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                value={markSearch}
-                onChange={(event) => setMarkSearch(event.target.value)}
-                placeholder="Search marks by employee, note, or recorder…"
-                aria-label="Search attendance marks"
-                style={{ flex: "1 1 200px", minWidth: 0, border: "none", outline: "none", background: "transparent", fontFamily: "inherit", fontSize: 13, fontWeight: 500, color: C.text, padding: "10px 4px" }}
-              />
-              {markSearch ? (
-                <button type="button" aria-label="Clear search" onClick={() => setMarkSearch("")} style={{ border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 4px" }}>×</button>
-              ) : null}
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                {ATTENDANCE_INCIDENT_OPTIONS.map((option) => {
-                  const on = markTypePills.has(option.value);
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => toggleMarkTypePill(option.value)}
-                      aria-pressed={on}
-                      title={`Filter by ${option.label}`}
-                      style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? option.color : C.border}`, background: on ? option.color : "transparent", color: on ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
+            <LaborSearchBar value={markSearch} onChange={setMarkSearch} placeholder="Search marks by employee, note, or recorder…">
+              {ATTENDANCE_INCIDENT_OPTIONS.map((option) => {
+                const on = markTypePills.has(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => toggleMarkTypePill(option.value)}
+                    aria-pressed={on}
+                    title={`Filter by ${option.label}`}
+                    style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? option.color : C.border}`, background: on ? option.color : "transparent", color: on ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
               <span style={{ width: 1, alignSelf: "stretch", minHeight: 24, background: C.border, margin: "0 4px" }} aria-hidden="true" />
               <Btn
                 variant={showMarkFilterPanel || Object.keys(markFilters).length > 0 ? "secondary" : "ghost"}
@@ -1520,7 +1504,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               ) : (
                 <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
               )}
-            </div>
+            </LaborSearchBar>
             <div style={{ padding: "10px 2px 0", fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
               Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"}. Tap a mark type to filter, search by employee or note, use Filter for advanced conditions, or open Attendance Summary above for trends.
             </div>
