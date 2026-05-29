@@ -427,6 +427,55 @@ function InterviewStyles() {
         gap: 14px;
         flex-wrap: wrap;
       }
+      .interview-search-block {
+        display: flex;
+        flex-direction: column;
+      }
+      .interview-search-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        background: ${C.bg};
+        border-bottom: 1.5px solid ${C.borderLight};
+      }
+      .interview-search-field {
+        flex: 1 1 auto;
+        min-width: 0;
+        border: none;
+        outline: none;
+        background: transparent;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        color: ${C.text};
+        padding: 12px 4px;
+      }
+      .interview-search-field::placeholder {
+        color: #94a3b8;
+        font-weight: 500;
+        opacity: 1;
+      }
+      .interview-search-clear {
+        border: none;
+        background: transparent;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 0 4px;
+        flex-shrink: 0;
+      }
+      .interview-search-clear:hover {
+        color: ${C.textSec};
+      }
+      .interview-explainer {
+        padding: 10px 16px;
+        background: linear-gradient(135deg, rgba(20, 83, 45, 0.06), #ffffff);
+        font-size: 12px;
+        line-height: 1.6;
+        color: ${C.textSec};
+      }
       .interview-table-shell {
         border: 1px solid rgba(226, 232, 240, 0.98);
         border-radius: 8px;
@@ -2074,6 +2123,7 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
 }
 
 function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
+  const [q, setQ] = useState("");
   if (records.length === 0) {
     return (
       <div className="interview-roster-shell">
@@ -2084,25 +2134,63 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
       </div>
     );
   }
+  const query = q.trim().toLowerCase();
+  const filtered = query
+    ? records.filter((record) => {
+        const name = getInterviewCandidateDisplayLabel(record) || "";
+        const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key) || "";
+        const contact = getInterviewCandidateContactLabel(record) || "";
+        return `${name} ${position} ${contact}`.toLowerCase().includes(query);
+      })
+    : records;
   return (
     <div className="interview-roster-shell">
-      <div className="interview-roster-toolbar">
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Interviews</div>
-          <div style={{ marginTop: 3, fontSize: 13, color: C.textMut }}>{records.length} total interview{records.length === 1 ? "" : "s"}</div>
+      <div className="interview-search-block">
+        <div className="interview-search-bar">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={q ? C.pri : "#94a3b8"}
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder="Search candidate, position, or contact…"
+            aria-label="Search interviews"
+            className="interview-search-field"
+          />
+          {q ? (
+            <button type="button" className="interview-search-clear" aria-label="Clear search" onClick={() => setQ("")}>
+              ×
+            </button>
+          ) : null}
+          {canAdd ? (
+            <Btn variant="primary" size="sm" onClick={onAdd}>Add New Interview</Btn>
+          ) : null}
         </div>
-        <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
+        <div className="interview-explainer">
+          {filtered.length} of {records.length} interview{records.length === 1 ? "" : "s"}. Search to filter, or open a row to review the transcript, scorecard, and recommendation.
+        </div>
       </div>
       <div className="interview-table-shell">
       <div className="interview-roster-table" style={{ minWidth: 900 }}>
-        <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "12px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "9px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
           <div>Candidate</div>
           <div>Position</div>
           <div>Date Interviewed</div>
           <div>Next Step</div>
           <div />
         </div>
-        {records.map((record, index) => (
+        {filtered.map((record, index) => (
           <button
             type="button"
             key={record.id}
@@ -2114,7 +2202,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
               gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px",
               gap: 0,
               alignItems: "center",
-              padding: "14px 16px",
+              padding: "8px 16px",
               border: "none",
               borderBottom: `1px solid ${C.borderLight}`,
               background: "#fff",
@@ -2125,15 +2213,18 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd }) {
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateDisplayLabel(record)}</div>
-              <div style={{ marginTop: 3, fontSize: 12, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateContactLabel(record)}</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateDisplayLabel(record)}</div>
+              <div style={{ marginTop: 2, fontSize: 11, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateContactLabel(record)}</div>
             </div>
-            <div style={{ fontSize: 13, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
-            <div style={{ fontSize: 13, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
+            <div style={{ fontSize: 12, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
+            <div style={{ fontSize: 12, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
             <div><RecommendationBadge value={getInterviewRecommendation(record)} /></div>
-            <div style={{ color: C.pri, fontSize: 13, fontWeight: 900, textAlign: "right" }}><span className="interview-open-pill">Open</span></div>
+            <div style={{ color: C.pri, fontSize: 12, fontWeight: 900, textAlign: "right" }}><span className="interview-open-pill">Open</span></div>
           </button>
         ))}
+        {filtered.length === 0 ? (
+          <div style={{ padding: "16px", fontSize: 13, color: C.textMut }}>No interviews match “{q}”.</div>
+        ) : null}
       </div>
       </div>
     </div>

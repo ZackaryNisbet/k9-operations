@@ -182,12 +182,12 @@ export const LABOR_MANAGEMENT_TABS = [
   { id: "performance-reviews", label: "Compliance" },
   { id: "training", label: "Training" },
   { id: "interviews", label: "Interviews" },
-  { id: "notes", label: "Notes" },
   { id: "hour-analysis", label: "Capacity Planning" },
 ];
 
 const HIDDEN_LABOR_TABS = [
   { id: "templates", label: "Templates" },
+  { id: "notes", label: "Notes" }, // hidden from the module nav per request (still routable)
 ];
 const TABS = LABOR_MANAGEMENT_TABS;
 
@@ -233,11 +233,32 @@ export function buildLaborModulePanelKey({ tab, interviewView, attendanceView, c
   return parts.join(":");
 }
 
-function LaborViewSwitcher({ options = [], value, onChange }) {
+function LaborViewSwitcher({ options = [], value, onChange, variant }) {
   const visibleOptions = options.filter(Boolean);
   const activeIndex = Math.max(0, visibleOptions.findIndex((option) => option.id === value));
   const hasSubtitles = visibleOptions.some((option) => option.subtitle);
   if (!visibleOptions.length) return null;
+  if (variant === "tabs") {
+    return (
+      <div className="labor-view-tabs" role="tablist">
+        {visibleOptions.map((option) => {
+          const active = option.id === value;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`labor-view-tab${active ? " is-active" : ""}`}
+              onClick={() => onChange(option.id)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       className={`labor-view-switcher${hasSubtitles ? "" : " is-compact"}`}
@@ -6226,18 +6247,17 @@ function compareCompliancePolicyRequirements(left = {}, right = {}) {
     if (ld !== rd) return ld - rd; // 30 then 60 then 90
     return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
   }
-  // Custom requirements: sort strictly by created_at (order they were added), oldest first.
-  // This makes new columns appear to the right of older ones (and to the right of the 30/60/90 block).
+  // Custom requirements: user-controlled order via display_order (Requirements tab reorder),
+  // then created_at (order added), then label.
+  const lo = Number(left.display_order ?? left.displayOrder ?? (left.metadata && isObjectRow(left.metadata) ? left.metadata.display_order : null));
+  const ro = Number(right.display_order ?? right.displayOrder ?? (right.metadata && isObjectRow(right.metadata) ? right.metadata.display_order : null));
+  if (Number.isFinite(lo) && Number.isFinite(ro) && lo !== ro) return lo - ro;
   const lc = left.created_at || left.createdAt || (left.metadata && isObjectRow(left.metadata) ? left.metadata.created_at : "") || "";
   const rc = right.created_at || right.createdAt || (right.metadata && isObjectRow(right.metadata) ? right.metadata.created_at : "") || "";
   if (lc && rc) {
     const c = lc.localeCompare(rc);
     if (c !== 0) return c;
   }
-  // Fallback for rows without created_at (pre-existing data or optimistic before refresh): use any legacy display_order, then label
-  const lo = Number(left.display_order ?? left.displayOrder ?? (left.metadata && isObjectRow(left.metadata) ? left.metadata.display_order : null) ?? 0);
-  const ro = Number(right.display_order ?? right.displayOrder ?? (right.metadata && isObjectRow(right.metadata) ? right.metadata.display_order : null) ?? 0);
-  if (Number.isFinite(lo) && Number.isFinite(ro) && lo !== ro) return lo - ro;
   return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
 }
 
@@ -7553,6 +7573,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [pctReadinessEditorVerifiedBy, setPctReadinessEditorVerifiedBy] = useState("");
   const [pctReadinessEditorComment, setPctReadinessEditorComment] = useState("");
   const [savingPctReadinessCell, setSavingPctReadinessCell] = useState(false);
+  // Multi-select bulk status update on the board. Click collects cells (keyed
+  // recordId:itemId -> {record,item,section}); a floating bar opens a modal to
+  // apply one status to the whole selection in a single batched, scroll-safe save.
+  const [pctReadinessSelection, setPctReadinessSelection] = useState({});
+  const [pctReadinessBulkOpen, setPctReadinessBulkOpen] = useState(false);
+  const [pctReadinessBulkStatus, setPctReadinessBulkStatus] = useState("verified");
+  const [pctReadinessBulkComment, setPctReadinessBulkComment] = useState("");
+  const [savingPctReadinessBulk, setSavingPctReadinessBulk] = useState(false);
   const [showPctReadinessNewRecord, setShowPctReadinessNewRecord] = useState(false);
   const [newPctReadinessEmployeeId, setNewPctReadinessEmployeeId] = useState("");
   const [creatingPctReadinessRecord, setCreatingPctReadinessRecord] = useState(false);
@@ -7565,6 +7593,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [draggingHierarchyTitle, setDraggingHierarchyTitle] = useState("");
   const [positionAcronyms, setPositionAcronyms] = useState({});
   const [rosterFilters, setRosterFilters] = useState(DEFAULT_ROSTER_FILTERS);
+  const [rosterSearch, setRosterSearch] = useState("");
+  const [rosterStatusPill, setRosterStatusPill] = useState("active"); // active | inactive | all
   const [rosterDraftFilters, setRosterDraftFilters] = useState(DEFAULT_ROSTER_FILTERS);
   const [savedRosterViews, setSavedRosterViews] = useState([]);
   const [activeRosterViewId, setActiveRosterViewId] = useState(null);
@@ -7622,6 +7652,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const previousEditingLaborCapacityModelIdRef = useRef(editingLaborCapacityModelId);
   const copiedRosterContactTimerRef = useRef(null);
   const pctReadinessScrollRef = useRef(null);
+  // When set, the board re-applies this scroll position on every re-render until
+  // the deadline. Survives the realtime refresh that otherwise remounts the
+  // matrix after a cell update and snaps the user back to the top.
+  const pctReadinessPendingScrollRef = useRef(null);
   const trainingRealtimeRefreshTimerRef = useRef(null);
   const lastRouteTrainingRecordIdRef = useRef(routeTrainingRecordId);
 
@@ -8549,14 +8583,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setActivePctReadinessSectionId("");
   }, [laborLocationRef]);
 
+  // Sync the visible board to its latest data. This fires on every cell update
+  // (optimistic patches mutate readinessSummaryBoards), so it must NOT reset any
+  // view state — doing so re-layouts the matrix and throws away the user's scroll
+  // position mid-update (the team's "it jumps back to the top" complaint).
   useEffect(() => {
     setPctReadinessBoard(readinessSummaryBoards[selectedReadinessTemplateSlug] || null);
     setPctReadinessLoaded(Boolean(readinessSummaryBoards[selectedReadinessTemplateSlug]));
+  }, [readinessSummaryBoards, selectedReadinessTemplateSlug]);
+
+  // Re-apply a pending scroll position after the board re-renders (optimistic
+  // patch + the realtime refresh that follows), so cell updates never jump to top.
+  useLayoutEffect(() => {
+    const pending = pctReadinessPendingScrollRef.current;
+    if (!pending) return;
+    const el = pctReadinessScrollRef.current;
+    if (el) {
+      el.scrollTop = pending.top;
+      el.scrollLeft = pending.left;
+    }
+    if (typeof window !== "undefined" && pending.winY != null) {
+      window.scrollTo({ top: pending.winY, left: 0, behavior: "auto" });
+    }
+    if (Date.now() >= pending.until) pctReadinessPendingScrollRef.current = null;
+  }, [pctReadinessBoard]);
+
+  // Reset board view state (collapsed sections, active jump, selected record)
+  // only when the template actually changes, not on every data refresh.
+  useEffect(() => {
     setNewPctReadinessEmployeeId("");
     setSelectedPctReadinessRecordId("");
     setActivePctReadinessSectionId("");
     setPctReadinessCollapsedSections({});
-  }, [readinessSummaryBoards, selectedReadinessTemplateSlug]);
+  }, [selectedReadinessTemplateSlug]);
 
   useEffect(() => {
     if (tab === "training" || tab === "performance-reviews" || tab === "templates" || showNewRecord || !!selectedRecordId || !!previewTemplateId || !!selectedReviewInstanceId) {
@@ -8578,7 +8637,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         trainingRealtimeRefreshTimerRef.current = null;
         try {
           await refreshLaborData({ includeTraining: true, includeSupport: true });
-          setPctReadinessLoaded(false);
+          // Do NOT reset pctReadinessLoaded here. loadPctReadinessBoard(true) forces
+          // the refetch anyway, and blanking "loaded" flips the matrix into its
+          // "Loading…" branch — which reads as a jarring full-page refresh on every
+          // cell update. Keep the board on screen and reconcile data in place.
           if (trainingView === "board") {
             await loadPctReadinessBoard(true);
           }
@@ -9536,6 +9598,114 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const customs = toObjectRows(laborCompliancePolicyRequirements).filter(isCustomComplianceRequirement);
     return [...defaults, ...customs].sort(compareCompliancePolicyRequirements);
   }, [laborCompliancePolicyRequirements]);
+
+  // === Requirements matrix (Compliance → Requirements): per-position applicability ===
+  // Columns = roster positions; cell = labor_compliance_role_applicability row.
+  // No rows for a requirement => applies to ALL positions (board default).
+  const [requirementPositionMap, setRequirementPositionMap] = useState({}); // requirement_id -> Set(normalized position)
+  const [togglingApplicabilityKey, setTogglingApplicabilityKey] = useState("");
+  const compliancePositionColumns = useMemo(() => {
+    const titles = toObjectRows(positionHierarchy)
+      .map((row) => formatLaborPositionTitle(row.position_title))
+      .filter(Boolean);
+    const source = titles.length ? titles : DEFAULT_LABOR_POSITION_TITLES.map((title) => formatLaborPositionTitle(title));
+    const seen = new Set();
+    const out = [];
+    source.forEach((title) => {
+      const key = normalizePositionTitle(title);
+      if (key && !seen.has(key)) { seen.add(key); out.push(title); }
+    });
+    return out;
+  }, [positionHierarchy]);
+  const reloadRequirementApplicability = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("labor_compliance_role_applicability")
+      .select("requirement_id, role_name, is_required");
+    if (error) return;
+    const map = {};
+    toObjectRows(data).forEach((row) => {
+      if (!row.is_required || !row.requirement_id) return;
+      if (!map[row.requirement_id]) map[row.requirement_id] = new Set();
+      map[row.requirement_id].add(normalizePositionTitle(row.role_name));
+    });
+    setRequirementPositionMap(map);
+  }, []);
+  useEffect(() => {
+    reloadRequirementApplicability();
+  }, [reloadRequirementApplicability, laborCompliancePolicyRequirements]);
+  const toggleRequirementPosition = useCallback(async (requirement, positionTitle, nextChecked) => {
+    if (!canManageCompliancePolicy || !requirement?.id || !positionTitle) return;
+    const normalizedPosition = normalizePositionTitle(positionTitle);
+    setTogglingApplicabilityKey(`${requirement.id}::${normalizedPosition}`);
+    const currentSet = requirementPositionMap[requirement.id];
+    const appliesToAll = !currentSet || currentSet.size === 0;
+    try {
+      if (nextChecked) {
+        const { error } = await supabase
+          .from("labor_compliance_role_applicability")
+          .upsert({ requirement_id: requirement.id, role_name: positionTitle, is_required: true }, { onConflict: "requirement_id,role_name" });
+        if (error) throw error;
+      } else if (appliesToAll) {
+        // Currently "applies to all" (no rows) — unchecking one means: apply to every OTHER position.
+        const rows = compliancePositionColumns
+          .filter((title) => normalizePositionTitle(title) !== normalizedPosition)
+          .map((title) => ({ requirement_id: requirement.id, role_name: title, is_required: true }));
+        if (rows.length) {
+          const { error } = await supabase
+            .from("labor_compliance_role_applicability")
+            .upsert(rows, { onConflict: "requirement_id,role_name" });
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase
+          .from("labor_compliance_role_applicability")
+          .delete()
+          .eq("requirement_id", requirement.id)
+          .ilike("role_name", positionTitle);
+        if (error) throw error;
+      }
+      await reloadRequirementApplicability();
+      await loadSupportBundle(true); // refresh the board so the Employees tab reflects it immediately
+    } catch (error) {
+      addGlobalToast?.(error?.message || "Could not update requirement applicability", "error");
+      await reloadRequirementApplicability();
+    } finally {
+      setTogglingApplicabilityKey("");
+    }
+  }, [addGlobalToast, canManageCompliancePolicy, compliancePositionColumns, loadSupportBundle, reloadRequirementApplicability, requirementPositionMap]);
+
+  // Reorder custom requirements (Requirements tab) via display_order — feeds the Employees column order.
+  const [reorderingRequirementId, setReorderingRequirementId] = useState("");
+  const moveComplianceRequirement = useCallback(async (requirement, direction) => {
+    if (!canManageCompliancePolicy || !requirement?.id) return;
+    const list = customCompliancePolicyRequirements;
+    const idx = list.findIndex((row) => row.id === requirement.id);
+    if (idx < 0) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= list.length) return;
+    const reordered = [...list];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(swapIdx, 0, moved);
+    setReorderingRequirementId(requirement.id);
+    try {
+      const updates = reordered
+        .map((row, position) => ({ id: row.id, display_order: (position + 1) * 10 }))
+        .filter((update) => Number(list.find((row) => row.id === update.id)?.display_order ?? NaN) !== update.display_order);
+      for (const update of updates) {
+        const { error } = await supabase
+          .from("labor_compliance_requirements")
+          .update({ display_order: update.display_order })
+          .eq("id", update.id);
+        if (error) throw error;
+      }
+      await loadSupportBundle(true);
+    } catch (error) {
+      addGlobalToast?.(error?.message || "Could not reorder requirement", "error");
+    } finally {
+      setReorderingRequirementId("");
+    }
+  }, [addGlobalToast, canManageCompliancePolicy, customCompliancePolicyRequirements, loadSupportBundle]);
+
   const complianceRequirementEditingRow = useMemo(() => (
     customCompliancePolicyRequirements.find((requirement) => requirement.id === complianceRequirementEditingId) || null
   ), [complianceRequirementEditingId, customCompliancePolicyRequirements]);
@@ -11647,6 +11817,141 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setPctReadinessEditorComment("");
     setSavingPctReadinessCell(false);
   }, []);
+
+  // ── Board multi-select + bulk status apply ────────────────────────────────
+  const togglePctReadinessSelection = useCallback((record, item, section) => {
+    if (!record?.id || !item?.id) return;
+    const key = `${record.id}:${item.id}`;
+    setPctReadinessSelection((current) => {
+      const next = { ...current };
+      if (next[key]) delete next[key];
+      else next[key] = { record, item, section };
+      return next;
+    });
+  }, []);
+
+  const clearPctReadinessSelection = useCallback(() => {
+    setPctReadinessSelection({});
+  }, []);
+
+  const openPctReadinessBulkModal = useCallback(() => {
+    setPctReadinessSelection((current) => {
+      const keys = Object.keys(current);
+      if (keys.length === 0) return current;
+      // Preselect the shared status when the whole selection already agrees.
+      const statuses = new Set(keys.map((key) => normalizePctReadinessStatus(
+        pctReadinessCells[key]?.readiness_status || pctReadinessCells[key]?.status,
+      )));
+      setPctReadinessBulkStatus(statuses.size === 1 ? [...statuses][0] : "verified");
+      setPctReadinessBulkComment("");
+      setPctReadinessBulkOpen(true);
+      return current;
+    });
+  }, [pctReadinessCells]);
+
+  const handleApplyPctReadinessBulk = useCallback(async () => {
+    const entries = Object.entries(pctReadinessSelection);
+    if (entries.length === 0) return;
+    const status = normalizePctReadinessStatus(pctReadinessBulkStatus);
+    const comment = entries.length === 1 ? String(pctReadinessBulkComment || "").trim() : "";
+    // Capture scroll so a board update never yanks the user back to the top, and
+    // arm the restore guard immediately (covers a realtime refresh mid-flight too).
+    const scrollEl = pctReadinessScrollRef.current;
+    const savedScrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    const savedScrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
+    const savedWindowY = typeof window !== "undefined" ? window.scrollY : 0;
+    pctReadinessPendingScrollRef.current = { top: savedScrollTop, left: savedScrollLeft, winY: savedWindowY, until: Date.now() + 4000 };
+    setSavingPctReadinessBulk(true);
+    try {
+      const savedAt = new Date().toISOString();
+      await Promise.all(entries.map(async ([, sel]) => {
+        const args = buildPctReadinessCellUpdateArgs({
+          recordId: sel.record.id,
+          templateItemId: sel.item.id,
+          readinessStatus: status,
+          comment,
+          actorUserId,
+          actorName,
+        });
+        const templateSlug = sel.record.template_slug || selectedReadinessTemplateSlug;
+        const { error } = await supabase.rpc("update_training_readiness_cell", args);
+        if (error) {
+          if (templateSlug === PCT_READINESS_TEMPLATE_SLUG && isMissingTeamReadinessRpcError(error)) {
+            const { error: legacyError } = await supabase.rpc("update_pct_readiness_cell", args);
+            if (legacyError) throw legacyError;
+          } else {
+            throw error;
+          }
+        }
+      }));
+      const nextCells = {};
+      entries.forEach(([key, sel]) => {
+        const previousCell = pctReadinessCells[key] || {};
+        const nextMetadata = {
+          ...(isObjectRow(previousCell.metadata) ? previousCell.metadata : {}),
+          last_updated_by_name: actorName || previousCell.metadata?.last_updated_by_name || "",
+          last_updated_at: savedAt,
+        };
+        if (status === "demonstrated") {
+          nextMetadata.demonstrated_by_name = actorName || previousCell.demonstrated_by || "";
+          nextMetadata.demonstrated_at = savedAt;
+        }
+        if (status === "verified" || status === "waived") {
+          nextMetadata.verified_by_name = actorName || previousCell.verified_by || "";
+          nextMetadata.verified_at = savedAt;
+        }
+        nextCells[key] = {
+          ...previousCell,
+          record_id: sel.record.id,
+          template_item_id: sel.item.id,
+          template_section_id: sel.section?.id || previousCell.template_section_id,
+          readiness_status: status,
+          status,
+          demonstrated_by: status === "demonstrated" ? nextMetadata.demonstrated_by_name : previousCell.demonstrated_by,
+          verified_by: (status === "verified" || status === "waived") ? nextMetadata.verified_by_name : previousCell.verified_by,
+          completed_by_name: (status === "verified" || status === "waived") ? nextMetadata.verified_by_name : previousCell.completed_by_name,
+          completed_at: (status === "verified" || status === "waived") ? savedAt : previousCell.completed_at,
+          updated_at: savedAt,
+          latest_status_actor_name: actorName || previousCell.latest_status_actor_name || "",
+          latest_status_actor_at: savedAt,
+          latest_note: comment || previousCell.latest_note || "",
+          latest_note_actor_name: comment ? (actorName || previousCell.latest_note_actor_name || "") : previousCell.latest_note_actor_name,
+          latest_note_at: comment ? savedAt : previousCell.latest_note_at,
+          metadata: nextMetadata,
+        };
+      });
+      const patchBoard = (board) => {
+        if (!board || !isObjectRow(board)) return board;
+        const cells = isObjectRow(board.cells) ? board.cells : {};
+        return { ...board, cells: { ...cells, ...nextCells } };
+      };
+      setPctReadinessBoard((current) => patchBoard(current));
+      setReadinessSummaryBoards((current) => {
+        const slug = selectedReadinessTemplateSlug;
+        return { ...current, [slug]: patchBoard(current[slug]) };
+      });
+      // Hold the scroll position through the optimistic patch AND the realtime
+      // refresh that follows (which can land up to ~1s later).
+      pctReadinessPendingScrollRef.current = { top: savedScrollTop, left: savedScrollLeft, winY: savedWindowY, until: Date.now() + 1600 };
+      setPctReadinessBulkOpen(false);
+      setPctReadinessSelection({});
+      setPctReadinessBulkComment("");
+      addGlobalToast?.(`Updated ${entries.length} cell${entries.length === 1 ? "" : "s"}`, "success");
+    } catch (error) {
+      console.error("Bulk readiness update error:", error);
+      addGlobalToast?.(error?.message || "Failed to update readiness cells", "error");
+    } finally {
+      setSavingPctReadinessBulk(false);
+    }
+  }, [pctReadinessSelection, pctReadinessBulkStatus, pctReadinessBulkComment, pctReadinessCells, actorUserId, actorName, selectedReadinessTemplateSlug, addGlobalToast]);
+
+  // Drop any pending board selection when the user leaves the board surface.
+  useEffect(() => {
+    if (tab !== "training" || trainingView !== "board") {
+      setPctReadinessSelection((current) => (Object.keys(current).length ? {} : current));
+      setPctReadinessBulkOpen(false);
+    }
+  }, [tab, trainingView]);
 
   const handleSavePctReadinessCell = useCallback(async () => {
     if (!pctReadinessCellEditor?.record?.id || !pctReadinessCellEditor?.item?.id) return;
@@ -14941,8 +15246,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     return applyLaborRosterFilters(preparedRosterRows, rosterFilters);
   }, [preparedRosterRows, rosterFilters]);
 	  const visibleRosterRows = useMemo(() => {
-	    return filteredRosterRows;
-	  }, [filteredRosterRows]);
+	    let list = filteredRosterRows;
+	    if (rosterStatusPill === "active") list = list.filter((row) => isLaborEmployeeActive(row));
+	    else if (rosterStatusPill === "inactive") list = list.filter((row) => !isLaborEmployeeActive(row));
+	    const q = rosterSearch.trim().toLowerCase();
+	    if (q) {
+	      list = list.filter((row) => [row.full_name, row.first_name, row.last_name, row.position_title, row.contact_email, row.contact_phone]
+	        .some((value) => String(value || "").toLowerCase().includes(q)));
+	    }
+	    return list;
+	  }, [filteredRosterRows, rosterStatusPill, rosterSearch]);
   useEffect(() => {
     if (showHierarchyManager) {
       setHierarchyDraft(positionHierarchyRows.map((row) => ({ ...row })));
@@ -16446,6 +16759,68 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <Btn variant="ghost" onClick={closePctReadinessCellEditor}>Cancel</Btn>
           <Btn variant="primary" onClick={handleSavePctReadinessCell} disabled={savingPctReadinessCell}>
             {savingPctReadinessCell ? "Saving..." : "Save Cell"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
+  const pctReadinessSelectionCount = Object.keys(pctReadinessSelection).length;
+
+  const pctReadinessSelectionBar = (canUseLaborTab("training") && tab === "training" && trainingView === "board" && pctReadinessSelectionCount > 0 && !pctReadinessBulkOpen) ? (
+    <div style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 8000, display: "flex", alignItems: "center", gap: 14, padding: "9px 10px 9px 18px", borderRadius: 999, background: C.surface, border: `1px solid ${C.border}`, boxShadow: "0 14px 40px rgba(15,40,25,0.22)" }}>
+      <span style={{ fontSize: 13, fontWeight: 800, color: C.text, whiteSpace: "nowrap" }}>
+        {pctReadinessSelectionCount} cell{pctReadinessSelectionCount === 1 ? "" : "s"} selected
+      </span>
+      <button type="button" onClick={clearPctReadinessSelection} style={{ border: "none", background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+      <Btn variant="primary" size="sm" onClick={openPctReadinessBulkModal}>Set status</Btn>
+    </div>
+  ) : null;
+
+  const pctReadinessBulkModal = (canUseLaborTab("training") && pctReadinessBulkOpen) ? (
+    <Modal title={`Set status for ${pctReadinessSelectionCount} cell${pctReadinessSelectionCount === 1 ? "" : "s"}`} onClose={() => setPctReadinessBulkOpen(false)}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>
+          Applies one status to every selected cell across all people and domains, stamped as <strong style={{ color: C.text }}>{actorName}</strong>.
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>Status</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+            {PCT_READINESS_STATUS_OPTIONS.map((option) => {
+              const st = PCT_READINESS_STATUS_STYLES[option.value] || PCT_READINESS_STATUS_STYLES.not_started;
+              const on = pctReadinessBulkStatus === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPctReadinessBulkStatus(option.value)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : st.border}`, background: st.bg, color: st.text, fontFamily: "inherit", fontSize: 12, fontWeight: 800, cursor: "pointer", textAlign: "left", boxShadow: on ? `0 0 0 2px ${C.pri}` : "none" }}
+                >
+                  <span style={{ minWidth: 18 }}>{st.icon}</span>
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {pctReadinessSelectionCount === 1 ? (
+          <Inp
+            label="Comment"
+            type="textarea"
+            rows={3}
+            value={pctReadinessBulkComment}
+            onChange={setPctReadinessBulkComment}
+            placeholder="Optional coaching note or context"
+          />
+        ) : (
+          <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600, lineHeight: 1.45 }}>
+            Comments aren&apos;t applied in a bulk update. Select a single cell to add a note.
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <Btn variant="ghost" onClick={() => setPctReadinessBulkOpen(false)}>Cancel</Btn>
+          <Btn variant="primary" onClick={handleApplyPctReadinessBulk} disabled={savingPctReadinessBulk}>
+            {savingPctReadinessBulk ? "Applying..." : `Apply to ${pctReadinessSelectionCount} cell${pctReadinessSelectionCount === 1 ? "" : "s"}`}
           </Btn>
         </div>
       </div>
@@ -18082,7 +18457,41 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   ];
   const headerAction = (() => {
     if (tab === "home") {
-      return null;
+      return (
+        <div className="labor-roster-action-bar">
+          {canEditRoster && (
+            <button type="button" className="labor-roster-action-button is-icon" title="Labor settings" aria-label="Labor settings" onClick={() => setShowHierarchyManager(true)}>
+              <I.Settings />
+            </button>
+          )}
+          <button type="button" className="labor-roster-action-button" onClick={() => handlePrintRoster()} disabled={generatingRosterPdf}>
+            <I.Download />
+            <span>{generatingRosterPdf ? "Generating PDF..." : "Roster PDF"}</span>
+          </button>
+          <button type="button" className={`labor-roster-action-button${copiedRosterContactKey === "all-emails" ? " is-copied" : ""}`} onClick={handleCopyAllRosterEmails} disabled={activeRosterEmailRecipientCount === 0} title={activeRosterEmailRecipientCount > 0 ? `Copy ${activeRosterEmailRecipientCount} active email recipients` : "No active email recipients"}>
+            {copiedRosterContactKey === "all-emails" ? <I.Check /> : <I.Clipboard />}
+            <span>{copiedRosterContactKey === "all-emails" ? "Copied Emails" : "Copy All Emails"}</span>
+          </button>
+          <LaborSortControl sort={rosterSort} defaultSort={LABOR_DEFAULT_SORT} columns={LABOR_ROSTER_SORT_COLUMNS} onChange={setRosterSort} />
+          <button type="button" className={`labor-roster-action-button${showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? " is-active" : ""}`} onClick={() => setShowRosterFilterPanel((current) => !current)}>
+            <I.Search />
+            <span>Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}</span>
+          </button>
+          <button type="button" className="labor-roster-action-button" onClick={handleDownloadActiveLaborContactCards} disabled={contactCardDownloadKey === "bulk" || activeContactCardEmployees.length === 0}>
+            <I.FileText />
+            <span>{contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}</span>
+          </button>
+          {canEditRoster && (showInlineLaborEmployeeComposer ? (
+            <button type="button" className="labor-roster-action-button" onClick={() => closeInlineLaborEmployeeComposer()}>
+              <I.X /><span>Cancel Add</span>
+            </button>
+          ) : (
+            <button type="button" className="labor-roster-action-button is-primary" onClick={openInlineLaborEmployeeComposer}>
+              <I.Plus /><span>Add Employee</span>
+            </button>
+          ))}
+        </div>
+      );
     }
     if (tab === "training") {
       return (
@@ -18126,6 +18535,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           <Btn variant="primary" onClick={async () => { await loadTrainingBundle(); setShowCreateTemplateModal(true); }}>Add Template</Btn>
         </div>
       );
+    }
+    if (tab === "performance-reviews") {
+      if (complianceView === "requirements" && canManageCompliancePolicy) {
+        return (
+          <Btn
+            variant="primary"
+            icon={<I.Plus />}
+            onClick={() => openComplianceRequirementEditor()}
+            disabled={savingComplianceRequirement}
+          >
+            Add Requirement
+          </Btn>
+        );
+      }
+      return null;
     }
     if (tab === "attendance" || tab === "interviews") {
       return null;
@@ -18804,14 +19228,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 0;
+          flex-shrink: 0;
         }
         .labor-module-title span {
           font-size: 22px;
-          font-weight: 900;
+          font-weight: 800;
           color: ${C.text};
-          letter-spacing: 0;
+          letter-spacing: -0.01em;
           line-height: 1.1;
+          white-space: nowrap;
         }
         .labor-header-action-slot {
           min-width: 178px;
@@ -18887,9 +19312,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          color: #fff;
 	        }
 	        .labor-roster-table-card {
-	          border-radius: 8px;
-	          border: 1px solid #e1e8f0;
-	          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.055);
+	          border-radius: 10px;
+	          border: 1.5px solid #DFE2E8;
+	          box-shadow: none;
 	        }
 	        .labor-roster-table {
 	          width: 100%;
@@ -18899,27 +19324,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        }
 	        .labor-roster-table-heading {
 	          padding: 0;
-	          border-bottom: 1px solid #dce5ee;
-	          background: #f8fafc;
+	          border-bottom: 1px solid rgb(226,232,240);
+	          background: #fff;
 	          text-align: left;
 	          vertical-align: middle;
 	        }
 	        .labor-roster-header-button {
 	          width: 100%;
-	          min-height: 38px;
+	          min-height: 28px;
 	          display: inline-flex;
 	          align-items: center;
 	          justify-content: space-between;
 	          gap: 8px;
 	          border: none;
 	          background: transparent;
-	          padding: 10px 14px;
-	          color: ${C.textMut};
+	          padding: 6px 14px;
+	          color: rgb(71,85,105);
 	          font-family: inherit;
 	          font-size: 10px;
-	          font-weight: 950;
+	          font-weight: 700;
 	          text-transform: uppercase;
-	          letter-spacing: 0;
+	          letter-spacing: 0.06em;
 	          cursor: pointer;
 	        }
 	        .labor-roster-header-button:hover,
@@ -18940,10 +19365,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        }
 	        .labor-roster-name-cell,
 	        .labor-roster-secondary-cell {
-	          padding: 11px 14px;
+	          padding: 6px 14px;
 	          border-bottom: 1px solid ${C.borderLight};
 	          vertical-align: middle;
-	          line-height: 1.35;
+	          line-height: 1.3;
 	        }
 	        .labor-roster-name-cell {
 	          min-width: 180px;
@@ -19184,71 +19609,55 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         .labor-module-tabs {
           --labor-tab-count: 1;
           --labor-active-index: 0;
-          --labor-indicator-flat-transition: transform 180ms ease, box-shadow 180ms ease;
           position: relative;
           display: grid;
           grid-template-columns: repeat(var(--labor-tab-count), minmax(0, 1fr));
-          align-items: center;
-          min-height: 50px;
-          margin-bottom: 22px;
-          padding: 5px;
-          border: 1px solid rgba(226, 232, 240, 0.95);
-          border-radius: 16px;
-          background:
-            linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92)),
-            #fff;
-          box-shadow: 0 16px 44px rgba(15, 23, 42, 0.055);
+          align-items: stretch;
+          gap: 2px;
+          margin-bottom: 14px;
+          padding: 0 4px;
+          border: none;
+          border-bottom: 1px solid ${C.borderLight};
+          border-radius: 0;
+          background: ${C.bg};
+          box-shadow: none;
           overflow-x: auto;
           overflow-y: hidden;
           scrollbar-width: none;
-          isolation: isolate;
         }
         .labor-module-tabs::-webkit-scrollbar { display: none; }
-        .labor-tab-indicator {
-          position: absolute;
-          top: 5px;
-          bottom: 5px;
-          left: 5px;
-          z-index: 0;
-          width: calc((100% - 10px) / var(--labor-tab-count));
-          border-radius: 12px;
-          background: linear-gradient(135deg, #14532d 0%, #166534 56%, #3f6212 100%);
-          box-shadow: 0 14px 34px rgba(20, 83, 45, 0.22), inset 0 1px 0 rgba(255,255,255,0.18);
-          transform: translateX(calc(var(--labor-active-index) * 100%));
-          transition: var(--labor-indicator-flat-transition);
-          overflow: hidden;
-        }
-        .labor-tab-indicator::after {
-          content: "";
-          position: absolute;
-          inset: -30% auto -30% 0;
-          width: 46%;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
-          animation: laborTabLightSweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-        }
+        .labor-tab-indicator { display: none; }
         .labor-tab-button {
           position: relative;
           z-index: 1;
-          height: 40px;
           border: none;
-          border-radius: 12px;
+          border-bottom: 3px solid transparent;
+          border-radius: 0;
           background: transparent;
           color: ${C.textSec};
           cursor: pointer;
           font-family: inherit;
           font-size: 13px;
-          font-weight: 850;
+          font-weight: 600;
           letter-spacing: 0;
           white-space: nowrap;
-          transition: color 220ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease;
+          padding: 10px 14px;
+          margin-bottom: -1px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          transition: color 0.15s ease;
         }
         .labor-tab-button:hover {
           color: ${C.pri};
-          background: rgba(20, 83, 45, 0.055);
+          background: transparent;
         }
         .labor-tab-button.is-active {
-          color: #fff;
-          transform: translateY(-1px);
+          color: ${C.text};
+          font-weight: 700;
+          border-bottom: 3px solid ${C.pri};
+          transform: none;
         }
         .labor-template-gear-button {
           width: 40px;
@@ -21020,6 +21429,94 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           clip-path: inset(50%);
           border: 0;
           white-space: nowrap;
+        }
+        .staffing-capacity-position-table-wrap {
+          margin-top: 18px;
+        }
+        .staffing-capacity-position-table-title {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: ${C.textMut};
+          margin-bottom: 8px;
+        }
+        .staffing-capacity-position-table-scroll {
+          border: 1.5px solid ${C.border};
+          border-radius: 10px;
+          overflow: hidden;
+          overflow-x: auto;
+          background: ${C.surface};
+        }
+        .staffing-capacity-position-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+        }
+        .staffing-capacity-position-table thead th {
+          text-align: left;
+          background: ${C.surface};
+          border-bottom: 1px solid ${C.border};
+          padding: 8px 14px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: ${C.textMut};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table thead th.num,
+        .staffing-capacity-position-table td.num {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+        }
+        .staffing-capacity-position-table tbody th[scope="row"] {
+          text-align: left;
+          padding: 6px 14px;
+          font-weight: 700;
+          color: ${C.text};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table td {
+          padding: 6px 14px;
+          border-top: 1px solid ${C.borderLight};
+          color: ${C.textSec};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-table tbody tr:first-child td,
+        .staffing-capacity-position-table tbody tr:first-child th {
+          border-top: none;
+        }
+        .staffing-capacity-position-table tbody tr:hover td,
+        .staffing-capacity-position-table tbody tr:hover th {
+          background: ${C.surfaceHover || "#F8FAFC"};
+        }
+        .staffing-capacity-position-status {
+          display: inline-block;
+          padding: 2px 8px;
+          border-radius: 999px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          background: ${C.borderLight};
+          color: ${C.textSec};
+          white-space: nowrap;
+        }
+        .staffing-capacity-position-status.is-danger,
+        .staffing-capacity-position-status.is-short {
+          background: rgba(220, 38, 38, 0.10);
+          color: #B91C1C;
+        }
+        .staffing-capacity-position-status.is-warning,
+        .staffing-capacity-position-status.is-surplus {
+          background: rgba(217, 119, 6, 0.12);
+          color: #B45309;
+        }
+        .staffing-capacity-position-status.is-success,
+        .staffing-capacity-position-status.is-healthy,
+        .staffing-capacity-position-status.is-even {
+          background: rgba(22, 163, 74, 0.10);
+          color: #15803D;
         }
         .hour-analysis-hire-list {
           display: grid;
@@ -23921,6 +24418,34 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           font-size: 11px;
           font-weight: 950;
         }
+        .labor-view-tabs {
+          display: flex;
+          gap: 2px;
+          padding: 0 4px;
+          margin-bottom: 12px;
+          background: ${C.bg};
+          border-bottom: 1.5px solid ${C.borderLight};
+        }
+        .labor-view-tab {
+          flex: 1 1 0;
+          min-width: 0;
+          border: none;
+          background: transparent;
+          border-bottom: 3px solid transparent;
+          padding: 10px 14px;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          color: ${C.textSec};
+          cursor: pointer;
+          transition: color 150ms ease, border-color 150ms ease;
+        }
+        .labor-view-tab:hover { color: ${C.text}; }
+        .labor-view-tab.is-active {
+          color: ${C.text};
+          font-weight: 700;
+          border-bottom: 3px solid ${C.pri};
+        }
         .labor-view-switcher {
           --labor-view-count: 1;
           --labor-view-active-index: 0;
@@ -24341,7 +24866,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	      `}</style>
 	      <div className="labor-module-header">
         <div className="labor-module-title">
-          <I.GraduationCap />
           <span>Labor Management</span>
         </div>
         <div className="labor-header-action-slot">{headerAction}</div>
@@ -24664,78 +25188,26 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             </div>
           )}
 
-          <SectionHeader title="Roster" count={sortedRosterRows.length}>
-            <div className="labor-roster-action-bar">
-              {canEditRoster && (
-                <button
-                  type="button"
-                  className="labor-roster-action-button is-icon"
-                  title="Labor settings"
-                  aria-label="Labor settings"
-                  onClick={() => setShowHierarchyManager(true)}
-                >
-                  <I.Settings />
-                </button>
-              )}
-              <button
-                type="button"
-                className="labor-roster-action-button"
-                onClick={() => handlePrintRoster()}
-                disabled={generatingRosterPdf}
-              >
-                <I.Download />
-                <span>{generatingRosterPdf ? "Generating PDF..." : "Roster PDF"}</span>
-              </button>
-              <button
-                type="button"
-                className={`labor-roster-action-button${copiedRosterContactKey === "all-emails" ? " is-copied" : ""}`}
-                onClick={handleCopyAllRosterEmails}
-                disabled={activeRosterEmailRecipientCount === 0}
-                title={activeRosterEmailRecipientCount > 0 ? `Copy ${activeRosterEmailRecipientCount} active email recipients` : "No active email recipients"}
-              >
-                {copiedRosterContactKey === "all-emails" ? <I.Check /> : <I.Clipboard />}
-                <span>{copiedRosterContactKey === "all-emails" ? "Copied Emails" : "Copy All Emails"}</span>
-              </button>
-              <LaborSortControl
-                sort={rosterSort}
-                defaultSort={LABOR_DEFAULT_SORT}
-                columns={LABOR_ROSTER_SORT_COLUMNS}
-                onChange={setRosterSort}
-              />
-              <button
-                type="button"
-                className={`labor-roster-action-button${showRosterFilterPanel || Object.keys(rosterFilters).length > 0 ? " is-active" : ""}`}
-                onClick={() => setShowRosterFilterPanel((current) => !current)}
-              >
-                <I.Search />
-                <span>
-                Filter{Object.keys(rosterFilters).length > 0 ? ` (${Object.keys(rosterFilters).length})` : ""}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="labor-roster-action-button"
-                onClick={handleDownloadActiveLaborContactCards}
-                disabled={contactCardDownloadKey === "bulk" || activeContactCardEmployees.length === 0}
-              >
-                <I.FileText />
-                <span>
-                {contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}
-                </span>
-              </button>
-	              {canEditRoster && (showInlineLaborEmployeeComposer ? (
-                <button type="button" className="labor-roster-action-button" onClick={() => closeInlineLaborEmployeeComposer()}>
-                  <I.X />
-                  <span>Cancel Add</span>
-                </button>
-              ) : (
-                <button type="button" className="labor-roster-action-button is-primary" onClick={openInlineLaborEmployeeComposer}>
-                  <I.Plus />
-                  <span>Add Employee</span>
-                </button>
-              ))}
+          <div style={{ marginBottom: 8 }}>
+            {/* Search bar — exact Grassroots wireframe (borderBottom + SVG + inline pills) */}
+            <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+              <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={rosterSearch ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                <input value={rosterSearch} onChange={(e) => setRosterSearch(e.target.value)} placeholder="Search name, position, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+                {rosterSearch && <button onClick={() => setRosterSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>}
+                <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                  {[{ id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }, { id: "all", label: "All" }].map((pill) => {
+                    const on = rosterStatusPill === pill.id;
+                    return <button key={pill.id} onClick={() => setRosterStatusPill(pill.id)} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{pill.label}</button>;
+                  })}
+                </div>
+              </div>
             </div>
-          </SectionHeader>
+            {/* One-line explainer — exact Grassroots gradient */}
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Your team roster. Filter by status or search; use the gear (top right) to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
+            </div>
+          </div>
 	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
@@ -25054,6 +25526,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={attendanceView}
             onChange={changeAttendanceView}
             options={[
@@ -25081,6 +25554,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         <div>
           {!interviewDetailOpen && (
             <LaborViewSwitcher
+              variant="tabs"
               value={interviewView}
               onChange={changeInterviewView}
               options={[
@@ -25108,6 +25582,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={complianceView}
             onChange={changeComplianceView}
             options={COMPLIANCE_VIEW_OPTIONS}
@@ -25167,109 +25642,113 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
           {complianceView === "requirements" && (
             <div style={{ display: "grid", gap: 14 }}>
-              <Card style={{ padding: 18, borderRadius: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text, marginBottom: 5 }}>Compliance Columns</div>
-                    <div style={{ fontSize: 12, fontWeight: 750, color: C.textMut }}>
-                      {customCompliancePolicyRequirements.length} custom column{customCompliancePolicyRequirements.length === 1 ? "" : "s"} active
-                    </div>
-                  </div>
-                  <Btn
-                    variant="secondary"
-                    size="sm"
-                    disabled={!canManageCompliancePolicy || savingComplianceRequirement}
-                    icon={<I.Plus />}
-                    onClick={() => openComplianceRequirementEditor()}
-                  >
-                    Add Column
-                  </Btn>
+              <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                    <thead>
+                      <tr>
+                        <th style={complianceTableHeaderStyle}>Requirement</th>
+                        <th style={complianceTableHeaderStyle}>Evidence Required?</th>
+                        <th style={complianceTableHeaderStyle}>Type</th>
+                        {compliancePositionColumns.map((position) => (
+                          <th key={position} style={{ ...complianceTableHeaderStyle, textAlign: "center", whiteSpace: "nowrap" }}>{position}</th>
+                        ))}
+                        <th style={{ ...complianceTableHeaderStyle, textAlign: "right" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allComplianceReviewRequirements.map((requirement) => {
+                        const positionSet = requirementPositionMap[requirement.id];
+                        const appliesToAll = !positionSet || positionSet.size === 0;
+                        const isCustom = isCustomComplianceRequirement(requirement);
+                        const evidenceRequired = String(requirement.evidence_policy || "") === "file_required";
+                        const customIndex = isCustom ? customCompliancePolicyRequirements.findIndex((row) => row.id === requirement.id) : -1;
+                        const customCount = customCompliancePolicyRequirements.length;
+                        return (
+                          <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                            <td style={{ padding: "6px 14px", color: C.text, fontSize: 13, fontWeight: 900 }}>
+                              {normalizeComplianceRequirementLabel(requirement)}
+                              {appliesToAll && (
+                                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 800, color: C.textMut, border: `1px solid ${C.borderLight}`, borderRadius: 999, padding: "1px 7px", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>All positions</span>
+                              )}
+                              {requirement.description ? (
+                                <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, lineHeight: 1.3, fontWeight: 700 }}>{requirement.description}</div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color={evidenceRequired ? "warning" : "default"}>{evidenceRequired ? "Required" : "Optional"}</Badge>
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color={isCustom ? "info" : "default"}>{isCustom ? "Custom" : "Native"}</Badge>
+                            </td>
+                            {compliancePositionColumns.map((position) => {
+                              const checked = appliesToAll || positionSet.has(normalizePositionTitle(position));
+                              const toggleKey = `${requirement.id}::${normalizePositionTitle(position)}`;
+                              return (
+                                <td key={position} style={{ padding: "6px 8px", textAlign: "center" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={!canManageCompliancePolicy || togglingApplicabilityKey === toggleKey}
+                                    onChange={(event) => toggleRequirementPosition(requirement, position, event.target.checked)}
+                                    title={appliesToAll ? "Applies to all positions — uncheck to scope to the others" : (checked ? "Applies to this position" : "Not applied to this position")}
+                                    style={{ width: 16, height: 16, accentColor: C.pri, cursor: canManageCompliancePolicy ? "pointer" : "default" }}
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td style={{ padding: "4px 10px", textAlign: "right" }}>
+                              {isCustom ? (
+                                <div style={{ display: "inline-flex", justifyContent: "flex-end", alignItems: "center", gap: 2 }}>
+                                  <button
+                                    type="button"
+                                    title="Move up"
+                                    disabled={!canManageCompliancePolicy || Boolean(reorderingRequirementId) || customIndex <= 0}
+                                    onClick={() => moveComplianceRequirement(requirement, "up")}
+                                    style={{ border: "none", background: "transparent", cursor: customIndex <= 0 ? "default" : "pointer", color: C.textMut, fontSize: 10, padding: "2px 4px", lineHeight: 1, opacity: customIndex <= 0 ? 0.3 : 1 }}
+                                  >▲</button>
+                                  <button
+                                    type="button"
+                                    title="Move down"
+                                    disabled={!canManageCompliancePolicy || Boolean(reorderingRequirementId) || customIndex < 0 || customIndex >= customCount - 1}
+                                    onClick={() => moveComplianceRequirement(requirement, "down")}
+                                    style={{ border: "none", background: "transparent", cursor: customIndex >= customCount - 1 ? "default" : "pointer", color: C.textMut, fontSize: 10, padding: "2px 4px", lineHeight: 1, opacity: customIndex >= customCount - 1 ? 0.3 : 1 }}
+                                  >▼</button>
+                                  <Btn
+                                    variant="ghost"
+                                    size="sm"
+                                    icon={<I.Pencil />}
+                                    disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                                    onClick={() => openComplianceRequirementEditor(requirement)}
+                                    style={{ padding: "5px 8px" }}
+                                  />
+                                  <Btn
+                                    variant="danger"
+                                    size="sm"
+                                    icon={<I.Trash />}
+                                    disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                                    onClick={() => handleDeleteComplianceRequirement(requirement)}
+                                    style={{ padding: "5px 8px" }}
+                                  />
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>System</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {allComplianceReviewRequirements.length === 0 && (
+                        <tr>
+                          <td colSpan={4 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
+                            No compliance requirements yet. Add one here and it will appear on the Employees grid.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </Card>
-              <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={complianceTableHeaderStyle}>Column</th>
-                      <th style={complianceTableHeaderStyle}>Evidence</th>
-                      <th style={complianceTableHeaderStyle}>Status</th>
-                      <th style={{ ...complianceTableHeaderStyle, textAlign: "right" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {customCompliancePolicyRequirements.map((requirement) => (
-                      <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
-                        <td style={{ padding: "14px 16px", color: C.text, fontSize: 14, fontWeight: 950 }}>
-                          {normalizeComplianceRequirementLabel(requirement)}
-                          {requirement.description ? (
-                            <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, lineHeight: 1.35, fontWeight: 750 }}>{requirement.description}</div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: C.textSec, fontSize: 12, fontWeight: 850 }}>{formatComplianceRequirementEvidence(requirement)}</td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <Badge color="success">Visible on Employees</Badge>
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                          <div style={{ display: "inline-flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <Btn
-                              variant="ghost"
-                              size="sm"
-                              icon={<I.Pencil />}
-                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
-                              onClick={() => openComplianceRequirementEditor(requirement)}
-                            >
-                              Edit
-                            </Btn>
-                            <Btn
-                              variant="danger"
-                              size="sm"
-                              icon={<I.Trash />}
-                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
-                              onClick={() => handleDeleteComplianceRequirement(requirement)}
-                            >
-                              {deletingComplianceRequirementId === requirement.id ? "Deleting..." : "Delete"}
-                            </Btn>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {customCompliancePolicyRequirements.length === 0 && (
-                      <tr>
-                        <td colSpan={4} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
-                          No custom Compliance columns yet. Add one here and it will appear on the Employees grid.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </Card>
-
-              {defaultReviewComplianceRequirements.length > 0 && (
-                <Card style={{ padding: 16, borderRadius: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-                    <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Default review checkpoints</div>
-                    <Badge color="default">{defaultReviewComplianceRequirements.length}</Badge>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                    {defaultReviewComplianceRequirements.map((requirement) => (
-                      <div
-                        key={requirement.id || requirement.slug}
-                        style={{
-                          border: `1px solid ${C.borderLight}`,
-                          borderRadius: 8,
-                          padding: "10px 12px",
-                          background: "#fff",
-                          minWidth: 0,
-                        }}
-                      >
-                        <div style={{ color: C.text, fontSize: 13, fontWeight: 950 }}>{normalizeComplianceRequirementLabel(requirement)}</div>
-                        <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementDueRule(requirement)}</div>
-                        <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementEvidence(requirement)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              )}
             </div>
           )}
           {complianceView === "history" && (
@@ -25401,6 +25880,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       {!loading && tab === "training" && canUseLaborTab("training") && (
         <div>
           <LaborViewSwitcher
+            variant="tabs"
             value={trainingView}
             onChange={setTrainingView}
             options={TRAINING_VIEW_OPTIONS}
@@ -25590,6 +26070,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                   const presentation = getPctReadinessStatusPresentation(row.status);
                                   const style = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
                                   const rowActorLine = getReadinessCellActorLine(row.cell, presentation.value);
+                                  const singleSelKey = `${pctReadinessEmployeeBoardProfile.record?.id}:${row.item.id}`;
+                                  const singleSelected = !!pctReadinessSelection[singleSelKey];
                                   return (
                                     <tr key={`single-${row.item.id}`} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                                       <td style={{ padding: "11px 12px", fontSize: 12, color: C.text, fontWeight: 900, verticalAlign: "top", width: 170 }}>{row.section.title}</td>
@@ -25597,9 +26079,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                       <td style={{ padding: "9px 12px", verticalAlign: "top", width: 190 }}>
                                         <button
                                           type="button"
-                                          onClick={() => openPctReadinessCellEditor(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
-                                          style={{ display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer" }}
+                                          onClick={() => togglePctReadinessSelection(pctReadinessEmployeeBoardProfile.record, row.item, row.section)}
+                                          aria-pressed={singleSelected}
+                                          style={{ position: "relative", display: "inline-flex", flexDirection: "column", gap: 3, alignItems: "flex-start", padding: "6px 9px", minWidth: rowActorLine ? 124 : undefined, borderRadius: 8, border: `1px solid ${singleSelected ? C.pri : style.border}`, background: style.bg, color: style.text, fontSize: 11, fontWeight: 900, fontFamily: "inherit", cursor: "pointer", boxShadow: singleSelected ? `0 0 0 2px ${C.pri}` : "none" }}
                                         >
+                                          {singleSelected && (
+                                            <span style={{ position: "absolute", top: 3, right: 3, width: 14, height: 14, borderRadius: 4, background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                                          )}
                                           <span style={{ display: "inline-flex", gap: 6, alignItems: "center", lineHeight: 1.1 }}>
                                             <span>{style.icon}</span>
                                             <span>{presentation.label}</span>
@@ -25830,17 +26316,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                     {item.label}
                                   </td>
                                   {filteredPctReadinessRecords.map((record) => {
-                                    const cell = pctReadinessCells[`${record.id}:${item.id}`] || {};
+                                    const cellSelKey = `${record.id}:${item.id}`;
+                                    const cell = pctReadinessCells[cellSelKey] || {};
                                     const presentation = getPctReadinessStatusPresentation(cell.readiness_status || cell.status);
                                     const statusStyle = PCT_READINESS_STATUS_STYLES[presentation.value] || PCT_READINESS_STATUS_STYLES.not_started;
                                     const cellActorLine = getReadinessCellActorLine(cell, presentation.value);
+                                    const selected = !!pctReadinessSelection[cellSelKey];
                                     return (
                                       <td key={`${record.id}:${item.id}`} style={{ padding: 7, minWidth: 156, borderBottom: `1px solid ${C.borderLight}`, background: "#fff", verticalAlign: "top" }}>
                                         <button
                                           type="button"
-                                          onClick={() => openPctReadinessCellEditor(record, item, section)}
-                                          title={`${record.employee_full_name || "Employee"} - ${item.label}`}
+                                          onClick={() => togglePctReadinessSelection(record, item, section)}
+                                          aria-pressed={selected}
+                                          title={`${record.employee_full_name || "Employee"} - ${item.label}${selected ? " (selected)" : ""}`}
                                           style={{
+                                            position: "relative",
                                             width: "100%",
                                             minHeight: 54,
                                             display: "flex",
@@ -25848,7 +26338,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             alignItems: "flex-start",
                                             justifyContent: "center",
                                             gap: 4,
-                                            border: `1px solid ${statusStyle.border}`,
+                                            border: `1px solid ${selected ? C.pri : statusStyle.border}`,
                                             borderRadius: 8,
                                             background: statusStyle.bg,
                                             color: statusStyle.text,
@@ -25856,8 +26346,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                                             padding: "7px 8px",
                                             cursor: "pointer",
                                             textAlign: "left",
+                                            boxShadow: selected ? `0 0 0 2px ${C.pri}` : "none",
                                           }}
                                         >
+                                          {selected && (
+                                            <span style={{ position: "absolute", top: 4, right: 4, width: 15, height: 15, borderRadius: 4, background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                                          )}
                                           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 900, lineHeight: 1.1 }}>
                                             <span style={{ minWidth: 20 }}>{statusStyle.icon}</span>
                                             <span>{presentation.label}</span>
@@ -26945,6 +27439,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	                  ))}
 	                </tbody>
 	              </table>
+	              <div className="staffing-capacity-position-table-wrap">
+	                <div className="staffing-capacity-position-table-title">Expected Hours by Position</div>
+	                <div className="staffing-capacity-position-table-scroll">
+	                  <table className="staffing-capacity-position-table">
+	                    <thead>
+	                      <tr>
+	                        <th>Position</th>
+	                        <th className="num">Expected</th>
+	                        <th className="num">Demand</th>
+	                        <th className="num">Δ vs demand</th>
+	                        <th>Buffer range</th>
+	                        <th>Status</th>
+	                      </tr>
+	                    </thead>
+	                    <tbody>
+	                      {staffingCapacityBarChartModel.rows.map((visual) => (
+	                        <tr key={`${visual.key}-visible-row`}>
+	                          <th scope="row">{visual.roleLabel}</th>
+	                          <td className="num">{formatHourAnalysisHours(visual.expected)}</td>
+	                          <td className="num">{formatHourAnalysisHours(visual.demand)}</td>
+	                          <td className="num">
+	                            <span className={`staffing-capacity-role-delta is-${visual.delta.tone}`}>{visual.delta.value}</span>
+	                          </td>
+	                          <td>{visual.hasTargetRange ? `${formatHourAnalysisHours(visual.targetLow)}–${formatHourAnalysisHours(visual.targetHigh)}` : "None"}</td>
+	                          <td>
+	                            <span className={`staffing-capacity-position-status is-${visual.tone}`} title={visual.statusDetail}>{visual.statusLabel}</span>
+	                          </td>
+	                        </tr>
+	                      ))}
+	                    </tbody>
+	                  </table>
+	                </div>
+	              </div>
 	            </div>
 	            )}
 	          </div>
@@ -28274,6 +28801,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       )}
 
       {pctReadinessCellEditorModal}
+      {pctReadinessSelectionBar}
+      {pctReadinessBulkModal}
 
       {canUseLaborTab("training") && showNewRecord && (
         <Modal title="New Training Record" onClose={() => { setShowNewRecord(false); resetNewRecordForm(); }}>

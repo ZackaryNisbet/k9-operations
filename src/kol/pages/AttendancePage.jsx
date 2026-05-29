@@ -260,6 +260,8 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [showMarkFilterPicker, setShowMarkFilterPicker] = useState(false);
   const [markFilterPickerReady, setMarkFilterPickerReady] = useState(false);
   const [configuringMarkFilterKey, setConfiguringMarkFilterKey] = useState(null);
+  const [markSearch, setMarkSearch] = useState("");
+  const [markTypePills, setMarkTypePills] = useState(() => new Set());
   const [rosterSort, setRosterSort] = useState(ATTENDANCE_DEFAULT_SORT);
 
   const [showPolicyActionModal, setShowPolicyActionModal] = useState(false);
@@ -656,6 +658,31 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       });
     });
   }, [attendanceIncidents, markFilters]);
+
+  const visibleAttendanceMarks = useMemo(() => {
+    const query = markSearch.trim().toLowerCase();
+    const hasPills = markTypePills.size > 0;
+    if (!query && !hasPills) return filteredAttendanceMarks;
+    return filteredAttendanceMarks.filter((incident) => {
+      if (hasPills && !markTypePills.has(incident.incident_type)) return false;
+      if (query) {
+        const name = employeeMap[incident.labor_employee_id]?.full_name || "";
+        const detail = incident.detail || "";
+        const recorder = incident.created_by_name || "";
+        if (!`${name} ${detail} ${recorder}`.toLowerCase().includes(query)) return false;
+      }
+      return true;
+    });
+  }, [filteredAttendanceMarks, markSearch, markTypePills, employeeMap]);
+
+  const toggleMarkTypePill = useCallback((value) => {
+    setMarkTypePills((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  }, []);
 
   const markUsedKeys = Object.keys(markDraftFilters);
   const markAvailableFields = ATTENDANCE_MARK_FILTER_FIELDS.filter((field) => !markDraftFilters[field.key]);
@@ -1441,22 +1468,55 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
 
       {tab === "log" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Attendance Marks</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px 10px", borderBottom: `1.5px solid ${C.borderLight}`, flexWrap: "wrap" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={markSearch ? C.pri : "#94a3b8"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                value={markSearch}
+                onChange={(event) => setMarkSearch(event.target.value)}
+                placeholder="Search marks by employee, note, or recorder…"
+                aria-label="Search attendance marks"
+                style={{ flex: "1 1 200px", minWidth: 0, border: "none", outline: "none", background: "transparent", fontFamily: "inherit", fontSize: 13, fontWeight: 500, color: C.text, padding: "10px 4px" }}
+              />
+              {markSearch ? (
+                <button type="button" aria-label="Clear search" onClick={() => setMarkSearch("")} style={{ border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 4px" }}>×</button>
+              ) : null}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {ATTENDANCE_INCIDENT_OPTIONS.map((option) => {
+                  const on = markTypePills.has(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleMarkTypePill(option.value)}
+                      aria-pressed={on}
+                      title={`Filter by ${option.label}`}
+                      style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? option.color : C.border}`, background: on ? option.color : "transparent", color: on ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span style={{ width: 1, alignSelf: "stretch", minHeight: 24, background: C.border, margin: "0 4px" }} aria-hidden="true" />
               <Btn
                 variant={showMarkFilterPanel || Object.keys(markFilters).length > 0 ? "secondary" : "ghost"}
+                size="sm"
                 onClick={() => setShowMarkFilterPanel((current) => !current)}
               >
                 Filter{Object.keys(markFilters).length > 0 ? ` (${Object.keys(markFilters).length})` : ""}
               </Btn>
               {showIncidentModal ? (
-                <Btn variant="ghost" onClick={() => closeIncidentComposer()}>Cancel Add</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => closeIncidentComposer()}>Cancel Add</Btn>
               ) : (
-                <Btn variant="primary" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
+                <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
               )}
+            </div>
+            <div style={{ padding: "10px 2px 0", fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"}. Tap a mark type to filter, search by employee or note, use Filter for advanced conditions, or open Attendance Summary above for trends.
             </div>
           </div>
 
@@ -1812,10 +1872,10 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
           )}
 
-          {filteredAttendanceMarks.length === 0 ? (
+          {visibleAttendanceMarks.length === 0 ? (
             <EmptyState
-              title={Object.keys(markFilters).length > 0 ? "No attendance marks match the current filters" : "No attendance marks yet"}
-              subtitle={Object.keys(markFilters).length > 0 ? "Clear or change the filters, or add a new attendance mark." : "Add the first attendance mark to start the record."}
+              title={Object.keys(markFilters).length > 0 || markTypePills.size > 0 || markSearch.trim() ? "No attendance marks match the current filters" : "No attendance marks yet"}
+              subtitle={Object.keys(markFilters).length > 0 || markTypePills.size > 0 || markSearch.trim() ? "Clear or change the filters, or add a new attendance mark." : "Add the first attendance mark to start the record."}
             />
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -1823,30 +1883,30 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                     {["Employee", "Mark Type", "Shift Date", "Coverage", "Notes", "Recorded By", "Actions"].map((label) => (
-                      <th key={label} style={{ padding: "10px 8px", textAlign: "left", color: C.textMut, fontSize: 11, textTransform: "uppercase" }}>{label}</th>
+                      <th key={label} style={{ padding: "8px 10px", textAlign: "left", color: C.textMut, fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAttendanceMarks.map((incident) => (
+                  {visibleAttendanceMarks.map((incident) => (
                     <tr key={incident.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "12px 8px", fontWeight: 700, color: C.text }}>
+                      <td style={{ padding: "7px 10px", fontWeight: 700, color: C.text }}>
                         {employeeMap[incident.labor_employee_id]?.full_name || "Unknown Employee"}
                       </td>
-                      <td style={{ padding: "12px 8px" }}>
+                      <td style={{ padding: "7px 10px" }}>
                         <TypePill
                           label={getAttendanceIncidentLabel(incident.incident_type)}
                           color={INCIDENT_COLOR_BY_VALUE[incident.incident_type] || C.textMut}
                         />
                       </td>
-                      <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(incident.incident_date)}</td>
-                      <td style={{ padding: "12px 8px", color: C.textSec }}>
+                      <td style={{ padding: "7px 10px", color: C.textSec }}>{formatDateOnly(incident.incident_date)}</td>
+                      <td style={{ padding: "7px 10px", color: C.textSec }}>
                         {incident?.metadata?.coverage_secured ? "Yes" : "No"}
                       </td>
-                      <td style={{ padding: "12px 8px", color: C.textSec, minWidth: 220 }}>
+                      <td style={{ padding: "7px 10px", color: C.textSec, minWidth: 220 }}>
                         {incident.detail || "—"}
                       </td>
-                      <td style={{ padding: "12px 8px", color: C.textSec }}>
+                      <td style={{ padding: "7px 10px", color: C.textSec }}>
                         <div>{incident.created_by_name || "Staff"}</div>
                         <div style={{ fontSize: 11, color: C.textMut }}>{formatTimestamp(incident.created_at)}</div>
                         {incident?.metadata?.last_edited_by_name && (
@@ -1855,7 +1915,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                           </div>
                         )}
                       </td>
-                      <td style={{ padding: "12px 8px" }}>
+                      <td style={{ padding: "7px 10px" }}>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           <Btn variant="ghost" size="sm" onClick={() => openIncidentComposer(incident, { switchToLog: false })} disabled={!canManage || deletingIncidentId === incident.id}>Edit</Btn>
                           <Btn variant="ghost" size="sm" onClick={() => handleDeleteIncident(incident)} disabled={!canManage || deletingIncidentId === incident.id} style={{ color: C.dan }}>
