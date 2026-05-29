@@ -519,3 +519,96 @@ export function buildClientIncidentMetrics({ cases = [], documents = [], reserva
     incidentRatePer100DogDays,
   };
 }
+
+// ─── Incident rate by reporting period ──────────────────────────────────────
+// The headline metric is "incidents per active dog" over a standard reporting
+// window. The denominator is the population at risk during the window — the
+// unique dogs that actually had a stay overlapping it — not every dog on file.
+// Periods follow standard business/operational reporting cadence:
+//   MTD / QTD / YTD (period-to-date), Trailing 12 Months (always a full year,
+//   the standard for rate normalization), Last Full Year (prior calendar year)
+//   and All Time. Rates are normalized per 1,000 dogs.
+
+export const INCIDENT_REPORTING_PERIODS = [
+  { id: "mtd", label: "MTD", description: "Month to date" },
+  { id: "qtd", label: "QTD", description: "Quarter to date" },
+  { id: "ytd", label: "YTD", description: "Year to date" },
+  { id: "ttm", label: "Trailing 12 Mo", description: "Trailing twelve months" },
+  { id: "last_year", label: "Last Full Year", description: "Previous calendar year" },
+  { id: "all", label: "All Time", description: "All recorded incidents" },
+];
+
+function atNoon(year, monthIndex, day) {
+  return new Date(year, monthIndex, day, 12, 0, 0, 0);
+}
+
+export function getIncidentReportingPeriodRange(periodId, asOf = new Date()) {
+  const base = asOf instanceof Date ? asOf : new Date(asOf);
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const day = base.getDate();
+  const today = atNoon(year, month, day);
+  switch (periodId) {
+    case "mtd":
+      return { start: atNoon(year, month, 1), end: today };
+    case "qtd":
+      return { start: atNoon(year, Math.floor(month / 3) * 3, 1), end: today };
+    case "ytd":
+      return { start: atNoon(year, 0, 1), end: today };
+    case "ttm":
+      // Trailing twelve months: the full 12-month window ending today.
+      return { start: atNoon(year - 1, month, day), end: today };
+    case "last_year":
+      return { start: atNoon(year - 1, 0, 1), end: atNoon(year - 1, 11, 31) };
+    case "all":
+    default:
+      return { start: null, end: null };
+  }
+}
+
+// Unique dogs whose countable stay overlaps [start, end] (null bound = open).
+export function countActiveDogsInRange(reservations = [], start = null, end = null) {
+  const dogs = new Set();
+  for (const reservation of reservations) {
+    if (!shouldCountReservation(reservation)) continue;
+    const dogId = reservation?.dogId ?? reservation?.dog_id;
+    if (dogId === null || dogId === undefined || dogId === "") continue;
+    const reservationStart = getReservationStart(reservation);
+    if (!reservationStart) continue;
+    const reservationEnd = getReservationEnd(reservation) || reservationStart;
+    if (end && reservationStart > end) continue; // begins after the window
+    if (start && reservationEnd < start) continue; // ends before the window
+    dogs.add(String(dogId));
+  }
+  return dogs.size;
+}
+
+// Incidents whose incident_date falls within [start, end] (null bound = open).
+export function countIncidentsInRange(cases = [], start = null, end = null) {
+  let count = 0;
+  for (const caseRow of cases) {
+    const incidentDate = toDateOnly(caseRow?.incident_date);
+    if (!incidentDate) continue;
+    if (start && incidentDate < start) continue;
+    if (end && incidentDate > end) continue;
+    count += 1;
+  }
+  return count;
+}
+
+export function buildIncidentRateForPeriod({ cases = [], reservations = [], periodId = "ytd", asOf = new Date() }) {
+  const { start, end } = getIncidentReportingPeriodRange(periodId, asOf);
+  const incidents = countIncidentsInRange(cases, start, end);
+  const activeDogs = countActiveDogsInRange(reservations, start, end);
+  const ratePerDog = activeDogs > 0 ? incidents / activeDogs : null;
+  return {
+    periodId,
+    start,
+    end,
+    incidents,
+    activeDogs,
+    ratePerDog,
+    ratePer1000: ratePerDog === null ? null : ratePerDog * 1000,
+    ratePercent: ratePerDog === null ? null : ratePerDog * 100,
+  };
+}
