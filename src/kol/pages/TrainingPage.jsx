@@ -18299,6 +18299,21 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </div>
       );
     }
+    if (tab === "performance-reviews") {
+      if (complianceView === "requirements" && canManageCompliancePolicy) {
+        return (
+          <Btn
+            variant="primary"
+            icon={<I.Plus />}
+            onClick={() => openComplianceRequirementEditor()}
+            disabled={savingComplianceRequirement}
+          >
+            Add Requirement
+          </Btn>
+        );
+      }
+      return null;
+    }
     if (tab === "attendance" || tab === "interviews") {
       return null;
     }
@@ -25390,22 +25405,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
           {complianceView === "requirements" && (
             <div style={{ display: "grid", gap: 14 }}>
-              <Card style={{ padding: 18, borderRadius: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Requirements</div>
-                  </div>
-                  <Btn
-                    variant="secondary"
-                    size="sm"
-                    disabled={!canManageCompliancePolicy || savingComplianceRequirement}
-                    icon={<I.Plus />}
-                    onClick={() => openComplianceRequirementEditor()}
-                  >
-                    Add Requirement
-                  </Btn>
-                </div>
-              </Card>
               <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
