@@ -6234,7 +6234,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                               id: activityId,
                               location_id: locationId,
                               target_id: target.id,
-                              activity_type: "event",
+                              activity_type: getGrassrootsActivityType(target.category || activeConfig.id),
                               activity_date: todayStr(),
                               notes: notes || "Logged",
                               next_contact_date: nextDate,
@@ -6249,10 +6249,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                               await updateFollowUpDate(target, nextDate);
                             }
 
-                            // Refresh
-                            const fresh = await loadGrassrootsData();
-                            if (fresh?.targets) setTargets(fresh.targets);
-                            if (fresh?.activities) setActivities(fresh.activities);
+                            // Refresh (loadGrassroots updates targets/activities state itself)
+                            await loadGrassroots();
 
                             // Clear composer, keep the row expanded so the new log appears in history
                             setInlineLoggingId(null);
