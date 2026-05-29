@@ -24891,7 +24891,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           Attendance, Compliance, and Interviews portal their search bar into the
           slot (passed down as searchSlot), so the bar swaps in place without the
           region collapsing or the search disappearing/reappearing. */}
-      <div className="labor-search-region" style={{ minHeight: 92, marginBottom: 8 }}>
+      <div className="labor-search-region" style={{ minHeight: 86, marginBottom: 8 }}>
         {!loading && tab === "home" && canUseLaborTab("home") && (
           <div>
             <LaborSearchBar value={rosterSearch} onChange={setRosterSearch} placeholder="Search name, position, phone, or email…">
@@ -24906,10 +24906,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           </div>
         )}
         {!loading && tab === "training" && canUseLaborTab("training") && (
-          <LaborSearchBar value={pctReadinessFilters.task} onChange={(value) => updatePctReadinessFilter("task", value)} placeholder="Search tasks or categories…" />
+          <div>
+            <LaborSearchBar value={pctReadinessFilters.task} onChange={(value) => updatePctReadinessFilter("task", value)} placeholder="Search tasks or categories…" />
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Team Readiness Board — every trainee&apos;s demonstrated &amp; verified tasks. Search tasks or categories, switch the view above, or open a trainee for the full record.
+            </div>
+          </div>
         )}
         {!loading && tab === "hour-analysis" && canUseLaborTab("hour-analysis") && (
-          <LaborSearchBar value={capacitySearch} onChange={setCapacitySearch} placeholder="Search by name or position…" />
+          <div>
+            <LaborSearchBar value={capacitySearch} onChange={setCapacitySearch} placeholder="Search by name or position…" />
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+              Staffing capacity by person — expected hours, coverage splits, and what-if scenarios. Search by name or position, or switch to the Labor Model above.
+            </div>
+          </div>
         )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
       </div>

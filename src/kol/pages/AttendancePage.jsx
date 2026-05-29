@@ -1505,7 +1505,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                 <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
               )}
             </LaborSearchBar>
-            <div style={{ padding: "10px 2px 0", fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
+            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
               Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"}. Tap a mark type to filter, search by employee or note, use Filter for advanced conditions, or open Attendance Summary above for trends.
             </div>
           </div>
