@@ -1686,6 +1686,34 @@ function EventDateEditor({ draft, onChange }) {
   };
   const visibleRows = multiDay ? rows : rows.slice(0, 1);
 
+  // Recurrence generator: build the full date series from the first date, by
+  // frequency, through an end date (e.g. a farmer's market every Sunday for 3
+  // months). Generated dates fill event_dates as a multi-day event.
+  const [recurFreq, setRecurFreq] = useState("none"); // none | weekly | biweekly | monthly
+  const [recurUntil, setRecurUntil] = useState("");
+  const firstDate = rows[0]?.event_date || "";
+  const canGenerate = Boolean(firstDate) && recurFreq !== "none" && Boolean(recurUntil);
+  const generateRecurrence = () => {
+    if (!canGenerate) return;
+    const start = new Date(`${firstDate}T12:00:00`);
+    const until = new Date(`${recurUntil}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(until.getTime()) || until < start) return;
+    const baseTimes = { start_time: rows[0]?.start_time || "", end_time: rows[0]?.end_time || "" };
+    const generated = [];
+    const cursor = new Date(start);
+    let guard = 0;
+    while (cursor <= until && guard < 520) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const d = String(cursor.getDate()).padStart(2, "0");
+      generated.push({ id: `event_date_${generated.length + 1}`, event_date: `${y}-${m}-${d}`, ...baseTimes, sequence_order: generated.length + 1 });
+      if (recurFreq === "monthly") cursor.setMonth(cursor.getMonth() + 1);
+      else cursor.setDate(cursor.getDate() + (recurFreq === "biweekly" ? 14 : 7));
+      guard += 1;
+    }
+    if (generated.length > 1) emitRows(generated, true);
+  };
+
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1733,6 +1761,33 @@ function EventDateEditor({ draft, onChange }) {
           <I.Plus /> Add date
         </button>
       )}
+
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", padding: "9px 11px", borderRadius: 9, border: `1px dashed ${C.border}`, background: C.bg }}>
+        <div>
+          <Label>Repeat</Label>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[{ id: "none", label: "None" }, { id: "weekly", label: "Weekly" }, { id: "biweekly", label: "Every 2 wks" }, { id: "monthly", label: "Monthly" }].map((opt) => {
+              const on = recurFreq === opt.id;
+              return (
+                <button key={opt.id} type="button" onClick={() => setRecurFreq(opt.id)} style={{ padding: "5px 9px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "#fff", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{opt.label}</button>
+              );
+            })}
+          </div>
+        </div>
+        {recurFreq !== "none" && (
+          <div style={{ minWidth: 150 }}>
+            <CalendarPicker label="Until" value={recurUntil} onChange={setRecurUntil} min={firstDate || undefined} />
+          </div>
+        )}
+        {recurFreq !== "none" && (
+          <button type="button" onClick={generateRecurrence} disabled={!canGenerate} style={{ padding: "9px 13px", borderRadius: 9, border: "none", background: canGenerate ? C.pri : C.border, color: "#fff", fontSize: 12, fontWeight: 800, cursor: canGenerate ? "pointer" : "default", fontFamily: "inherit" }}>Generate dates</button>
+        )}
+        {recurFreq !== "none" && (
+          <div style={{ flexBasis: "100%", fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>
+            Builds the full series from the first date above through the chosen end date (replaces the date list).
+          </div>
+        )}
+      </div>
     </div>
   );
 }
