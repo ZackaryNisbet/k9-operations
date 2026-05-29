@@ -1178,6 +1178,108 @@ function GooglePlacesAddressInput({ label = "Address", value, onChange, onPlaceS
   );
 }
 
+// Organizer typeahead — same dropdown UI as the Google Places address input, but
+// suggests organizers already stored in the system (no manual re-typing).
+function OrganizerAutocomplete({ label = "Organizer", value, onChange, options = [], placeholder = "Organizer" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const q = String(value || "").trim().toLowerCase();
+  const matches = useMemo(() => {
+    if (!q) return [];
+    return options.filter((o) => o.toLowerCase().includes(q) && o.toLowerCase() !== q).slice(0, 8);
+  }, [options, q]);
+
+  useEffect(() => {
+    const handle = (e) => {
+      if (dropdownRef.current?.contains(e.target) || inputRef.current?.contains(e.target)) return;
+      setIsOpen(false);
+      setActiveIndex(-1);
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  const choose = (org) => { onChange(org); setIsOpen(false); setActiveIndex(-1); };
+
+  const handleKeyDown = (e) => {
+    if (!isOpen || matches.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIndex((p) => Math.min(p + 1, matches.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIndex((p) => Math.max(p - 1, 0)); }
+    else if (e.key === "Enter" && activeIndex >= 0) { e.preventDefault(); choose(matches[activeIndex]); }
+    else if (e.key === "Escape") { setIsOpen(false); setActiveIndex(-1); }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <label style={{ display: "block" }}>
+        {label ? <Label>{label}</Label> : null}
+        <input
+          ref={inputRef}
+          value={value || ""}
+          onChange={(e) => { onChange(e.target.value); setIsOpen(true); setActiveIndex(-1); }}
+          onKeyDown={handleKeyDown}
+          onFocus={() => { if (matches.length > 0) setIsOpen(true); }}
+          placeholder={placeholder}
+          autoComplete="off"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-form-type="other"
+          style={{ ...INPUT_STYLE }}
+        />
+      </label>
+
+      {isOpen && matches.length > 0 && (
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            background: "#fff",
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+            marginTop: 2,
+            maxHeight: 300,
+            overflowY: "auto",
+            fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          }}
+        >
+          {matches.map((org, index) => (
+            <div
+              key={org}
+              onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); choose(org); }}
+              onClick={() => choose(org)}
+              onMouseEnter={() => setActiveIndex(index)}
+              style={{
+                padding: "6px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+                background: index === activeIndex ? "#F3F4F6" : "transparent",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0, fontWeight: 600, color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {org}
+              </div>
+            </div>
+          ))}
+          <div style={{ padding: "4px 12px", fontSize: 10, color: "#9CA3AF", background: "#F9FAFB", borderTop: `1px solid ${C.borderLight}`, textAlign: "right" }}>
+            Existing organizers
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GooglePlacesBusinessInput({
   label,
   value,
@@ -1889,7 +1991,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [] }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -1988,12 +2090,12 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
               <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 Organizer / Contact
               </div>
-              <input
-                type="text"
+              <OrganizerAutocomplete
+                label={null}
                 value={draft.organizer || ""}
-                onChange={(e) => onChange("organizer", e.target.value)}
+                onChange={(val) => onChange("organizer", val)}
+                options={organizerOptions}
                 placeholder="Name (optional)"
-                style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}
               />
             </div>
 
@@ -2078,7 +2180,7 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
 
           <FormSection title="Organizer">
             <div className="grassroots-event-field-grid">
-              <FieldEditor field={{ key: "organizer", label: "Organizer", placeholder: "Organizer" }} value={draft.organizer} onChange={(value) => onChange("organizer", value)} />
+              <OrganizerAutocomplete label="Organizer" value={draft.organizer} onChange={(value) => onChange("organizer", value)} options={organizerOptions} placeholder="Organizer" />
               <FieldEditor field={{ key: "first_name", label: "Contact Name", placeholder: "Contact name" }} value={draft.first_name} onChange={(value) => onChange("first_name", value)} />
               <FieldEditor field={{ key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" }} value={draft.contact_email} onChange={(value) => onChange("contact_email", value)} />
               <FieldEditor field={{ key: "contact_phone", label: "Contact Number", placeholder: "Contact number" }} value={draft.contact_phone} onChange={(value) => onChange("contact_phone", value)} />
@@ -3411,6 +3513,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
   const [followUpSortDirection, setFollowUpSortDirection] = useState(null);
   const [targets, setTargets] = useState([]);
+  const organizerOptions = useMemo(() => {
+    const set = new Set();
+    targets.forEach((t) => { const o = String(t.organizer || "").trim(); if (o) set.add(o); });
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [targets]);
   const [activities, setActivities] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
   const [attachmentsSchemaMissing, setAttachmentsSchemaMissing] = useState(false);
@@ -6120,6 +6227,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                             onChange={updateDraft}
                             onSave={saveDraft}
                             onCancel={closeEditor}
+                            organizerOptions={organizerOptions}
                           />
                         </div>
                       )}
@@ -6140,6 +6248,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                             onLog={() => openLogModal(editDraft)}
                             onPreviewAttachment={previewGrassrootsAttachment}
                             previewingAttachmentId={previewingAttachmentId}
+                            organizerOptions={organizerOptions}
                           />
                         </div>
                       )}
@@ -6258,6 +6367,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                             onLog={() => openLogModal(editDraft)}
                             onPreviewAttachment={previewGrassrootsAttachment}
                             previewingAttachmentId={previewingAttachmentId}
+                            organizerOptions={organizerOptions}
                           />
                         </div>
                       )}
