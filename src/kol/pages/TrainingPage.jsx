@@ -5,7 +5,8 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr, fmtDate, fmtDateFull, fmtPhoneInput, LC_OP_LABELS } from "../../shared/theme";
-import { Btn, Modal, Card, Inp, Badge, CustomSelect, LaborSearchBar } from "../../shared/ui";
+import { Btn, Modal, Card, Inp, Badge, CustomSelect, LaborSearchBar, LaborIntro } from "../../shared/ui";
+import { LABOR_INTRO_DEFAULTS, LABOR_INTRO_SETTING_KEY } from "../laborIntros";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
@@ -7216,6 +7217,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [tab, setTab] = useState(routeLaborTab);
   const [tabSearchSlot, setTabSearchSlot] = useState(null);
   const [capacitySearch, setCapacitySearch] = useState("");
+  const [laborIntros, setLaborIntros] = useState({});
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
   const [trainingBundleLoading, setTrainingBundleLoading] = useState(false);
@@ -7296,6 +7298,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const canManageCompliancePolicy = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Compliance Manage Policy");
   const canViewCompliancePdfs = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Compliance View PDFs");
   const canAccessEmployeeNotes = hasLaborModuleAccess && hasLeanPermission(profile, "Labor Employee Notes");
+  // Location admins can edit the per-tab intro/header lines (matches lite_settings write RLS).
+  const canEditLaborIntro = ["owner", "role_owner", "enterprise_admin", "location_admin", "manager"].includes(profile?.role);
   const canUseLaborTab = useCallback((tabId) => {
     if (!hasLaborModuleAccess) return false;
     const permissionKey = LABOR_TAB_PERMISSION_MAP[normalizeLaborTab(tabId)];
@@ -7735,6 +7739,40 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   const locationRef = profile?.location_id || data?.locationId || "";
   const laborLocationRef = resolvedLaborLocationId || locationRef || "";
+
+  // Per-location editable intro/header lines (location admins only).
+  useEffect(() => {
+    if (!laborLocationRef) return;
+    let cancelled = false;
+    supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", laborLocationRef)
+      .eq("setting_key", LABOR_INTRO_SETTING_KEY)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data?.setting_value && typeof data.setting_value === "object") {
+          setLaborIntros(data.setting_value);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [laborLocationRef]);
+
+  const saveLaborIntro = useCallback(async (tabKey, text) => {
+    const next = { ...laborIntros };
+    if (text && text.trim()) next[tabKey] = text.trim();
+    else delete next[tabKey];
+    setLaborIntros(next);
+    if (!laborLocationRef) return;
+    const { error } = await supabase.from("lite_settings").upsert({
+      location_id: laborLocationRef,
+      setting_key: LABOR_INTRO_SETTING_KEY,
+      setting_value: next,
+      updated_by: profile?.id || null,
+    }, { onConflict: "location_id,setting_key" });
+    if (error) addGlobalToast?.(`Couldn't save intro text: ${error.message || "Unknown error"}`, "error");
+    else addGlobalToast?.("Intro text saved", "success");
+  }, [laborIntros, laborLocationRef, profile?.id, addGlobalToast]);
   const laborContactLocationName = String(locationName || data?.locationName || profile?.location_name || "K9 Operations").trim();
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.full_name || profile?.name || profile?.email || "System";
@@ -24900,25 +24938,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                 return <button key={pill.id} onClick={() => setRosterStatusPill(pill.id)} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{pill.label}</button>;
               })}
             </LaborSearchBar>
-            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
-              Your team roster. Filter by status or search; use the gear (top right) to manage positions, Filter for advanced filters &amp; saved views, or open a row for the full employee record.
-            </div>
+            <LaborIntro value={laborIntros.home} defaultValue={LABOR_INTRO_DEFAULTS.home} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("home", t)} />
           </div>
         )}
         {!loading && tab === "training" && canUseLaborTab("training") && (
           <div>
             <LaborSearchBar value={pctReadinessFilters.task} onChange={(value) => updatePctReadinessFilter("task", value)} placeholder="Search tasks or categories…" />
-            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
-              Team Readiness Board — every trainee&apos;s demonstrated &amp; verified tasks. Search tasks or categories, switch the view above, or open a trainee for the full record.
-            </div>
+            <LaborIntro value={laborIntros.training} defaultValue={LABOR_INTRO_DEFAULTS.training} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("training", t)} />
           </div>
         )}
         {!loading && tab === "hour-analysis" && canUseLaborTab("hour-analysis") && (
           <div>
             <LaborSearchBar value={capacitySearch} onChange={setCapacitySearch} placeholder="Search by name or position…" />
-            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
-              Staffing capacity by person — expected hours, coverage splits, and what-if scenarios. Search by name or position, or switch to the Labor Model above.
-            </div>
+            <LaborIntro value={laborIntros["hour-analysis"]} defaultValue={LABOR_INTRO_DEFAULTS["hour-analysis"]} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("hour-analysis", t)} />
           </div>
         )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
@@ -25581,6 +25613,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             canLogAttendance={canLogAttendance}
             laborPositionOrder={positionHierarchyRows.map((row) => row.position_title)}
             searchSlot={tabSearchSlot}
+            introValue={laborIntros.attendance}
+            canEditIntro={canEditLaborIntro}
+            onSaveIntro={(t) => saveLaborIntro("attendance", t)}
           />
         </div>
       )}
@@ -25611,6 +25646,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             onRecordChange={handleInterviewRecordRouteChange}
             onDetailChange={setInterviewDetailOpen}
             searchSlot={tabSearchSlot}
+            introValue={laborIntros.interviews}
+            canEditIntro={canEditLaborIntro}
+            onSaveIntro={(t) => saveLaborIntro("interviews", t)}
           />
         </div>
       )}
@@ -25644,6 +25682,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
               canViewPdfs={canViewCompliancePdfs}
               searchSlot={tabSearchSlot}
+              introValue={laborIntros["performance-reviews"]}
+              canEditIntro={canEditLaborIntro}
+              onSaveIntro={(t) => saveLaborIntro("performance-reviews", t)}
             />
           )}
           {complianceView === "summary" && (

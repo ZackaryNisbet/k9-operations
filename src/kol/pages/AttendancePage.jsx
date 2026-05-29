@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
-import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar } from "../../shared/ui";
+import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar, LaborIntro } from "../../shared/ui";
+import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
@@ -228,7 +229,7 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [], searchSlot = null }) {
+export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [], searchSlot = null, introValue = "", canEditIntro = false, onSaveIntro = null }) {
   const [tab, setTab] = useState("roster");
   const [loading, setLoading] = useState(true);
   const [resolvedLocationId, setResolvedLocationId] = useState("");
@@ -1505,9 +1506,13 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                 <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
               )}
             </LaborSearchBar>
-            <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec }}>
-              Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"}. Tap a mark type to filter, search by employee or note, use Filter for advanced conditions, or open Attendance Summary above for trends.
-            </div>
+            <LaborIntro
+              value={introValue}
+              defaultValue={LABOR_INTRO_DEFAULTS.attendance}
+              canEdit={canEditIntro}
+              onSave={onSaveIntro}
+              prefix={<>Showing {visibleAttendanceMarks.length} of {filteredAttendanceMarks.length} mark{filteredAttendanceMarks.length === 1 ? "" : "s"} · </>}
+            />
           </div>
           ); return searchSlot ? createPortal(__searchHeader, searchSlot) : __searchHeader; })()}
 

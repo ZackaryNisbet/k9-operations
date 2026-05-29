@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { I } from "../../shared/icons";
-import { LaborSearchBar } from "../../shared/ui";
+import { LaborSearchBar, LaborIntro } from "../../shared/ui";
+import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 
 const defaultFormatter = (value) => value || "-";
@@ -430,6 +431,9 @@ export default function PerformanceReviewComplianceGrid({
   sortColumns = [],
   variant = "grid",
   searchSlot = null,
+  introValue = "",
+  canEditIntro = false,
+  onSaveIntro = null,
   onSortChange = () => {},
   onOpenEmployee = () => {},
   onOpenEvidence = () => {},
@@ -581,9 +585,7 @@ export default function PerformanceReviewComplianceGrid({
           </button>
         </LaborSearchBar>
         {variant !== "summary" ? (
-          <div className="compliance-explainer">
-            Every active employee and their review cadence. Search by name or position, use Filter for advanced views &amp; saved filters, or open a row for the full record. Each column maps to a required review or packet.
-          </div>
+          <LaborIntro value={introValue} defaultValue={LABOR_INTRO_DEFAULTS["performance-reviews"]} canEdit={canEditIntro} onSave={onSaveIntro} />
         ) : null}
       </div>
       ); return searchSlot ? createPortal(__searchRow, searchSlot) : __searchRow; })()}
