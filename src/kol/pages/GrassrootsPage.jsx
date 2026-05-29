@@ -5707,10 +5707,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
 
           {activeConfig.id === "drops" ? (
             <>
-              <Btn variant="secondary" size="md" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft}>
+              <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
                 Add Business
               </Btn>
-              <Btn variant="primary" size="md" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity}>
+              <Btn variant="primary" size="sm" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
                 Log Activity
               </Btn>
             </>
