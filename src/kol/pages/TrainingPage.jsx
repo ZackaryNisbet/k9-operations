@@ -7215,6 +7215,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : "";
   const [tab, setTab] = useState(routeLaborTab);
   const [tabSearchSlot, setTabSearchSlot] = useState(null);
+  const [capacitySearch, setCapacitySearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [trainingBundleLoaded, setTrainingBundleLoaded] = useState(false);
   const [trainingBundleLoading, setTrainingBundleLoading] = useState(false);
@@ -15434,6 +15435,18 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       }
     })
   ), [hourAnalysisModel.rows, hourAnalysisPersonSort, positionHierarchyIndex]);
+  const filteredHourAnalysisRows = useMemo(() => {
+    const q = capacitySearch.trim().toLowerCase();
+    if (!q) return sortedHourAnalysisRows;
+    return sortedHourAnalysisRows.filter((row) => [
+      row.full_name,
+      [row.first_name, row.last_name].filter(Boolean).join(" "),
+      row.position_title,
+      row.position,
+      row.groupLabel,
+      row.sourceGroupLabel,
+    ].some((value) => String(value || "").toLowerCase().includes(q)));
+  }, [sortedHourAnalysisRows, capacitySearch]);
   const performanceReviewOverview = useMemo(() => {
     const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
     return [
@@ -24895,6 +24908,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         {!loading && tab === "training" && canUseLaborTab("training") && (
           <LaborSearchBar value={pctReadinessFilters.task} onChange={(value) => updatePctReadinessFilter("task", value)} placeholder="Search tasks or categories…" />
         )}
+        {!loading && tab === "hour-analysis" && canUseLaborTab("hour-analysis") && (
+          <LaborSearchBar value={capacitySearch} onChange={setCapacitySearch} placeholder="Search by name or position…" />
+        )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
       </div>
 
@@ -27742,7 +27758,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   onChange={setHourAnalysisPersonSort}
                 />
                 <span className="hour-analysis-status-pill" style={{ background: "#eff6ff", borderColor: "#bfdbfe", color: "#1d4ed8" }}>
-                  {hourAnalysisModel.rows.length} rows
+                  {filteredHourAnalysisRows.length} rows
                 </span>
               </div>
             </div>
@@ -27760,7 +27776,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedHourAnalysisRows.map((row) => {
+                  {filteredHourAnalysisRows.map((row) => {
                     const rowKey = row.employeeKey || row.id || row.full_name;
                     return (
                       <tr key={rowKey} className={`hour-analysis-person-row${row.isWhatIf ? " is-what-if" : ""}${row.isMovement ? " is-movement" : ""}${hourAnalysisChangedKeys.has(`row:${rowKey}`) ? " is-recent-change" : ""}`}>
