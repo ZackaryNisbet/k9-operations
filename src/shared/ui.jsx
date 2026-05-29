@@ -41,9 +41,9 @@ function Badge({children,color="default",size="sm",tip}) {
 }
 
 function Btn({children,variant="primary",size="md",onClick,disabled,style={},icon}) {
-  const base={display:"inline-flex",alignItems:"center",gap:7,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontFamily:"inherit",borderRadius:12,transition:"all 0.18s cubic-bezier(0.4,0,0.2,1)",opacity:disabled?0.5:1,letterSpacing:"0.01em"};
-  const sz={sm:{padding:"7px 14px",fontSize:13},md:{padding:"10px 22px",fontSize:14},lg:{padding:"13px 26px",fontSize:15}};
-  const vr={primary:{background:C.pri,color:"#fff",boxShadow:"0 1px 3px rgba(20,83,45,0.3)"},accent:{background:C.acc,color:"#fff",boxShadow:"0 1px 3px rgba(132,204,22,0.3)"},secondary:{background:C.surfaceHover,color:C.text,border:`1px solid ${C.border}`},ghost:{background:"transparent",color:C.textSec},danger:{background:C.danLt,color:C.dan},success:{background:C.suc,color:"#fff",boxShadow:"0 1px 3px rgba(22,163,74,0.3)"}};
+  const base={display:"inline-flex",alignItems:"center",gap:6,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:700,fontFamily:"inherit",borderRadius:10,transition:"all 0.15s ease",opacity:disabled?0.5:1,letterSpacing:"0.01em"};
+  const sz={sm:{padding:"6px 12px",fontSize:12},md:{padding:"8px 16px",fontSize:13},lg:{padding:"10px 20px",fontSize:14}};
+  const vr={primary:{background:C.pri,color:"#fff"},accent:{background:C.acc,color:"#fff"},secondary:{background:C.surfaceHover,color:C.text,border:`1px solid ${C.border}`},ghost:{background:"transparent",color:C.textSec},danger:{background:C.danLt,color:C.dan},success:{background:C.suc,color:"#fff"}};
   return <button onClick={onClick} disabled={disabled} style={{...base,...sz[size],...vr[variant],...style}}>{icon&&icon}{children}</button>;
 }
 
@@ -241,8 +241,35 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
   const [vMonth, setVMonth] = useState(parsed.getMonth());
   const [vYear, setVYear] = useState(parsed.getFullYear());
   const [yrPage, setYrPage] = useState(Math.floor(parsed.getFullYear() / 12) * 12);
+  const [popLeft, setPopLeft] = useState(null);
+  const [popTop, setPopTop] = useState(null);
   useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
-  useEffect(() => { if (open) { setView("days"); if (value) { const d = new Date(value + "T12:00:00"); setVMonth(d.getMonth()); setVYear(d.getFullYear()); setYrPage(Math.floor(d.getFullYear() / 12) * 12); } } }, [open]);
+  const reposition = useCallback(() => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const pw = 248; const pad = 8;
+    let l = r.left;
+    if (l + pw > window.innerWidth - pad) l = Math.max(pad, window.innerWidth - pw - pad);
+    setPopLeft(l);
+    setPopTop(r.bottom + 4);
+  }, []);
+  useEffect(() => {
+    if (open) {
+      setView("days");
+      if (value) { const d = new Date(value + "T12:00:00"); setVMonth(d.getMonth()); setVYear(d.getFullYear()); setYrPage(Math.floor(d.getFullYear() / 12) * 12); }
+      reposition();
+      const onReposition = () => reposition();
+      window.addEventListener("resize", onReposition);
+      window.addEventListener("scroll", onReposition); // non-capture to reduce storm; still catches most container scrolls
+      return () => {
+        window.removeEventListener("resize", onReposition);
+        window.removeEventListener("scroll", onReposition);
+      };
+    } else {
+      setPopLeft(null);
+      setPopTop(null);
+    }
+  }, [open, value, reposition]);
   const days = useMemo(() => { const first = new Date(vYear, vMonth, 1); const sd = first.getDay(); const dim = new Date(vYear, vMonth + 1, 0).getDate(); const c = []; for (let i = 0; i < sd; i++) c.push(null); for (let d = 1; d <= dim; d++) c.push(d); return c; }, [vMonth, vYear]);
   const ml = new Date(vYear, vMonth).toLocaleDateString("en-US", { month: "short", year: "numeric" });
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -265,8 +292,8 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
         {display || (placeholder || "Pick date")}
         {value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: 7, background: C.bg, color: C.textMut, fontSize: 10, cursor: "pointer", lineHeight: 1, flexShrink: 0, marginLeft: 2 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>×</span>}
       </button>
-      {open && (
-        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.15)", padding: 14, width: 260 }}>
+      {open && popTop != null && (
+        <div style={{ position: "fixed", top: popTop, left: popLeft, marginTop: 0, zIndex: 2000, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.15)", padding: 12, width: 248 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <button onClick={prev} style={navBtn}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg></button>
             <span onClick={headerClick} style={{ fontSize: 12, fontWeight: 700, color: C.text, cursor: view !== "years" ? "pointer" : "default", padding: "2px 6px", borderRadius: 5, transition: "background 0.15s" }} onMouseEnter={e => { if (view !== "years") e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>{headerLabel}</span>
@@ -553,5 +580,32 @@ function validateClientFields(fields, values) {
   return errs;
 }
 
+// Standardized search bar used across the Labor module tabs (Roster, Attendance,
+// Compliance, Interviews) so the input, icon, padding, and height are identical
+// everywhere. `onChange` receives the new value; `children` render as the
+// right-aligned pills/actions for that tab.
+function LaborSearchBar({ value = "", onChange = () => {}, placeholder = "Search…", children = null }) {
+  return (
+    <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+      <div style={{ display: "flex", alignItems: "center", padding: "0 16px", minHeight: 44 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={value ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+        <input
+          value={value || ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="no-focus-ring"
+          style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }}
+        />
+        {value ? (
+          <button type="button" onClick={() => onChange("")} title="Clear" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", flexShrink: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        ) : null}
+        {children ? <div style={{ display: "flex", gap: 6, marginLeft: 8, flexShrink: 0, alignItems: "center" }}>{children}</div> : null}
+      </div>
+    </div>
+  );
+}
 
-export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields };
+
+export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields, LaborSearchBar };
