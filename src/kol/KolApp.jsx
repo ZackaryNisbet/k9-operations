@@ -294,19 +294,21 @@ function parseLiteUrl(pathname, dataRef) {
 // Manager roles: Home, My Work, Inventory, Cash Tips, Photos, Settings
 // Admin/owner roles: Home, Inventory, Cash Tips, Photos, Settings
 
-// Sidebar palette — a calm, low-chroma deep green panel (the brand forest dialed
-// down from the old bold #14532D→#0B3018 gradient). Lime (C.acc) is reserved for
-// the active item, logo, and avatar; everything else is neutral white-alpha so the
-// accent stays meaningful. OKLCH keeps the neutrals tinted toward the brand hue.
+// Sidebar palette — a calm, light sage-tinted panel (the chrome reads as a quiet
+// neutral against the white content, with forest green carrying identity + the
+// active state). Lime is dropped from the rail entirely: it's garish on light, so
+// the active affordance is a soft green tint + forest text. OKLCH throughout;
+// neutrals are tinted toward the brand hue rather than flat gray.
 const SIDEBAR = {
-  bg: "oklch(0.31 0.04 159)",
-  border: "oklch(1 0 0 / 0.07)",
-  divider: "oklch(1 0 0 / 0.08)",
-  itemText: "oklch(0.97 0.012 160 / 0.74)",
-  hover: "oklch(1 0 0 / 0.06)",
-  active: "oklch(0.62 0.17 130 / 0.16)",
-  muted: "oklch(0.97 0.012 160 / 0.5)",
-  faint: "oklch(0.97 0.012 160 / 0.34)",
+  bg: "oklch(0.965 0.013 152)",
+  border: "oklch(0.9 0.018 152)",
+  divider: "oklch(0.93 0.014 152)",
+  itemText: "oklch(0.46 0.026 196)",
+  itemActive: "oklch(0.37 0.085 156)",
+  hover: "oklch(0.935 0.018 152)",
+  active: "oklch(0.915 0.05 151)",
+  muted: "oklch(0.55 0.022 196)",
+  faint: "oklch(0.64 0.018 196)",
 };
 
 const STAFF_NAV_ITEMS = [
@@ -1423,10 +1425,10 @@ function LeanAppInner() {
         {/* Logo Header */}
         <div style={{ padding: "20px 15px 14px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 12, height: 40, boxSizing: "content-box" }}>
           <div style={{ flexShrink: 0, width: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {sbExpanded ? <K9Logo size={36} variant="white" /> : <K9LogoMini size={32} variant="white" />}
+            {sbExpanded ? <K9Logo size={36} variant="dark" /> : <K9LogoMini size={32} variant="dark" />}
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.12s", whiteSpace: "nowrap" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.01em" }}>K9 Operations</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: SIDEBAR.itemActive, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.01em" }}>K9 Operations</div>
           </div>
         </div>
 
@@ -1441,11 +1443,12 @@ function LeanAppInner() {
             collapsed={!sbExpanded}
             allLocations={filteredLocations}
             profile={profile}
+            theme="light"
           />
         </div>
 
         {/* Navigation */}
-        <nav style={{ flex: 1, padding: "4px 10px 0", overflowY: "auto" }}>
+        <nav style={{ flex: 1, padding: "6px 0 8px", overflowY: "auto" }}>
           {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : (() => {
             // Role-aware nav: staff get minimal nav, managers get oversight, admins get full.
             // profile.role is the source of truth; userLocationRoles are role *definitions*.
@@ -1471,16 +1474,16 @@ function LeanAppInner() {
                   alignItems: "center",
                   gap: 12,
                   width: "100%",
-                  padding: "9px 12px",
+                  padding: "10px 18px",
                   justifyContent: "flex-start",
                   border: "none",
-                  borderRadius: 8,
+                  borderRadius: 0,
                   background: act ? SIDEBAR.active : "transparent",
-                  color: act ? C.acc : SIDEBAR.itemText,
+                  color: act ? SIDEBAR.itemActive : SIDEBAR.itemText,
                   fontSize: 13,
                   fontWeight: act ? 600 : 500,
                   cursor: "pointer",
-                  marginBottom: 2,
+                  marginBottom: 0,
                   fontFamily: "inherit",
                   transition: "background 0.15s ease, color 0.15s ease",
                   whiteSpace: "nowrap",
@@ -1502,42 +1505,42 @@ function LeanAppInner() {
           {sbExpanded && (
             <div style={{ position: "relative" }}>
               <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? SIDEBAR.active : "transparent", color: SIDEBAR.itemText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(132,204,22,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: C.acc }}>{(user?.email || "U")[0].toUpperCase()}</span>
+                <div style={{ width: 26, height: 26, borderRadius: 8, background: SIDEBAR.active, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: SIDEBAR.itemActive }}>{(user?.email || "U")[0].toUpperCase()}</span>
                 </div>
                 <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SIDEBAR.muted, fontSize: 11 }}>{user?.email || "User"}</div>
                 <span style={{ fontSize: 8, color: SIDEBAR.faint, transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
               </button>
 
               {accountSwitchOpen && (
-                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "oklch(0.26 0.04 159)", border: `1px solid ${SIDEBAR.border}`, borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "oklch(0.99 0.005 152)", border: `1px solid ${SIDEBAR.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(20,40,30,0.16)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
                   <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: SIDEBAR.faint, textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
-                    <div style={{ padding: "12px", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
+                    <div style={{ padding: "12px", fontSize: 11, color: SIDEBAR.faint, textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
                   ) : teamAccounts.map(acct => (
                     <button key={acct.id} onClick={() => { setSwitchTarget(acct); setSwitchPassword(""); setSwitchError(""); setAccountSwitchOpen(false); }}
-                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "none", background: "transparent", color: "rgba(255,255,255,0.8)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left", transition: "background 0.1s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "rgba(132,204,22,0.1)"}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "none", background: "transparent", color: SIDEBAR.itemText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left", transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = SIDEBAR.hover}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(132,204,22,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: C.acc }}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: SIDEBAR.active, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: SIDEBAR.itemActive }}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
                       </div>
                       <div style={{ flex: 1, overflow: "hidden" }}>
                         <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.full_name || acct.email}</div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.email}</div>
+                        <div style={{ fontSize: 10, color: SIDEBAR.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.email}</div>
                       </div>
-                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "rgba(132,204,22,0.1)", color: "rgba(132,204,22,0.5)", fontWeight: 600, textTransform: "uppercase" }}>{acct.role}</div>
+                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: SIDEBAR.active, color: SIDEBAR.itemActive, fontWeight: 700, textTransform: "uppercase" }}>{acct.role}</div>
                     </button>
                   ))}
-                  <div style={{ borderTop: "1px solid rgba(132,204,22,0.1)", padding: "6px 12px" }}>
-                    <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(239,68,68,0.12)", color: "rgba(255,150,150,0.8)", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600 }}>Sign Out</button>
+                  <div style={{ borderTop: `1px solid ${SIDEBAR.divider}`, padding: "6px 12px" }}>
+                    <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(220,38,38,0.08)", color: "#B91C1C", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 700 }}>Sign Out</button>
                   </div>
                 </div>
               )}
             </div>
           )}
-          {!sbExpanded && <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "7px 14px", border: "none", borderRadius: 8, background: "rgba(239,68,68,0.12)", color: "rgba(255,150,150,0.8)", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 500, textAlign: "center", boxSizing: "border-box" }}>&#9211;</button>}
-          {sbExpanded && <div style={{ textAlign: "center", fontSize: 9, color: "rgba(255,255,255,0.5)", marginTop: 4, lineHeight: 1.4 }}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
+          {!sbExpanded && <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "7px 14px", border: "none", borderRadius: 8, background: "rgba(220,38,38,0.08)", color: "#B91C1C", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>&#9211;</button>}
+          {sbExpanded && <div style={{ textAlign: "center", fontSize: 9, color: SIDEBAR.faint, marginTop: 4, lineHeight: 1.4 }}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
 
           {switchTarget && ReactDOM.createPortal(
             /* NOTE: closing </div> for sidebar is inside the !isFullscreenPage conditional */
