@@ -1190,7 +1190,11 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     save,
   ]);
 
-  if (loading) {
+  // When embedded in the Labor module, don't gate the whole view on loading —
+  // that would empty the search slot above the tabs and make the search bar
+  // flash on tab switch. Render immediately (the search bar needs no data); the
+  // marks list fills in once data arrives.
+  if (loading && !embedded) {
     return (
       <div style={{ padding: 24 }}>
         <Card style={{ padding: 28, textAlign: "center", color: C.textMut }}>Loading attendance…</Card>
@@ -1198,7 +1202,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     );
   }
 
-  if (!laborLocationRef) {
+  if (!laborLocationRef && !loading) {
     return (
       <div style={{ padding: 24 }}>
         <EmptyState

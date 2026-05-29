@@ -2125,16 +2125,6 @@ function SegmentedRecommendation({ value, onChange, disabled }) {
 
 function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null }) {
   const [q, setQ] = useState("");
-  if (records.length === 0) {
-    return (
-      <div className="interview-roster-shell">
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <Btn variant="primary" onClick={onAdd} disabled={!canAdd}>Add New Interview</Btn>
-        </div>
-        <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />
-      </div>
-    );
-  }
   const query = q.trim().toLowerCase();
   const filtered = query
     ? records.filter((record) => {
@@ -2184,6 +2174,9 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null }) 
         </div>
       </div>
       ); return searchSlot ? createPortal(__searchBlock, searchSlot) : __searchBlock; })()}
+      {records.length === 0 ? (
+        <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />
+      ) : (
       <div className="interview-table-shell">
       <div className="interview-roster-table" style={{ minWidth: 900 }}>
         <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "9px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
@@ -2230,6 +2223,7 @@ function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null }) 
         ) : null}
       </div>
       </div>
+      )}
     </div>
   );
 }
@@ -6747,11 +6741,15 @@ export default function LaborInterviewsPage({ data, profile, addGlobalToast, loc
     return templateOptions.filter((option) => !attached.has(option.value));
   }, [selectedGuides, templateOptions]);
 
-  if (loading) {
+  // When embedded in the Labor module, don't gate the whole view on loading or
+  // location resolution — that empties the search slot above the tabs and makes
+  // the search bar flash on tab switch. Render immediately (the search needs no
+  // data); records fill in once loaded.
+  if (loading && !embedded) {
     return <div style={{ textAlign: "center", padding: 50, color: C.textMut }}>Loading interviews...</div>;
   }
 
-  if (!locationId) {
+  if (!locationId && !loading) {
     return <EmptyState title="Location Required" body="Labor interviews need a resolved location before templates, records, and private PDFs can be loaded." />;
   }
 
