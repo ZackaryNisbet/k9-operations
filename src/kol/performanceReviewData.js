@@ -403,6 +403,9 @@ export function buildPerformanceReviewCyclesFromPolicy(policyRequirements = []) 
   customCycles.sort((a, b) => {
     const srcA = a.requirement || {};
     const srcB = b.requirement || {};
+    const oa = Number(srcA.display_order ?? srcA.displayOrder ?? srcA.metadata?.display_order);
+    const ob = Number(srcB.display_order ?? srcB.displayOrder ?? srcB.metadata?.display_order);
+    if (Number.isFinite(oa) && Number.isFinite(ob) && oa !== ob) return oa - ob;
     const ca = srcA.created_at || srcA.createdAt || srcA.metadata?.created_at || "";
     const cb = srcB.created_at || srcB.createdAt || srcB.metadata?.created_at || "";
     if (ca && cb) {

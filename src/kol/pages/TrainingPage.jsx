@@ -6247,18 +6247,17 @@ function compareCompliancePolicyRequirements(left = {}, right = {}) {
     if (ld !== rd) return ld - rd; // 30 then 60 then 90
     return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
   }
-  // Custom requirements: sort strictly by created_at (order they were added), oldest first.
-  // This makes new columns appear to the right of older ones (and to the right of the 30/60/90 block).
+  // Custom requirements: user-controlled order via display_order (Requirements tab reorder),
+  // then created_at (order added), then label.
+  const lo = Number(left.display_order ?? left.displayOrder ?? (left.metadata && isObjectRow(left.metadata) ? left.metadata.display_order : null));
+  const ro = Number(right.display_order ?? right.displayOrder ?? (right.metadata && isObjectRow(right.metadata) ? right.metadata.display_order : null));
+  if (Number.isFinite(lo) && Number.isFinite(ro) && lo !== ro) return lo - ro;
   const lc = left.created_at || left.createdAt || (left.metadata && isObjectRow(left.metadata) ? left.metadata.created_at : "") || "";
   const rc = right.created_at || right.createdAt || (right.metadata && isObjectRow(right.metadata) ? right.metadata.created_at : "") || "";
   if (lc && rc) {
     const c = lc.localeCompare(rc);
     if (c !== 0) return c;
   }
-  // Fallback for rows without created_at (pre-existing data or optimistic before refresh): use any legacy display_order, then label
-  const lo = Number(left.display_order ?? left.displayOrder ?? (left.metadata && isObjectRow(left.metadata) ? left.metadata.display_order : null) ?? 0);
-  const ro = Number(right.display_order ?? right.displayOrder ?? (right.metadata && isObjectRow(right.metadata) ? right.metadata.display_order : null) ?? 0);
-  if (Number.isFinite(lo) && Number.isFinite(ro) && lo !== ro) return lo - ro;
   return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
 }
 
@@ -9559,6 +9558,114 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const customs = toObjectRows(laborCompliancePolicyRequirements).filter(isCustomComplianceRequirement);
     return [...defaults, ...customs].sort(compareCompliancePolicyRequirements);
   }, [laborCompliancePolicyRequirements]);
+
+  // === Requirements matrix (Compliance → Requirements): per-position applicability ===
+  // Columns = roster positions; cell = labor_compliance_role_applicability row.
+  // No rows for a requirement => applies to ALL positions (board default).
+  const [requirementPositionMap, setRequirementPositionMap] = useState({}); // requirement_id -> Set(normalized position)
+  const [togglingApplicabilityKey, setTogglingApplicabilityKey] = useState("");
+  const compliancePositionColumns = useMemo(() => {
+    const titles = toObjectRows(positionHierarchy)
+      .map((row) => formatLaborPositionTitle(row.position_title))
+      .filter(Boolean);
+    const source = titles.length ? titles : DEFAULT_LABOR_POSITION_TITLES.map((title) => formatLaborPositionTitle(title));
+    const seen = new Set();
+    const out = [];
+    source.forEach((title) => {
+      const key = normalizePositionTitle(title);
+      if (key && !seen.has(key)) { seen.add(key); out.push(title); }
+    });
+    return out;
+  }, [positionHierarchy]);
+  const reloadRequirementApplicability = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("labor_compliance_role_applicability")
+      .select("requirement_id, role_name, is_required");
+    if (error) return;
+    const map = {};
+    toObjectRows(data).forEach((row) => {
+      if (!row.is_required || !row.requirement_id) return;
+      if (!map[row.requirement_id]) map[row.requirement_id] = new Set();
+      map[row.requirement_id].add(normalizePositionTitle(row.role_name));
+    });
+    setRequirementPositionMap(map);
+  }, []);
+  useEffect(() => {
+    reloadRequirementApplicability();
+  }, [reloadRequirementApplicability, laborCompliancePolicyRequirements]);
+  const toggleRequirementPosition = useCallback(async (requirement, positionTitle, nextChecked) => {
+    if (!canManageCompliancePolicy || !requirement?.id || !positionTitle) return;
+    const normalizedPosition = normalizePositionTitle(positionTitle);
+    setTogglingApplicabilityKey(`${requirement.id}::${normalizedPosition}`);
+    const currentSet = requirementPositionMap[requirement.id];
+    const appliesToAll = !currentSet || currentSet.size === 0;
+    try {
+      if (nextChecked) {
+        const { error } = await supabase
+          .from("labor_compliance_role_applicability")
+          .upsert({ requirement_id: requirement.id, role_name: positionTitle, is_required: true }, { onConflict: "requirement_id,role_name" });
+        if (error) throw error;
+      } else if (appliesToAll) {
+        // Currently "applies to all" (no rows) — unchecking one means: apply to every OTHER position.
+        const rows = compliancePositionColumns
+          .filter((title) => normalizePositionTitle(title) !== normalizedPosition)
+          .map((title) => ({ requirement_id: requirement.id, role_name: title, is_required: true }));
+        if (rows.length) {
+          const { error } = await supabase
+            .from("labor_compliance_role_applicability")
+            .upsert(rows, { onConflict: "requirement_id,role_name" });
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase
+          .from("labor_compliance_role_applicability")
+          .delete()
+          .eq("requirement_id", requirement.id)
+          .ilike("role_name", positionTitle);
+        if (error) throw error;
+      }
+      await reloadRequirementApplicability();
+      await loadSupportBundle(true); // refresh the board so the Employees tab reflects it immediately
+    } catch (error) {
+      addGlobalToast?.(error?.message || "Could not update requirement applicability", "error");
+      await reloadRequirementApplicability();
+    } finally {
+      setTogglingApplicabilityKey("");
+    }
+  }, [addGlobalToast, canManageCompliancePolicy, compliancePositionColumns, loadSupportBundle, reloadRequirementApplicability, requirementPositionMap]);
+
+  // Reorder custom requirements (Requirements tab) via display_order — feeds the Employees column order.
+  const [reorderingRequirementId, setReorderingRequirementId] = useState("");
+  const moveComplianceRequirement = useCallback(async (requirement, direction) => {
+    if (!canManageCompliancePolicy || !requirement?.id) return;
+    const list = customCompliancePolicyRequirements;
+    const idx = list.findIndex((row) => row.id === requirement.id);
+    if (idx < 0) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= list.length) return;
+    const reordered = [...list];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(swapIdx, 0, moved);
+    setReorderingRequirementId(requirement.id);
+    try {
+      const updates = reordered
+        .map((row, position) => ({ id: row.id, display_order: (position + 1) * 10 }))
+        .filter((update) => Number(list.find((row) => row.id === update.id)?.display_order ?? NaN) !== update.display_order);
+      for (const update of updates) {
+        const { error } = await supabase
+          .from("labor_compliance_requirements")
+          .update({ display_order: update.display_order })
+          .eq("id", update.id);
+        if (error) throw error;
+      }
+      await loadSupportBundle(true);
+    } catch (error) {
+      addGlobalToast?.(error?.message || "Could not reorder requirement", "error");
+    } finally {
+      setReorderingRequirementId("");
+    }
+  }, [addGlobalToast, canManageCompliancePolicy, customCompliancePolicyRequirements, loadSupportBundle]);
+
   const complianceRequirementEditingRow = useMemo(() => (
     customCompliancePolicyRequirements.find((requirement) => requirement.id === complianceRequirementEditingId) || null
   ), [complianceRequirementEditingId, customCompliancePolicyRequirements]);
@@ -25286,9 +25393,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <Card style={{ padding: 18, borderRadius: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text, marginBottom: 5 }}>Compliance Columns</div>
+                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text, marginBottom: 5 }}>Requirements</div>
                     <div style={{ fontSize: 12, fontWeight: 750, color: C.textMut }}>
-                      {customCompliancePolicyRequirements.length} custom column{customCompliancePolicyRequirements.length === 1 ? "" : "s"} active
+                      {allComplianceReviewRequirements.length} requirement{allComplianceReviewRequirements.length === 1 ? "" : "s"} &times; {compliancePositionColumns.length} position{compliancePositionColumns.length === 1 ? "" : "s"} &middot; check a box to require it for that position (none checked = all positions)
                     </div>
                   </div>
                   <Btn
@@ -25298,94 +25405,117 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     icon={<I.Plus />}
                     onClick={() => openComplianceRequirementEditor()}
                   >
-                    Add Column
+                    Add Requirement
                   </Btn>
                 </div>
               </Card>
               <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={complianceTableHeaderStyle}>Column</th>
-                      <th style={complianceTableHeaderStyle}>Evidence</th>
-                      <th style={complianceTableHeaderStyle}>Status</th>
-                      <th style={{ ...complianceTableHeaderStyle, textAlign: "right" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {customCompliancePolicyRequirements.map((requirement) => (
-                      <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
-                        <td style={{ padding: "14px 16px", color: C.text, fontSize: 14, fontWeight: 950 }}>
-                          {normalizeComplianceRequirementLabel(requirement)}
-                          {requirement.description ? (
-                            <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, lineHeight: 1.35, fontWeight: 750 }}>{requirement.description}</div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: C.textSec, fontSize: 12, fontWeight: 850 }}>{formatComplianceRequirementEvidence(requirement)}</td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <Badge color="success">Visible on Employees</Badge>
-                        </td>
-                        <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                          <div style={{ display: "inline-flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <Btn
-                              variant="ghost"
-                              size="sm"
-                              icon={<I.Pencil />}
-                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
-                              onClick={() => openComplianceRequirementEditor(requirement)}
-                            >
-                              Edit
-                            </Btn>
-                            <Btn
-                              variant="danger"
-                              size="sm"
-                              icon={<I.Trash />}
-                              disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
-                              onClick={() => handleDeleteComplianceRequirement(requirement)}
-                            >
-                              {deletingComplianceRequirementId === requirement.id ? "Deleting..." : "Delete"}
-                            </Btn>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {customCompliancePolicyRequirements.length === 0 && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                    <thead>
                       <tr>
-                        <td colSpan={4} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
-                          No custom Compliance columns yet. Add one here and it will appear on the Employees grid.
-                        </td>
+                        <th style={complianceTableHeaderStyle}>Requirement</th>
+                        <th style={complianceTableHeaderStyle}>Evidence Required?</th>
+                        <th style={complianceTableHeaderStyle}>Type</th>
+                        {compliancePositionColumns.map((position) => (
+                          <th key={position} style={{ ...complianceTableHeaderStyle, textAlign: "center", whiteSpace: "nowrap" }}>{position}</th>
+                        ))}
+                        <th style={{ ...complianceTableHeaderStyle, textAlign: "right" }}>Actions</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {allComplianceReviewRequirements.map((requirement) => {
+                        const positionSet = requirementPositionMap[requirement.id];
+                        const appliesToAll = !positionSet || positionSet.size === 0;
+                        const isCustom = isCustomComplianceRequirement(requirement);
+                        const evidenceRequired = String(requirement.evidence_policy || "") === "file_required";
+                        const customIndex = isCustom ? customCompliancePolicyRequirements.findIndex((row) => row.id === requirement.id) : -1;
+                        const customCount = customCompliancePolicyRequirements.length;
+                        return (
+                          <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                            <td style={{ padding: "6px 14px", color: C.text, fontSize: 13, fontWeight: 900 }}>
+                              {normalizeComplianceRequirementLabel(requirement)}
+                              {appliesToAll && (
+                                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 800, color: C.textMut, border: `1px solid ${C.borderLight}`, borderRadius: 999, padding: "1px 7px", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>All positions</span>
+                              )}
+                              {requirement.description ? (
+                                <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, lineHeight: 1.3, fontWeight: 700 }}>{requirement.description}</div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color={evidenceRequired ? "warning" : "default"}>{evidenceRequired ? "Required" : "Optional"}</Badge>
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color={isCustom ? "info" : "default"}>{isCustom ? "Custom" : "Native"}</Badge>
+                            </td>
+                            {compliancePositionColumns.map((position) => {
+                              const checked = appliesToAll || positionSet.has(normalizePositionTitle(position));
+                              const toggleKey = `${requirement.id}::${normalizePositionTitle(position)}`;
+                              return (
+                                <td key={position} style={{ padding: "6px 8px", textAlign: "center" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={!canManageCompliancePolicy || togglingApplicabilityKey === toggleKey}
+                                    onChange={(event) => toggleRequirementPosition(requirement, position, event.target.checked)}
+                                    title={appliesToAll ? "Applies to all positions — uncheck to scope to the others" : (checked ? "Applies to this position" : "Not applied to this position")}
+                                    style={{ width: 16, height: 16, accentColor: C.pri, cursor: canManageCompliancePolicy ? "pointer" : "default" }}
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td style={{ padding: "4px 10px", textAlign: "right" }}>
+                              {isCustom ? (
+                                <div style={{ display: "inline-flex", justifyContent: "flex-end", alignItems: "center", gap: 2 }}>
+                                  <button
+                                    type="button"
+                                    title="Move up"
+                                    disabled={!canManageCompliancePolicy || Boolean(reorderingRequirementId) || customIndex <= 0}
+                                    onClick={() => moveComplianceRequirement(requirement, "up")}
+                                    style={{ border: "none", background: "transparent", cursor: customIndex <= 0 ? "default" : "pointer", color: C.textMut, fontSize: 10, padding: "2px 4px", lineHeight: 1, opacity: customIndex <= 0 ? 0.3 : 1 }}
+                                  >▲</button>
+                                  <button
+                                    type="button"
+                                    title="Move down"
+                                    disabled={!canManageCompliancePolicy || Boolean(reorderingRequirementId) || customIndex < 0 || customIndex >= customCount - 1}
+                                    onClick={() => moveComplianceRequirement(requirement, "down")}
+                                    style={{ border: "none", background: "transparent", cursor: customIndex >= customCount - 1 ? "default" : "pointer", color: C.textMut, fontSize: 10, padding: "2px 4px", lineHeight: 1, opacity: customIndex >= customCount - 1 ? 0.3 : 1 }}
+                                  >▼</button>
+                                  <Btn
+                                    variant="ghost"
+                                    size="sm"
+                                    icon={<I.Pencil />}
+                                    disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                                    onClick={() => openComplianceRequirementEditor(requirement)}
+                                    style={{ padding: "5px 8px" }}
+                                  />
+                                  <Btn
+                                    variant="danger"
+                                    size="sm"
+                                    icon={<I.Trash />}
+                                    disabled={!canManageCompliancePolicy || savingComplianceRequirement || deletingComplianceRequirementId === requirement.id}
+                                    onClick={() => handleDeleteComplianceRequirement(requirement)}
+                                    style={{ padding: "5px 8px" }}
+                                  />
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>System</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {allComplianceReviewRequirements.length === 0 && (
+                        <tr>
+                          <td colSpan={4 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
+                            No compliance requirements yet. Add one here and it will appear on the Employees grid.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </Card>
-
-              {defaultReviewComplianceRequirements.length > 0 && (
-                <Card style={{ padding: 16, borderRadius: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-                    <div style={{ fontSize: 14, fontWeight: 950, color: C.text }}>Default review checkpoints</div>
-                    <Badge color="default">{defaultReviewComplianceRequirements.length}</Badge>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                    {defaultReviewComplianceRequirements.map((requirement) => (
-                      <div
-                        key={requirement.id || requirement.slug}
-                        style={{
-                          border: `1px solid ${C.borderLight}`,
-                          borderRadius: 8,
-                          padding: "10px 12px",
-                          background: "#fff",
-                          minWidth: 0,
-                        }}
-                      >
-                        <div style={{ color: C.text, fontSize: 13, fontWeight: 950 }}>{normalizeComplianceRequirementLabel(requirement)}</div>
-                        <div style={{ marginTop: 4, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementDueRule(requirement)}</div>
-                        <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, fontWeight: 750 }}>{formatComplianceRequirementEvidence(requirement)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              )}
             </div>
           )}
           {complianceView === "history" && (
