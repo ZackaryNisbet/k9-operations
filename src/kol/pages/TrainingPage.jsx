@@ -25393,10 +25393,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               <Card style={{ padding: 18, borderRadius: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text, marginBottom: 5 }}>Requirements</div>
-                    <div style={{ fontSize: 12, fontWeight: 750, color: C.textMut }}>
-                      {allComplianceReviewRequirements.length} requirement{allComplianceReviewRequirements.length === 1 ? "" : "s"} &times; {compliancePositionColumns.length} position{compliancePositionColumns.length === 1 ? "" : "s"} &middot; check a box to require it for that position (none checked = all positions)
-                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Requirements</div>
                   </div>
                   <Btn
                     variant="secondary"
