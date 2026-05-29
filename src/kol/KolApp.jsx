@@ -294,6 +294,21 @@ function parseLiteUrl(pathname, dataRef) {
 // Manager roles: Home, My Work, Inventory, Cash Tips, Photos, Settings
 // Admin/owner roles: Home, Inventory, Cash Tips, Photos, Settings
 
+// Sidebar palette — a calm, low-chroma deep green panel (the brand forest dialed
+// down from the old bold #14532D→#0B3018 gradient). Lime (C.acc) is reserved for
+// the active item, logo, and avatar; everything else is neutral white-alpha so the
+// accent stays meaningful. OKLCH keeps the neutrals tinted toward the brand hue.
+const SIDEBAR = {
+  bg: "oklch(0.31 0.04 159)",
+  border: "oklch(1 0 0 / 0.07)",
+  divider: "oklch(1 0 0 / 0.08)",
+  itemText: "oklch(0.97 0.012 160 / 0.74)",
+  hover: "oklch(1 0 0 / 0.06)",
+  active: "oklch(0.62 0.17 130 / 0.16)",
+  muted: "oklch(0.97 0.012 160 / 0.5)",
+  faint: "oklch(0.97 0.012 160 / 0.34)",
+};
+
 const STAFF_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
@@ -1395,14 +1410,14 @@ function LeanAppInner() {
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           width: sbExpanded ? 240 : 68,
-          background: `linear-gradient(180deg, ${C.pri} 0%, #0B3018 100%)`,
+          background: SIDEBAR.bg,
           display: "flex",
           flexDirection: "column",
           transition: "width 0.18s cubic-bezier(0.4,0,0.2,1)",
           overflow: "hidden",
           flexShrink: 0,
           zIndex: 50,
-          borderRight: "1px solid rgba(132,204,22,0.06)",
+          borderRight: `1px solid ${SIDEBAR.border}`,
         }}
       >
         {/* Logo Header */}
@@ -1416,7 +1431,7 @@ function LeanAppInner() {
         </div>
 
         {/* Divider */}
-        <div style={{ margin: "0 14px 10px", height: 1, background: "rgba(132,204,22,0.08)" }} />
+        <div style={{ margin: "0 14px 10px", height: 1, background: SIDEBAR.divider }} />
 
         {/* Location Selector */}
         <div style={{ padding: "0 10px 8px", height: 44, boxSizing: "border-box" }}>
@@ -1448,31 +1463,29 @@ function LeanAppInner() {
             return (
               <button
                 key={item.id}
-                onMouseEnter={e => { if (!act) e.currentTarget.style.background = "rgba(132,204,22,0.08)"; }}
-                onMouseLeave={e => { if (!act) e.currentTarget.style.background = act ? "rgba(132,204,22,0.15)" : "transparent"; }}
+                onMouseEnter={e => { if (!act) e.currentTarget.style.background = SIDEBAR.hover; }}
+                onMouseLeave={e => { if (!act) e.currentTarget.style.background = "transparent"; }}
                 onClick={() => nav(item.id)}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
                   width: "100%",
-                  padding: "10px 14px",
+                  padding: "9px 12px",
                   justifyContent: "flex-start",
                   border: "none",
-                  borderRadius: 10,
-                  background: act ? "rgba(132,204,22,0.15)" : "transparent",
-                  color: act ? C.acc : "rgba(255,255,255,0.7)",
+                  borderRadius: 8,
+                  background: act ? SIDEBAR.active : "transparent",
+                  color: act ? C.acc : SIDEBAR.itemText,
                   fontSize: 13,
-                  fontWeight: act ? 700 : 500,
+                  fontWeight: act ? 600 : 500,
                   cursor: "pointer",
-                  marginBottom: 3,
+                  marginBottom: 2,
                   fontFamily: "inherit",
-                  transition: "background 0.15s, color 0.15s",
+                  transition: "background 0.15s ease, color 0.15s ease",
                   whiteSpace: "nowrap",
                   position: "relative",
                   boxSizing: "border-box",
-                  borderLeft: act ? "3px solid " + C.acc : "3px solid transparent",
-                  letterSpacing: act ? "0.01em" : "0",
                 }}
               >
                 <div style={{ flexShrink: 0, width: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1488,17 +1501,17 @@ function LeanAppInner() {
         <div style={{ padding: "14px 10px", display: "flex", flexDirection: "column", gap: 6, position: "relative" }}>
           {sbExpanded && (
             <div style={{ position: "relative" }}>
-              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? "rgba(132,204,22,0.15)" : "transparent", color: "rgba(132,204,22,0.6)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? SIDEBAR.active : "transparent", color: SIDEBAR.itemText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(132,204,22,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: C.acc }}>{(user?.email || "U")[0].toUpperCase()}</span>
                 </div>
-                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(132,204,22,0.55)", fontSize: 11 }}>{user?.email || "User"}</div>
-                <span style={{ fontSize: 8, color: "rgba(132,204,22,0.3)", transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
+                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SIDEBAR.muted, fontSize: 11 }}>{user?.email || "User"}</div>
+                <span style={{ fontSize: 8, color: SIDEBAR.faint, transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
               </button>
 
               {accountSwitchOpen && (
-                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "#0D3B1E", border: "1px solid rgba(132,204,22,0.2)", borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
-                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: "rgba(132,204,22,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "oklch(0.26 0.04 159)", border: `1px solid ${SIDEBAR.border}`, borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
+                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: SIDEBAR.faint, textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
                     <div style={{ padding: "12px", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
                   ) : teamAccounts.map(acct => (
