@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { C } from "../../shared/theme";
+import { C, todayStr } from "../../shared/theme";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   addLicenseLog,
   addVendorLog,
   archiveVendor,
+  buildUpkeepDueItems,
   deactivateLicense,
   fmtUpkeepDate,
   fmtUpkeepStatus,
@@ -31,6 +32,7 @@ import {
 } from "../resortUpkeepData";
 
 const TABS = [
+  { id: "due", label: "Due", desc: "What's overdue and coming up across upkeep" },
   { id: "maintenance", label: "Building Maintenance", desc: "Recurring facility checklists" },
   { id: "vendors", label: "Local Vendors", desc: "Contracts, contacts, and service history" },
   { id: "licenses", label: "Licenses", desc: "Compliance proof and renewal dates" },
@@ -236,7 +238,7 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   const actor = useMemo(() => actorName(profile), [profile]);
   const canComplete = hasLeanPermission(profile, "Resort Upkeep Complete");
   const canManage = hasLeanPermission(profile, "Resort Upkeep Manage");
-  const [tab, setTab] = useState("maintenance");
+  const [tab, setTab] = useState("due");
   const [dashboard, setDashboard] = useState(EMPTY_DASHBOARD);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -285,6 +287,7 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   const hasLoadedLocation = loadedLocationRef.current === locationId;
   const metricsLoading = loading && !hasLoadedLocation;
   const tabStats = useMemo(() => ({
+    due: (dashboard.maintenanceSummary?.overdue || 0) + (dashboard.licenses?.non_compliant || 0) + (dashboard.licenses?.expiring_soon || 0),
     maintenance: dashboard.maintenanceSummary?.active || 0,
     vendors: dashboard.vendors?.active || 0,
     licenses: dashboard.licenses?.non_compliant || 0,
@@ -336,11 +339,160 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
         ))}
       </div>
 
+      {tab === "due" && <DuePanel locationId={locationId} dashboard={dashboard} onOpenTab={setTab} />}
       {tab === "maintenance" && <MaintenancePanel locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onRefresh={load} toast={toast} />}
       {tab === "vendors" && <VendorsPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
       {tab === "licenses" && <LicensesPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
       {tab === "guide" && <TroubleshootingPanel articles={dashboard.troubleshooting || []} />}
     </Shell>
+  );
+}
+
+const DUE_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "maintenance", label: "Maintenance" },
+  { id: "license", label: "Licenses" },
+  { id: "vendor", label: "Vendors" },
+];
+const DUE_WINDOWS = [
+  { id: 30, label: "30 days" },
+  { id: 60, label: "60 days" },
+  { id: 90, label: "90 days" },
+  { id: Infinity, label: "All" },
+];
+const DUE_KIND_PILL = {
+  maintenance: { bg: C.priLt, fg: C.pri },
+  license: { bg: C.infoLt, fg: C.info },
+  vendor: { bg: C.accLt, fg: C.accDk },
+};
+
+function toneBadgeStyle(tone) {
+  if (tone === "danger") return { background: C.danLt, color: C.dan };
+  if (tone === "warn") return { background: C.warnLt, color: "#B45309" };
+  if (tone === "good") return { background: C.sucLt, color: C.suc };
+  return { background: C.borderLight, color: C.textMut };
+}
+
+function KindPill({ kind, label }) {
+  const c = DUE_KIND_PILL[kind] || { bg: C.borderLight, fg: C.textMut };
+  return <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", borderRadius: 999, padding: "3px 8px", background: c.bg, color: c.fg, whiteSpace: "nowrap" }}>{label}</span>;
+}
+
+// A read-only rollup of everything overdue or coming due across the three
+// upkeep domains. It reuses data the page already loads (active maintenance
+// periods from the dashboard, plus licenses and vendor contracts) and renders
+// it as the DESIGN.md dense table. No writes, no new RPC, no migration.
+function DuePanel({ locationId, dashboard, onOpenTab }) {
+  const [licenses, setLicenses] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState("all");
+  const [windowDays, setWindowDays] = useState(60);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!locationId) return;
+    if (!silent) setLoading(true);
+    try {
+      const [nextLicenses, nextVendors] = await withUpkeepTimeout(
+        Promise.all([loadLicenses(locationId, false), loadVendors(locationId, false)]),
+        "What's due took too long to load."
+      );
+      setLicenses(nextLicenses);
+      setVendors(nextVendors);
+      setError("");
+    } catch (nextError) {
+      console.warn("Due rollup load failed", nextError);
+      setError(friendlyErrorMessage(nextError, "What's due could not be loaded."));
+    } finally {
+      setLoading(false);
+    }
+  }, [locationId]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!locationId) return undefined;
+    return subscribeToResortUpkeep(locationId, () => load({ silent: true }));
+  }, [load, locationId]);
+
+  const today = todayStr();
+  const windowItems = useMemo(
+    () => buildUpkeepDueItems({ maintenance: dashboard.maintenance || [], licenses, vendors, today, windowDays }),
+    [dashboard.maintenance, licenses, vendors, today, windowDays]
+  );
+  const counts = useMemo(() => ({
+    all: windowItems.length,
+    maintenance: windowItems.filter((item) => item.kind === "maintenance").length,
+    license: windowItems.filter((item) => item.kind === "license").length,
+    vendor: windowItems.filter((item) => item.kind === "vendor").length,
+  }), [windowItems]);
+  const overdueCount = useMemo(() => windowItems.filter((item) => item.tone === "danger").length, [windowItems]);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return windowItems.filter((item) =>
+      (kind === "all" || item.kind === kind)
+      && (!needle || `${item.title} ${item.subtitle}`.toLowerCase().includes(needle))
+    );
+  }, [windowItems, kind, query]);
+
+  return (
+    <div style={detailPanel}>
+      <style>{`.k9-due-row:hover{background:${C.surfaceHover}}.k9-due-row:last-child{border-bottom:none}.k9-due-row:focus-visible{outline:2px solid ${C.pri};outline-offset:-2px}`}</style>
+      <div style={dueControls}>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search what's due" style={{ ...input, maxWidth: 260 }} />
+        <div style={pillRow}>
+          {DUE_FILTERS.map((filter) => (
+            <button key={filter.id} type="button" onClick={() => setKind(filter.id)} style={kind === filter.id ? activeFilterPill : filterPill}>
+              {filter.label}<span style={pillCount}>{counts[filter.id] ?? 0}</span>
+            </button>
+          ))}
+          <span style={vSep} />
+          {DUE_WINDOWS.map((option) => (
+            <button key={String(option.id)} type="button" onClick={() => setWindowDays(option.id)} style={windowDays === option.id ? activeWindowToggle : windowToggle}>{option.label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={dueExplainer}>Everything overdue or coming due across maintenance, licenses, and vendor contracts. Read only; open a row to act in its tab.</div>
+      {error && <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div>}
+
+      {loading ? (
+        <div style={{ marginTop: 14, display: "grid", gap: 10 }}><LoadingRows /></div>
+      ) : visible.length === 0 ? (
+        <div style={{ marginTop: 14 }}>
+          <EmptyCard title="Nothing due in this window" text={overdueCount ? "Adjust the filters to see the rest." : "You're current. Widen the window to look further ahead."} compact />
+        </div>
+      ) : (
+        <div style={dueTableWrap}>
+          <div style={dueScroll}>
+            <div style={dueTableInner}>
+              <div style={dueHeadRow}>
+                <div style={dueHeadCell}>Type</div>
+                <div style={dueHeadCell}>Item</div>
+                <div style={dueHeadCell}>Due</div>
+                <div style={dueHeadCell}>Status</div>
+                <div style={dueHeadCell} />
+              </div>
+              {visible.map((item) => (
+                <button key={item.id} type="button" className="k9-due-row" onClick={() => onOpenTab(item.targetTab)} style={dueRow} title={`Open in ${item.kindLabel} tab`}>
+                  <div><KindPill kind={item.kind} label={item.kindLabel} /></div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={dueTitle}>{item.title}</div>
+                    {item.subtitle && <div style={dueSub}>{item.subtitle}</div>}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={dueDateText}>{fmtUpkeepDate(item.dueDate)}</div>
+                    <div style={{ ...dueBadgeStyle, ...toneBadgeStyle(item.tone) }}>{item.dueBadge}</div>
+                  </div>
+                  <div><span style={{ ...dueStatusStyle, ...toneBadgeStyle(item.tone) }}>{item.statusLabel}</span></div>
+                  <div style={dueChevron}>›</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1762,3 +1914,87 @@ const inlineLinkButton = {
   textDecoration: "underline",
   fontFamily: "inherit",
 };
+
+// ─── "Due" rollup (dense table per DESIGN.md THE STANDARD) ───────────────────
+const DUE_GRID = "104px minmax(160px, 1fr) 128px 132px 22px";
+
+const dueControls = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 4 };
+const pillRow = { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" };
+const filterPill = {
+  appearance: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  border: `1px solid ${C.border}`,
+  borderRadius: 999,
+  background: "#fff",
+  color: C.textMut,
+  padding: "5px 11px",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  outline: "none",
+};
+const activeFilterPill = { ...filterPill, borderColor: C.pri, background: C.priLt, color: C.pri };
+const pillCount = { fontSize: 10, fontWeight: 900, background: C.borderLight, color: C.textMut, borderRadius: 999, padding: "1px 6px" };
+const vSep = { width: 1, alignSelf: "stretch", minHeight: 20, background: C.border, margin: "0 2px" };
+const windowToggle = {
+  appearance: "none",
+  border: `1px solid ${C.border}`,
+  borderRadius: 8,
+  background: "#fff",
+  color: C.textMut,
+  padding: "5px 9px",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  outline: "none",
+};
+const activeWindowToggle = { ...windowToggle, background: C.pri, color: "#fff", borderColor: C.pri };
+const dueExplainer = {
+  marginTop: 10,
+  padding: "7px 12px",
+  borderRadius: 8,
+  fontSize: 12,
+  lineHeight: 1.4,
+  color: C.textMut,
+  background: C.priLt,
+  border: `1px solid ${C.borderLight}`,
+};
+const dueTableWrap = { marginTop: 12, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface };
+const dueScroll = { overflowX: "auto" };
+const dueTableInner = { minWidth: 620 };
+const dueHeadRow = {
+  display: "grid",
+  gridTemplateColumns: DUE_GRID,
+  gap: 10,
+  alignItems: "center",
+  padding: "8px 12px",
+  background: "#fff",
+  borderBottom: `1px solid ${C.border}`,
+};
+const dueHeadCell = { fontSize: 10, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: C.textMut };
+const dueRow = {
+  appearance: "none",
+  display: "grid",
+  gridTemplateColumns: DUE_GRID,
+  gap: 10,
+  alignItems: "start",
+  width: "100%",
+  textAlign: "left",
+  border: 0,
+  borderBottom: `1px solid ${C.borderLight}`,
+  background: "#fff",
+  color: C.text,
+  padding: "7px 12px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
+const dueTitle = { fontSize: 13, fontWeight: 700, color: C.pri, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+const dueSub = { marginTop: 2, fontSize: 11, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+const dueDateText = { fontSize: 12, fontWeight: 700, color: C.text, whiteSpace: "nowrap" };
+const dueBadgeStyle = { marginTop: 3, display: "inline-block", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" };
+const dueStatusStyle = { display: "inline-block", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" };
+const dueChevron = { color: C.textMut, fontSize: 16, fontWeight: 900, alignSelf: "center", textAlign: "right" };

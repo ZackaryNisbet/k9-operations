@@ -359,3 +359,120 @@ export function subscribeToResortUpkeep(locationId, onChange) {
     supabase.removeChannel(channel);
   };
 }
+
+// ─── Unified "what's due" rollup ─────────────────────────────────────────────
+// Pure, side-effect-free aggregation of everything that is overdue or coming
+// due across the three upkeep domains: maintenance periods, license renewals,
+// and vendor contract end dates. It reads only data the page already loads, so
+// the read-only Due rollup needs no new RPC and no migration. It also previews
+// the denormalized "due feed" the redesign proposes promoting to a server-side
+// view, which the future aggregated Calendar can read cheaply.
+
+const UPKEEP_DONE_PERIOD_STATUSES = new Set(["submitted", "late_submitted", "submitted_late", "closed"]);
+
+function upkeepDaysUntil(fromIso, toValue) {
+  if (!toValue) return null;
+  const to = new Date(`${String(toValue).slice(0, 10)}T12:00:00`);
+  const from = new Date(`${String(fromIso).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(to.getTime()) || Number.isNaN(from.getTime())) return null;
+  return Math.round((to - from) / 86400000);
+}
+
+function upkeepDueBadge(daysLeft) {
+  if (daysLeft === null) return "No date";
+  if (daysLeft < 0) return `Overdue ${Math.abs(daysLeft)}d`;
+  if (daysLeft === 0) return "Due today";
+  return `Due in ${daysLeft}d`;
+}
+
+function upkeepTone(daysLeft, { attention = false, soonDays = 14 } = {}) {
+  if (attention) return "danger";
+  if (daysLeft === null) return "neutral";
+  if (daysLeft < 0) return "danger";
+  if (daysLeft <= soonDays) return "warn";
+  return "neutral";
+}
+
+export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors = [], today, windowDays = 60 } = {}) {
+  const anchor = today || new Date().toISOString().slice(0, 10);
+  const horizon = windowDays === null || windowDays === Infinity ? Infinity : Number(windowDays);
+  const items = [];
+
+  (Array.isArray(maintenance) ? maintenance : []).forEach((p) => {
+    if (!p?.id) return;
+    const status = String(p.computed_status || p.status || "open");
+    if (UPKEEP_DONE_PERIOD_STATUSES.has(status)) return;
+    const dueDate = p.due_date || p.period_end || null;
+    const daysLeft = upkeepDaysUntil(anchor, dueDate);
+    const overdue = status === "overdue" || (daysLeft !== null && daysLeft < 0);
+    if (!overdue && daysLeft !== null && daysLeft > horizon) return;
+    const progress = p.progress || {};
+    const range = [p.period_start, p.period_end].filter(Boolean).map((d) => fmtUpkeepDate(d)).join(" - ");
+    const done = progress.totalRequired ? `${progress.completedRequired || 0}/${progress.totalRequired} done` : "";
+    items.push({
+      id: `maintenance:${p.id}`,
+      kind: "maintenance",
+      kindLabel: "Maintenance",
+      title: p.template_name || p.template_slug || "Maintenance period",
+      subtitle: [range, done].filter(Boolean).join(" · "),
+      dueDate,
+      daysLeft,
+      tone: overdue ? "danger" : upkeepTone(daysLeft, { soonDays: 7 }),
+      statusLabel: fmtUpkeepStatus(status),
+      dueBadge: upkeepDueBadge(daysLeft),
+      attention: overdue,
+      targetTab: "maintenance",
+    });
+  });
+
+  (Array.isArray(licenses) ? licenses : []).forEach((l) => {
+    if (!l?.id || l.is_active === false) return;
+    const dateRef = l.expiration_date || l.next_expected_date || null;
+    const daysLeft = upkeepDaysUntil(anchor, dateRef);
+    const nonCompliant = l.status === "non_compliant";
+    const expired = daysLeft !== null && daysLeft < 0;
+    if (!nonCompliant && (daysLeft === null || daysLeft > horizon)) return;
+    items.push({
+      id: `license:${l.id}`,
+      kind: "license",
+      kindLabel: "License",
+      title: l.requirement_name || "License requirement",
+      subtitle: l.issuing_organization || "No issuing organization",
+      dueDate: dateRef,
+      daysLeft,
+      tone: upkeepTone(daysLeft, { attention: nonCompliant }),
+      statusLabel: nonCompliant ? "Non-compliant" : expired ? "Expired" : "Renewal due",
+      dueBadge: upkeepDueBadge(daysLeft),
+      attention: nonCompliant || expired,
+      targetTab: "licenses",
+    });
+  });
+
+  (Array.isArray(vendors) ? vendors : []).forEach((v) => {
+    if (!v?.id || v.is_archived) return;
+    if (!v.has_contract || !v.contract_effective_end) return;
+    const daysLeft = upkeepDaysUntil(anchor, v.contract_effective_end);
+    if (daysLeft === null || daysLeft > horizon) return;
+    const expired = daysLeft < 0;
+    items.push({
+      id: `vendor:${v.id}`,
+      kind: "vendor",
+      kindLabel: "Vendor",
+      title: v.business_name || "Vendor contract",
+      subtitle: "Service contract",
+      dueDate: v.contract_effective_end,
+      daysLeft,
+      tone: upkeepTone(daysLeft),
+      statusLabel: expired ? "Contract expired" : "Contract ending",
+      dueBadge: upkeepDueBadge(daysLeft),
+      attention: expired,
+      targetTab: "vendors",
+    });
+  });
+
+  const rank = (item) => (item.attention && item.daysLeft === null ? -1e9 : item.daysLeft === null ? 1e9 : item.daysLeft);
+  return items.sort((a, b) => {
+    const diff = rank(a) - rank(b);
+    return diff !== 0 ? diff : String(a.title).localeCompare(String(b.title));
+  });
+}

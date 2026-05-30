@@ -26,6 +26,7 @@ vi.mock("../supabaseClient", () => ({ supabase: supabaseMock }));
 
 import {
   RESORT_UPKEEP_ATTACHMENT_BUCKET,
+  buildUpkeepDueItems,
   createResortUpkeepSignedUrl,
   loadMaintenanceTemplates,
   loadResortUpkeepDashboard,
@@ -594,5 +595,78 @@ describe("resortUpkeepData", () => {
       expect(triggerIndex).toBeLessThan(oldAuditDropIndex);
     });
     expect(policyAlignmentSql).not.toContain("EXECUTE FUNCTION public.resort_upkeep_audit_row_change()");
+  });
+});
+
+describe("buildUpkeepDueItems", () => {
+  const TODAY = "2026-05-30";
+  const maintenance = [
+    { id: "m1", template_name: "HVAC Quarterly", due_date: "2026-05-28", computed_status: "overdue", period_start: "2026-04-01", period_end: "2026-06-30", progress: { completedRequired: 2, totalRequired: 5 } },
+    { id: "m2", template_name: "Monthly Walkthrough", due_date: "2026-06-15", status: "open", progress: { completedRequired: 0, totalRequired: 4 } },
+    { id: "m3", template_name: "Closed Period", due_date: "2026-05-20", computed_status: "submitted" },
+  ];
+  const licenses = [
+    { id: "l1", requirement_name: "Fire Inspection", issuing_organization: "City FD", status: "compliant", expiration_date: "2026-06-02" },
+    { id: "l2", requirement_name: "Kennel Permit", status: "non_compliant", expiration_date: null },
+    { id: "l3", requirement_name: "Annual Far License", status: "compliant", expiration_date: "2026-12-01" },
+    { id: "l4", requirement_name: "Retired License", status: "compliant", expiration_date: "2026-06-01", is_active: false },
+    { id: "l5", requirement_name: "Pest Control Permit", status: "compliant", expiration_date: "2026-07-10" },
+  ];
+  const vendors = [
+    { id: "v1", business_name: "Ace Plumbing", has_contract: true, contract_effective_end: "2026-06-10" },
+    { id: "v2", business_name: "No Contract Co", has_contract: false, contract_effective_end: "2026-06-05" },
+    { id: "v3", business_name: "Lapsed HVAC", has_contract: true, contract_effective_end: "2026-05-01" },
+    { id: "v4", business_name: "Archived Vendor", has_contract: true, contract_effective_end: "2026-06-01", is_archived: true },
+  ];
+
+  it("aggregates all three domains, sorted by urgency with attention-no-date pinned to the top", () => {
+    const items = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY });
+    expect(items.map((item) => item.id)).toEqual([
+      "license:l2", // non-compliant, no date -> needs attention now
+      "vendor:v3", // contract lapsed 29 days ago
+      "maintenance:m1", // 2 days overdue
+      "license:l1", // renews in 3 days
+      "vendor:v1", // contract ends in 11 days
+      "maintenance:m2", // due in 16 days
+      "license:l5", // renews in 41 days (inside default 60-day window)
+    ]);
+    expect(items[0]).toMatchObject({ id: "license:l2", attention: true, tone: "danger", dueBadge: "No date", statusLabel: "Non-compliant" });
+    const m1 = items.find((item) => item.id === "maintenance:m1");
+    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "Overdue", targetTab: "maintenance" });
+    expect(m1.subtitle).toContain("2/5 done");
+  });
+
+  it("excludes completed periods, inactive licenses, archived vendors, and vendors without a contract end date", () => {
+    const ids = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY }).map((item) => item.id);
+    expect(ids).not.toContain("maintenance:m3"); // submitted -> done
+    expect(ids).not.toContain("license:l4"); // is_active === false
+    expect(ids).not.toContain("vendor:v2"); // has_contract === false
+    expect(ids).not.toContain("vendor:v4"); // archived
+  });
+
+  it("respects the window horizon and treats Infinity as no horizon", () => {
+    const within30 = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY, windowDays: 30 }).map((item) => item.id);
+    expect(within30).not.toContain("license:l5"); // 41 days out
+    expect(within30).toContain("license:l2"); // attention items ignore the horizon
+
+    const allHorizons = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY, windowDays: Infinity }).map((item) => item.id);
+    expect(allHorizons).toContain("license:l3"); // ~185 days out
+    expect(allHorizons).toContain("license:l5");
+  });
+
+  it("labels vendor and license urgency with tone and due badges", () => {
+    const items = buildUpkeepDueItems({ vendors, today: TODAY });
+    expect(items.find((item) => item.id === "vendor:v3")).toMatchObject({ tone: "danger", statusLabel: "Contract expired", dueBadge: "Overdue 29d", kindLabel: "Vendor" });
+    expect(items.find((item) => item.id === "vendor:v1")).toMatchObject({ tone: "warn", statusLabel: "Contract ending", dueBadge: "Due in 11d" });
+  });
+
+  it("renders a Due today badge when the date is the anchor day", () => {
+    const items = buildUpkeepDueItems({ licenses: [{ id: "today", requirement_name: "Today Permit", status: "compliant", expiration_date: TODAY }], today: TODAY });
+    expect(items[0]).toMatchObject({ id: "license:today", dueBadge: "Due today", tone: "warn", statusLabel: "Renewal due" });
+  });
+
+  it("returns an empty array for empty or missing input", () => {
+    expect(buildUpkeepDueItems({})).toEqual([]);
+    expect(buildUpkeepDueItems()).toEqual([]);
   });
 });
