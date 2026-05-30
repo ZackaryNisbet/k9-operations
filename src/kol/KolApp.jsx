@@ -1423,11 +1423,12 @@ function LeanAppInner() {
         }}
       >
         {/* Logo Header */}
-        <div style={{ padding: "20px 15px 14px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 12, height: 40, boxSizing: "content-box" }}>
-          <div style={{ flexShrink: 0, width: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {sbExpanded ? <K9Logo size={36} variant="dark" /> : <K9LogoMini size={32} variant="dark" />}
+        <div style={{ padding: "20px 0 14px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 0, height: 40, boxSizing: "content-box" }}>
+          {/* Fixed 68px slot (= collapsed rail width) so the logo stays the same size and position whether collapsed or expanded. */}
+          <div style={{ flexShrink: 0, width: 68, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <K9LogoMini size={32} variant="dark" />
           </div>
-          <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.12s", whiteSpace: "nowrap" }}>
+          <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.18s", whiteSpace: "nowrap" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: SIDEBAR.itemActive, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.01em" }}>K9 Operations</div>
           </div>
         </div>
@@ -1472,10 +1473,10 @@ function LeanAppInner() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: sbExpanded ? 12 : 0,
+                  gap: 0,
                   width: "100%",
-                  padding: sbExpanded ? "10px 18px" : "10px 0",
-                  justifyContent: sbExpanded ? "flex-start" : "center",
+                  padding: "10px 0",
+                  justifyContent: "flex-start",
                   border: "none",
                   borderRadius: 0,
                   background: act ? SIDEBAR.active : "transparent",
@@ -1491,10 +1492,11 @@ function LeanAppInner() {
                   boxSizing: "border-box",
                 }}
               >
-                <div style={{ flexShrink: 0, width: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {/* Fixed 68px icon slot (= collapsed rail width): the icon stays centered at the same x in both states, so it never shifts. */}
+                <div style={{ flexShrink: 0, width: 68, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {IconComp && <IconComp />}
                 </div>
-                <span style={{ overflow: "hidden", maxWidth: sbExpanded ? "none" : 0, opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s" }}>{item.label}</span>
+                <span style={{ opacity: sbExpanded ? 1 : 0, transition: "opacity 0.18s ease", whiteSpace: "nowrap", overflow: "hidden" }}>{item.label}</span>
               </button>
             );
           })}
