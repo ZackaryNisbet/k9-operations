@@ -59,6 +59,9 @@ import SchedulingPage from "./pages/SchedulingPage";
 import ClientManagementPage from "./pages/ClientManagementPage";
 import ResourcesPage from "./pages/ResourcesPage";
 import GrassrootsPage from "./pages/GrassrootsPage";
+import CalendarPage from "./pages/CalendarPage";
+import CrmPage from "./pages/CrmPage";
+import MarketingDirectoryPage from "./pages/MarketingDirectoryPage";
 import ResortUpkeepPage from "./pages/ResortUpkeepPage";
 import EnrichmentsPage from "./pages/EnrichmentsPage";
 import GingrIconsPage from "./pages/GingrIconsPage";
@@ -136,6 +139,9 @@ const LITE_PAGE_SLUGS = {
   "resources": "resources",
   "grassroots": "grassroots",
   "resort-upkeep": "resort-upkeep",
+  "calendar": "calendar",
+  "crm": "crm",
+  "marketing-directory": "marketing-directory",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -333,7 +339,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
-  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "grassroots", label: "Marketing", icon: "TrendingUp" },
   { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -347,8 +353,9 @@ const MANAGER_NAV_ITEMS = [
 // stays scannable in seconds. Anything pulled from the rail must have a Home card.
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "calendar", label: "Calendar", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
-  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "grassroots", label: "Marketing", icon: "TrendingUp" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
@@ -364,7 +371,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "resources", label: "Resources", icon: "Book" },
-  { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
+  { id: "grassroots", label: "Marketing", icon: "TrendingUp" },
   { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -429,6 +436,9 @@ const PAGE_PERMISSION_MAP = {
   "resources": null,
   "grassroots": "Grassroots Access",
   "resort-upkeep": "Resort Upkeep Access",
+  "calendar": "Calendar Access",
+  "crm": "CRM Access",
+  "marketing-directory": "Marketing Directory Access",
   "inventory": "Inventory Management",
   "inventory-report": "Inventory Management",
   "occupancy-report": "Occupancy Reports",
@@ -463,6 +473,9 @@ const PAGE_OWNED_DATA_PAGES = new Set([
   "training",
   "grassroots",
   "resort-upkeep",
+  "calendar",
+  "crm",
+  "marketing-directory",
   "resources",
   "settings",
   "gingr-icons",
@@ -1039,7 +1052,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "gingr-icons", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "gingr-icons", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "calendar", "crm", "marketing-directory", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -1059,8 +1072,11 @@ function LeanAppInner() {
       case "client-management": return "Incidents";
       case "enrichments": return "Enrichments";
       case "resources": return "Resources";
-      case "grassroots": return "Grassroots Tracking";
+      case "grassroots": return "Marketing";
       case "resort-upkeep": return "Resort Upkeep";
+      case "calendar": return "Calendar";
+      case "crm": return "CRM";
+      case "marketing-directory": return "Marketing Directory";
       case "funnel": return "Lead Funnel";
       case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
@@ -1373,6 +1389,12 @@ function LeanAppInner() {
         return <ResourcesPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "grassroots":
         return <GrassrootsPage profile={profile} addGlobalToast={addGlobalToast} />;
+      case "calendar":
+        return <CalendarPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
+      case "crm":
+        return <CrmPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
+      case "marketing-directory":
+        return <MarketingDirectoryPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "resort-upkeep":
         return <ResortUpkeepPage profile={profile} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "scheduling":
