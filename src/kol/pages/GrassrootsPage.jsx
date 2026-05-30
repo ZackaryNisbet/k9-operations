@@ -2046,7 +2046,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [] }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [], inline = false }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -2068,12 +2068,16 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onCancel]);
 
+  // When rendered inside a dense table row (true inline edit) the surrounding
+  // expansion already frames the editor, so flatten the floating-card chrome.
+  const rootClassName = `grassroots-event-inline-editor grassroots-event-dense${inline ? " grassroots-event-inline-editor--in-row" : ""}`;
+
   // Quick capture mode for new events (minimal, clean, fast)
   if (draft.isDraft) {
     const dates = Array.isArray(draft.event_dates) ? draft.event_dates : [];
 
     return (
-      <div className="grassroots-event-inline-editor grassroots-event-dense">
+      <div className={rootClassName}>
         <div className="grassroots-event-inline-header" style={{ background: 'transparent', borderBottom: `1px solid ${C.borderLight}` }}>
           <div>
             <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.06em" }}>
@@ -2196,7 +2200,7 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
 
   // Full edit mode for existing events (richer details)
   return (
-    <div className="grassroots-event-inline-editor grassroots-event-dense">
+    <div className={rootClassName}>
         <div className="grassroots-event-inline-header">
           <div>
             <div style={{ fontSize: 9, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -2650,7 +2654,7 @@ function DenseGrassrootsTable({
   targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
   expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, onShowFollowUpInfo,
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
-  savingLog
+  savingLog, editingTargetId = null, renderInlineEditor
 }) {
   // Use the shared K9 brand palette (forest green primary + lime accent, neutral
   // slate text) — no local navy/gold override.
@@ -2751,6 +2755,7 @@ function DenseGrassrootsTable({
         const primaryHref = getSafeEventLinkHref(primaryLinkRaw);
 
         const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
+        const isEditingRow = cm.updatesMode !== "edit" && !!renderInlineEditor && editingTargetId === target.id;
 
         return (
           <div key={target.id}>
@@ -2935,8 +2940,8 @@ function DenseGrassrootsTable({
                   {targetActivities.length}
                 </button>
 
-                {/* Hide Log button while the inline composer is open for this row */}
-                {inlineLoggingId !== target.id && (
+                {/* Hide Log button while the inline composer or inline editor is open for this row */}
+                {inlineLoggingId !== target.id && !isEditingRow && (
                   <button
                     onClick={() => onLog(target)}
                     style={{ padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
@@ -2948,17 +2953,29 @@ function DenseGrassrootsTable({
                 {onEdit && (
                   <button
                     onClick={() => onEdit(target)}
-                    style={{ padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                    aria-pressed={isEditingRow}
+                    title={isEditingRow ? "Close editor" : "Edit"}
+                    style={isEditingRow
+                      ? { padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.pri}`, background: C.pri, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }
+                      : { padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
                   >
-                    Edit
+                    {isEditingRow ? "Editing" : "Edit"}
                   </button>
                 )}
               </div>
               )}
             </div>
 
+            {/* Inline edit editor — expands in place, anchored to the row being edited
+                (replaces the old editor that was lifted to the top of the table). */}
+            {isEditingRow && (
+              <div className="grassroots-inline-edit-anchor" style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}`, scrollMarginTop: 96 }}>
+                {renderInlineEditor(target)}
+              </div>
+            )}
+
             {/* Expanded area: composer (when logging) + history */}
-            {cm.updatesMode !== "edit" && (isExp || inlineLoggingId === target.id) && (
+            {cm.updatesMode !== "edit" && !isEditingRow && (isExp || inlineLoggingId === target.id) && (
               <div style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}` }}>
                 {/* Inline Log Composer — dominant textarea + date picker right underneath (no big modal) */}
                 {inlineLoggingId === target.id && (
@@ -3878,6 +3895,22 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     };
   }, [newDraft?.id]);
 
+  // Editing an existing event opens an editor expanded inside its own table row;
+  // reveal it once that row's expansion has rendered.
+  useEffect(() => {
+    if (!editDraft?.id || editDraft.isDraft) return undefined;
+    let frameId = 0;
+    const timerId = window.setTimeout(() => {
+      frameId = window.requestAnimationFrame(() => {
+        scrollGrassrootsEditorIntoView(document.querySelector(".grassroots-inline-edit-anchor"));
+      });
+    }, 60);
+    return () => {
+      window.clearTimeout(timerId);
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
+  }, [editDraft?.id, editDraft?.isDraft]);
+
   useEffect(() => {
     const category = logModal ? (logModal.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) : "";
     if (category !== "drops") return undefined;
@@ -4702,6 +4735,20 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           background: ${C.surface};
           box-shadow: 0 8px 24px rgba(15,23,42,0.10);
           animation: grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        /* In-row variant: the table's row expansion already frames the editor
+           (subtle bg + 3px primary left-border), so drop the floating-card chrome
+           and let the editor sit flush inside the expanded row. */
+        .grassroots-event-inline-editor--in-row {
+          border: none;
+          border-radius: 0;
+          box-shadow: none;
+          background: transparent;
+          animation: grassrootsInlineEditIn 0.26s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        @keyframes grassrootsInlineEditIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .grassroots-event-inline-header {
           position: relative;
@@ -6273,7 +6320,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 <>
                   {activeConfig.id === "events" ? (
                     <>
-                      {/* New event inline editor (kept for full functionality) */}
+                      {/* New event inline editor — quick-capture composer for a brand-new
+                          event (no existing row to expand into, so it stays above the table). */}
                       {canEditTargets && newDraft && (
                         <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
                           <EventTargetInlineEditor
@@ -6287,10 +6335,24 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                           />
                         </div>
                       )}
-                      {/* Edit event inline editor (lifted when editing via dense row) */}
-                      {canEditTargets && editDraft && activeConfig.id === "events" && (
-                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
+                      {/* Editing an existing event now happens inline, expanded inside its
+                          own row via the table's renderInlineEditor prop below. */}
+                      {/* THE DENSE CLIENTS-STYLE TABLE for Events — exact whitespace, columns, follow-up + log behavior */}
+                      <DenseGrassrootsTable
+                        targets={lifecycleDisplayTargets}
+                        activitiesByTarget={activitiesByTarget}
+                        categoryConfig={activeConfig}
+                        onLog={startInlineLog}
+                        onEdit={(t) => {
+                          // Toggle: clicking Edit on the row already open closes the inline editor.
+                          if (editDraft && !editDraft.isDraft && editDraft.id === t.id) { closeEditor(); return; }
+                          setNewDraft(null);
+                          setEditDraft(buildEditorDraft(t));
+                        }}
+                        editingTargetId={editDraft && !editDraft.isDraft ? editDraft.id : null}
+                        renderInlineEditor={() => (
                           <EventTargetInlineEditor
+                            inline
                             key={editDraft.id}
                             draft={editDraft}
                             saving={savingDraft}
@@ -6306,15 +6368,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                             previewingAttachmentId={previewingAttachmentId}
                             organizerOptions={organizerOptions}
                           />
-                        </div>
-                      )}
-                      {/* THE DENSE CLIENTS-STYLE TABLE for Events — exact whitespace, columns, follow-up + log behavior */}
-                      <DenseGrassrootsTable
-                        targets={lifecycleDisplayTargets}
-                        activitiesByTarget={activitiesByTarget}
-                        categoryConfig={activeConfig}
-                        onLog={startInlineLog}
-                        onEdit={(t) => { setNewDraft(null); setEditDraft(buildEditorDraft(t)); }}
+                        )}
                         onUpdateFollowUp={updateFollowUpDate}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
