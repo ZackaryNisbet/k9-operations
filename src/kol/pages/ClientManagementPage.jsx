@@ -8,8 +8,10 @@ import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingDat
 import {
   CLIENT_CASE_TYPE_OPTIONS,
   countIncidentsInRange,
+  countOpenFollowUps,
   getClientCaseTypeLabel,
   getClientCaseStatusLabel,
+  getIncidentFollowUpState,
   getIncidentReportingPeriodRange,
   INCIDENT_REPORTING_PERIODS,
 } from "../clientManagementData";
@@ -68,6 +70,48 @@ function Pill({ color, bg, children, dot = true, onClick, title }) {
   );
 }
 
+// Follow-up badge — stacks UNDER the incident date per the DESIGN.md dense-table
+// standard. Tone is semantic; color stays calm (overdue earns red, today amber,
+// upcoming stays neutral slate, done recedes to muted) so the "one accent" rule
+// holds and only genuinely urgent rows pull the eye.
+const FOLLOW_UP_TONE = {
+  overdue: { color: C.dan, bg: C.danLt, border: `${C.dan}33` },
+  today: { color: C.warn, bg: C.warnLt, border: `${C.warn}33` },
+  upcoming: { color: C.textMut, bg: C.borderLight, border: C.border },
+  done: { color: C.textMut, bg: "transparent", border: "transparent" },
+};
+
+function FollowUpBadge({ state, canManage, onToggle }) {
+  if (!state?.has) return null;
+  const tone = FOLLOW_UP_TONE[state.tone] || FOLLOW_UP_TONE.upcoming;
+  const dueText = fmtDate(state.dueKey);
+  const label = state.tone === "overdue" ? "Overdue"
+    : state.tone === "today" ? "Due today"
+    : state.tone === "done" ? "Followed up"
+    : `Due ${dueText}`;
+  const title = state.completed
+    ? `Follow-up done${canManage ? ". Click to reopen." : ""}`
+    : `Follow-up due ${dueText}${canManage ? ". Click to mark done." : ""}`;
+  return (
+    <button
+      type="button"
+      onClick={canManage && onToggle ? onToggle : undefined}
+      title={title}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4, marginTop: 3,
+        padding: state.tone === "done" ? "1px 2px" : "1px 7px",
+        borderRadius: 999, background: tone.bg, color: tone.color,
+        border: state.tone === "done" ? "none" : `1px solid ${tone.border}`,
+        fontSize: 10, fontWeight: 800, letterSpacing: "0.01em", whiteSpace: "nowrap",
+        cursor: canManage && onToggle ? "pointer" : "default", fontFamily: "inherit",
+      }}
+    >
+      {state.completed && <I.Check style={{ width: 10, height: 10 }} />}
+      {label}
+    </button>
+  );
+}
+
 function formatBytes(bytes) {
   const n = Number(bytes) || 0;
   if (n < 1024) return `${n} B`;
@@ -84,7 +128,7 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-const TABLE_GRID = "176px 104px minmax(160px, 1fr) 122px 128px 110px 40px";
+const TABLE_GRID = "176px 124px minmax(160px, 1fr) 122px 128px 110px 40px";
 
 export default function ClientManagementPage({ data, profile, addGlobalToast = () => {} }) {
   const [loading, setLoading] = useState(true);
@@ -94,6 +138,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [period, setPeriod] = useState("ytd");
+  const [followUpOnly, setFollowUpOnly] = useState(false);
   const [activeDogCounts, setActiveDogCounts] = useState(null);
 
   const [showModal, setShowModal] = useState(false);
@@ -102,6 +147,8 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
   const [newDate, setNewDate] = useState(todayStr());
   const [newSubject, setNewSubject] = useState("");
   const [newNote, setNewNote] = useState("");
+  const [newFollowUp, setNewFollowUp] = useState("");
+  const [newFollowUpNote, setNewFollowUpNote] = useState("");
   const [newFile, setNewFile] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -186,6 +233,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
   );
 
   const openCount = useMemo(() => incidentCases.filter((row) => row.status !== "closed").length, [incidentCases]);
+  const openFollowUpCount = useMemo(() => countOpenFollowUps(incidentCases, asOf), [incidentCases, asOf]);
 
   const filteredCases = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -195,17 +243,23 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
       if (start && (!incidentDate || incidentDate < start)) return false;
       if (end && (!incidentDate || incidentDate > end)) return false;
       if (typeFilter && row.case_type !== typeFilter) return false;
+      if (followUpOnly) {
+        const fu = getIncidentFollowUpState(row, asOf);
+        if (!fu.overdue && !fu.dueToday) return false;
+      }
       if (!query) return true;
       return [row.subject_name, row.summary, getClientCaseTypeLabel(row.case_type)]
         .some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [incidentCases, search, typeFilter, period, asOf]);
+  }, [incidentCases, search, typeFilter, period, followUpOnly, asOf]);
 
   const resetModal = useCallback(() => {
     setNewType("animal_incident");
     setNewDate(todayStr());
     setNewSubject("");
     setNewNote("");
+    setNewFollowUp("");
+    setNewFollowUpNote("");
     setNewFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
@@ -241,6 +295,8 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         incident_date: newDate || todayStr(),
         subject_name: newSubject.trim(),
         summary,
+        follow_up_at: newFollowUp || null,
+        follow_up_note: newFollowUp ? (newFollowUpNote.trim() || null) : null,
         metadata: { source: "incident_upload" },
         created_by_user_id: actorUserId,
         created_by_name: actorName,
@@ -287,7 +343,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
     setShowModal(false);
     resetModal();
     addGlobalToast("Incident logged", "success");
-  }, [actorName, actorUserId, addGlobalToast, loadData, newDate, newFile, newNote, newSubject, newType, resetModal, resolvedLocationId]);
+  }, [actorName, actorUserId, addGlobalToast, loadData, newDate, newFile, newFollowUp, newFollowUpNote, newNote, newSubject, newType, resetModal, resolvedLocationId]);
 
   const openDocument = useCallback(async (caseRow) => {
     const document = caseRow?.metadata?.document;
@@ -316,6 +372,26 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
       .eq("id", caseRow.id);
     if (error) {
       addGlobalToast(`Failed to update status: ${error.message || "Unknown error"}`, "error");
+      return;
+    }
+    await loadData();
+  }, [actorName, actorUserId, addGlobalToast, canManage, loadData]);
+
+  const toggleFollowUp = useCallback(async (caseRow) => {
+    if (!canManage || !caseRow?.id || !caseRow?.follow_up_at) return;
+    const completing = !caseRow.follow_up_completed_at;
+    const { error } = await supabase
+      .from("client_incident_cases")
+      .update({
+        follow_up_completed_at: completing ? new Date().toISOString() : null,
+        follow_up_completed_by_user_id: completing ? actorUserId : null,
+        follow_up_completed_by_name: completing ? actorName : null,
+        updated_by_user_id: actorUserId,
+        updated_by_name: actorName,
+      })
+      .eq("id", caseRow.id);
+    if (error) {
+      addGlobalToast(`Failed to update follow-up: ${error.message || "Unknown error"}`, "error");
       return;
     }
     await loadData();
@@ -494,6 +570,19 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
               </button>
             );
           })}
+          {(openFollowUpCount > 0 || followUpOnly) && (
+            <>
+              <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: C.border, margin: "2px 3px" }} />
+              <button
+                onClick={() => setFollowUpOnly((v) => !v)}
+                title="Show only incidents with a follow-up due today or overdue"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 11px", borderRadius: 8, border: `1.5px solid ${followUpOnly ? C.warn : C.border}`, background: followUpOnly ? C.warn : "transparent", color: followUpOnly ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+              >
+                <I.Clock style={{ width: 12, height: 12 }} />
+                Needs follow-up {openFollowUpCount}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -529,6 +618,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
             const meta = typeMeta(row.case_type);
             const sMeta = statusMeta(row.status);
             const document = row?.metadata?.document;
+            const followUp = getIncidentFollowUpState(row, asOf);
             return (
               <div
                 key={row.id}
@@ -537,7 +627,10 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
                 <div>
                   <Pill color={meta.color} bg={meta.bg}>{meta.short}</Pill>
                 </div>
-                <div style={{ color: C.textSec, fontWeight: 600 }}>{row.incident_date ? fmtDate(row.incident_date) : "—"}</div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <span style={{ color: C.textSec, fontWeight: 600 }}>{row.incident_date ? fmtDate(row.incident_date) : "—"}</span>
+                  <FollowUpBadge state={followUp} canManage={canManage} onToggle={() => toggleFollowUp(row)} />
+                </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.subject_name}>{row.subject_name || "—"}</div>
                   <div style={{ color: C.textMut, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.summary}>{row.summary || ""}</div>
@@ -633,6 +726,12 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
             </div>
 
             <Inp label="Short Note (optional)" type="textarea" rows={2} value={newNote} onChange={setNewNote} placeholder="One line of context. Leave blank to auto-fill from the type and subject." />
+
+            {/* Follow-up — first-class, so it can be tracked, filtered, and flagged overdue */}
+            <div style={{ display: "grid", gridTemplateColumns: "190px 1fr", gap: 12, alignItems: "start" }}>
+              <Inp label="Follow-up Date (optional)" type="date" value={newFollowUp} onChange={setNewFollowUp} />
+              <Inp label="Follow-up Note" value={newFollowUpNote} onChange={setNewFollowUpNote} placeholder={newFollowUp ? "e.g. Call owner re: vet recheck" : "Set a date to add a follow-up"} disabled={!newFollowUp} />
+            </div>
 
             {/* PDF upload */}
             <div>
