@@ -2007,7 +2007,7 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], attachme
             {!draft.isDraft && (
               <div className="grassroots-event-commentary">
                 <div className="grassroots-event-commentary-header">
-                  <Label>{categoryId === "drops" ? "Drops" : "Developments"}</Label>
+                  <Label>{categoryId === "drops" ? "Visits" : "Developments"}</Label>
                   <button type="button" onClick={onLog} disabled={!canLog || !onLog} className="grassroots-comment-add-button">
                     <I.MessageSquare /> {categoryConfig.logLabel}
                   </button>
