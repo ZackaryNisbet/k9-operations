@@ -2928,7 +2928,7 @@ function DenseGrassrootsTable({
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                 <button
                   onClick={(e) => handleCountClick(target.id, e)}
-                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", background: targetActivities.length > 0 ? `${C.acc}20` : C.bg, color: targetActivities.length > 0 ? C.acc : C.textMut }}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", background: targetActivities.length > 0 ? `${C.pri}14` : C.bg, color: targetActivities.length > 0 ? C.pri : C.textMut }}
                   title={`${targetActivities.length} updates — click to expand`}
                 >
                   {targetActivities.length}
