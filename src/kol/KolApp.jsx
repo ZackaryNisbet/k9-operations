@@ -353,6 +353,7 @@ const MANAGER_NAV_ITEMS = [
 // stays scannable in seconds. Anything pulled from the rail must have a Home card.
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "calendar", label: "Calendar", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "grassroots", label: "Marketing", icon: "TrendingUp" },
   { id: "inventory", label: "Inventory", icon: "Package" },
