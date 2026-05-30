@@ -178,7 +178,7 @@ Every list/record surface in the app uses this exact pattern (first established 
 - **Row actions** are compact icon-only buttons (pencil/trash), right-aligned; reorder via small ▲▼ when applicable.
 - Wide tables scroll horizontally (`overflow-x: auto`) rather than shrinking columns illegibly.
 
-**Reference component:** `DenseGrassrootsTable` + the per-category column-map pattern in `GrassrootsPage.jsx`. New list surfaces should reuse a shared extraction of this rather than re-implementing.
+**Reference component:** `DenseGrassrootsTable` + the per-category column-map pattern in `GrassrootsPage.jsx` — the visual reference these were lifted from. The shared extraction now exists: compose `DenseTable`, `StatusPill`, `ListSearchRow`/`PillFilter`, `ListTabBar`, and `ListExplainer` from `src/shared/listSurface.jsx` (documented in `docs/shared-list-surface.md`). New list surfaces should reuse these rather than re-implementing the chrome.
 
 ## 6. Do's and Don'ts
 
