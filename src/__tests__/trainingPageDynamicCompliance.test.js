@@ -273,11 +273,41 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('from("labor_compliance_requirements")');
     expect(source).toContain(".update({");
     expect(source).toContain("is_active: false");
-    expect(source).toContain('display_group: "custom"');
+    // Custom columns persist a configurable display_group (default "custom") so groups are first-class.
+    expect(source).toContain("display_group: getComplianceGroupKey(complianceRequirementGroup");
+    expect(source).toContain("setComplianceRequirementGroup");
     expect(source).toContain('ui_kind: "custom_yes_no"');
     expect(source).not.toContain("Review policy");
     expect(source).not.toContain("Franchisor Training Guide");
     expect(source).not.toContain("Dog CPR Certification");
     expect(source).not.toContain("PPBC Level 1");
+  });
+
+  it("renders a dynamic Compliance metrics header grouped by display_group", () => {
+    // Roster-wide metrics builder, wired above the Employees grid and reused on Summary.
+    expect(performanceReviewDataSource).toContain("export function buildLaborComplianceMetrics");
+    expect(performanceReviewDataSource).toContain("export function getLaborComplianceMetricState");
+    expect(performanceReviewDataSource).toContain("COMPLIANCE_GROUP_LABELS");
+    expect(source).toContain("buildLaborComplianceMetrics");
+    expect(source).toContain("const complianceMetrics = useMemo");
+    expect(source).toContain("const ComplianceMetricsHeader =");
+    expect(source).toContain('<ComplianceMetricsHeader metrics={complianceMetrics} variant="full" />');
+    expect(source).toContain('<ComplianceMetricsHeader metrics={complianceMetrics} variant="headline" />');
+    // Headline metrics: # overdue leads, plus due-in-7-days and a compliant %.
+    expect(source).toContain('label="Overdue"');
+    expect(source).toContain('label="Due in 7 Days"');
+    expect(source).toContain('label="Compliant"');
+    // The bogus "in progress / started" surfaces are gone for compliance cells.
+    expect(source).not.toContain("checkpoint evidence pending");
+    expect(performanceReviewDataSource).not.toContain('label: "In Progress"');
+    expect(reviewGridSource).not.toContain("is-in-progress");
+  });
+
+  it("surfaces requirement groups as a first-class Requirements column and editor field", () => {
+    expect(source).toContain("<th style={complianceTableHeaderStyle}>Group</th>");
+    expect(source).toContain("getComplianceGroupLabel(requirement.display_group)");
+    expect(source).toContain("colSpan={5 + compliancePositionColumns.length}");
+    expect(source).toContain('{ value: "reviews", label: "Performance Review" }');
+    expect(source).toContain('{ value: "training", label: "Training" }');
   });
 });

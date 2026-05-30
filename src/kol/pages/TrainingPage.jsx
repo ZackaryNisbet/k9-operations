@@ -86,6 +86,9 @@ import {
   getPerformanceReviewCompliance,
   getLaborComplianceCellState,
   isWaivedLaborComplianceState,
+  buildLaborComplianceMetrics,
+  getComplianceGroupLabel,
+  getComplianceGroupKey,
   PERFORMANCE_REVIEW_CYCLES,
   PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY,
   normalizePerformanceReviewTemplateRoleKey,
@@ -7537,6 +7540,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [complianceRequirementTitle, setComplianceRequirementTitle] = useState("");
   const [complianceRequirementDescription, setComplianceRequirementDescription] = useState("");
   const [complianceRequirementEvidencePolicy, setComplianceRequirementEvidencePolicy] = useState("checkbox_only");
+  const [complianceRequirementGroup, setComplianceRequirementGroup] = useState("custom");
   const [savingComplianceRequirement, setSavingComplianceRequirement] = useState(false);
   const [deletingComplianceRequirementId, setDeletingComplianceRequirementId] = useState("");
   const performanceReviewEvidenceFileInputRef = useRef(null);
@@ -13106,6 +13110,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setComplianceRequirementTitle("");
     setComplianceRequirementDescription("");
     setComplianceRequirementEvidencePolicy("checkbox_only");
+    setComplianceRequirementGroup("custom");
   }, []);
 
   const openComplianceRequirementEditor = useCallback((requirement = null) => {
@@ -13121,6 +13126,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setComplianceRequirementTitle(requirement ? normalizeComplianceRequirementLabel(requirement) : "");
     setComplianceRequirementDescription(requirement?.description || "");
     setComplianceRequirementEvidencePolicy(requirement?.evidence_policy || "checkbox_only");
+    setComplianceRequirementGroup(getComplianceGroupKey(requirement?.display_group || "custom"));
     setComplianceRequirementEditorOpen(true);
   }, [addGlobalToast, canManageCompliancePolicy]);
 
@@ -13156,6 +13162,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       title,
       description: complianceRequirementDescription.trim() || null,
       evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
+      display_group: getComplianceGroupKey(complianceRequirementGroup || "custom"),
       updated_by_user_id: actorUserId || null,
     };
     const nowIso = new Date().toISOString();
@@ -13167,7 +13174,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ...sharedPayload,
       renewal_due_date_required: false,
       due_rule: {},
-      display_group: "custom",
       display_order: maxDisplayOrder + 10,
       is_active: true,
       metadata: {
@@ -13223,6 +13229,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     complianceRequirementEditingId,
     complianceRequirementDescription,
     complianceRequirementEvidencePolicy,
+    complianceRequirementGroup,
     complianceRequirementTitle,
     laborCompliancePolicyRequirements,
     refreshLaborData,
@@ -15485,35 +15492,16 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       row.sourceGroupLabel,
     ].some((value) => String(value || "").toLowerCase().includes(q)));
   }, [sortedHourAnalysisRows, capacitySearch]);
-  const performanceReviewOverview = useMemo(() => {
-    const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
-    return [
-      {
-        label: "Needs Attention",
-        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Non-compliant").length,
-        color: C.dan,
-        helper: "active employees",
-      },
-      {
-        label: "Past Due",
-        value: cycles.filter((cycle) => String(cycle.status) === "overdue").length,
-        color: C.warn,
-        helper: activePerformanceReviewCycles.length === 0 ? "No checkpoints configured" : "configured checkpoints",
-      },
-      {
-        label: "Started",
-        value: cycles.filter((cycle) => String(cycle.status) === "in_progress").length,
-        color: C.info,
-        helper: "checkpoint evidence pending",
-      },
-      {
-        label: "Complete",
-        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Compliant").length,
-        color: C.suc,
-        helper: "active employees",
-      },
-    ];
-  }, [activePerformanceReviewRows, activePerformanceReviewCycles]);
+  // Roster-wide Compliance metrics (dynamic per-requirement + per-group, # overdue / # due in 7
+  // days / compliant %). Mirrors the Training tab's metric header and powers ComplianceMetricsHeader.
+  const complianceMetrics = useMemo(() => buildLaborComplianceMetrics({
+    employees: activePerformanceReviewRows.map((row) => ({
+      id: getLaborEmployeeRowId(row),
+      requirements: row.performance_review_policy_employee?.requirements || row.requirements || [],
+    })),
+    requirements: toObjectRows(laborCompliancePolicyRequirements),
+    today: todayStr(),
+  }), [activePerformanceReviewRows, laborCompliancePolicyRequirements]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -16463,6 +16451,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           onChange={setComplianceRequirementDescription}
           placeholder="Optional context"
         />
+        <label style={{ display: "block" }}>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Group</span>
+          <CustomSelect
+            value={complianceRequirementGroup}
+            onChange={setComplianceRequirementGroup}
+            options={[
+              { value: "custom", label: "Custom" },
+              { value: "reviews", label: "Performance Review" },
+              { value: "training", label: "Training" },
+            ]}
+          />
+          <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 650 }}>Groups this column on the Employees metrics header and the Requirements list.</div>
+        </label>
         <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Evidence</span>
           <CustomSelect
@@ -18348,6 +18349,100 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       </div>
     </Card>
   );
+
+  // Compliance metrics header: headline tiles (Overdue emphasized) + dynamic per-group score% and
+  // per-requirement breakdown. variant="full" adds the group breakdown; "headline" shows tiles only.
+  const complianceScoreColor = (p) => (
+    p == null ? C.textMut : p >= 100 ? C.suc : p >= 80 ? C.pri : p >= 50 ? C.warn : C.dan
+  );
+  const ComplianceMetricsHeader = ({ metrics, variant = "full" }) => {
+    if (!metrics) return null;
+    const groups = Array.isArray(metrics.groups) ? metrics.groups : [];
+    return (
+      <div style={{ display: "grid", gap: 14, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <MetricCard
+            label="Overdue"
+            value={metrics.overdueCount}
+            color={metrics.overdueCount > 0 ? C.dan : C.text}
+            helper="checkpoints past due"
+          />
+          <MetricCard
+            label="Due in 7 Days"
+            value={metrics.dueSoonCount}
+            color={metrics.dueSoonCount > 0 ? C.warn : C.text}
+            helper="coming due this week"
+          />
+          <MetricCard
+            label="Compliant"
+            value={metrics.compliantPct == null ? "—" : `${metrics.compliantPct}%`}
+            color={complianceScoreColor(metrics.compliantPct)}
+            helper={`${metrics.compliantCount} of ${metrics.applicableCount} checkpoints`}
+          />
+          <MetricCard
+            label="Needs Attention"
+            value={metrics.needsAttentionCount}
+            color={metrics.needsAttentionCount > 0 ? C.dan : C.suc}
+            helper="employees with an overdue item"
+          />
+        </div>
+        {variant === "full" && groups.length > 0 ? (
+          <Card style={{ padding: 0, overflow: "hidden", borderRadius: 10 }}>
+            {groups.map((group, groupIndex) => (
+              <div
+                key={group.key}
+                style={{ padding: "14px 16px", borderTop: groupIndex === 0 ? "none" : `1px solid ${C.borderLight}` }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 9, minWidth: 0, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>{group.label}</span>
+                    {group.overdue > 0 ? <Badge color="danger">{group.overdue} overdue</Badge> : null}
+                    {group.dueSoon > 0 ? <Badge color="warning">{group.dueSoon} due soon</Badge> : null}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 20, fontWeight: 950, lineHeight: 1, color: complianceScoreColor(group.compliantPct) }}>
+                      {group.compliantPct == null ? "—" : `${group.compliantPct}%`}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 750, color: C.textMut }}>{group.compliant}/{group.applicable} compliant</span>
+                  </div>
+                </div>
+                <div style={{ height: 4, borderRadius: 999, background: C.borderLight, overflow: "hidden", marginBottom: 12 }}>
+                  <div style={{ width: `${group.compliantPct || 0}%`, height: "100%", background: complianceScoreColor(group.compliantPct) }} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))", gap: 8 }}>
+                  {group.requirements.map((req) => (
+                    <div
+                      key={req.id}
+                      style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "9px 11px", background: C.surfaceHover, minWidth: 0 }}
+                    >
+                      <div
+                        style={{ fontSize: 11, fontWeight: 800, color: C.textSec, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        title={req.label}
+                      >
+                        {req.label}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 17, fontWeight: 950, color: complianceScoreColor(req.compliantPct) }}>
+                          {req.compliant}<span style={{ color: C.textMut, fontWeight: 800 }}>/{req.applicable}</span>
+                        </span>
+                        {req.overdue > 0 ? (
+                          <Badge color="danger">{req.overdue} overdue</Badge>
+                        ) : req.dueSoon > 0 ? (
+                          <Badge color="warning">{req.dueSoon} due</Badge>
+                        ) : req.compliantPct === 100 ? (
+                          <Badge color="success">All set</Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Card>
+        ) : null}
+      </div>
+    );
+  };
 
   const RecordRow = ({ rec }) => {
     const mappedProgress = pctReadinessRecordProgressById[rec.id];
@@ -25665,6 +25760,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading compliance...</Card>
           ) : null}
           {complianceView === "employees" && (
+            <>
+            <ComplianceMetricsHeader metrics={complianceMetrics} variant="full" />
             <PerformanceReviewComplianceGrid
               rows={sortedPerformanceReviewRows}
               reviewCycles={activePerformanceReviewCycles}
@@ -25686,18 +25783,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               canEditIntro={canEditLaborIntro}
               onSaveIntro={(t) => saveLaborIntro("performance-reviews", t)}
             />
+            </>
           )}
           {complianceView === "summary" && (
             <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                {performanceReviewOverview.map((item) => (
-                  <Card key={item.label} style={{ padding: 16, borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>{item.label}</div>
-                    <div style={{ fontSize: 25, fontWeight: 950, color: item.color }}>{item.value}</div>
-                    <div style={{ fontSize: 12, color: C.textMut, marginTop: 5, fontWeight: 700 }}>{item.helper}</div>
-                  </Card>
-                ))}
-              </div>
+              <ComplianceMetricsHeader metrics={complianceMetrics} variant="headline" />
               <PerformanceReviewComplianceGrid
                 variant="summary"
                 rows={sortedPerformanceReviewRows}
@@ -25726,6 +25816,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <thead>
                       <tr>
                         <th style={complianceTableHeaderStyle}>Requirement</th>
+                        <th style={complianceTableHeaderStyle}>Group</th>
                         <th style={complianceTableHeaderStyle}>Evidence Required?</th>
                         <th style={complianceTableHeaderStyle}>Type</th>
                         {compliancePositionColumns.map((position) => (
@@ -25752,6 +25843,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               {requirement.description ? (
                                 <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, lineHeight: 1.3, fontWeight: 700 }}>{requirement.description}</div>
                               ) : null}
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color="default">{getComplianceGroupLabel(requirement.display_group)}</Badge>
                             </td>
                             <td style={{ padding: "6px 14px" }}>
                               <Badge color={evidenceRequired ? "warning" : "default"}>{evidenceRequired ? "Required" : "Optional"}</Badge>
@@ -25818,7 +25912,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       })}
                       {allComplianceReviewRequirements.length === 0 && (
                         <tr>
-                          <td colSpan={4 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
+                          <td colSpan={5 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
                             No compliance requirements yet. Add one here and it will appear on the Employees grid.
                           </td>
                         </tr>
