@@ -341,19 +341,16 @@ const MANAGER_NAV_ITEMS = [
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
+// Owner/admin rail — deliberately minimal: just the highest-frequency destinations.
+// The long tail (Scheduling, Enrichments, Resources, Cash Tips, Photos, TV, etc.)
+// lives as launcher cards on the Home view, so the rail stays scannable in seconds.
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
-  { id: "scheduling", label: "Scheduling", icon: "Calendar" },
-  { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
-  { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
-  { id: "resources", label: "Resources", icon: "Book" },
   { id: "grassroots", label: "Grassroots", icon: "TrendingUp" },
-  { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
   { id: "inventory", label: "Inventory", icon: "Package" },
-  { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
-  { id: "photos", label: "Photos", icon: "Image" },
-  { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "resort-upkeep", label: "Resort Upkeep", icon: "ClipboardCheck" },
+  { id: "client-management", label: "Incidents", icon: "AlertTriangle" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
