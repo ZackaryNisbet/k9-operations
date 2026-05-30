@@ -294,21 +294,25 @@ function parseLiteUrl(pathname, dataRef) {
 // Manager roles: Home, My Work, Inventory, Cash Tips, Photos, Settings
 // Admin/owner roles: Home, Inventory, Cash Tips, Photos, Settings
 
-// Sidebar palette — a calm, light sage-tinted panel (the chrome reads as a quiet
-// neutral against the white content, with forest green carrying identity + the
-// active state). Lime is dropped from the rail entirely: it's garish on light, so
-// the active affordance is a soft green tint + forest text. OKLCH throughout;
-// neutrals are tinted toward the brand hue rather than flat gray.
+// Sidebar palette — a deep green-tinted charcoal rail. It reads as "dark grey":
+// the brand hue (152) is dialled almost to zero so the chrome is a quiet neutral
+// frame that recedes against the white content, rather than a saturated green wash.
+// The accent is concentrated in one place — the ACTIVE icon fills vivid brand green —
+// so green becomes a signal ("you are here") instead of decoration. Inactive
+// icons/labels are muted light; the active label goes near-white over a subtle,
+// nearly-neutral pill. OKLCH throughout; neutrals tinted toward the brand hue.
 const SIDEBAR = {
-  bg: "oklch(0.965 0.013 152)",
-  border: "oklch(0.9 0.018 152)",
-  divider: "oklch(0.93 0.014 152)",
-  itemText: "oklch(0.46 0.026 196)",
-  itemActive: "oklch(0.37 0.085 156)",
-  hover: "oklch(0.935 0.018 152)",
-  active: "oklch(0.915 0.05 151)",
-  muted: "oklch(0.55 0.022 196)",
-  faint: "oklch(0.64 0.018 196)",
+  bg: "oklch(0.235 0.012 152)",       // the dark rail
+  elevated: "oklch(0.285 0.014 152)", // raised surfaces on the rail (popovers)
+  border: "oklch(0.32 0.016 152)",    // seam against white content + internal edges
+  divider: "oklch(0.31 0.012 152)",   // internal hairlines
+  itemText: "oklch(0.72 0.012 152)",  // inactive label + icon: muted light
+  itemActive: "oklch(0.97 0.01 152)", // active label / logo / avatar text: near-white
+  iconActive: "oklch(0.78 0.17 150)", // active icon fill: vivid brand green
+  hover: "oklch(0.285 0.014 152)",    // inactive hover lift
+  active: "oklch(0.315 0.02 150)",    // active item pill: quiet, nearly-neutral lift
+  muted: "oklch(0.68 0.012 152)",     // secondary text (account email) — AA on the dark rail
+  faint: "oklch(0.62 0.012 152)",     // tertiary (copyright, chevrons, dropdown sublines)
 };
 
 const STAFF_NAV_ITEMS = [
@@ -1426,7 +1430,7 @@ function LeanAppInner() {
         <div style={{ padding: "20px 0 14px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 0, height: 40, boxSizing: "content-box" }}>
           {/* Fixed 68px slot (= collapsed rail width) so the logo stays the same size and position whether collapsed or expanded. */}
           <div style={{ flexShrink: 0, width: 68, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <K9LogoMini size={32} variant="dark" />
+            <K9LogoMini size={32} variant="white" />
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.18s", whiteSpace: "nowrap" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: SIDEBAR.itemActive, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.01em" }}>K9 Operations</div>
@@ -1444,7 +1448,7 @@ function LeanAppInner() {
             collapsed={!sbExpanded}
             allLocations={filteredLocations}
             profile={profile}
-            theme="light"
+            theme="dark"
           />
         </div>
 
@@ -1493,7 +1497,7 @@ function LeanAppInner() {
                 }}
               >
                 {/* Fixed 68px icon slot (= collapsed rail width): the icon stays centered at the same x in both states, so it never shifts. */}
-                <div style={{ flexShrink: 0, width: 68, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ flexShrink: 0, width: 68, display: "flex", alignItems: "center", justifyContent: "center", color: act ? SIDEBAR.iconActive : "inherit", transition: "color 0.15s ease" }}>
                   {IconComp && <IconComp />}
                 </div>
                 <span style={{ opacity: sbExpanded ? 1 : 0, transition: "opacity 0.18s ease", whiteSpace: "nowrap", overflow: "hidden" }}>{item.label}</span>
@@ -1515,7 +1519,7 @@ function LeanAppInner() {
               </button>
 
               {accountSwitchOpen && (
-                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "oklch(0.99 0.005 152)", border: `1px solid ${SIDEBAR.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(20,40,30,0.16)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: SIDEBAR.elevated, border: `1px solid ${SIDEBAR.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,0.45)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
                   <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: SIDEBAR.faint, textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
                     <div style={{ padding: "12px", fontSize: 11, color: SIDEBAR.faint, textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
@@ -1535,13 +1539,13 @@ function LeanAppInner() {
                     </button>
                   ))}
                   <div style={{ borderTop: `1px solid ${SIDEBAR.divider}`, padding: "6px 12px" }}>
-                    <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(220,38,38,0.08)", color: "#B91C1C", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 700 }}>Sign Out</button>
+                    <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(248,113,113,0.14)", color: "#FCA5A5", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 700 }}>Sign Out</button>
                   </div>
                 </div>
               )}
             </div>
           )}
-          {!sbExpanded && <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "7px 14px", border: "none", borderRadius: 8, background: "rgba(220,38,38,0.08)", color: "#B91C1C", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>&#9211;</button>}
+          {!sbExpanded && <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "7px 14px", border: "none", borderRadius: 8, background: "rgba(248,113,113,0.14)", color: "#FCA5A5", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>&#9211;</button>}
           {sbExpanded && <div style={{ textAlign: "center", fontSize: 9, color: SIDEBAR.faint, marginTop: 4, lineHeight: 1.4 }}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
 
           {switchTarget && ReactDOM.createPortal(
