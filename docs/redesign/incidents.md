@@ -8,6 +8,18 @@
 
 ---
 
+## 0. Update — post-review iteration (2026-05-30)
+
+Owner review of the first preview drove three changes, now in this PR:
+
+1. **The rate denominator was wrong (unique dogs) and is fixed to dog VOLUME.** The old `incident_active_dog_counts` RPC counted unique dogs (≈628/month for Cherry Hill), which reads as absurdly low (the resort sees that in a week). The rate now divides by **dog volume**, the per-day reservation counts that Scheduling already treats as the count authority (`gingr_reservation_widget_daily.total_reservation_volume`), summed over the window by a new `incident_rate_inputs` RPC (`supabase/migrations/20260530130000_incident_rate_inputs_rpc.sql`). For the same month that read 628, volume is **3,143**. **Unique dogs** is retained as a secondary column (both are shown). Windows where widget coverage doesn't reach the window start are flagged "partial" (the widget table currently starts 2026-04-22, so QTD/YTD are partial).
+2. **Incidents now opens to a Summary, not a metrics hero.** The gradient "Incident Rate" hero and the "rate /1k vs %" math card are gone. The landing view is a clean period table: MTD / QTD / YTD (plus TTM / Last Full Year / All Time) with `Incidents | Dog Volume | Unique Dogs | Rate /1k`. A single rate representation (per 1,000), no percentage.
+3. **Two views + filters in the search bar.** A `Summary | Log` tab bar. The **Log** view is the data-entry surface (the dense incident table), and its filter pills now live **inside** the search bar (the app-standard ClientsPage/Grassroots layout), not in a separate row below it. The period selector no longer doubles as a list filter.
+
+Everything below is the original discovery write-up; §4.1 (inverted hierarchy) and §4.5/§4.6 (metric confusion) are what this iteration resolves.
+
+---
+
 ## 1. TL;DR
 
 Incidents works, but it is upside down. The page leads with a large gradient "Incident Rate" hero plus a second full analytics table, so the operational incident log (the thing staff actually open the page to use) sits two screens down. That directly contradicts the `DESIGN.md` list standard ("plain title, no hero metrics, no big banners"). Meanwhile a rich data model is barely used: the case table has columns for severity, narrative, time, area, a second subject, and client/owner contact, plus an `under_review` status and a whole `client_incident_activity` audit table, and almost none of it is reachable from the UI. There is also a meaningful amount of dead code (an entire 350-line form library and a second, divergent metric system) kept alive only by its own unit tests.
