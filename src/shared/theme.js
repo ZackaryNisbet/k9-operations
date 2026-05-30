@@ -104,6 +104,9 @@ const LEAN_PERMISSION_AREAS = [
   "Resort Upkeep Access",
   "Resort Upkeep Complete",
   "Resort Upkeep Manage",
+  "Calendar Access",
+  "CRM Access",
+  "Marketing Directory Access",
 ];
 
 const LEAN_PERMISSION_CATEGORIES = [
@@ -111,6 +114,7 @@ const LEAN_PERMISSION_CATEGORIES = [
     { key: "Dashboard", label: "Home Metrics", desc: "View the home surface with today's metrics and workflow progress" },
     { key: "Financial Reporting", label: "Financial Reporting", desc: "View revenue, transactions, refunds, and financial charts" },
     { key: "Occupancy Reports", label: "Occupancy Reports", desc: "View occupancy trends and reports" },
+    { key: "Calendar Access", label: "Calendar", desc: "Open the aggregated operations calendar across labor, reviews, training, marketing, enrichment, and inventory" },
   ]},
   { key: "operations", label: "Operations & Daily Work", permissions: [
     { key: "My Work", label: "My Work", desc: "Use the role-based employee execution surface" },
@@ -125,6 +129,7 @@ const LEAN_PERMISSION_CATEGORIES = [
     { key: "Photos Module", label: "Photos", desc: "Open the pet photo library" },
     { key: "Photos Upload", label: "Upload Photos", desc: "Upload new pet photos" },
     { key: "Photos Edit Pairings", label: "Pair Photos", desc: "Pair, unpair, and bulk-pair photos to dogs" },
+    { key: "CRM Access", label: "CRM", desc: "Open the CRM intake for booking and employment inquiries captured from Ignite" },
   ]},
   { key: "inventory", label: "Inventory", permissions: [
     { key: "Inventory Management", label: "Inventory Access", desc: "Open the inventory count and depletion surfaces" },
@@ -154,10 +159,11 @@ const LEAN_PERMISSION_CATEGORIES = [
     { key: "Attendance Tracker", label: "Standalone Attendance", desc: "Open the standalone attendance tracker" },
     { key: "Checklist Templates", label: "Checklist Templates", desc: "Customize operation and labor templates" },
   ]},
-  { key: "grassroots", label: "Grassroots", permissions: [
-    { key: "Grassroots Access", label: "Grassroots Access", desc: "Open grassroots targets and activity history" },
-    { key: "Grassroots Log Activity", label: "Log Development", desc: "Log grassroots development updates and drops" },
-    { key: "Grassroots Edit Targets", label: "Edit Targets", desc: "Create, edit, move, and delete grassroots targets" },
+  { key: "grassroots", label: "Marketing", permissions: [
+    { key: "Grassroots Access", label: "Marketing Access", desc: "Open marketing targets and activity history" },
+    { key: "Grassroots Log Activity", label: "Log Development", desc: "Log marketing development updates and visits" },
+    { key: "Grassroots Edit Targets", label: "Edit Targets", desc: "Create, edit, move, and delete marketing targets" },
+    { key: "Marketing Directory Access", label: "Marketing Directory", desc: "Open the marketing organizations and contacts directory" },
   ]},
   { key: "resort-upkeep", label: "Resort Upkeep", permissions: [
     { key: "Resort Upkeep Access", label: "Resort Upkeep Access", desc: "Open building maintenance, local vendors, licenses, and troubleshooting" },
@@ -222,6 +228,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": false,
     "Resort Upkeep Complete": false,
     "Resort Upkeep Manage": false,
+    "Calendar Access": false,
+    "CRM Access": false,
+    "Marketing Directory Access": false,
   },
   csr: {
     "My Work": true,
@@ -272,6 +281,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": false,
     "Resort Upkeep Complete": false,
     "Resort Upkeep Manage": false,
+    "Calendar Access": false,
+    "CRM Access": false,
+    "Marketing Directory Access": false,
   },
   supervisor: {
     "My Work": true,
@@ -322,6 +334,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": true,
     "Resort Upkeep Complete": true,
     "Resort Upkeep Manage": false,
+    "Calendar Access": true,
+    "CRM Access": true,
+    "Marketing Directory Access": true,
   },
   manager: {
     "My Work": true,
@@ -372,6 +387,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": true,
     "Resort Upkeep Complete": true,
     "Resort Upkeep Manage": true,
+    "Calendar Access": true,
+    "CRM Access": true,
+    "Marketing Directory Access": true,
   },
   location_admin: {
     "My Work": true,
@@ -422,6 +440,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": true,
     "Resort Upkeep Complete": true,
     "Resort Upkeep Manage": true,
+    "Calendar Access": true,
+    "CRM Access": true,
+    "Marketing Directory Access": true,
   },
   multi_location_admin: {
     "My Work": true,
@@ -472,6 +493,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": true,
     "Resort Upkeep Complete": true,
     "Resort Upkeep Manage": true,
+    "Calendar Access": true,
+    "CRM Access": true,
+    "Marketing Directory Access": true,
   },
   enterprise_admin: {
     "My Work": true,
@@ -522,6 +546,9 @@ const LEAN_PERMISSION_MATRIX = {
     "Resort Upkeep Access": true,
     "Resort Upkeep Complete": true,
     "Resort Upkeep Manage": true,
+    "Calendar Access": true,
+    "CRM Access": true,
+    "Marketing Directory Access": true,
   },
 };
 

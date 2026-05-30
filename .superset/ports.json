@@ -1,0 +1,5 @@
+{
+  "ports": [
+    { "port": 5201, "label": "F2 — Nav + route scaffolding" }
+  ]
+}
