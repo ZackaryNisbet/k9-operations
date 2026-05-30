@@ -309,8 +309,8 @@ describe("resortUpkeepData", () => {
     expect(source).toContain("friendlyErrorMessage");
     expect(source).toContain("withUpkeepTimeout");
     expect(source).toContain("loadVendors(locationId, includeArchived)");
-    expect(source).toContain("Local vendors took too long to load.");
-    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Local vendors could not be loaded.\"));");
+    expect(source).toContain("Vendors took too long to load.");
+    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Vendors could not be loaded.\"));");
     expect(source).toContain("return subscribeToResortUpkeep(locationId, () => load({ silent: true }));");
     expect(source).toContain("loadLicenses(locationId, includeInactive)");
     expect(source).toContain("Licenses took too long to load.");
@@ -340,10 +340,13 @@ describe("resortUpkeepData", () => {
     expect(source).not.toContain("Live Supabase");
     expect(source).not.toContain("tabRail");
 
-    // The other tabs' record panels still exist.
-    expect(source).toContain("Track contractors, service partners, contract proof, and development notes.");
-    expect(source).toContain("Keep permits, compliance requirements, proof files, and renewal timing in one view.");
-    expect(source).toContain("Search the facilities reference without leaving the upkeep workflow.");
+    // The rebuilt record surfaces (Vendors / Licenses / Settings) and the photo-required flag.
+    expect(source).toContain("VendorEditorModal");
+    expect(source).toContain("LicenseEditorModal");
+    expect(source).toContain("SettingsPanel");
+    expect(source).toContain("requires_photo");
+    // Maintenance is no longer a tab in the rail.
+    expect(source).not.toContain('{ id: "maintenance", label: "Maintenance" }');
     expect(source).toContain("LoadingRows");
   });
 

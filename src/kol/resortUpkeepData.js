@@ -1,6 +1,7 @@
 import { supabase } from "../supabaseClient";
 
 export const RESORT_UPKEEP_ATTACHMENT_BUCKET = "resort-upkeep-attachments";
+export const UPKEEP_SERVICE_FREQUENCIES = ["Daily", "Weekly", "Bi-weekly", "Monthly", "Bi-monthly", "Quarterly", "Biannually", "Annually"];
 export const BUILDING_MAINTENANCE_SLUGS = [
   "building-maintenance-monthly",
   "building-maintenance-quarterly",
@@ -130,6 +131,16 @@ export async function reopenMaintenancePeriod(periodId, reason, actorName = null
   return data;
 }
 
+export function upkeepVendorMeta(vendor) {
+  const md = vendor?.metadata && typeof vendor.metadata === "object" ? vendor.metadata : {};
+  return { trade: md.trade || "", frequency: md.frequency || "", cost: md.cost ?? "" };
+}
+
+export function upkeepLicenseMeta(license) {
+  const md = license?.metadata && typeof license.metadata === "object" ? license.metadata : {};
+  return { frequency: md.frequency || "" };
+}
+
 export async function loadVendors(locationId, includeArchived = false) {
   let query = supabase
     .from("resort_upkeep_vendors")
@@ -224,6 +235,18 @@ export async function deactivateLicense(licenseId, reason, actorName = null) {
   });
   if (error) throw error;
   return data;
+}
+
+export async function loadLicenseLogCounts(locationId) {
+  if (!locationId) return {};
+  const { data, error } = await supabase
+    .from("resort_upkeep_license_logs")
+    .select("license_id")
+    .eq("location_id", locationId);
+  if (error) throw error;
+  const counts = {};
+  (data || []).forEach((row) => { counts[row.license_id] = (counts[row.license_id] || 0) + 1; });
+  return counts;
 }
 
 export async function loadLicenseLogs(locationId, licenseId) {

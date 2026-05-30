@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { C, todayStr } from "../../shared/theme";
+import { C, todayStr, fmtPhone } from "../../shared/theme";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   addLicenseLog,
   addVendorLog,
   archiveVendor,
   buildUpkeepDueItems,
+  UPKEEP_SERVICE_FREQUENCIES,
+  upkeepVendorMeta,
+  upkeepLicenseMeta,
   deactivateLicense,
   fmtUpkeepDate,
   fmtUpkeepStatus,
   createResortUpkeepSignedUrl,
   loadLicenses,
   loadLicenseLogs,
+  loadLicenseLogCounts,
   loadMaintenancePeriodSnapshot,
   loadMaintenancePeriods,
   loadMaintenanceTemplates,
@@ -44,7 +48,6 @@ import {
 
 const TABS = [
   { id: "due", label: "Due" },
-  { id: "maintenance", label: "Maintenance" },
   { id: "vendors", label: "Vendors" },
   { id: "licenses", label: "Licenses" },
   { id: "guide", label: "Guide" },
@@ -245,6 +248,7 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   const canComplete = hasLeanPermission(profile, "Resort Upkeep Complete");
   const canManage = hasLeanPermission(profile, "Resort Upkeep Manage");
   const [tab, setTab] = useState("due");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [dashboard, setDashboard] = useState(EMPTY_DASHBOARD);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -292,7 +296,6 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   const toast = useCallback((message) => addGlobalToast({ type: "success", message }), [addGlobalToast]);
   const tabStats = useMemo(() => ({
     due: (dashboard.maintenanceSummary?.overdue || 0) + (dashboard.licenses?.non_compliant || 0) + (dashboard.licenses?.expiring_soon || 0),
-    maintenance: dashboard.maintenanceSummary?.active || 0,
     vendors: dashboard.vendors?.active || 0,
     licenses: dashboard.licenses?.non_compliant || 0,
     guide: dashboard.troubleshooting?.length || 0,
@@ -302,25 +305,54 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
     return <Shell><EmptyCard title="No location selected" text="Choose a location before opening Resort Upkeep." /></Shell>;
   }
 
+  const tabsBar = (
+    <ListTabBar
+      tabs={TABS.map((item) => ({ id: item.id, label: item.label, count: tabStats[item.id] }))}
+      activeId={tab}
+      onChange={setTab}
+    />
+  );
+
   return (
     <Shell>
-      <ListSurfaceTitle>Resort Upkeep</ListSurfaceTitle>
+      <ListSurfaceTitle
+        actions={canManage ? (
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((v) => !v)}
+            title="Resort Upkeep settings"
+            aria-label="Resort Upkeep settings"
+            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 9, border: `1px solid ${settingsOpen ? C.pri : C.border}`, background: settingsOpen ? C.priLt : "#fff", color: settingsOpen ? C.pri : C.textMut, cursor: "pointer" }}
+          >
+            <GearIcon />
+          </button>
+        ) : null}
+      >
+        Resort Upkeep
+      </ListSurfaceTitle>
 
       {error && <div style={{ marginBottom: 12 }}><InlineAlert tone="warning">{error}</InlineAlert></div>}
 
-      <ListTabBar
-        tabs={TABS.map((item) => ({ id: item.id, label: item.label, count: tabStats[item.id] }))}
-        activeId={tab}
-        onChange={setTab}
-        style={{ marginBottom: 14 }}
-      />
-
-      {tab === "due" && <DuePanel locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onOpenTab={setTab} onRefresh={load} toast={toast} />}
-      {tab === "maintenance" && <MaintenancePanel locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onRefresh={load} toast={toast} />}
-      {tab === "vendors" && <VendorsPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
-      {tab === "licenses" && <LicensesPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
-      {tab === "guide" && <TroubleshootingPanel articles={dashboard.troubleshooting || []} />}
+      {settingsOpen ? (
+        <SettingsPanel locationId={locationId} actor={actor} canManage={canManage} onClose={() => setSettingsOpen(false)} toast={toast} />
+      ) : (
+        <>
+          {tab === "due" && <DuePanel tabsBar={tabsBar} locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onOpenTab={setTab} onRefresh={load} toast={toast} />}
+          {tab === "vendors" && <VendorsPanel tabsBar={tabsBar} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
+          {tab === "licenses" && <LicensesPanel tabsBar={tabsBar} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
+          {tab === "guide" && <TroubleshootingPanel tabsBar={tabsBar} articles={dashboard.troubleshooting || []} />}
+        </>
+      )}
     </Shell>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
   );
 }
 
@@ -357,7 +389,7 @@ function formatDueRange(item) {
 // (active maintenance periods from the dashboard, plus licenses and vendor
 // contracts). Maintenance rows open a completion modal; license/vendor rows
 // jump to their own tab. No new RPC, no migration.
-function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefresh, toast }) {
+function DuePanel({ tabsBar, locationId, actor, dashboard, canComplete, onOpenTab, onRefresh, toast }) {
   const [licenses, setLicenses] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -399,17 +431,18 @@ function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefr
   );
   const counts = useMemo(() => ({
     all: windowItems.length,
+    overdue: windowItems.filter((item) => item.tone === "danger").length,
     maintenance: windowItems.filter((item) => item.kind === "maintenance").length,
     license: windowItems.filter((item) => item.kind === "license").length,
     vendor: windowItems.filter((item) => item.kind === "vendor").length,
   }), [windowItems]);
-  const overdueCount = useMemo(() => windowItems.filter((item) => item.tone === "danger").length, [windowItems]);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return windowItems.filter((item) =>
-      (kind === "all" || item.kind === kind)
-      && (!needle || `${item.title} ${item.subtitle} ${item.frequency}`.toLowerCase().includes(needle))
-    );
+    return windowItems.filter((item) => {
+      const matchesKind = kind === "all" ? true : kind === "overdue" ? item.tone === "danger" : item.kind === kind;
+      const matchesText = !needle || `${item.title} ${item.subtitle} ${item.frequency}`.toLowerCase().includes(needle);
+      return matchesKind && matchesText;
+    });
   }, [windowItems, kind, query]);
 
   const activePeriods = dashboard.maintenance || [];
@@ -480,6 +513,7 @@ function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefr
     <div>
       <ListSearchRow value={query} onChange={setQuery} placeholder="Search what's due">
         <PillFilter active={kind === "all"} count={counts.all} onClick={() => setKind("all")}>All</PillFilter>
+        <PillFilter active={kind === "overdue"} count={counts.overdue} variant="solid" color={C.dan} onClick={() => setKind(kind === "overdue" ? "all" : "overdue")}>Overdue</PillFilter>
         <PillFilter active={kind === "maintenance"} count={counts.maintenance} onClick={() => setKind("maintenance")}>Maintenance</PillFilter>
         <PillFilter active={kind === "license"} count={counts.license} onClick={() => setKind("license")}>Licenses</PillFilter>
         <PillFilter active={kind === "vendor"} count={counts.vendor} onClick={() => setKind("vendor")}>Vendors</PillFilter>
@@ -488,6 +522,7 @@ function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefr
           <PillFilter key={String(opt.id)} active={windowDays === opt.id} onClick={() => setWindowDays(opt.id)} title={`Due within ${opt.label}`}>{opt.label}</PillFilter>
         ))}
       </ListSearchRow>
+      {tabsBar}
       <ListExplainer>
         Everything overdue or coming due across building maintenance, licenses, and vendor contracts. Open a maintenance row to complete its checklist.
       </ListExplainer>
@@ -508,7 +543,7 @@ function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefr
             getRowKey={(r) => r.id}
             minWidth={660}
             onRowClick={handleRow}
-            emptyText={overdueCount ? "Nothing matches these filters." : "You're current. Widen the window to look further ahead."}
+            emptyText={counts.overdue ? "Nothing matches these filters." : "You're current. Widen the window to look further ahead."}
           />
         )}
       </div>
@@ -536,7 +571,6 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
   const [snapshot, setSnapshot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pdf, setPdf] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -566,19 +600,6 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
   const submitted = ["submitted", "submitted_late", "late_submitted"].includes(computedStatus);
   const canEdit = canComplete && (snapshot?.canEdit ?? true) && !submitted;
 
-  const toggleItem = async (item) => {
-    if (!canEdit || busyKey) return;
-    setBusyKey(item.key);
-    try {
-      await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked: !item.state?.checked, notes: item.state?.notes || "", actorName: actor });
-      await reload();
-    } catch (e) {
-      setError(friendlyErrorMessage(e, "That item could not be updated."));
-    } finally {
-      setBusyKey("");
-    }
-  };
-
   const pickPdf = async (file) => {
     if (!file) return;
     setUploading(true);
@@ -588,7 +609,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
       let url = "";
       try { url = await createResortUpkeepSignedUrl({ storage_path: uploaded.path }); } catch { /* link is best-effort */ }
       setPdf({ name: file.name || uploaded.safeName, size: file.size || 0, url });
-      if (toast) toast("Checklist PDF uploaded");
+      if (toast) toast("Checklist PDF attached");
     } catch (e) {
       setError(friendlyErrorMessage(e, "That PDF could not be uploaded."));
     } finally {
@@ -639,56 +660,41 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
         <div style={muBody}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{done}/{total} items complete</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{pct}%</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{pct}%</div>
+              {pdf?.url ? (
+                <a href={pdf.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.pri }} title={pdf.name}>PDF attached ✓</a>
+              ) : null}
+              {canEdit ? (
+                <label style={{ ...muSmallBtn, opacity: uploading ? 0.6 : 1, cursor: uploading ? "default" : "pointer" }} title="Attach a signed, scanned checklist PDF as the record of completion">
+                  {uploading ? "Uploading…" : pdf ? "Replace PDF" : "Attach PDF"}
+                  <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={uploading} onChange={(e) => pickPdf(e.target.files?.[0])} />
+                </label>
+              ) : null}
+            </div>
           </div>
           <div style={muProgressTrack}>
             <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: allComplete ? C.suc : C.pri, transition: "width 0.3s" }} />
           </div>
 
           <div style={{ marginTop: 16 }}>
-            <div style={sectionLabel}>Complete by upload</div>
-            <div style={muUploadZone}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {pdf ? (
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, wordBreak: "break-word" }}>
-                    {pdf.name} <span style={{ color: C.textMut, fontWeight: 600 }}>({Math.max(1, Math.round((pdf.size || 0) / 1024))} KB)</span>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.4 }}>Upload a signed, scanned checklist (PDF) as the record of completion.</div>
-                )}
-                {pdf?.url ? <a href={pdf.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 700 }}>View uploaded PDF</a> : null}
-              </div>
-              <label style={{ ...primaryBtn, opacity: uploading ? 0.6 : 1, whiteSpace: "nowrap", cursor: uploading ? "default" : "pointer" }}>
-                {uploading ? "Uploading…" : pdf ? "Replace PDF" : "Upload PDF"}
-                <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={uploading} onChange={(e) => pickPdf(e.target.files?.[0])} />
-              </label>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={sectionLabel}>Or complete in app</div>
             {loading ? (
-              <div style={{ marginTop: 10 }}><LoadingRows /></div>
+              <div style={{ display: "grid", gap: 8 }}><LoadingRows /></div>
             ) : items.length === 0 ? (
-              <div style={{ marginTop: 10, color: C.textMut, fontSize: 13 }}>This checklist has no items yet.</div>
+              <div style={{ color: C.textMut, fontSize: 13 }}>This checklist has no items yet. Add items in Settings.</div>
             ) : (
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {items.map((item) => {
-                  const checked = !!item.state?.checked;
-                  return (
-                    <div key={item.key} style={checked ? muItemDone : muItem}>
-                      <button type="button" onClick={() => toggleItem(item)} disabled={!canEdit || busyKey === item.key} aria-pressed={checked} title={checked ? "Mark not done" : "Mark done"} style={checked ? muToggleOn : muToggle}>
-                        {checked ? "✓" : ""}
-                      </button>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35 }}>{item.label}</div>
-                        {checked && (item.state?.checked_by_name || item.state?.checked_at) ? (
-                          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>Done{item.state?.checked_by_name ? ` by ${item.state.checked_by_name}` : ""}</div>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div style={{ display: "grid", gap: 8 }}>
+                {items.map((item) => (
+                  <ChecklistItemRow
+                    key={item.key}
+                    item={item}
+                    period={period}
+                    locationId={locationId}
+                    actor={actor}
+                    canEdit={canEdit}
+                    onSaved={reload}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -698,12 +704,137 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
 
         <div style={muFoot}>
           <div style={{ fontSize: 12, color: C.textMut, flex: 1, minWidth: 0 }}>
-            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pdf ? "Ready to submit with the uploaded PDF." : allComplete ? "All items complete." : "Complete every item, or upload a PDF."}
+            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pdf ? "Ready to submit with the attached PDF." : allComplete ? "All items complete." : "Progress is saved as you go. Finish the items or attach a PDF to submit."}
           </div>
           <button type="button" onClick={submit} disabled={submitDisabled} style={{ ...primaryBtn, opacity: submitDisabled ? 0.5 : 1 }}>
             {submitting ? "Submitting…" : "Submit checklist"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// One checklist line: tap to complete (with who/when attribution that persists
+// as a draft), an optional note, and photo capture. If the template marks the
+// item photo-required, the checkbox stays locked until a photo is attached.
+function ChecklistItemRow({ item, period, locationId, actor, canEdit, onSaved }) {
+  const checked = !!item.state?.checked;
+  const requiresPhoto = !!item.requires_photo;
+  const attachments = item.attachments || [];
+  const hasPhoto = attachments.length > 0;
+  const completedBy = item.state?.completed_by_name || item.state?.checked_by_name || "";
+  const completedAt = item.state?.completed_at || item.state?.checked_at || "";
+  const [note, setNote] = useState(item.state?.notes || "");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => { setNote(item.state?.notes || ""); }, [item.key, item.state?.notes]);
+
+  const persist = async (overrides) => {
+    await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked, notes: note, actorName: actor, ...overrides });
+    if (onSaved) await onSaved();
+  };
+
+  const blocked = !checked && requiresPhoto && !hasPhoto;
+
+  const toggle = async () => {
+    if (!canEdit || busy || blocked) return;
+    setBusy("toggle");
+    setError("");
+    try { await persist({ checked: !checked }); }
+    catch (e) { setError(friendlyErrorMessage(e, "Could not update this item.")); }
+    finally { setBusy(""); }
+  };
+
+  const saveNote = async () => {
+    if (!canEdit || busy || note === (item.state?.notes || "")) return;
+    setBusy("note");
+    setError("");
+    try { await persist({ notes: note }); }
+    catch (e) { setError(friendlyErrorMessage(e, "Could not save the note.")); }
+    finally { setBusy(""); }
+  };
+
+  const addPhoto = async (file) => {
+    if (!file || !canEdit) return;
+    setBusy("photo");
+    setError("");
+    try {
+      const saved = await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked, notes: note, actorName: actor });
+      const itemStateId = saved?.itemState?.id || item.state?.id;
+      const uploaded = await uploadResortUpkeepAttachment({ locationId, file, pathParts: ["maintenance", period.id, itemStateId] });
+      await recordResortUpkeepAttachment({
+        locationId,
+        attachmentScope: file.type?.startsWith("image/") ? "maintenance_item_photo" : "maintenance_item_attachment",
+        periodId: period.id,
+        itemStateId,
+        file,
+        fileName: file.name || uploaded.safeName,
+        storagePath: uploaded.path,
+        actorName: actor,
+      });
+      if (onSaved) await onSaved();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "That photo could not be uploaded."));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const openAttachment = async (attachment) => {
+    try {
+      const url = await createResortUpkeepSignedUrl(attachment);
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+    } catch { /* non-blocking */ }
+  };
+
+  return (
+    <div style={checked ? muItemDone : muItem}>
+      <button type="button" onClick={toggle} disabled={!canEdit || busy === "toggle" || blocked} aria-pressed={checked} title={blocked ? "Attach a photo first" : checked ? "Mark not done" : "Mark done"} style={checked ? muToggleOn : muToggle}>
+        {checked ? "✓" : ""}
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35 }}>{item.label}</span>
+          {requiresPhoto ? (
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.02em", color: hasPhoto ? C.suc : C.warn, background: hasPhoto ? C.sucLt : C.warnLt, padding: "1px 6px", borderRadius: 999 }}>
+              {hasPhoto ? "PHOTO ✓" : "PHOTO REQUIRED"}
+            </span>
+          ) : null}
+        </div>
+        {checked && (completedBy || completedAt) ? (
+          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>
+            Done{completedBy ? ` by ${completedBy}` : ""}{completedAt ? ` · ${fmtAuditDate(completedAt)}` : ""}
+          </div>
+        ) : null}
+        {canEdit ? (
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onBlur={saveNote}
+            placeholder="Add a note (needs cleaning, looks good, repair needed…)"
+            rows={1}
+            style={{ ...input, marginTop: 8, minHeight: 34, fontSize: 12, padding: "7px 10px" }}
+          />
+        ) : note ? (
+          <div style={{ marginTop: 6, fontSize: 12, color: C.textSec, whiteSpace: "pre-wrap" }}>{note}</div>
+        ) : null}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          {canEdit ? (
+            <label style={{ ...muSmallBtn, cursor: busy === "photo" ? "default" : "pointer", opacity: busy === "photo" ? 0.6 : 1 }}>
+              {busy === "photo" ? "Uploading…" : "Add photo"}
+              <input type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => addPhoto(e.target.files?.[0])} />
+            </label>
+          ) : null}
+          {attachments.map((attachment) => (
+            <button key={attachment.id} type="button" onClick={() => openAttachment(attachment)} style={muSmallBtn} title={attachment.file_name || "Attachment"}>
+              {attachment.file_name ? String(attachment.file_name).slice(0, 22) : "Photo"}
+            </button>
+          ))}
+          {busy === "note" ? <span style={{ fontSize: 11, color: C.textMut }}>Saving…</span> : null}
+        </div>
+        {error ? <div style={{ marginTop: 6, fontSize: 11, color: C.dan, fontWeight: 700 }}>{error}</div> : null}
       </div>
     </div>
   );
@@ -715,11 +846,43 @@ const muHead = { padding: "16px 20px", borderBottom: `1px solid ${C.borderLight}
 const muBody = { padding: "16px 20px", overflowY: "auto" };
 const muFoot = { padding: "12px 20px", borderTop: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 12 };
 const muProgressTrack = { marginTop: 10, height: 6, borderRadius: 999, background: C.borderLight, overflow: "hidden" };
-const muUploadZone = { marginTop: 8, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: 14, background: C.surfaceHover, display: "flex", alignItems: "center", gap: 12 };
+const muSmallBtn = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text, padding: "5px 10px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" };
+const muSmallPrimary = { border: 0, borderRadius: 8, background: C.pri, color: "#fff", padding: "5px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
 const muItem = { display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#fff" };
 const muItemDone = { ...muItem, borderColor: "#BBF7D0", background: "#F0FDF4" };
 const muToggle = { width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: "transparent", cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" };
 const muToggleOn = { ...muToggle, border: `1.5px solid ${C.suc}`, background: C.suc, color: "#fff" };
+
+// Reusable modal shell + labelled field for the Vendors/Licenses/Settings editors.
+function UpkeepModal({ title, subtitle, onClose, children, footer, maxWidth = 640 }) {
+  return (
+    <div style={muOverlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ ...muCard, maxWidth }} role="dialog" aria-modal="true">
+        <div style={muHead}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, lineHeight: 1.2, wordBreak: "break-word" }}>{title}</div>
+            {subtitle ? <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{subtitle}</div> : null}
+          </div>
+          <button type="button" onClick={onClose} style={secondaryBtn}>Close</button>
+        </div>
+        <div style={muBody}>{children}</div>
+        {footer ? <div style={muFoot}>{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function MField({ label, children, hint }) {
+  return (
+    <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: C.textMut, marginBottom: 12 }}>
+      {label}
+      {children}
+      {hint ? <span style={{ fontSize: 11, fontWeight: 500, textTransform: "none", letterSpacing: 0, color: C.textMut }}>{hint}</span> : null}
+    </label>
+  );
+}
+
+const mSelect = { ...({ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff", color: C.text, padding: "9px 11px", fontSize: 13, fontFamily: "inherit", fontWeight: 600 }) };
 
 function MaintenancePanel({ locationId, actor, dashboard, canComplete, canManage, onRefresh, toast }) {
   const [selectedId, setSelectedId] = useState("");
@@ -1180,26 +1343,24 @@ function buildTemplateItemKey(slug, label, usedKeys) {
   return candidate;
 }
 
-function VendorsPanel({ locationId, actor, canManage, toast }) {
+function VendorsPanel({ tabsBar, locationId, actor, canManage, toast }) {
   const [vendors, setVendors] = useState([]);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!locationId) return;
     if (!silent) setLoading(true);
     try {
-      const rows = await withUpkeepTimeout(
-        loadVendors(locationId, includeArchived),
-        "Local vendors took too long to load."
-      );
-      setVendors(rows);
+      const data = await withUpkeepTimeout(loadVendors(locationId, includeArchived), "Vendors took too long to load.");
+      setVendors(data);
       setError("");
     } catch (nextError) {
       console.warn("Vendor load failed", nextError);
-      setError(friendlyErrorMessage(nextError, "Local vendors could not be loaded."));
+      setError(friendlyErrorMessage(nextError, "Vendors could not be loaded."));
     } finally {
       setLoading(false);
     }
@@ -1209,37 +1370,145 @@ function VendorsPanel({ locationId, actor, canManage, toast }) {
     if (!locationId) return undefined;
     return subscribeToResortUpkeep(locationId, () => load({ silent: true }));
   }, [load, locationId]);
-  const filtered = useMemo(() => vendors.filter((vendor) => [vendor.business_name, vendor.business_address, vendor.website, vendor.notes].some((value) => String(value || "").toLowerCase().includes(query.toLowerCase()))), [query, vendors]);
+
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return vendors
+      .map((vendor) => ({ vendor, meta: upkeepVendorMeta(vendor), contact: primaryContact(vendor.contact_info) }))
+      .filter(({ vendor, meta, contact }) => !needle || [meta.trade, vendor.business_name, contact.name, contact.phone, contact.email, meta.frequency].some((value) => String(value || "").toLowerCase().includes(needle)));
+  }, [vendors, query]);
+
+  const columns = useMemo(() => ([
+    { key: "trade", header: "Trade", width: "minmax(110px, 1.1fr)", sortable: true, sortValue: (r) => r.meta.trade.toLowerCase(), render: (r) => <span style={{ fontWeight: 700, color: C.text, fontSize: 12, wordBreak: "break-word" }}>{r.meta.trade || "—"}</span> },
+    { key: "company", header: "Company", width: "minmax(140px, 1.5fr)", sortable: true, sortValue: (r) => String(r.vendor.business_name).toLowerCase(), render: (r) => <span style={{ fontWeight: 700, color: C.pri, fontSize: 12, wordBreak: "break-word" }}>{r.vendor.business_name || "Untitled"}</span> },
+    { key: "contact", header: "Contact", width: "minmax(96px, 1fr)", render: (r) => <span style={{ fontSize: 12, color: C.text }}>{r.contact.name || "—"}</span> },
+    { key: "phone", header: "Phone", width: 122, render: (r) => <span style={{ fontSize: 12, color: C.text, whiteSpace: "nowrap" }}>{r.contact.phone ? fmtPhone(r.contact.phone) : "—"}</span> },
+    { key: "email", header: "Email", width: "minmax(120px, 1.2fr)", render: (r) => <span style={{ fontSize: 11, color: C.textSec, wordBreak: "break-all" }}>{r.contact.email || "—"}</span> },
+    { key: "contract", header: "Contract", width: 84, align: "center", sortable: true, sortValue: (r) => (r.vendor.has_contract ? 1 : 0), render: (r) => <SharedStatusPill tone={r.vendor.has_contract ? "success" : "neutral"}>{r.vendor.has_contract ? "Yes" : "No"}</SharedStatusPill> },
+    { key: "frequency", header: "Frequency", width: 100, sortable: true, sortValue: (r) => r.meta.frequency, render: (r) => <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec }}>{r.meta.frequency || "—"}</span> },
+    { key: "cost", header: "Cost", width: 80, align: "end", sortable: true, sortValue: (r) => Number(r.meta.cost) || 0, render: (r) => <span style={{ fontSize: 12, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{r.meta.cost !== "" && r.meta.cost != null ? `$${r.meta.cost}` : "—"}</span> },
+  ]), []);
+
   return (
-    <EntityLayout
-      title="Local Vendors"
-      subtitle="Track contractors, service partners, contract proof, and development notes."
-      canManage={canManage}
-      query={query}
-      setQuery={setQuery}
-      includeLabel="Show archived"
-      include={includeArchived}
-      setInclude={setIncludeArchived}
-      onNew={() => canManage && setSelected(blankVendor(locationId))}
-      newLabel="New vendor"
-      list={filtered}
-      loading={loading}
-      error={error}
-      onRetry={() => load()}
-      emptyTitle="No vendors found"
-      emptyText="Create vendor records for HVAC, plumbing, electrical, pest control, fire systems, and other local service providers."
-      renderRow={(vendor) => (
-        <button key={vendor.id} onClick={() => setSelected(vendor)} style={{ ...(selected?.id === vendor.id ? selectedRowButton : rowButton), opacity: vendor.is_archived ? 0.62 : 1 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-            <div style={{ fontWeight: 950, minWidth: 0 }}>{vendor.business_name || "Untitled vendor"}</div>
-            {vendor.has_contract ? <SmallPill>Contract</SmallPill> : null}
-          </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>{vendor.business_address || vendor.address_line_1 || "No address"}</div>
-          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>{vendor.website && <SmallPill>Website</SmallPill>}{vendor.is_archived && <SmallPill>Archived</SmallPill>}</div>
-        </button>
+    <div>
+      <ListSearchRow value={query} onChange={setQuery} placeholder="Search trade, company, contact…">
+        <PillFilter active={includeArchived} onClick={() => setIncludeArchived((v) => !v)}>Archived</PillFilter>
+        {canManage ? <button type="button" onClick={() => setSelected(blankVendorRecord(locationId))} style={muSmallPrimary}>+ New</button> : null}
+      </ListSearchRow>
+      {tabsBar}
+      <ListExplainer>
+        The facility vendor and utility call list: trade, company, contact, contract, service frequency and cost. A full company directory (multiple contacts and documents per company) is planned; for now this is the call list.
+      </ListExplainer>
+
+      {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div> : null}
+
+      <div style={{ marginTop: 12 }}>
+        {loading ? <div style={{ display: "grid", gap: 10 }}><LoadingRows /></div> : (
+          <DenseTable
+            columns={columns}
+            rows={rows}
+            getRowKey={(r) => r.vendor.id}
+            minWidth={820}
+            onRowClick={canManage ? (r) => setSelected(r.vendor) : undefined}
+            rowStyle={(r) => (r.vendor.is_archived ? { opacity: 0.55 } : null)}
+            emptyText="No vendors yet. Add HVAC, plumbing, electrical, fire, pest, and utility contacts."
+          />
+        )}
+      </div>
+
+      {selected ? (
+        <VendorEditorModal
+          vendor={selected}
+          locationId={locationId}
+          actor={actor}
+          canManage={canManage}
+          onClose={() => setSelected(null)}
+          onSaved={async () => { if (toast) toast("Vendor saved"); setSelected(null); await load(); }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function blankVendorRecord(locationId) {
+  return { location_id: locationId, business_name: "", has_contract: false, contact_info: [], is_archived: false, metadata: { trade: "", frequency: "", cost: "" } };
+}
+
+function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSaved }) {
+  const meta0 = upkeepVendorMeta(vendor);
+  const contact0 = primaryContact(vendor.contact_info);
+  const [trade, setTrade] = useState(meta0.trade);
+  const [company, setCompany] = useState(vendor.business_name || "");
+  const [contactName, setContactName] = useState(contact0.name);
+  const [phone, setPhone] = useState(contact0.phone);
+  const [email, setEmail] = useState(contact0.email);
+  const [hasContract, setHasContract] = useState(!!vendor.has_contract);
+  const [frequency, setFrequency] = useState(meta0.frequency);
+  const [cost, setCost] = useState(meta0.cost === "" || meta0.cost == null ? "" : String(meta0.cost));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if (!canManage) { setError("Only managers can save vendors."); return; }
+    if (!company.trim() && !trade.trim()) { setError("Add a trade or company name."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await saveVendor({
+        ...(vendor.id ? { id: vendor.id } : {}),
+        location_id: vendor.location_id || locationId,
+        business_name: company.trim() || trade.trim(),
+        has_contract: hasContract,
+        contact_info: mergePrimaryContact(vendor.contact_info, { name: contactName, role: "", phone, email, notes: "" }),
+        is_archived: !!vendor.is_archived,
+        metadata: { ...(vendor.metadata || {}), trade: trade.trim(), frequency, cost: cost === "" ? "" : Number(cost) },
+      }, actor);
+      await onSaved();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "Vendor could not be saved."));
+      setSaving(false);
+    }
+  };
+
+  const archive = async () => {
+    if (!vendor.id) return;
+    setSaving(true);
+    try { await archiveVendor(vendor.id, "Archived from web", actor); await onSaved(); }
+    catch (e) { setError(friendlyErrorMessage(e, "Vendor could not be archived.")); setSaving(false); }
+  };
+
+  return (
+    <UpkeepModal
+      title={vendor.id ? "Edit vendor" : "New vendor"}
+      onClose={onClose}
+      footer={(
+        <>
+          <div style={{ flex: 1 }}>{vendor.id && !vendor.is_archived ? <button type="button" onClick={archive} disabled={saving} style={secondaryBtn}>Archive</button> : null}</div>
+          <button type="button" onClick={save} disabled={saving || !canManage} style={{ ...primaryBtn, opacity: saving || !canManage ? 0.6 : 1 }}>{saving ? "Saving…" : "Save vendor"}</button>
+        </>
       )}
-      editor={selected && <VendorEditor vendor={selected} actor={actor} canManage={canManage} onClose={() => setSelected(null)} onSaved={async () => { toast("Vendor saved"); setSelected(null); await load(); }} />}
-    />
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px" }}>
+        <MField label="Trade"><input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Electrical, HVAC, Fire…" style={input} /></MField>
+        <MField label="Company name"><input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company" style={input} /></MField>
+        <MField label="Contact"><input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact person" style={input} /></MField>
+        <MField label="Phone"><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-5555" style={input} /></MField>
+        <MField label="Email"><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" style={input} /></MField>
+        <MField label="Frequency">
+          <select value={frequency} onChange={(e) => setFrequency(e.target.value)} style={mSelect}>
+            <option value="">—</option>
+            {UPKEEP_SERVICE_FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </MField>
+        <MField label="Cost" hint="Cost per the selected frequency."><input value={cost} onChange={(e) => setCost(e.target.value)} type="number" placeholder="0" style={input} /></MField>
+        <MField label="Contract">
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, textTransform: "none", letterSpacing: 0, color: C.text }}>
+            <input type="checkbox" checked={hasContract} onChange={(e) => setHasContract(e.target.checked)} /> Contract on file
+          </label>
+        </MField>
+      </div>
+      {error ? <div style={{ marginTop: 4 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
+    </UpkeepModal>
   );
 }
 
@@ -1406,22 +1675,26 @@ function VendorEditor({ vendor, actor, canManage, onClose, onSaved }) {
   );
 }
 
-function LicensesPanel({ locationId, actor, canManage, toast }) {
+function LicensesPanel({ tabsBar, locationId, actor, canManage, toast }) {
   const [licenses, setLicenses] = useState([]);
+  const [logCounts, setLogCounts] = useState({});
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!locationId) return;
     if (!silent) setLoading(true);
     try {
-      const rows = await withUpkeepTimeout(
-        loadLicenses(locationId, includeInactive),
+      const [data, lc] = await withUpkeepTimeout(
+        Promise.all([loadLicenses(locationId, includeInactive), loadLicenseLogCounts(locationId).catch(() => ({}))]),
         "Licenses took too long to load."
       );
-      setLicenses(rows);
+      setLicenses(data);
+      setLogCounts(lc || {});
       setError("");
     } catch (nextError) {
       console.warn("License load failed", nextError);
@@ -1435,36 +1708,223 @@ function LicensesPanel({ locationId, actor, canManage, toast }) {
     if (!locationId) return undefined;
     return subscribeToResortUpkeep(locationId, () => load({ silent: true }));
   }, [load, locationId]);
-  const filtered = useMemo(() => licenses.filter((row) => [row.requirement_name, row.issuing_organization, row.notes].some((value) => String(value || "").toLowerCase().includes(query.toLowerCase()))), [licenses, query]);
-  return (
-    <EntityLayout
-      title="Licenses"
-      subtitle="Keep permits, compliance requirements, proof files, and renewal timing in one view."
-      canManage={canManage}
-      query={query}
-      setQuery={setQuery}
-      includeLabel="Show inactive"
-      include={includeInactive}
-      setInclude={setIncludeInactive}
-      onNew={() => canManage && setSelected(blankLicense(locationId))}
-      newLabel="New license"
-      list={filtered}
-      loading={loading}
-      error={error}
-      onRetry={() => load()}
-      emptyTitle="No licenses found"
-      emptyText="Create license and compliance records for local requirements that need proof, renewal dates, or audit history."
-      renderRow={(license) => (
-        <button key={license.id} onClick={() => setSelected(license)} style={{ ...(selected?.id === license.id ? selectedRowButton : rowButton), opacity: license.is_active === false ? 0.62 : 1 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-            <div style={{ fontWeight: 950 }}>{license.requirement_name || "Untitled requirement"}</div>
-            <StatusPill status={license.is_active === false ? "inactive" : license.status} />
+
+  const counts = useMemo(() => ({
+    all: licenses.length,
+    compliant: licenses.filter((l) => l.status === "compliant").length,
+    non_compliant: licenses.filter((l) => l.status === "non_compliant").length,
+  }), [licenses]);
+
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return licenses
+      .filter((l) => (statusFilter === "all" ? true : l.status === statusFilter))
+      .filter((l) => !needle || [l.requirement_name, l.issuing_organization, upkeepLicenseMeta(l).frequency].some((v) => String(v || "").toLowerCase().includes(needle)));
+  }, [licenses, statusFilter, query]);
+
+  const today = todayStr();
+  const columns = useMemo(() => ([
+    { key: "license", header: "License", width: "minmax(150px, 1.8fr)", sortable: true, sortValue: (l) => String(l.requirement_name).toLowerCase(),
+      render: (l) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: C.pri, fontSize: 12, wordBreak: "break-word" }}>{l.requirement_name || "Untitled"}</div>
+          {l.issuing_organization ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{l.issuing_organization}</div> : null}
+        </div>
+      ) },
+    { key: "frequency", header: "Frequency", width: 104, sortable: true, sortValue: (l) => upkeepLicenseMeta(l).frequency, render: (l) => <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec }}>{upkeepLicenseMeta(l).frequency || "—"}</span> },
+    { key: "due", header: "Due date", width: "minmax(110px, 1fr)", sortable: true, sortValue: (l) => l.expiration_date || l.next_expected_date || "9999",
+      render: (l) => {
+        const d = l.expiration_date || l.next_expected_date;
+        if (!d) return <span style={{ fontSize: 11, color: C.textMut }}>—</span>;
+        const days = Math.round((new Date(`${String(d).slice(0, 10)}T12:00:00`) - new Date(`${today}T12:00:00`)) / 86400000);
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{fmtUpkeepDate(d)}</span>
+            {days < 0 ? <StackBadge tone="danger">{`Overdue ${Math.abs(days)}d`}</StackBadge> : days <= 30 ? <StackBadge tone="warning">{`Due in ${days}d`}</StackBadge> : null}
           </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut }}>{license.issuing_organization || "No organization"} · {license.expiration_date ? `Expires ${fmtUpkeepDate(license.expiration_date)}` : "No expiration"}</div>
-        </button>
+        );
+      } },
+    { key: "status", header: "Status", width: 118, render: (l) => <SharedStatusPill tone={l.is_active === false ? "neutral" : l.status === "compliant" ? "success" : "danger"}>{l.is_active === false ? "Inactive" : l.status === "compliant" ? "Compliant" : "Non-compliant"}</SharedStatusPill> },
+    { key: "update", header: "Update", width: 96, align: "center", render: (l) => (
+      <button type="button" onClick={(e) => { e.stopPropagation(); setSelected(l); }} style={{ ...muSmallBtn, padding: "3px 8px", fontSize: 11 }} title="View / add log entries">
+        Log{logCounts[l.id] ? ` · ${logCounts[l.id]}` : ""}
+      </button>
+    ) },
+  ]), [logCounts, today]);
+
+  return (
+    <div>
+      <ListSearchRow value={query} onChange={setQuery} placeholder="Search licenses…">
+        <PillFilter active={statusFilter === "all"} count={counts.all} onClick={() => setStatusFilter("all")}>All</PillFilter>
+        <PillFilter active={statusFilter === "non_compliant"} count={counts.non_compliant} variant="solid" color={C.dan} onClick={() => setStatusFilter(statusFilter === "non_compliant" ? "all" : "non_compliant")}>Non-compliant</PillFilter>
+        <PillFilter active={statusFilter === "compliant"} count={counts.compliant} onClick={() => setStatusFilter(statusFilter === "compliant" ? "all" : "compliant")}>Compliant</PillFilter>
+        <PillSeparator />
+        <PillFilter active={includeInactive} onClick={() => setIncludeInactive((v) => !v)}>Inactive</PillFilter>
+        {canManage ? <button type="button" onClick={() => setSelected(blankLicenseRecord(locationId))} style={muSmallPrimary}>+ New</button> : null}
+      </ListSearchRow>
+      {tabsBar}
+      <ListExplainer>
+        Permits and compliance requirements with renewal frequency, due dates, compliance status, proof documents, and an update log.
+      </ListExplainer>
+
+      {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div> : null}
+
+      <div style={{ marginTop: 12 }}>
+        {loading ? <div style={{ display: "grid", gap: 10 }}><LoadingRows /></div> : (
+          <DenseTable
+            columns={columns}
+            rows={rows}
+            getRowKey={(l) => l.id}
+            minWidth={720}
+            onRowClick={canManage ? (l) => setSelected(l) : undefined}
+            rowStyle={(l) => (l.is_active === false ? { opacity: 0.55 } : null)}
+            emptyText="No licenses yet. Add permits and compliance requirements that need renewal tracking."
+          />
+        )}
+      </div>
+
+      {selected ? (
+        <LicenseEditorModal
+          license={selected}
+          locationId={locationId}
+          actor={actor}
+          canManage={canManage}
+          onClose={() => setSelected(null)}
+          onSaved={async () => { if (toast) toast("License saved"); setSelected(null); await load(); }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function blankLicenseRecord(locationId) {
+  return { location_id: locationId, requirement_name: "", issuing_organization: "", status: "non_compliant", expiration_date: "", next_expected_date: "", contact_info: [], website_links: [], is_active: true, metadata: { frequency: "" } };
+}
+
+function LicenseEditorModal({ license, locationId, actor, canManage, onClose, onSaved }) {
+  const meta0 = upkeepLicenseMeta(license);
+  const [name, setName] = useState(license.requirement_name || "");
+  const [org, setOrg] = useState(license.issuing_organization || "");
+  const [frequency, setFrequency] = useState(meta0.frequency);
+  const [due, setDue] = useState(license.expiration_date || "");
+  const [status, setStatus] = useState(license.status === "compliant" ? "compliant" : "non_compliant");
+  const [attachments, setAttachments] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [logSummary, setLogSummary] = useState("");
+  const [logNote, setLogNote] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!license.id) return undefined;
+    let cancelled = false;
+    Promise.all([
+      loadResortUpkeepAttachments(locationId, { license_id: license.id }).catch(() => []),
+      loadLicenseLogs(locationId, license.id).catch(() => []),
+    ]).then(([att, lg]) => { if (!cancelled) { setAttachments(att); setLogs(lg); } });
+    return () => { cancelled = true; };
+  }, [license.id, locationId]);
+
+  const hasEvidence = attachments.some((a) => a.attachment_scope === "license_evidence" && !a.deleted_at) || !!evidenceFile;
+
+  const save = async () => {
+    if (!canManage) { setError("Only managers can save licenses."); return; }
+    if (!name.trim()) { setError("License name is required."); return; }
+    if (status === "compliant" && !hasEvidence) { setError("Attach a compliance document before marking compliant."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      const base = {
+        ...(license.id ? { id: license.id } : {}),
+        location_id: license.location_id || locationId,
+        requirement_name: name.trim(),
+        issuing_organization: org.trim(),
+        expiration_date: due || null,
+        is_active: license.is_active !== false,
+        metadata: { ...(license.metadata || {}), frequency },
+      };
+      const needsEvidenceFirst = status === "compliant" && evidenceFile;
+      const saved = await saveLicense({ ...base, status: needsEvidenceFirst ? "non_compliant" : status }, actor);
+      let final = saved;
+      if (needsEvidenceFirst) {
+        const uploaded = await uploadResortUpkeepAttachment({ locationId: saved.location_id, file: evidenceFile, pathParts: ["licenses", saved.id, "evidence"] });
+        await recordResortUpkeepAttachment({ locationId: saved.location_id, attachmentScope: "license_evidence", licenseId: saved.id, file: evidenceFile, fileName: evidenceFile.name || uploaded.safeName, storagePath: uploaded.path, actorName: actor });
+        final = await saveLicense({ ...base, id: saved.id, status: "compliant" }, actor);
+      }
+      if (logSummary || logNote) await addLicenseLog({ location_id: final.location_id, license_id: final.id, summary: logSummary || "License update", notes: logNote, status_snapshot: final.status }, actor);
+      await onSaved();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "License could not be saved."));
+      setSaving(false);
+    }
+  };
+
+  const deactivate = async () => {
+    if (!license.id) return;
+    setSaving(true);
+    try { await deactivateLicense(license.id, "Deactivated from web", actor); await onSaved(); }
+    catch (e) { setError(friendlyErrorMessage(e, "License could not be deactivated.")); setSaving(false); }
+  };
+
+  const openAttachment = async (a) => { try { const url = await createResortUpkeepSignedUrl(a); if (url) window.open(url, "_blank", "noopener,noreferrer"); } catch { /* non-blocking */ } };
+
+  return (
+    <UpkeepModal
+      title={license.id ? "Edit license" : "New license"}
+      onClose={onClose}
+      footer={(
+        <>
+          <div style={{ flex: 1 }}>{license.id && license.is_active !== false ? <button type="button" onClick={deactivate} disabled={saving} style={secondaryBtn}>Deactivate</button> : null}</div>
+          <button type="button" onClick={save} disabled={saving || !canManage} style={{ ...primaryBtn, opacity: saving || !canManage ? 0.6 : 1 }}>{saving ? "Saving…" : "Save license"}</button>
+        </>
       )}
-      editor={selected && <LicenseEditor license={selected} actor={actor} canManage={canManage} onClose={() => setSelected(null)} onSaved={async () => { toast("License saved"); setSelected(null); await load(); }} />}
-    />
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px" }}>
+        <MField label="License"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fire inspection, Kennel permit…" style={input} /></MField>
+        <MField label="Issuing organization"><input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="City, State, vendor…" style={input} /></MField>
+        <MField label="Frequency">
+          <select value={frequency} onChange={(e) => setFrequency(e.target.value)} style={mSelect}>
+            <option value="">—</option>
+            {UPKEEP_SERVICE_FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </MField>
+        <MField label="Due date"><input value={due} onChange={(e) => setDue(e.target.value)} type="date" style={input} /></MField>
+      </div>
+      <MField label="Compliance">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, textTransform: "none", letterSpacing: 0 }}>
+          <button type="button" onClick={() => setStatus("compliant")} style={status === "compliant" ? primaryBtn : secondaryBtn}>Compliant</button>
+          <button type="button" onClick={() => setStatus("non_compliant")} style={status === "non_compliant" ? dangerBtn : secondaryBtn}>Non-compliant</button>
+        </div>
+      </MField>
+      <MField label="Compliance document" hint="Required to mark compliant.">
+        <label style={{ ...secondaryBtn, display: "inline-flex", justifyContent: "center", textTransform: "none", letterSpacing: 0 }}>
+          {evidenceFile ? evidenceFile.name : "Upload PDF or photo"}
+          <input type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => setEvidenceFile(e.target.files?.[0] || null)} />
+        </label>
+      </MField>
+      {attachments.length ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+          {attachments.map((a) => <button key={a.id} type="button" onClick={() => openAttachment(a)} style={muSmallBtn}>{a.file_name ? String(a.file_name).slice(0, 24) : "Document"}</button>)}
+        </div>
+      ) : null}
+      <MField label="Add update / log">
+        <input value={logSummary} onChange={(e) => setLogSummary(e.target.value)} placeholder="Summary (e.g. Renewal filed)" style={{ ...input, marginBottom: 6 }} />
+        <input value={logNote} onChange={(e) => setLogNote(e.target.value)} placeholder="Note (optional)" style={input} />
+      </MField>
+      {logs.length ? (
+        <div style={{ display: "grid", gap: 6, marginBottom: 4 }}>
+          {logs.slice(0, 5).map((lg) => (
+            <div key={lg.id} style={{ padding: 9, borderRadius: 8, background: C.surfaceHover }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{lg.summary}</div>
+              {lg.notes ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{lg.notes}</div> : null}
+              <div style={{ marginTop: 2, fontSize: 10, color: C.textMut }}>{lg.created_by_name || ""}{lg.created_at ? ` · ${fmtAuditDate(lg.created_at)}` : ""}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {error ? <div><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
+    </UpkeepModal>
   );
 }
 
@@ -1581,30 +2041,182 @@ function LicenseEditor({ license, actor, canManage, onClose, onSaved }) {
   );
 }
 
-function TroubleshootingPanel({ articles }) {
+function TroubleshootingPanel({ tabsBar, articles }) {
   const [query, setQuery] = useState("");
-  const rows = articles.filter((article) => [article.title, article.category, article.body].some((value) => String(value || "").toLowerCase().includes(query.toLowerCase())));
+  const list = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return (articles || []).filter((a) => !needle || [a.title, a.category, a.body].some((v) => String(v || "").toLowerCase().includes(needle)));
+  }, [articles, query]);
+  const groups = useMemo(() => {
+    const map = new Map();
+    [...list].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)).forEach((a) => {
+      const key = a.category || "General";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(a);
+    });
+    return Array.from(map.entries());
+  }, [list]);
+
   return (
-    <div style={detailPanel}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div style={{ minWidth: 260 }}>
-          <div style={eyebrow}>Field reference</div>
-          <h2 style={{ margin: "4px 0 4px", fontSize: 24, lineHeight: 1.1 }}>Troubleshooting Guide</h2>
-          <div style={{ color: C.textMut, fontSize: 13 }}>Search the facilities reference without leaving the upkeep workflow.</div>
+    <div>
+      <ListSearchRow value={query} onChange={setQuery} placeholder="Search the field reference…" />
+      {tabsBar}
+      <ListExplainer>
+        Field reference and escalation paths for common facility issues. Expanded for fast scanning under operational pressure.
+      </ListExplainer>
+
+      <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 10, background: C.warnLt, border: "1px solid #FDE68A", color: "#92400E", fontSize: 12, fontWeight: 700, lineHeight: 1.45 }}>
+        Emergency or same-day service: call Facilities Vendor at (555) 000-0000. Non-emergency: facilities@example.com.
+      </div>
+
+      <div style={{ marginTop: 14, display: "grid", gap: 18 }}>
+        {groups.length === 0 ? (
+          <EmptyCard title="No guide matches" text="Try a broader facilities term or clear the search." compact />
+        ) : groups.map(([category, items]) => (
+          <div key={category}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>{category}</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {items.map((article) => (
+                <div key={article.id} style={{ border: `1px solid ${C.border}`, borderRadius: 12, background: "#fff", padding: "14px 16px", boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6, lineHeight: 1.3 }}>{article.title}</div>
+                  <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65, fontSize: 13, color: C.textSec }}>{article.body}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Settings surface (gear): configure building-maintenance checklist templates,
+// including a per-item "photo required" flag. Reached via the gear in the title.
+function SettingsPanel({ locationId, actor, canManage, onClose, toast }) {
+  const [templates, setTemplates] = useState([]);
+  const [templateId, setTemplateId] = useState("");
+  const [items, setItems] = useState([]);
+  const [name, setName] = useState("");
+  const [changelog, setChangelog] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const rows = await withUpkeepTimeout(loadMaintenanceTemplates(locationId), "Templates took too long to load.");
+      setTemplates(rows);
+      setError("");
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "Templates could not be loaded."));
+    } finally {
+      setLoading(false);
+    }
+  }, [locationId]);
+  useEffect(() => { reload(); }, [reload]);
+
+  const selected = templates.find((t) => t.id === templateId) || templates[0];
+  useEffect(() => {
+    if (!selected) return;
+    setTemplateId(selected.id);
+    setName(selected.name || "");
+    setItems((selected.latest_version?.items || []).map((it) => ({ key: it.key, label: it.label, is_required: it.is_required !== false, requires_photo: !!it.requires_photo })));
+  }, [selected?.id]);
+
+  const updateItem = (i, patch) => setItems((arr) => arr.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  const addItem = () => setItems((arr) => [...arr, { key: "", label: "", is_required: true, requires_photo: false }]);
+  const removeItem = (i) => setItems((arr) => arr.filter((_, idx) => idx !== i));
+  const moveItem = (i, dir) => setItems((arr) => {
+    const next = [...arr];
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return arr;
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
+
+  const publish = async () => {
+    if (!selected) return;
+    const usedKeys = new Set();
+    const built = items
+      .filter((it) => it.label.trim())
+      .map((it, index) => {
+        const key = it.key && !usedKeys.has(it.key) ? it.key : buildTemplateItemKey(selected.slug, it.label, usedKeys);
+        usedKeys.add(key);
+        return { key, label: it.label.trim(), sort_order: index + 1, is_required: it.is_required !== false, requires_photo: !!it.requires_photo };
+      });
+    if (!built.length) { setError("Add at least one item."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await publishMaintenanceTemplateVersion({ templateId: selected.id, locationId, items: built, changelog: changelog || "Template edited from web", actorName: actor, templateName: name });
+      if (toast) toast("Template published");
+      setChangelog("");
+      await reload();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "Template could not be published."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>Checklist templates</div>
+        <button type="button" onClick={onClose} style={muSmallBtn}>← Back</button>
+      </div>
+      <ListExplainer>
+        Configure the building-maintenance checklists. Edit items, mark each Required or Photo-required, then publish a new version. Open periods pick up changes; submitted history keeps its snapshot.
+      </ListExplainer>
+
+      {loading ? (
+        <div style={{ marginTop: 12 }}><LoadingRows /></div>
+      ) : !selected ? (
+        <div style={{ marginTop: 12 }}><EmptyCard title="No templates yet" text="Maintenance templates appear here once the backend seeds them." compact /></div>
+      ) : (
+        <div style={{ marginTop: 14, maxWidth: 760 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+            <MField label="Template">
+              <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={mSelect}>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </MField>
+            <MField label="Template name"><input value={name} onChange={(e) => setName(e.target.value)} style={input} /></MField>
+          </div>
+
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Checklist items</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {items.map((it, i) => (
+              <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 10, background: "#fff" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <textarea value={it.label} onChange={(e) => updateItem(i, { label: e.target.value })} placeholder="Inspection item…" rows={2} style={{ ...input, minHeight: 40, fontSize: 13 }} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <button type="button" onClick={() => moveItem(i, -1)} style={{ ...muSmallBtn, padding: "2px 8px" }} title="Move up">▲</button>
+                    <button type="button" onClick={() => moveItem(i, 1)} style={{ ...muSmallBtn, padding: "2px 8px" }} title="Move down">▼</button>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.text }}>
+                    <input type="checkbox" checked={it.is_required} onChange={(e) => updateItem(i, { is_required: e.target.checked })} /> Required
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.text }}>
+                    <input type="checkbox" checked={it.requires_photo} onChange={(e) => updateItem(i, { requires_photo: e.target.checked })} /> Photo required
+                  </label>
+                  <button type="button" onClick={() => removeItem(i)} style={{ ...muSmallBtn, marginLeft: "auto", color: C.dan, borderColor: "#FECACA" }}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addItem} style={{ ...muSmallBtn, marginTop: 10 }}>+ Add item</button>
+
+          <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <input value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder="Change note (optional)" style={{ ...input, flex: 1, minWidth: 200 }} />
+            <button type="button" onClick={publish} disabled={saving || !canManage} style={{ ...primaryBtn, opacity: saving || !canManage ? 0.6 : 1, whiteSpace: "nowrap" }}>{saving ? "Publishing…" : "Publish version"}</button>
+          </div>
+          {error ? <div style={{ marginTop: 10 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
         </div>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search guide" style={{ ...input, width: "min(100%, 320px)" }} />
-      </div>
-      <div style={{ padding: 12, borderRadius: 12, background: C.warnLt, color: "#92400E", fontWeight: 800, fontSize: 13, marginBottom: 12, border: `1px solid #FDE68A` }}>
-        Emergency or same-day service: call Facilities Vendor at 623-261-3294. Non-emergency: facilities@example.com.
-      </div>
-      <div style={{ display: "grid", gap: 10 }}>
-        {rows.length ? rows.map((article) => (
-          <details key={article.id} open={article.sort_order === 1} style={articleCard}>
-            <summary style={{ cursor: "pointer", fontWeight: 900 }}>{article.title} <span style={{ color: C.textMut, fontSize: 12 }}>· {article.category}</span></summary>
-            <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 13, color: C.textSec }}>{article.body}</p>
-          </details>
-        )) : <EmptyCard title="No guide matches" text="Try a broader facilities term or clear the search." compact />}
-      </div>
+      )}
     </div>
   );
 }
