@@ -2652,7 +2652,8 @@ function DenseGrassrootsTable({
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
   savingLog
 }) {
-  const C = { bg: "#F5F6F8", surface: "#fff", border: "#DFE2E8", borderLight: "#ECEEF2", text: "#1A1D23", textSec: "#5A6170", textMut: "#959BA8", pri: "#003462", priLt: "#E6EEF6", acc: "#AF8D54", suc: "#0D7A56", dan: "#C42B2B" };
+  // Use the shared K9 brand palette (forest green primary + lime accent, neutral
+  // slate text) — no local navy/gold override.
 
   // Column configuration — Events shape by default; other categories map their data into the same columns.
   const cm = columnMap || getGrassrootsColumnMap("events");
@@ -2700,7 +2701,7 @@ function DenseGrassrootsTable({
         <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.event ? cm.headers.event : ""}</div>
         <div
           onClick={cm.sortable.eventDate ? onToggleEventDateSort : undefined}
-          style={{ cursor: cm.sortable.eventDate ? "pointer" : "default", userSelect: "none", color: (cm.sortable.eventDate && eventDateSortDirection) ? "#003462" : "rgb(71,85,105)", fontWeight: (cm.sortable.eventDate && eventDateSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
+          style={{ cursor: cm.sortable.eventDate ? "pointer" : "default", userSelect: "none", color: (cm.sortable.eventDate && eventDateSortDirection) ? C.pri : "rgb(71,85,105)", fontWeight: (cm.sortable.eventDate && eventDateSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
           title={cm.sortable.eventDate ? "Sort by event date" : undefined}
         >
           {cm.show.eventDate ? cm.headers.eventDate : ""}{cm.sortable.eventDate && eventDateSortDirection === "asc" ? " ▲" : cm.sortable.eventDate && eventDateSortDirection === "desc" ? " ▼" : ""}
@@ -2709,7 +2710,7 @@ function DenseGrassrootsTable({
         <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.notes ? cm.headers.notes : ""}</div>
         <div
           onClick={cm.sortable.followUp ? onToggleFollowUpSort : undefined}
-          style={{ cursor: cm.sortable.followUp ? "pointer" : "default", userSelect: "none", color: (cm.sortable.followUp && followUpSortDirection) ? "#003462" : "rgb(71,85,105)", fontWeight: (cm.sortable.followUp && followUpSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
+          style={{ cursor: cm.sortable.followUp ? "pointer" : "default", userSelect: "none", color: (cm.sortable.followUp && followUpSortDirection) ? C.pri : "rgb(71,85,105)", fontWeight: (cm.sortable.followUp && followUpSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
           title={cm.sortable.followUp ? "Sort by follow-up date" : undefined}
         >
           {cm.headers.followUp}{cm.sortable.followUp && followUpSortDirection === "asc" ? " ▲" : cm.sortable.followUp && followUpSortDirection === "desc" ? " ▼" : ""}
