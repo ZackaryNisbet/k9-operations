@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS ignite_leads (
   match_candidates    jsonb,                         -- IGN-002: array of { client_id, confidence, match_type }
   resolved_by         uuid,                          -- IGN-002: user who resolved a review item
   resolved_at         timestamptz,                   -- IGN-002: when the review was resolved
+  outreach_log        jsonb NOT NULL DEFAULT '[]'::jsonb,  -- CRM: append-only outreach touches (channel, notes, follow-up dates, who/when)
   processed_at        timestamptz,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
@@ -124,3 +125,6 @@ CREATE TRIGGER ignite_config_updated_at
 -- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS resolved_by uuid;
 -- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS resolved_at timestamptz;
 -- CREATE INDEX IF NOT EXISTS idx_ignite_leads_matched_client ON ignite_leads(matched_client_id);
+
+-- ─── CRM Migration (add outreach log to existing tables) ─────────────────────
+-- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS outreach_log jsonb NOT NULL DEFAULT '[]'::jsonb;
