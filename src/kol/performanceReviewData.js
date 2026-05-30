@@ -546,18 +546,11 @@ export function getLaborComplianceCellState(boardReq = {}, context = {}) {
     };
   }
 
-  if (status === "in_progress" || status === "scheduled") {
-    return {
-      key: "in_progress",
-      label: "In Progress",
-      icon: "O",
-      detail: dueDate ? `Due ${String(dueDate).slice(0, 10)}` : "Checkpoint started",
-      isCompliant: false,
-      color: "info",
-      source: "board",
-    };
-  }
-
+  // A checkpoint that is merely "scheduled" or "in_progress" (and not yet overdue, complete, or
+  // waived) is, from a compliance standpoint, simply not started. There is no separate "In Progress"
+  // cell state: the only states are not_started / waived / completed / overdue (+ not-applicable,
+  // which the grid derives when no board requirement is attached). The future due date is surfaced
+  // in the detail line so the user still sees when it comes due.
   return {
     key: "not_started",
     label: "Not Started",
@@ -636,7 +629,7 @@ export function getPerformanceReviewCycleStatus(row = {}, cycleId, todayValue = 
     // Trust the canonical board-derived state for labor policy requirements (including 90-day mapped ones).
     // This ensures overdue is respected even after "not started", and waived/completed win correctly.
     const canonical = getLaborComplianceCellState(requirementStatus, { recentAuditEvents: options?.recentAuditEvents || [] });
-    rawStatus = canonical.key; // waived | overdue | completed | not_started | in_progress | ...
+    rawStatus = canonical.key; // waived | overdue | completed | not_started
   } else {
     rawStatus = String(requirementStatus?.status || requirementStatus?.compliance_status || row?.[cycle.statusKey] || "not_started").toLowerCase();
   }
@@ -760,6 +753,194 @@ export function getPerformanceReviewCompliance(row = {}, todayValue = null, opti
     detail: "No overdue reviews",
     overdueCount: 0,
     cycleRows,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compliance requirement groups + roster-wide metrics
+//
+// display_group is a first-class grouping on labor_compliance_requirements
+// ('reviews' = performance reviews, 'training' = training certifications, plus any
+// custom group). These helpers surface friendly group labels and build the
+// roster-wide metrics shown above the Compliance employee table.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const COMPLIANCE_GROUP_LABELS = {
+  reviews: "Performance Review",
+  training: "Training",
+  custom: "Custom",
+};
+
+export function getComplianceGroupKey(value = "") {
+  return String(value || "").trim().toLowerCase() || "other";
+}
+
+export function getComplianceGroupLabel(value = "") {
+  const key = getComplianceGroupKey(value);
+  return COMPLIANCE_GROUP_LABELS[key] || humanizeReviewPolicySlug(key) || "Other";
+}
+
+function diffDaysIso(fromIso, toIso) {
+  const from = Date.parse(`${String(fromIso).slice(0, 10)}T00:00:00Z`);
+  const to = Date.parse(`${String(toIso).slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  return Math.round((to - from) / 86400000);
+}
+
+/**
+ * Roster-wide metric state for a single board requirement cell. Reuses the single
+ * canonical getLaborComplianceCellState and adds the "due_soon" bucket (a not-started
+ * checkpoint whose due date falls within dueSoonDays). Never returns "in_progress".
+ * Returns one of: "completed" | "waived" | "overdue" | "due_soon" | "not_started".
+ */
+export function getLaborComplianceMetricState(boardReq = {}, { today = null, dueSoonDays = 7 } = {}) {
+  const asOf = today || new Date().toISOString().slice(0, 10);
+  const cell = getLaborComplianceCellState(boardReq, { today: asOf });
+  if (cell.key === "completed" || cell.key === "waived" || cell.key === "overdue") return cell.key;
+  const due = boardReq?.due_date || boardReq?.adjusted_due_date || boardReq?.original_due_date;
+  if (due) {
+    const diff = diffDaysIso(asOf, due);
+    if (diff !== null && diff >= 0 && diff <= dueSoonDays) return "due_soon";
+  }
+  return "not_started";
+}
+
+function compliancePct(numerator, denominator) {
+  if (!denominator) return null;
+  return Math.round((numerator / denominator) * 100);
+}
+
+/**
+ * Builds the roster-wide Compliance metrics shown above the employee table.
+ *
+ * @param employees    array of { id, requirements: [boardReq] } — each boardReq is a
+ *                     get_labor_compliance_board employee requirement entry.
+ * @param requirements the active policy requirement definitions (board `requirements[]`),
+ *                     each with id, title, display_group, requirement_kind, display_order.
+ *
+ * Per-requirement and per-group counts are DYNAMIC: every active requirement applicable to
+ * at least one employee produces its own metric, so adding a requirement adds a tile.
+ */
+export function buildLaborComplianceMetrics({ employees = [], requirements = [], today = null, dueSoonDays = 7 } = {}) {
+  const asOf = today || new Date().toISOString().slice(0, 10);
+  const defById = new Map();
+  (Array.isArray(requirements) ? requirements : []).forEach((row) => {
+    if (!row || typeof row !== "object" || row.is_active === false) return;
+    const id = String(row.id || row.requirement_id || "");
+    if (id) defById.set(id, row);
+  });
+
+  const reqAgg = new Map();
+  const ensureReq = (bucketId, seed) => {
+    if (!reqAgg.has(bucketId)) {
+      reqAgg.set(bucketId, {
+        id: bucketId,
+        label: seed.label,
+        groupKey: seed.groupKey,
+        requirementKind: seed.requirementKind,
+        displayOrder: seed.displayOrder,
+        applicable: 0,
+        compliant: 0,
+        overdue: 0,
+        dueSoon: 0,
+      });
+    }
+    return reqAgg.get(bucketId);
+  };
+
+  let overdueCount = 0;
+  let dueSoonCount = 0;
+  let compliantCount = 0;
+  let applicableCount = 0;
+  let employeeCount = 0;
+  const nonCompliantEmployees = new Set();
+
+  (Array.isArray(employees) ? employees : []).forEach((employee) => {
+    if (!employee || typeof employee !== "object") return;
+    employeeCount += 1;
+    const employeeId = String(employee.id || employee.labor_employee_id || employee.full_name || employeeCount);
+    const reqs = Array.isArray(employee.requirements) ? employee.requirements : [];
+    reqs.forEach((boardReq) => {
+      if (!boardReq || typeof boardReq !== "object") return;
+      const state = getLaborComplianceMetricState(boardReq, { today: asOf, dueSoonDays });
+      const reqId = String(boardReq.requirement_id || boardReq.id || "");
+      const policyKey = String(boardReq.parent_requirement_id || reqId || "");
+      const def = defById.get(reqId) || defById.get(policyKey) || null;
+      const bucketId = def ? String(def.id) : (policyKey || reqId || String(boardReq.slug || ""));
+      if (!bucketId) return;
+      const groupKey = getComplianceGroupKey(
+        def?.display_group
+          || boardReq.display_group
+          || (String(boardReq.requirement_kind || def?.requirement_kind) === "review_checkpoint" ? "reviews" : "training")
+      );
+      const agg = ensureReq(bucketId, {
+        label: def?.title || def?.label || boardReq.title || boardReq.slug || "Requirement",
+        groupKey,
+        requirementKind: String(def?.requirement_kind || boardReq.requirement_kind || ""),
+        displayOrder: Number(def?.display_order ?? boardReq.display_order ?? 0) || 0,
+      });
+      agg.applicable += 1;
+      applicableCount += 1;
+      if (state === "completed" || state === "waived") {
+        agg.compliant += 1;
+        compliantCount += 1;
+      } else if (state === "overdue") {
+        agg.overdue += 1;
+        overdueCount += 1;
+        nonCompliantEmployees.add(employeeId);
+      } else if (state === "due_soon") {
+        agg.dueSoon += 1;
+        dueSoonCount += 1;
+      }
+    });
+  });
+
+  const requirementsOut = [...reqAgg.values()].map((agg) => ({
+    ...agg,
+    compliantPct: compliancePct(agg.compliant, agg.applicable),
+  }));
+
+  const groupMap = new Map();
+  requirementsOut.forEach((req) => {
+    if (!groupMap.has(req.groupKey)) {
+      groupMap.set(req.groupKey, {
+        key: req.groupKey,
+        label: getComplianceGroupLabel(req.groupKey),
+        order: req.displayOrder,
+        applicable: 0,
+        compliant: 0,
+        overdue: 0,
+        dueSoon: 0,
+        requirements: [],
+      });
+    }
+    const group = groupMap.get(req.groupKey);
+    group.order = Math.min(group.order, req.displayOrder);
+    group.applicable += req.applicable;
+    group.compliant += req.compliant;
+    group.overdue += req.overdue;
+    group.dueSoon += req.dueSoon;
+    group.requirements.push(req);
+  });
+
+  const groups = [...groupMap.values()]
+    .map((group) => ({
+      ...group,
+      compliantPct: compliancePct(group.compliant, group.applicable),
+      requirements: group.requirements.sort((a, b) => (a.displayOrder - b.displayOrder) || a.label.localeCompare(b.label)),
+    }))
+    .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label));
+
+  return {
+    asOf,
+    employeeCount,
+    overdueCount,
+    dueSoonCount,
+    compliantCount,
+    applicableCount,
+    compliantPct: compliancePct(compliantCount, applicableCount),
+    needsAttentionCount: nonCompliantEmployees.size,
+    groups,
   };
 }
 
