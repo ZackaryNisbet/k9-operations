@@ -2766,7 +2766,7 @@ function DenseGrassrootsTable({
               }}
             >
               {/* Organizer */}
-              <div style={{ fontWeight: 700, color: C.pri, wordBreak: "break-word", fontSize: 12, lineHeight: 1.25 }} title={organizer}>
+              <div style={{ fontWeight: 700, color: C.text, wordBreak: "break-word", fontSize: 12, lineHeight: 1.25 }} title={organizer}>
                 {organizer}
               </div>
 
@@ -3016,7 +3016,7 @@ function DenseGrassrootsTable({
                   <div style={{ padding: "8px 14px 4px" }}>
                     {[...targetActivities].sort((a, b) => String(b.created_at || b.activity_date || "").localeCompare(String(a.created_at || a.activity_date || ""))).map((act, idx, arr) => (
                       <div key={act.id} style={{ marginBottom: idx === arr.length - 1 ? 0 : 6, paddingBottom: idx === arr.length - 1 ? 0 : 6, borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{activityActorName(act)} — {fmtDate(act.activity_date || act.created_at)}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{activityActorName(act)} — {fmtDate(act.activity_date || act.created_at)}{act.created_at ? ` · ${new Date(act.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}` : ""}</div>
                         <div style={{ fontSize: 11, color: C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{act.notes || "—"}</div>
                         {act.next_contact_date && <div style={{ fontSize: 9, color: C.textSec, marginTop: 1 }}>Follow-up: {fmtDate(act.next_contact_date)}</div>}
                       </div>
@@ -3182,7 +3182,7 @@ function DropActivityView({
       <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>{filteredEmpty ? `No ${categoryLabel.toLowerCase()} visits in this view` : "No drop activity logged yet"}</div>
         <div style={{ fontSize: 13, marginBottom: 16 }}>{filteredEmpty ? "Choose another category or log a new visit." : "Log the visit first; the business rollup updates from that activity."}</div>
-        <Btn variant="primary" icon={<I.Plus />} onClick={() => onLog()} disabled={!canLog}>Log Activity</Btn>
+        <Btn variant="primary" size="sm" icon={<I.Plus />} onClick={() => onLog()} disabled={!canLog} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>Log Activity</Btn>
       </Card>
     );
   }
@@ -6267,7 +6267,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 <Card style={{ padding: 30, textAlign: "center", color: C.textMut, borderRadius: 14 }}>
                   <div style={{ fontSize: 16, fontWeight: 900, color: C.text, marginBottom: 6 }}>No {activeConfig.label.toLowerCase()} match this view</div>
                   <div style={{ fontSize: 13, marginBottom: 16 }}>Add a row or adjust the filter.</div>
-                  {canEditTargets && <Btn variant="primary" icon={<I.Plus />} onClick={openNewDraft}>Add {activeConfig.singular}</Btn>}
+                  {canEditTargets && <Btn variant="primary" size="sm" icon={<I.Plus />} onClick={openNewDraft} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>Add {activeConfig.singular}</Btn>}
                 </Card>
               ) : (
                 <>
