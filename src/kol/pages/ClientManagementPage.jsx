@@ -16,13 +16,6 @@ import {
   INCIDENT_REPORTING_PERIODS,
 } from "../clientManagementData";
 
-function formatRangeLabel(start, end) {
-  if (!start && !end) return "All recorded incidents";
-  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  if (start && end) return `${fmt(start)} – ${fmt(end)}`;
-  return end ? `Through ${fmt(end)}` : `Since ${fmt(start)}`;
-}
-
 const INCIDENT_DOC_BUCKET = "incident-documents";
 
 // Each incident type gets the same colored-pill treatment Grassroots uses for
@@ -129,17 +122,18 @@ function EmptyState({ title, subtitle }) {
 }
 
 const TABLE_GRID = "176px 124px minmax(160px, 1fr) 122px 128px 110px 40px";
+const SUMMARY_GRID = "minmax(150px, 1.6fr) 1fr 1fr 1fr 0.9fr";
 
 export default function ClientManagementPage({ data, profile, addGlobalToast = () => {} }) {
   const [loading, setLoading] = useState(true);
   const [resolvedLocationId, setResolvedLocationId] = useState("");
   const [incidentCases, setIncidentCases] = useState([]);
 
+  const [view, setView] = useState("summary");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const [period, setPeriod] = useState("ytd");
   const [followUpOnly, setFollowUpOnly] = useState(false);
-  const [activeDogCounts, setActiveDogCounts] = useState(null);
+  const [rateInputs, setRateInputs] = useState(null);
 
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -167,24 +161,30 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         setLoading(false);
         return;
       }
-      const [casesRes, dogCountsRes] = await Promise.all([
+      const [casesRes, rateRes] = await Promise.all([
         supabase
           .from("client_incident_cases")
           .select("*")
           .eq("location_id", locationId)
           .order("incident_date", { ascending: false })
           .order("created_at", { ascending: false }),
-        supabase.rpc("incident_active_dog_counts", { p_location_id: locationId, p_as_of: todayStr() }),
+        supabase.rpc("incident_rate_inputs", { p_location_id: locationId, p_as_of: todayStr() }),
       ]);
       if (casesRes.error) throw casesRes.error;
       setIncidentCases(casesRes.data || []);
-      if (dogCountsRes.error) {
-        console.warn("incident_active_dog_counts RPC failed:", dogCountsRes.error.message);
-        setActiveDogCounts({});
+      if (rateRes.error) {
+        console.warn("incident_rate_inputs RPC failed:", rateRes.error.message);
+        setRateInputs({});
       } else {
-        const counts = {};
-        (dogCountsRes.data || []).forEach((row) => { counts[row.period_id] = Number(row.active_dogs) || 0; });
-        setActiveDogCounts(counts);
+        const inputs = {};
+        (rateRes.data || []).forEach((row) => {
+          inputs[row.period_id] = {
+            dogVolume: Number(row.dog_volume) || 0,
+            uniqueDogs: Number(row.unique_dogs) || 0,
+            coveredFrom: row.covered_from || null,
+          };
+        });
+        setRateInputs(inputs);
       }
     } catch (error) {
       console.error("Incidents load error:", error);
@@ -198,50 +198,37 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
   }, [loadData]);
 
   // ─── Incident rate by reporting period ─────────────────────────────────────
-  // Rate = incidents in the window ÷ ACTIVE dogs in the window (unique dogs with
-  // a countable stay overlapping it — the population at risk), normalized per
-  // 1,000 dogs. Incident counts come from the cases loaded here; the active-dog
-  // denominators come from the incident_active_dog_counts RPC, which aggregates
-  // the full reservation history server-side (the browser only holds a recent
-  // slice, so historical windows can't be counted client-side).
+  // Rate = incidents in the window ÷ DOG VOLUME in the window, per 1,000. Dog
+  // volume is Scheduling's daily reservation-count authority
+  // (gingr_reservation_widget_daily.total_reservation_volume), summed server-side
+  // by the incident_rate_inputs RPC — the correct exposure denominator (a month
+  // is thousands of dog-visits, not the few hundred UNIQUE dogs the old metric
+  // used). unique_dogs is kept alongside as a secondary figure, and covered_from
+  // lets us flag windows where volume data doesn't reach the window start.
   const asOf = useMemo(() => new Date(), []);
   const totalIncidents = incidentCases.length;
-  const dogCountsReady = activeDogCounts !== null;
+  const ratesReady = rateInputs !== null;
 
   const periodRates = useMemo(() => {
-    const counts = activeDogCounts || {};
+    const inputs = rateInputs || {};
     return INCIDENT_REPORTING_PERIODS.map((option) => {
       const { start, end } = getIncidentReportingPeriodRange(option.id, asOf);
       const incidents = countIncidentsInRange(incidentCases, start, end);
-      const activeDogs = counts[option.id] ?? 0;
-      const ratePerDog = activeDogs > 0 ? incidents / activeDogs : null;
-      return {
-        ...option,
-        start,
-        end,
-        incidents,
-        activeDogs,
-        ratePerDog,
-        ratePer1000: ratePerDog === null ? null : ratePerDog * 1000,
-        ratePercent: ratePerDog === null ? null : ratePerDog * 100,
-      };
+      const input = inputs[option.id] || {};
+      const dogVolume = input.dogVolume || 0;
+      const uniqueDogs = input.uniqueDogs || 0;
+      const ratePer1000 = dogVolume > 0 ? (incidents / dogVolume) * 1000 : null;
+      const coveredFrom = input.coveredFrom ? new Date(`${input.coveredFrom}T12:00:00`) : null;
+      const partial = Boolean(start && coveredFrom && coveredFrom > start);
+      return { ...option, start, end, incidents, dogVolume, uniqueDogs, ratePer1000, coveredFrom, partial };
     });
-  }, [incidentCases, activeDogCounts, asOf]);
-  const selectedRate = useMemo(
-    () => periodRates.find((entry) => entry.id === period) || periodRates[0],
-    [periodRates, period],
-  );
+  }, [incidentCases, rateInputs, asOf]);
 
-  const openCount = useMemo(() => incidentCases.filter((row) => row.status !== "closed").length, [incidentCases]);
   const openFollowUpCount = useMemo(() => countOpenFollowUps(incidentCases, asOf), [incidentCases, asOf]);
 
   const filteredCases = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const { start, end } = getIncidentReportingPeriodRange(period, asOf);
     return incidentCases.filter((row) => {
-      const incidentDate = row.incident_date ? new Date(`${row.incident_date}T12:00:00`) : null;
-      if (start && (!incidentDate || incidentDate < start)) return false;
-      if (end && (!incidentDate || incidentDate > end)) return false;
       if (typeFilter && row.case_type !== typeFilter) return false;
       if (followUpOnly) {
         const fu = getIncidentFollowUpState(row, asOf);
@@ -251,7 +238,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
       return [row.subject_name, row.summary, getClientCaseTypeLabel(row.case_type)]
         .some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [incidentCases, search, typeFilter, period, followUpOnly, asOf]);
+  }, [incidentCases, search, typeFilter, followUpOnly, asOf]);
 
   const resetModal = useCallback(() => {
     setNewType("animal_incident");
@@ -413,10 +400,6 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
     addGlobalToast("Incident deleted", "success");
   }, [addGlobalToast, canManage, loadData]);
 
-  const rateBig = !dogCountsReady
-    ? "…"
-    : (selectedRate && selectedRate.ratePer1000 !== null ? selectedRate.ratePer1000.toFixed(1) : "—");
-
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 16px" }}>
       {/* Header */}
@@ -430,168 +413,120 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         </Btn>
       </div>
 
-      {/* Reporting-period selector (industry-standard windows) */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-        {periodRates.map((entry) => {
-          const on = entry.id === period;
+      {/* View switch — Summary (rates) vs Log (data entry) */}
+      <div style={{ display: "flex", borderBottom: `1.5px solid ${C.borderLight}`, marginBottom: 14 }}>
+        {[{ id: "summary", label: "Summary" }, { id: "log", label: "Log", count: incidentCases.length }].map((t) => {
+          const on = view === t.id;
           return (
             <button
-              key={entry.id}
-              onClick={() => setPeriod(entry.id)}
-              title={entry.description}
-              style={{ padding: "6px 13px", borderRadius: 9, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.pri : "transparent", color: on ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+              key={t.id}
+              onClick={() => setView(t.id)}
+              style={{ flex: 1, padding: "10px 12px", border: "none", background: "transparent", borderBottom: `3px solid ${on ? C.pri : "transparent"}`, marginBottom: -1.5, color: on ? C.pri : C.textMut, fontSize: 13, fontWeight: on ? 800 : 600, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7 }}
             >
-              {entry.label}
+              {t.label}
+              {t.count != null && (
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: on ? C.priLt : C.borderLight, color: on ? C.pri : C.textMut }}>{t.count}</span>
+              )}
             </button>
           );
         })}
       </div>
 
-      {/* ─── Incident Rate hero — selected period, math shown in full ─── */}
-      <Card style={{ padding: 0, marginBottom: 14, overflow: "hidden", border: `1.5px solid ${C.pri}33` }}>
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch" }}>
-          <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.pri}, ${C.pri}cc)`, color: "#fff", minWidth: 240, flex: "1 1 240px" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", opacity: 0.9 }}>Incident Rate · {selectedRate?.label}</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 8 }}>
-              <span style={{ fontSize: 46, fontWeight: 900, lineHeight: 1 }}>{rateBig}</span>
-              <span style={{ fontSize: 14, fontWeight: 700, opacity: 0.95 }}>per 1,000 dogs</span>
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8, opacity: 0.95 }}>
-              {!dogCountsReady
-                ? "Calculating active dogs…"
-                : (selectedRate && selectedRate.ratePercent !== null ? `${selectedRate.ratePercent.toFixed(2)}% of active dogs` : "No active dogs in this window yet")}
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 6, opacity: 0.85 }}>
-              {selectedRate?.description} · {formatRangeLabel(selectedRate?.start, selectedRate?.end)}
-            </div>
+      {view === "summary" && (
+        <>
+          <div style={{ fontSize: 12, color: C.textSec, background: `linear-gradient(90deg, ${C.priLt}, transparent)`, padding: "7px 12px", borderRadius: 8, marginBottom: 10 }}>
+            Incidents per 1,000 dogs by reporting period. Dog volume is the scheduling reservation count; unique dogs is distinct animals with a stay in the window.
           </div>
-
-          <div style={{ padding: "20px 24px", flex: "2 1 360px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>How this is calculated</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 14, color: C.text }}>
-              <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: `${C.dan}12`, border: `1px solid ${C.dan}33`, minWidth: 92 }}>
-                <span style={{ fontSize: 22, fontWeight: 900, color: C.dan }}>{(selectedRate?.incidents ?? 0).toLocaleString()}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>incidents</span>
-              </span>
-              <span style={{ fontSize: 24, fontWeight: 800, color: C.textMut }}>÷</span>
-              <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: `${C.pri}10`, border: `1px solid ${C.pri}33`, minWidth: 92 }}>
-                <span style={{ fontSize: 22, fontWeight: 900, color: C.pri }}>{!dogCountsReady ? "…" : (selectedRate?.activeDogs ?? 0).toLocaleString()}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>active dogs</span>
-              </span>
-              <span style={{ fontSize: 24, fontWeight: 800, color: C.textMut }}>=</span>
-              <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, minWidth: 110 }}>
-                <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{!dogCountsReady ? "…" : (selectedRate && selectedRate.ratePerDog !== null ? selectedRate.ratePerDog.toFixed(4) : "—")}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>per dog</span>
-              </span>
+          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div>Period</div>
+              <div style={{ textAlign: "right" }}>Incidents</div>
+              <div style={{ textAlign: "right" }}>Dog Volume</div>
+              <div style={{ textAlign: "right" }}>Unique Dogs</div>
+              <div style={{ textAlign: "right" }}>Rate /1k</div>
             </div>
-            <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
-              {!dogCountsReady ? (
-                "Counting unique dogs with a stay in this window across the full reservation history…"
-              ) : selectedRate && selectedRate.ratePerDog !== null ? (
-                <>
-                  {selectedRate.ratePerDog.toFixed(4)} × 1,000 = <strong style={{ color: C.text }}>{selectedRate.ratePer1000.toFixed(1)} incidents per 1,000 dogs</strong>
-                  {" "}({selectedRate.incidents.toLocaleString()} incident{selectedRate.incidents === 1 ? "" : "s"} across {selectedRate.activeDogs.toLocaleString()} active dog{selectedRate.activeDogs === 1 ? "" : "s"} in {selectedRate.label}).
-                </>
-              ) : (
-                "No dogs had a stay in this window yet, so the rate can’t be computed."
-              )}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* All reporting periods at a glance — click a row to select it */}
-      <Card style={{ padding: 0, marginBottom: 18, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          <div>Period</div>
-          <div style={{ textAlign: "right" }}>Incidents</div>
-          <div style={{ textAlign: "right" }}>Active Dogs</div>
-          <div style={{ textAlign: "right" }}>Rate /1k</div>
-          <div style={{ textAlign: "right" }}>%</div>
-        </div>
-        {periodRates.map((entry) => {
-          const on = entry.id === period;
-          return (
-            <button
-              key={entry.id}
-              onClick={() => setPeriod(entry.id)}
-              style={{ width: "100%", display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", padding: "9px 14px", border: "none", borderBottom: `1px solid ${C.borderLight}`, background: on ? `${C.pri}0c` : "transparent", cursor: "pointer", fontFamily: "inherit", alignItems: "center" }}
-            >
-              <div style={{ textAlign: "left", fontSize: 12, color: on ? C.pri : C.text }}>
-                <span style={{ fontWeight: on ? 800 : 700 }}>{entry.label}</span>
-                <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}> · {entry.description}</span>
+            {periodRates.map((entry) => (
+              <div key={entry.id} style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
+                <div style={{ fontSize: 12 }}>
+                  <span style={{ fontWeight: 700, color: C.text }}>{entry.label}</span>
+                  <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}> · {entry.description}</span>
+                  {entry.partial && (
+                    <div style={{ fontSize: 10, color: C.warn, fontWeight: 700, marginTop: 2 }}>Volume data from {fmtDate(entry.coveredFrom)} (partial window)</div>
+                  )}
+                </div>
+                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: C.text }}>{entry.incidents.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.dogVolume.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.uniqueDogs.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: C.pri }}>{!ratesReady ? "…" : (entry.ratePer1000 !== null ? entry.ratePer1000.toFixed(1) : "—")}</div>
               </div>
-              <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: C.text }}>{entry.incidents.toLocaleString()}</div>
-              <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!dogCountsReady ? "…" : entry.activeDogs.toLocaleString()}</div>
-              <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: C.pri }}>{!dogCountsReady ? "…" : (entry.ratePer1000 !== null ? entry.ratePer1000.toFixed(1) : "—")}</div>
-              <div style={{ textAlign: "right", fontSize: 12, color: C.textMut }}>{!dogCountsReady ? "…" : (entry.ratePercent !== null ? `${entry.ratePercent.toFixed(2)}%` : "—")}</div>
-            </button>
-          );
-        })}
-      </Card>
+            ))}
+          </Card>
+          <div style={{ fontSize: 11, color: C.textMut, padding: "2px 4px 0" }}>
+            Rate /1k = incidents ÷ dog volume × 1,000. Dog volume comes from Scheduling&rsquo;s daily reservation counts.
+          </div>
+        </>
+      )}
 
-      {/* Search + type filter pills (above the table, Grassroots-style) */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search incidents by subject, note, or type…"
-              style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }}
-            />
-            {search && (
-              <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-              </button>
+      {view === "log" && (
+      <>
+      {/* Search bar with filter pills INSIDE it (app-standard layout) */}
+      <div style={{ marginBottom: 8, borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px 0 16px", flexWrap: "wrap" }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search incidents by subject, note, or type…"
+            style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 4px", flex: "1 1 180px", minWidth: 120, fontFamily: "inherit" }}
+          />
+          {search && (
+            <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          )}
+          <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", alignItems: "center", padding: "6px 0" }}>
+            <button
+              onClick={() => setTypeFilter("")}
+              style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${!typeFilter ? C.pri : C.border}`, background: !typeFilter ? C.pri : "transparent", color: !typeFilter ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+            >
+              All {incidentCases.length}
+            </button>
+            {CLIENT_CASE_TYPE_OPTIONS.map((option) => {
+              const meta = typeMeta(option.value);
+              const on = typeFilter === option.value;
+              const count = incidentCases.filter((row) => row.case_type === option.value).length;
+              return (
+                <button
+                  key={option.value}
+                  onClick={() => setTypeFilter(on ? "" : option.value)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? meta.color : C.border}`, background: on ? meta.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: on ? "#fff" : meta.color }} />
+                  {meta.short} {count}
+                </button>
+              );
+            })}
+            {(openFollowUpCount > 0 || followUpOnly) && (
+              <>
+                <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: C.border, margin: "2px 3px" }} />
+                <button
+                  onClick={() => setFollowUpOnly((v) => !v)}
+                  title="Show only incidents with a follow-up due today or overdue"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${followUpOnly ? C.warn : C.border}`, background: followUpOnly ? C.warn : "transparent", color: followUpOnly ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                >
+                  <I.Clock style={{ width: 12, height: 12 }} />
+                  Needs follow-up {openFollowUpCount}
+                </button>
+              </>
             )}
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 4px 0" }}>
-          <button
-            onClick={() => setTypeFilter("")}
-            style={{ padding: "4px 11px", borderRadius: 8, border: `1.5px solid ${!typeFilter ? C.pri : C.border}`, background: !typeFilter ? C.pri : "transparent", color: !typeFilter ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
-          >
-            All {incidentCases.length}
-          </button>
-          {CLIENT_CASE_TYPE_OPTIONS.map((option) => {
-            const meta = typeMeta(option.value);
-            const on = typeFilter === option.value;
-            const count = incidentCases.filter((row) => row.case_type === option.value).length;
-            return (
-              <button
-                key={option.value}
-                onClick={() => setTypeFilter(on ? "" : option.value)}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 11px", borderRadius: 8, border: `1.5px solid ${on ? meta.color : C.border}`, background: on ? meta.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
-              >
-                <span style={{ width: 7, height: 7, borderRadius: 999, background: on ? "#fff" : meta.color }} />
-                {meta.short} {count}
-              </button>
-            );
-          })}
-          {(openFollowUpCount > 0 || followUpOnly) && (
-            <>
-              <span aria-hidden style={{ width: 1, alignSelf: "stretch", background: C.border, margin: "2px 3px" }} />
-              <button
-                onClick={() => setFollowUpOnly((v) => !v)}
-                title="Show only incidents with a follow-up due today or overdue"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 11px", borderRadius: 8, border: `1.5px solid ${followUpOnly ? C.warn : C.border}`, background: followUpOnly ? C.warn : "transparent", color: followUpOnly ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
-              >
-                <I.Clock style={{ width: 12, height: 12 }} />
-                Needs follow-up {openFollowUpCount}
-              </button>
-            </>
-          )}
         </div>
       </div>
 
       {/* ─── Incident table (Grassroots Events style) ─── */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
-            Incident log <span style={{ color: C.textMut, fontWeight: 600 }}>· {selectedRate?.label}</span>
-          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Incident log</div>
           <div style={{ fontSize: 11, color: C.textMut }}>
             Showing {filteredCases.length.toLocaleString()} of {totalIncidents.toLocaleString()} total incident{totalIncidents === 1 ? "" : "s"}
           </div>
@@ -676,6 +611,8 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
           })
         )}
       </Card>
+      </>
+      )}
 
       {/* ─── New incident modal ─── */}
       {showModal && (
