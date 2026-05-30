@@ -129,7 +129,7 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
   const [resolvedLocationId, setResolvedLocationId] = useState("");
   const [incidentCases, setIncidentCases] = useState([]);
 
-  const [view, setView] = useState("summary");
+  const [view, setView] = useState("log");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [followUpOnly, setFollowUpOnly] = useState(false);
@@ -413,78 +413,22 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         </Btn>
       </div>
 
-      {/* View switch — Summary (rates) vs Log (data entry) */}
-      <div style={{ display: "flex", borderBottom: `1.5px solid ${C.borderLight}`, marginBottom: 14 }}>
-        {[{ id: "summary", label: "Summary" }, { id: "log", label: "Log", count: incidentCases.length }].map((t) => {
-          const on = view === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setView(t.id)}
-              style={{ flex: 1, padding: "10px 12px", border: "none", background: "transparent", borderBottom: `3px solid ${on ? C.pri : "transparent"}`, marginBottom: -1.5, color: on ? C.pri : C.textMut, fontSize: 13, fontWeight: on ? 800 : 600, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7 }}
-            >
-              {t.label}
-              {t.count != null && (
-                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: on ? C.priLt : C.borderLight, color: on ? C.pri : C.textMut }}>{t.count}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {view === "summary" && (
-        <>
-          <div style={{ fontSize: 12, color: C.textSec, background: `linear-gradient(90deg, ${C.priLt}, transparent)`, padding: "7px 12px", borderRadius: 8, marginBottom: 10 }}>
-            Incidents per 1,000 dogs by reporting period. Dog volume is the scheduling reservation count; unique dogs is distinct animals with a stay in the window.
-          </div>
-          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              <div>Period</div>
-              <div style={{ textAlign: "right" }}>Incidents</div>
-              <div style={{ textAlign: "right" }}>Dog Volume</div>
-              <div style={{ textAlign: "right" }}>Unique Dogs</div>
-              <div style={{ textAlign: "right" }}>Rate /1k</div>
-            </div>
-            {periodRates.map((entry) => (
-              <div key={entry.id} style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
-                <div style={{ fontSize: 12 }}>
-                  <span style={{ fontWeight: 700, color: C.text }}>{entry.label}</span>
-                  <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}> · {entry.description}</span>
-                  {entry.partial && (
-                    <div style={{ fontSize: 10, color: C.warn, fontWeight: 700, marginTop: 2 }}>Volume data from {fmtDate(entry.coveredFrom)} (partial window)</div>
-                  )}
-                </div>
-                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: C.text }}>{entry.incidents.toLocaleString()}</div>
-                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.dogVolume.toLocaleString()}</div>
-                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.uniqueDogs.toLocaleString()}</div>
-                <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: C.pri }}>{!ratesReady ? "…" : (entry.ratePer1000 !== null ? entry.ratePer1000.toFixed(1) : "—")}</div>
-              </div>
-            ))}
-          </Card>
-          <div style={{ fontSize: 11, color: C.textMut, padding: "2px 4px 0" }}>
-            Rate /1k = incidents ÷ dog volume × 1,000. Dog volume comes from Scheduling&rsquo;s daily reservation counts.
-          </div>
-        </>
-      )}
-
-      {view === "log" && (
-      <>
-      {/* Search bar with filter pills INSIDE it (app-standard layout) */}
-      <div style={{ marginBottom: 8, borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px 0 16px", flexWrap: "wrap" }}>
+      {/* Standard chrome: search bar (with filter pills ON it) → tabs → one-line explainer */}
+      <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 12px 0 16px" }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search incidents by subject, note, or type…"
-            style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 4px", flex: "1 1 180px", minWidth: 120, fontFamily: "inherit" }}
+            placeholder="Search incidents…"
+            style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 8px", flex: "1 1 80px", minWidth: 60, fontFamily: "inherit" }}
           />
           {search && (
-            <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }} title="Clear">
+            <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", flexShrink: 0 }} title="Clear">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           )}
-          <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", alignItems: "center", padding: "6px 0" }}>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", marginLeft: 8, padding: "6px 0" }}>
             <button
               onClick={() => setTypeFilter("")}
               style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${!typeFilter ? C.pri : C.border}`, background: !typeFilter ? C.pri : "transparent", color: !typeFilter ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
@@ -523,6 +467,66 @@ export default function ClientManagementPage({ data, profile, addGlobalToast = (
         </div>
       </div>
 
+      {/* View tabs — Log (data entry) first, Summary (rates) second */}
+      <div style={{ display: "flex", borderBottom: `1.5px solid ${C.borderLight}` }}>
+        {[{ id: "log", label: "Log", count: incidentCases.length }, { id: "summary", label: "Summary" }].map((t) => {
+          const on = view === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setView(t.id)}
+              style={{ flex: 1, padding: "10px 12px", border: "none", background: "transparent", borderBottom: `3px solid ${on ? C.pri : "transparent"}`, marginBottom: -1.5, color: on ? C.pri : C.textMut, fontSize: 13, fontWeight: on ? 800 : 600, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+            >
+              {t.label}
+              {t.count != null && (
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: on ? C.priLt : C.borderLight, color: on ? C.pri : C.textMut }}>{t.count}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* One-line explainer beneath the tabs (changes per active tab) */}
+      <div style={{ fontSize: 12, color: C.textSec, background: `linear-gradient(90deg, ${C.priLt}, transparent)`, padding: "7px 12px", borderRadius: 8, margin: "10px 0 12px" }}>
+        {view === "log"
+          ? "Every incident logged at this location. Search, filter by type, or show only what needs follow-up."
+          : "Incidents per 1,000 dogs by reporting period. Dog volume is the scheduling reservation count; unique dogs is distinct animals with a stay in the window."}
+      </div>
+
+      {view === "summary" && (
+        <>
+          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "8px 14px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div>Period</div>
+              <div style={{ textAlign: "right" }}>Incidents</div>
+              <div style={{ textAlign: "right" }}>Dog Volume</div>
+              <div style={{ textAlign: "right" }}>Unique Dogs</div>
+              <div style={{ textAlign: "right" }}>Rate /1k</div>
+            </div>
+            {periodRates.map((entry) => (
+              <div key={entry.id} style={{ display: "grid", gridTemplateColumns: SUMMARY_GRID, padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
+                <div style={{ fontSize: 12 }}>
+                  <span style={{ fontWeight: 700, color: C.text }}>{entry.label}</span>
+                  <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}> · {entry.description}</span>
+                  {entry.partial && (
+                    <div style={{ fontSize: 10, color: C.warn, fontWeight: 700, marginTop: 2 }}>Volume data from {fmtDate(entry.coveredFrom)} (partial window)</div>
+                  )}
+                </div>
+                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: C.text }}>{entry.incidents.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.dogVolume.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 13, color: C.textSec }}>{!ratesReady ? "…" : entry.uniqueDogs.toLocaleString()}</div>
+                <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: C.pri }}>{!ratesReady ? "…" : (entry.ratePer1000 !== null ? entry.ratePer1000.toFixed(1) : "—")}</div>
+              </div>
+            ))}
+          </Card>
+          <div style={{ fontSize: 11, color: C.textMut, padding: "2px 4px 0" }}>
+            Rate /1k = incidents ÷ dog volume × 1,000. Dog volume comes from Scheduling&rsquo;s daily reservation counts.
+          </div>
+        </>
+      )}
+
+      {view === "log" && (
+      <>
       {/* ─── Incident table (Grassroots Events style) ─── */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
