@@ -5783,7 +5783,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       {/* Clean clients-style header (no green gradient, tight, exact match to what user loves) */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>Grassroots Tracking</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>Marketing</h1>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saveState !== "idle" && (

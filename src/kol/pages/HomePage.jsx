@@ -1459,7 +1459,10 @@ function ManagerHome({
         <QuickCard label="Labor" desc="Roster, training, and compliance" icon="GraduationCap" onClick={() => nav("training")} accent="#2563EB" />
         <QuickCard label="Incidents" desc="Incident cases and forms" icon="AlertTriangle" onClick={() => nav("client-management")} accent="#DC2626" />
         <QuickCard label="Resources" desc="SOPs, trackers, and shared docs" icon="Book" onClick={() => nav("resources")} accent="#7C3AED" />
-        <QuickCard label="Grassroots" desc="Events, drops, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
+        <QuickCard label="Marketing" desc="Events, visits, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
+        <QuickCard label="Calendar" desc="Aggregated schedule across the resort" icon="Calendar" onClick={() => nav("calendar")} accent="#6366F1" />
+        <QuickCard label="CRM" desc="Booking and employment inquiries" icon="MessageSquare" onClick={() => nav("crm")} accent="#0891B2" />
+        <QuickCard label="Marketing Directory" desc="Organizations and contacts" icon="Users" onClick={() => nav("marketing-directory")} accent="#DB2777" />
       </div>
 
       <WorkflowProgressPanel rows={snapshot.workflowProgress} nav={nav} />
@@ -1562,7 +1565,10 @@ function AdminHome({
         <QuickCard label="Labor" desc="Roster, training, and compliance" icon="GraduationCap" onClick={() => nav("training")} accent="#2563EB" />
         <QuickCard label="Incidents" desc="Incident cases and forms" icon="AlertTriangle" onClick={() => nav("client-management")} accent="#DC2626" />
         <QuickCard label="Resources" desc="SOPs, trackers, and shared docs" icon="Book" onClick={() => nav("resources")} accent="#7C3AED" />
-        <QuickCard label="Grassroots" desc="Events, drops, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
+        <QuickCard label="Marketing" desc="Events, visits, and local outreach" icon="TrendingUp" onClick={() => nav("grassroots")} accent="#EA580C" />
+        <QuickCard label="Calendar" desc="Aggregated schedule across the resort" icon="Calendar" onClick={() => nav("calendar")} accent="#6366F1" />
+        <QuickCard label="CRM" desc="Booking and employment inquiries" icon="MessageSquare" onClick={() => nav("crm")} accent="#0891B2" />
+        <QuickCard label="Marketing Directory" desc="Organizations and contacts" icon="Users" onClick={() => nav("marketing-directory")} accent="#DB2777" />
         <QuickCard label="Resort Upkeep" desc="Cleaning and facility checklists" icon="ClipboardCheck" onClick={() => nav("resort-upkeep")} accent="#0D9488" />
       </div>
 
