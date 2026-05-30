@@ -290,7 +290,9 @@ describe("applyLaborRosterFilters", () => {
 
   it("keeps the Training board search visible before opening the filter panel", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
-    const visibleSearchIndex = source.indexOf('label="Search Training Board"');
+    // The always-visible board search is now the standardized LaborSearchBar bound
+    // to the task filter (rendered above the tabs), not the old "Search Training Board" input.
+    const visibleSearchIndex = source.indexOf("<LaborSearchBar value={pctReadinessFilters.task}");
     const filterPanelIndex = source.indexOf("showPctReadinessFilterPanel &&");
     const hiddenTaskSearchIndex = source.indexOf('label="Task or Category"');
 
