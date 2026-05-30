@@ -30,13 +30,24 @@ import {
   subscribeToResortUpkeep,
   uploadResortUpkeepAttachment,
 } from "../resortUpkeepData";
+import {
+  DenseTable,
+  ListSurfaceTitle,
+  ListSearchRow,
+  PillFilter,
+  PillSeparator,
+  ListTabBar,
+  ListExplainer,
+  StatusPill as SharedStatusPill,
+  StackBadge,
+} from "../../shared/listSurface";
 
 const TABS = [
-  { id: "due", label: "Due", desc: "What's overdue and coming up across upkeep" },
-  { id: "maintenance", label: "Building Maintenance", desc: "Recurring facility checklists" },
-  { id: "vendors", label: "Local Vendors", desc: "Contracts, contacts, and service history" },
-  { id: "licenses", label: "Licenses", desc: "Compliance proof and renewal dates" },
-  { id: "guide", label: "Troubleshooting", desc: "Field reference and escalation paths" },
+  { id: "due", label: "Due" },
+  { id: "maintenance", label: "Maintenance" },
+  { id: "vendors", label: "Vendors" },
+  { id: "licenses", label: "Licenses" },
+  { id: "guide", label: "Guide" },
 ];
 
 const EMPTY_DASHBOARD = {
@@ -224,11 +235,6 @@ function withUpkeepTimeout(promise, message = "This Resort Upkeep request took t
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
-function metricValue(value, loading) {
-  if (loading) return "...";
-  return value ?? 0;
-}
-
 function plural(value, single, many = `${single}s`) {
   return `${value} ${value === 1 ? single : many}`;
 }
@@ -284,8 +290,6 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   }, [load, locationId]);
 
   const toast = useCallback((message) => addGlobalToast({ type: "success", message }), [addGlobalToast]);
-  const hasLoadedLocation = loadedLocationRef.current === locationId;
-  const metricsLoading = loading && !hasLoadedLocation;
   const tabStats = useMemo(() => ({
     due: (dashboard.maintenanceSummary?.overdue || 0) + (dashboard.licenses?.non_compliant || 0) + (dashboard.licenses?.expiring_soon || 0),
     maintenance: dashboard.maintenanceSummary?.active || 0,
@@ -300,46 +304,18 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
 
   return (
     <Shell>
-      <div style={moduleHeader}>
-        <div style={{ minWidth: 0 }}>
-          <div style={eyebrow}>Admin Workspace</div>
-          <h1 style={{ margin: "6px 0 5px", fontSize: 32, letterSpacing: 0, lineHeight: 1.05 }}>Resort Upkeep</h1>
-          <div style={{ color: C.textMut, fontSize: 14, maxWidth: 720, lineHeight: 1.55 }}>
-            Facility maintenance, vendor accountability, license compliance, and field troubleshooting in one operating surface.
-          </div>
-        </div>
-        <div style={headerActionGroup}>
-          <SmallPill>Live Supabase</SmallPill>
-          {canManage ? <SmallPill>Manager controls</SmallPill> : canComplete ? <SmallPill>Checklist access</SmallPill> : <SmallPill>Read only</SmallPill>}
-        </div>
-      </div>
+      <ListSurfaceTitle>Resort Upkeep</ListSurfaceTitle>
 
-      {error && <InlineAlert tone="warning">{error}</InlineAlert>}
+      {error && <div style={{ marginBottom: 12 }}><InlineAlert tone="warning">{error}</InlineAlert></div>}
 
-      <div style={metricGrid}>
-        <Metric label="Maintenance" value={metricValue(dashboard.maintenanceSummary?.active, metricsLoading)} detail="Active periods" />
-        <Metric label="Overdue" value={metricValue(dashboard.maintenanceSummary?.overdue, metricsLoading)} detail="Needs attention" tone="danger" />
-        <Metric label="Vendors" value={metricValue(dashboard.vendors?.active, metricsLoading)} detail="Active records" />
-        <Metric label="Non-compliant" value={metricValue(dashboard.licenses?.non_compliant, metricsLoading)} detail="License issues" tone="danger" />
-      </div>
+      <ListTabBar
+        tabs={TABS.map((item) => ({ id: item.id, label: item.label, count: tabStats[item.id] }))}
+        activeId={tab}
+        onChange={setTab}
+        style={{ marginBottom: 14 }}
+      />
 
-      <div style={tabRail}>
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setTab(item.id)}
-            style={tab === item.id ? activeTabButton : tabButton}
-          >
-            <span style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-              <span>{item.label}</span>
-              <span style={tabBadge}>{metricValue(tabStats[item.id], metricsLoading)}</span>
-            </span>
-            <span style={tabDesc}>{item.desc}</span>
-          </button>
-        ))}
-      </div>
-
-      {tab === "due" && <DuePanel locationId={locationId} dashboard={dashboard} onOpenTab={setTab} />}
+      {tab === "due" && <DuePanel locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onOpenTab={setTab} onRefresh={load} toast={toast} />}
       {tab === "maintenance" && <MaintenancePanel locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onRefresh={load} toast={toast} />}
       {tab === "vendors" && <VendorsPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
       {tab === "licenses" && <LicensesPanel locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
@@ -348,41 +324,40 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   );
 }
 
-const DUE_FILTERS = [
-  { id: "all", label: "All" },
-  { id: "maintenance", label: "Maintenance" },
-  { id: "license", label: "Licenses" },
-  { id: "vendor", label: "Vendors" },
-];
 const DUE_WINDOWS = [
-  { id: 30, label: "30 days" },
-  { id: 60, label: "60 days" },
-  { id: 90, label: "90 days" },
+  { id: 30, label: "30d" },
+  { id: 60, label: "60d" },
+  { id: 90, label: "90d" },
   { id: Infinity, label: "All" },
 ];
-const DUE_KIND_PILL = {
-  maintenance: { bg: C.priLt, fg: C.pri },
-  license: { bg: C.infoLt, fg: C.info },
-  vendor: { bg: C.accLt, fg: C.accDk },
-};
 
-function toneBadgeStyle(tone) {
-  if (tone === "danger") return { background: C.danLt, color: C.dan };
-  if (tone === "warn") return { background: C.warnLt, color: "#B45309" };
-  if (tone === "good") return { background: C.sucLt, color: C.suc };
-  return { background: C.borderLight, color: C.textMut };
+// Map a due item's kind / urgency onto the shared StatusPill + StackBadge tones.
+const KIND_TONE = { maintenance: "primary", license: "info", vendor: "accent" };
+const dueToneToStatus = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "neutral");
+const dueToneToBadge = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "primary");
+
+function fmtDueCompact(value) {
+  if (!value) return "—";
+  try {
+    return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" });
+  } catch {
+    return String(value);
+  }
 }
 
-function KindPill({ kind, label }) {
-  const c = DUE_KIND_PILL[kind] || { bg: C.borderLight, fg: C.textMut };
-  return <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", borderRadius: 999, padding: "3px 8px", background: c.bg, color: c.fg, whiteSpace: "nowrap" }}>{label}</span>;
+function formatDueRange(item) {
+  if (item.dueStart && item.dueEnd && item.dueStart !== item.dueEnd) {
+    return `${fmtDueCompact(item.dueStart)} – ${fmtDueCompact(item.dueEnd)}`;
+  }
+  return fmtDueCompact(item.dueDate || item.dueEnd || item.dueStart);
 }
 
-// A read-only rollup of everything overdue or coming due across the three
-// upkeep domains. It reuses data the page already loads (active maintenance
-// periods from the dashboard, plus licenses and vendor contracts) and renders
-// it as the DESIGN.md dense table. No writes, no new RPC, no migration.
-function DuePanel({ locationId, dashboard, onOpenTab }) {
+// The unified "what's due" rollup, composed from the shared list-surface
+// standard (src/shared/listSurface.jsx). It reuses data the page already loads
+// (active maintenance periods from the dashboard, plus licenses and vendor
+// contracts). Maintenance rows open a completion modal; license/vendor rows
+// jump to their own tab. No new RPC, no migration.
+function DuePanel({ locationId, actor, dashboard, canComplete, onOpenTab, onRefresh, toast }) {
   const [licenses, setLicenses] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -390,6 +365,7 @@ function DuePanel({ locationId, dashboard, onOpenTab }) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("all");
   const [windowDays, setWindowDays] = useState(60);
+  const [openPeriodId, setOpenPeriodId] = useState("");
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!locationId) return;
@@ -432,69 +408,318 @@ function DuePanel({ locationId, dashboard, onOpenTab }) {
     const needle = query.trim().toLowerCase();
     return windowItems.filter((item) =>
       (kind === "all" || item.kind === kind)
-      && (!needle || `${item.title} ${item.subtitle}`.toLowerCase().includes(needle))
+      && (!needle || `${item.title} ${item.subtitle} ${item.frequency}`.toLowerCase().includes(needle))
     );
   }, [windowItems, kind, query]);
 
-  return (
-    <div style={detailPanel}>
-      <style>{`.k9-due-row:hover{background:${C.surfaceHover}}.k9-due-row:last-child{border-bottom:none}.k9-due-row:focus-visible{outline:2px solid ${C.pri};outline-offset:-2px}`}</style>
-      <div style={dueControls}>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search what's due" style={{ ...input, maxWidth: 260 }} />
-        <div style={pillRow}>
-          {DUE_FILTERS.map((filter) => (
-            <button key={filter.id} type="button" onClick={() => setKind(filter.id)} style={kind === filter.id ? activeFilterPill : filterPill}>
-              {filter.label}<span style={pillCount}>{counts[filter.id] ?? 0}</span>
-            </button>
-          ))}
-          <span style={vSep} />
-          {DUE_WINDOWS.map((option) => (
-            <button key={String(option.id)} type="button" onClick={() => setWindowDays(option.id)} style={windowDays === option.id ? activeWindowToggle : windowToggle}>{option.label}</button>
-          ))}
-        </div>
-      </div>
-      <div style={dueExplainer}>Everything overdue or coming due across maintenance, licenses, and vendor contracts. Read only; open a row to act in its tab.</div>
-      {error && <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div>}
+  const activePeriods = dashboard.maintenance || [];
+  const openPeriod = useMemo(
+    () => activePeriods.find((p) => String(p.id) === openPeriodId) || null,
+    [activePeriods, openPeriodId]
+  );
 
-      {loading ? (
-        <div style={{ marginTop: 14, display: "grid", gap: 10 }}><LoadingRows /></div>
-      ) : visible.length === 0 ? (
-        <div style={{ marginTop: 14 }}>
-          <EmptyCard title="Nothing due in this window" text={overdueCount ? "Adjust the filters to see the rest." : "You're current. Widen the window to look further ahead."} compact />
+  const handleRow = (item) => {
+    if (item.kind === "maintenance") setOpenPeriodId(String(item.id).replace(/^maintenance:/, ""));
+    else onOpenTab(item.targetTab);
+  };
+
+  const columns = useMemo(() => ([
+    {
+      key: "item",
+      header: "Item",
+      width: "minmax(150px, 1.7fr)",
+      sortable: true,
+      sortValue: (r) => String(r.title).toLowerCase(),
+      render: (r) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25, wordBreak: "break-word" }}>{r.title}</div>
+          {r.subtitle ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut, lineHeight: 1.3 }}>{r.subtitle}</div> : null}
         </div>
-      ) : (
-        <div style={dueTableWrap}>
-          <div style={dueScroll}>
-            <div style={dueTableInner}>
-              <div style={dueHeadRow}>
-                <div style={dueHeadCell}>Type</div>
-                <div style={dueHeadCell}>Item</div>
-                <div style={dueHeadCell}>Due</div>
-                <div style={dueHeadCell}>Status</div>
-                <div style={dueHeadCell} />
-              </div>
-              {visible.map((item) => (
-                <button key={item.id} type="button" className="k9-due-row" onClick={() => onOpenTab(item.targetTab)} style={dueRow} title={`Open in ${item.kindLabel} tab`}>
-                  <div><KindPill kind={item.kind} label={item.kindLabel} /></div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={dueTitle}>{item.title}</div>
-                    {item.subtitle && <div style={dueSub}>{item.subtitle}</div>}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={dueDateText}>{fmtUpkeepDate(item.dueDate)}</div>
-                    <div style={{ ...dueBadgeStyle, ...toneBadgeStyle(item.tone) }}>{item.dueBadge}</div>
-                  </div>
-                  <div><span style={{ ...dueStatusStyle, ...toneBadgeStyle(item.tone) }}>{item.statusLabel}</span></div>
-                  <div style={dueChevron}>›</div>
-                </button>
-              ))}
-            </div>
-          </div>
+      ),
+    },
+    {
+      key: "type",
+      header: "Type",
+      width: 96,
+      sortable: true,
+      sortValue: (r) => r.kindLabel,
+      render: (r) => <SharedStatusPill tone={KIND_TONE[r.kind] || "neutral"}>{r.kindLabel}</SharedStatusPill>,
+    },
+    {
+      key: "frequency",
+      header: "Frequency",
+      width: "minmax(92px, 0.9fr)",
+      sortable: true,
+      sortValue: (r) => r.frequency || "",
+      render: (r) => <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec, whiteSpace: "nowrap" }}>{r.frequency || "—"}</span>,
+    },
+    {
+      key: "due",
+      header: "Due",
+      width: "minmax(118px, 1.1fr)",
+      sortable: true,
+      sortValue: (r) => (r.daysLeft == null ? Number.POSITIVE_INFINITY : r.daysLeft),
+      render: (r) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{formatDueRange(r)}</span>
+          {r.dueBadge ? <StackBadge tone={dueToneToBadge(r.tone)}>{r.dueBadge}</StackBadge> : null}
         </div>
-      )}
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: 112,
+      sortable: true,
+      sortValue: (r) => r.statusLabel,
+      render: (r) => <SharedStatusPill tone={dueToneToStatus(r.tone)}>{r.statusLabel}</SharedStatusPill>,
+    },
+  ]), []);
+
+  return (
+    <div>
+      <ListSearchRow value={query} onChange={setQuery} placeholder="Search what's due">
+        <PillFilter active={kind === "all"} count={counts.all} onClick={() => setKind("all")}>All</PillFilter>
+        <PillFilter active={kind === "maintenance"} count={counts.maintenance} onClick={() => setKind("maintenance")}>Maintenance</PillFilter>
+        <PillFilter active={kind === "license"} count={counts.license} onClick={() => setKind("license")}>Licenses</PillFilter>
+        <PillFilter active={kind === "vendor"} count={counts.vendor} onClick={() => setKind("vendor")}>Vendors</PillFilter>
+        <PillSeparator />
+        {DUE_WINDOWS.map((opt) => (
+          <PillFilter key={String(opt.id)} active={windowDays === opt.id} onClick={() => setWindowDays(opt.id)} title={`Due within ${opt.label}`}>{opt.label}</PillFilter>
+        ))}
+      </ListSearchRow>
+      <ListExplainer>
+        Everything overdue or coming due across building maintenance, licenses, and vendor contracts. Open a maintenance row to complete its checklist.
+      </ListExplainer>
+
+      {error ? (
+        <div style={{ marginTop: 12 }}>
+          <InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert>
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 12 }}>
+        {loading ? (
+          <div style={{ display: "grid", gap: 10 }}><LoadingRows /></div>
+        ) : (
+          <DenseTable
+            columns={columns}
+            rows={visible}
+            getRowKey={(r) => r.id}
+            minWidth={660}
+            onRowClick={handleRow}
+            emptyText={overdueCount ? "Nothing matches these filters." : "You're current. Widen the window to look further ahead."}
+          />
+        )}
+      </div>
+
+      {openPeriod ? (
+        <MaintenanceCompletionModal
+          period={openPeriod}
+          locationId={locationId}
+          actor={actor}
+          canComplete={canComplete}
+          onClose={() => setOpenPeriodId("")}
+          onChanged={() => { if (onRefresh) onRefresh(); }}
+          toast={toast}
+        />
+      ) : null}
     </div>
   );
 }
+
+// Checklist completion, reimagined on the Bathing Report model: a clean,
+// tap-to-complete item list with a progress bar (who/when attribution), plus a
+// PDF upload as an alternate "record of completion" path. Replaces the old
+// notes-per-item + autosave + auto-submit-timer flow.
+function MaintenanceCompletionModal({ period, locationId, actor, canComplete, onClose, onChanged, toast }) {
+  const [snapshot, setSnapshot] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [pdf, setPdf] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const snap = await withUpkeepTimeout(loadMaintenancePeriodSnapshot(period.id), "Checklist took too long to load.");
+      setSnapshot(snap);
+      setError("");
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "This checklist could not be loaded."));
+    } finally {
+      setLoading(false);
+    }
+  }, [period.id]);
+
+  useEffect(() => { setLoading(true); reload(); }, [reload]);
+
+  const items = snapshot?.items || [];
+  const progress = snapshot?.progress || {};
+  const requiredItems = items.filter((it) => it.is_required !== false);
+  const total = progress.totalRequired ?? (requiredItems.length || items.length);
+  const done = progress.completedRequired ?? requiredItems.filter((it) => it.state?.checked).length;
+  const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const allComplete = total > 0 && done >= total;
+  const computedStatus = snapshot?.computedStatus || period.computed_status || period.status;
+  const submitted = ["submitted", "submitted_late", "late_submitted"].includes(computedStatus);
+  const canEdit = canComplete && (snapshot?.canEdit ?? true) && !submitted;
+
+  const toggleItem = async (item) => {
+    if (!canEdit || busyKey) return;
+    setBusyKey(item.key);
+    try {
+      await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked: !item.state?.checked, notes: item.state?.notes || "", actorName: actor });
+      await reload();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "That item could not be updated."));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const pickPdf = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const uploaded = await uploadResortUpkeepAttachment({ locationId, file, pathParts: ["maintenance", period.id, "completion"] });
+      let url = "";
+      try { url = await createResortUpkeepSignedUrl({ storage_path: uploaded.path }); } catch { /* link is best-effort */ }
+      setPdf({ name: file.name || uploaded.safeName, size: file.size || 0, url });
+      if (toast) toast("Checklist PDF uploaded");
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "That PDF could not be uploaded."));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      if (!allComplete && pdf) {
+        // The uploaded PDF is the record of completion: mark each item done.
+        for (const item of items) {
+          if (!item.state?.checked) {
+            await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked: true, notes: item.state?.notes || `Completed via uploaded PDF (${pdf.name})`, actorName: actor });
+          }
+        }
+      }
+      await submitMaintenancePeriod(period.id, actor, pdf ? `Completed via uploaded PDF: ${pdf.name}` : "");
+      if (toast) toast("Checklist submitted");
+      if (onChanged) onChanged();
+      onClose();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "This checklist could not be submitted."));
+      setSubmitting(false);
+    }
+  };
+
+  const title = period.template_name || period.template_slug || "Maintenance checklist";
+  const range = [period.period_start, period.period_end].filter(Boolean).map(fmtUpkeepDate).join(" – ");
+  const submitDisabled = submitting || submitted || !canComplete || (!allComplete && !pdf);
+
+  return (
+    <div style={muOverlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={muCard} role="dialog" aria-modal="true">
+        <div style={muHead}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, lineHeight: 1.2, wordBreak: "break-word" }}>{title}</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>
+              {range || "Current period"}{computedStatus ? ` · ${fmtUpkeepStatus(computedStatus)}` : ""}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={secondaryBtn}>Close</button>
+        </div>
+
+        <div style={muBody}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{done}/{total} items complete</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{pct}%</div>
+          </div>
+          <div style={muProgressTrack}>
+            <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: allComplete ? C.suc : C.pri, transition: "width 0.3s" }} />
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <div style={sectionLabel}>Complete by upload</div>
+            <div style={muUploadZone}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {pdf ? (
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, wordBreak: "break-word" }}>
+                    {pdf.name} <span style={{ color: C.textMut, fontWeight: 600 }}>({Math.max(1, Math.round((pdf.size || 0) / 1024))} KB)</span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.4 }}>Upload a signed, scanned checklist (PDF) as the record of completion.</div>
+                )}
+                {pdf?.url ? <a href={pdf.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.pri, fontWeight: 700 }}>View uploaded PDF</a> : null}
+              </div>
+              <label style={{ ...primaryBtn, opacity: uploading ? 0.6 : 1, whiteSpace: "nowrap", cursor: uploading ? "default" : "pointer" }}>
+                {uploading ? "Uploading…" : pdf ? "Replace PDF" : "Upload PDF"}
+                <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={uploading} onChange={(e) => pickPdf(e.target.files?.[0])} />
+              </label>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 18 }}>
+            <div style={sectionLabel}>Or complete in app</div>
+            {loading ? (
+              <div style={{ marginTop: 10 }}><LoadingRows /></div>
+            ) : items.length === 0 ? (
+              <div style={{ marginTop: 10, color: C.textMut, fontSize: 13 }}>This checklist has no items yet.</div>
+            ) : (
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                {items.map((item) => {
+                  const checked = !!item.state?.checked;
+                  return (
+                    <div key={item.key} style={checked ? muItemDone : muItem}>
+                      <button type="button" onClick={() => toggleItem(item)} disabled={!canEdit || busyKey === item.key} aria-pressed={checked} title={checked ? "Mark not done" : "Mark done"} style={checked ? muToggleOn : muToggle}>
+                        {checked ? "✓" : ""}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35 }}>{item.label}</div>
+                        {checked && (item.state?.checked_by_name || item.state?.checked_at) ? (
+                          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>Done{item.state?.checked_by_name ? ` by ${item.state.checked_by_name}` : ""}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
+        </div>
+
+        <div style={muFoot}>
+          <div style={{ fontSize: 12, color: C.textMut, flex: 1, minWidth: 0 }}>
+            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pdf ? "Ready to submit with the uploaded PDF." : allComplete ? "All items complete." : "Complete every item, or upload a PDF."}
+          </div>
+          <button type="button" onClick={submit} disabled={submitDisabled} style={{ ...primaryBtn, opacity: submitDisabled ? 0.5 : 1 }}>
+            {submitting ? "Submitting…" : "Submit checklist"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const muOverlay = { position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 16px", zIndex: 1000, overflowY: "auto" };
+const muCard = { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 720, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 60px rgba(15,23,42,0.28)" };
+const muHead = { padding: "16px 20px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 };
+const muBody = { padding: "16px 20px", overflowY: "auto" };
+const muFoot = { padding: "12px 20px", borderTop: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 12 };
+const muProgressTrack = { marginTop: 10, height: 6, borderRadius: 999, background: C.borderLight, overflow: "hidden" };
+const muUploadZone = { marginTop: 8, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: 14, background: C.surfaceHover, display: "flex", alignItems: "center", gap: 12 };
+const muItem = { display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#fff" };
+const muItemDone = { ...muItem, borderColor: "#BBF7D0", background: "#F0FDF4" };
+const muToggle = { width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: "transparent", cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" };
+const muToggleOn = { ...muToggle, border: `1.5px solid ${C.suc}`, background: C.suc, color: "#fff" };
 
 function MaintenancePanel({ locationId, actor, dashboard, canComplete, canManage, onRefresh, toast }) {
   const [selectedId, setSelectedId] = useState("");
@@ -1604,16 +1829,6 @@ function Shell({ children }) {
   return <div style={{ padding: 24, maxWidth: 1320, margin: "0 auto" }}>{children}</div>;
 }
 
-function Metric({ label, value, tone, detail }) {
-  return (
-    <div style={{ ...metricCard, borderColor: tone === "danger" ? "#FECACA" : C.border }}>
-      <div style={{ fontSize: 11, lineHeight: 1.15, fontWeight: 950, color: C.textMut, textTransform: "uppercase", letterSpacing: ".07em", overflowWrap: "anywhere" }}>{label}</div>
-      <div style={{ marginTop: 9, fontSize: 28, lineHeight: 1, fontWeight: 950, color: tone === "danger" ? C.dan : C.pri }}>{value}</div>
-      {detail && <div style={{ marginTop: 7, color: C.textMut, fontSize: 12, fontWeight: 800 }}>{detail}</div>}
-    </div>
-  );
-}
-
 function Progress({ row }) {
   const percent = row?.progress?.percentComplete || 0;
   return <div style={{ marginTop: 10 }}><div style={{ height: 7, borderRadius: 999, background: C.borderLight, overflow: "hidden" }}><div style={{ height: "100%", width: `${percent}%`, background: C.pri }} /></div><div style={{ marginTop: 5, fontSize: 11, fontWeight: 800, color: C.textMut }}>{row?.progress?.completedRequired || 0}/{row?.progress?.totalRequired || 0} complete</div></div>;
@@ -1688,92 +1903,12 @@ const panel = {
   boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
 };
 
-const moduleHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: 18,
-  marginBottom: 18,
-  paddingBottom: 2,
-};
-
-const headerActionGroup = {
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-  justifyContent: "flex-end",
-  flexWrap: "wrap",
-};
-
 const eyebrow = {
   fontSize: 11,
   fontWeight: 950,
   color: C.pri,
   letterSpacing: ".08em",
   textTransform: "uppercase",
-};
-
-const metricGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-  gap: 12,
-  marginBottom: 16,
-};
-
-const metricCard = {
-  ...panel,
-  minWidth: 0,
-  padding: 16,
-};
-
-const tabRail = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))",
-  gap: 10,
-  marginBottom: 16,
-};
-
-const tabButton = {
-  appearance: "none",
-  border: `1px solid ${C.border}`,
-  borderRadius: 12,
-  background: "#fff",
-  color: C.textMut,
-  padding: 12,
-  fontWeight: 950,
-  fontSize: 13,
-  cursor: "pointer",
-  textAlign: "left",
-  fontFamily: "inherit",
-  minWidth: 0,
-  outline: "none",
-};
-
-const activeTabButton = {
-  ...tabButton,
-  borderColor: C.pri,
-  color: C.text,
-  background: "#F8FAFC",
-  boxShadow: "inset 0 -3px 0 #14532D",
-};
-
-const tabBadge = {
-  borderRadius: 999,
-  padding: "2px 7px",
-  background: C.borderLight,
-  color: C.textMut,
-  fontSize: 11,
-  fontWeight: 950,
-  flexShrink: 0,
-};
-
-const tabDesc = {
-  display: "block",
-  marginTop: 5,
-  color: C.textMut,
-  fontSize: 11,
-  lineHeight: 1.35,
-  fontWeight: 800,
 };
 
 const workspaceGrid = {
@@ -1914,87 +2049,3 @@ const inlineLinkButton = {
   textDecoration: "underline",
   fontFamily: "inherit",
 };
-
-// ─── "Due" rollup (dense table per DESIGN.md THE STANDARD) ───────────────────
-const DUE_GRID = "104px minmax(160px, 1fr) 128px 132px 22px";
-
-const dueControls = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 4 };
-const pillRow = { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" };
-const filterPill = {
-  appearance: "none",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  border: `1px solid ${C.border}`,
-  borderRadius: 999,
-  background: "#fff",
-  color: C.textMut,
-  padding: "5px 11px",
-  fontSize: 12,
-  fontWeight: 800,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-const activeFilterPill = { ...filterPill, borderColor: C.pri, background: C.priLt, color: C.pri };
-const pillCount = { fontSize: 10, fontWeight: 900, background: C.borderLight, color: C.textMut, borderRadius: 999, padding: "1px 6px" };
-const vSep = { width: 1, alignSelf: "stretch", minHeight: 20, background: C.border, margin: "0 2px" };
-const windowToggle = {
-  appearance: "none",
-  border: `1px solid ${C.border}`,
-  borderRadius: 8,
-  background: "#fff",
-  color: C.textMut,
-  padding: "5px 9px",
-  fontSize: 12,
-  fontWeight: 800,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-const activeWindowToggle = { ...windowToggle, background: C.pri, color: "#fff", borderColor: C.pri };
-const dueExplainer = {
-  marginTop: 10,
-  padding: "7px 12px",
-  borderRadius: 8,
-  fontSize: 12,
-  lineHeight: 1.4,
-  color: C.textMut,
-  background: C.priLt,
-  border: `1px solid ${C.borderLight}`,
-};
-const dueTableWrap = { marginTop: 12, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface };
-const dueScroll = { overflowX: "auto" };
-const dueTableInner = { minWidth: 620 };
-const dueHeadRow = {
-  display: "grid",
-  gridTemplateColumns: DUE_GRID,
-  gap: 10,
-  alignItems: "center",
-  padding: "8px 12px",
-  background: "#fff",
-  borderBottom: `1px solid ${C.border}`,
-};
-const dueHeadCell = { fontSize: 10, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: C.textMut };
-const dueRow = {
-  appearance: "none",
-  display: "grid",
-  gridTemplateColumns: DUE_GRID,
-  gap: 10,
-  alignItems: "start",
-  width: "100%",
-  textAlign: "left",
-  border: 0,
-  borderBottom: `1px solid ${C.borderLight}`,
-  background: "#fff",
-  color: C.text,
-  padding: "7px 12px",
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-const dueTitle = { fontSize: 13, fontWeight: 700, color: C.pri, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
-const dueSub = { marginTop: 2, fontSize: 11, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
-const dueDateText = { fontSize: 12, fontWeight: 700, color: C.text, whiteSpace: "nowrap" };
-const dueBadgeStyle = { marginTop: 3, display: "inline-block", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" };
-const dueStatusStyle = { display: "inline-block", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" };
-const dueChevron = { color: C.textMut, fontSize: 16, fontWeight: 900, alignSelf: "center", textAlign: "right" };

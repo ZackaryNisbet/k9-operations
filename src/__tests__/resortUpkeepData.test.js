@@ -27,6 +27,8 @@ vi.mock("../supabaseClient", () => ({ supabase: supabaseMock }));
 import {
   RESORT_UPKEEP_ATTACHMENT_BUCKET,
   buildUpkeepDueItems,
+  upkeepFrequencyFromMonths,
+  upkeepFrequencyFromSlug,
   createResortUpkeepSignedUrl,
   loadMaintenanceTemplates,
   loadResortUpkeepDashboard,
@@ -322,13 +324,23 @@ describe("resortUpkeepData", () => {
     expect(source).not.toContain("useEffect(() => { if (draft.id) loadLicenseLogs");
   });
 
-  it("adds a polished operational shell around Resort Upkeep web tabs", () => {
+  it("composes Resort Upkeep on the shared list-surface standard", () => {
     const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
 
-    expect(source).toContain("Admin Workspace");
-    expect(source).toContain("Live Supabase");
-    expect(source).toContain("tabRail");
-    expect(source).toContain("Checklist command center");
+    // Adopts the shared DESIGN.md §5 components instead of bespoke chrome.
+    expect(source).toContain('from "../../shared/listSurface"');
+    expect(source).toContain("ListSurfaceTitle");
+    expect(source).toContain("ListTabBar");
+    expect(source).toContain("ListSearchRow");
+    expect(source).toContain("ListExplainer");
+    expect(source).toContain("DenseTable");
+
+    // The old admin-workspace chrome (hero metrics, status pills, bespoke tab rail) is gone.
+    expect(source).not.toContain("Admin Workspace");
+    expect(source).not.toContain("Live Supabase");
+    expect(source).not.toContain("tabRail");
+
+    // The other tabs' record panels still exist.
     expect(source).toContain("Track contractors, service partners, contract proof, and development notes.");
     expect(source).toContain("Keep permits, compliance requirements, proof files, and renewal timing in one view.");
     expect(source).toContain("Search the facilities reference without leaving the upkeep workflow.");
@@ -632,8 +644,8 @@ describe("buildUpkeepDueItems", () => {
     ]);
     expect(items[0]).toMatchObject({ id: "license:l2", attention: true, tone: "danger", dueBadge: "No date", statusLabel: "Non-compliant" });
     const m1 = items.find((item) => item.id === "maintenance:m1");
-    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "Overdue", targetTab: "maintenance" });
-    expect(m1.subtitle).toContain("2/5 done");
+    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "Overdue", targetTab: "maintenance", frequency: "Quarterly", dueStart: "2026-04-01", dueEnd: "2026-06-30" });
+    expect(m1.subtitle).toBe(""); // the item column no longer carries dates
   });
 
   it("excludes completed periods, inactive licenses, archived vendors, and vendors without a contract end date", () => {
@@ -656,7 +668,7 @@ describe("buildUpkeepDueItems", () => {
 
   it("labels vendor and license urgency with tone and due badges", () => {
     const items = buildUpkeepDueItems({ vendors, today: TODAY });
-    expect(items.find((item) => item.id === "vendor:v3")).toMatchObject({ tone: "danger", statusLabel: "Contract expired", dueBadge: "Overdue 29d", kindLabel: "Vendor" });
+    expect(items.find((item) => item.id === "vendor:v3")).toMatchObject({ tone: "danger", statusLabel: "Contract expired", dueBadge: "Overdue 29d", kindLabel: "Vendor", frequency: "Contract" });
     expect(items.find((item) => item.id === "vendor:v1")).toMatchObject({ tone: "warn", statusLabel: "Contract ending", dueBadge: "Due in 11d" });
   });
 
@@ -668,5 +680,17 @@ describe("buildUpkeepDueItems", () => {
   it("returns an empty array for empty or missing input", () => {
     expect(buildUpkeepDueItems({})).toEqual([]);
     expect(buildUpkeepDueItems()).toEqual([]);
+  });
+
+  it("derives frequency labels from template slugs and license cadence months", () => {
+    expect(upkeepFrequencyFromSlug("building-maintenance-semi-annual")).toBe("Semi-annual");
+    expect(upkeepFrequencyFromSlug("building-maintenance-quarterly")).toBe("Quarterly");
+    expect(upkeepFrequencyFromSlug("building-maintenance-monthly")).toBe("Monthly");
+    expect(upkeepFrequencyFromSlug("building-maintenance-annual")).toBe("Annual");
+    expect(upkeepFrequencyFromSlug("")).toBe("");
+    expect(upkeepFrequencyFromMonths(12)).toBe("Annual");
+    expect(upkeepFrequencyFromMonths(3)).toBe("Quarterly");
+    expect(upkeepFrequencyFromMonths(18)).toBe("18 mo");
+    expect(upkeepFrequencyFromMonths(null)).toBe("");
   });
 });

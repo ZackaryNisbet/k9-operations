@@ -393,6 +393,23 @@ function upkeepTone(daysLeft, { attention = false, soonDays = 14 } = {}) {
   return "neutral";
 }
 
+const UPKEEP_FREQUENCY_BY_MONTHS = { 1: "Monthly", 2: "Bi-monthly", 3: "Quarterly", 6: "Semi-annual", 12: "Annual", 24: "Biennial" };
+
+export function upkeepFrequencyFromSlug(slug) {
+  const s = String(slug || "").toLowerCase();
+  if (s.includes("semi-annual") || s.includes("semi_annual") || s.includes("semiannual")) return "Semi-annual";
+  if (s.includes("quarter")) return "Quarterly";
+  if (s.includes("month")) return "Monthly";
+  if (s.includes("annual") || s.includes("yearly")) return "Annual";
+  return "";
+}
+
+export function upkeepFrequencyFromMonths(months) {
+  const n = Number(months);
+  if (!n) return "";
+  return UPKEEP_FREQUENCY_BY_MONTHS[n] || `${n} mo`;
+}
+
 export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors = [], today, windowDays = 60 } = {}) {
   const anchor = today || new Date().toISOString().slice(0, 10);
   const horizon = windowDays === null || windowDays === Infinity ? Infinity : Number(windowDays);
@@ -406,15 +423,15 @@ export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors =
     const daysLeft = upkeepDaysUntil(anchor, dueDate);
     const overdue = status === "overdue" || (daysLeft !== null && daysLeft < 0);
     if (!overdue && daysLeft !== null && daysLeft > horizon) return;
-    const progress = p.progress || {};
-    const range = [p.period_start, p.period_end].filter(Boolean).map((d) => fmtUpkeepDate(d)).join(" - ");
-    const done = progress.totalRequired ? `${progress.completedRequired || 0}/${progress.totalRequired} done` : "";
     items.push({
       id: `maintenance:${p.id}`,
       kind: "maintenance",
       kindLabel: "Maintenance",
       title: p.template_name || p.template_slug || "Maintenance period",
-      subtitle: [range, done].filter(Boolean).join(" · "),
+      subtitle: "",
+      frequency: upkeepFrequencyFromSlug(p.template_slug) || upkeepFrequencyFromSlug(p.template_name),
+      dueStart: p.period_start || null,
+      dueEnd: p.period_end || null,
       dueDate,
       daysLeft,
       tone: overdue ? "danger" : upkeepTone(daysLeft, { soonDays: 7 }),
@@ -437,7 +454,10 @@ export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors =
       kind: "license",
       kindLabel: "License",
       title: l.requirement_name || "License requirement",
-      subtitle: l.issuing_organization || "No issuing organization",
+      subtitle: l.issuing_organization || "",
+      frequency: upkeepFrequencyFromMonths(l.cadence_months),
+      dueStart: dateRef,
+      dueEnd: dateRef,
       dueDate: dateRef,
       daysLeft,
       tone: upkeepTone(daysLeft, { attention: nonCompliant }),
@@ -459,7 +479,10 @@ export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors =
       kind: "vendor",
       kindLabel: "Vendor",
       title: v.business_name || "Vendor contract",
-      subtitle: "Service contract",
+      subtitle: "",
+      frequency: "Contract",
+      dueStart: v.contract_effective_end,
+      dueEnd: v.contract_effective_end,
       dueDate: v.contract_effective_end,
       daysLeft,
       tone: upkeepTone(daysLeft),
