@@ -39,6 +39,8 @@ import {
   summarizeUpdates,
   deriveFollowUp,
   leadUpdates,
+  buildLeadHistoryRows,
+  groupLeadHistoryByDay,
   receivedDate,
   receivedTime,
   leadAttachments,
@@ -301,7 +303,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     return filterRows(scoped, query, columns);
   }, [leads, activeTab, query, columns]);
 
-  const tabs = SUBMISSION_CATEGORIES.map((c) => ({ id: c.id, label: c.label, count: categoryCounts[c.id] || 0 }));
+  const historyRows = useMemo(() => buildLeadHistoryRows(leads, updatesByLead), [leads, updatesByLead]);
+
+  const tabs = [
+    ...SUBMISSION_CATEGORIES.map((c) => ({ id: c.id, label: c.label, count: categoryCounts[c.id] || 0 })),
+    { id: "history", label: "History", count: historyRows.length },
+  ];
   const activeCategory = getCategory(activeTab);
   const emptyText = query.trim() ? "No submissions match your search." : `No ${activeCategory ? activeCategory.label.toLowerCase() : ""} submissions yet.`;
 
@@ -349,6 +356,8 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   let body;
   if (loading && leads.length === 0) {
     body = <div style={{ padding: "44px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading submissions…</div>;
+  } else if (activeTab === "history") {
+    body = <HistoryView rows={historyRows} />;
   } else {
     body = (
       <DenseTable
@@ -380,7 +389,9 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface }}>
           <ListSearchRow value={query} onChange={setQuery} placeholder="Search by name, phone, or form details…" />
           <ListTabBar tabs={tabs} activeId={activeTab} onChange={(id) => { setActiveTab(id); setExpand({ id: null, mode: "form" }); }} />
-          {activeCategory && <ListExplainer>{activeCategory.explainer}</ListExplainer>}
+          {activeTab === "history"
+            ? <ListExplainer>Every logged change across your leads — who changed what, the follow-up it set, and when.</ListExplainer>
+            : activeCategory && <ListExplainer>{activeCategory.explainer}</ListExplainer>}
           {body}
         </div>
       )}
@@ -484,6 +495,61 @@ function SubmissionDetails({ lead }) {
 function fmtDateTime(value) {
   if (!value) return "—";
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// The follow-up "state change" — previous date crossed off, pointing to the new
+// one (mirrors the Training History status-change pills).
+function CrmHistoryStatusChange({ prev, next }) {
+  if (!prev && !next) return <span style={{ color: C.textMut }}>—</span>;
+  const pill = (label, struck) => (
+    <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, border: `1px solid ${struck ? C.border : `${C.pri}40`}`, background: struck ? C.surfaceHover : C.priLt, color: struck ? C.textMut : C.pri, padding: "2px 8px", fontSize: 10.5, fontWeight: 900, textDecoration: struck ? "line-through" : "none", opacity: struck ? 0.72 : 1, whiteSpace: "nowrap" }}>{label}</span>
+  );
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {prev ? pill(fmtDate(prev), true) : null}
+      {prev ? <span style={{ color: C.textMut, fontSize: 11, fontWeight: 900 }}>{"->"}</span> : null}
+      {next ? pill(fmtDate(next), false) : <span style={{ color: C.textMut }}>—</span>}
+    </span>
+  );
+}
+
+// Global change-history, grouped by day — what changed on each lead, the follow-up
+// transition, who did it, and when. Same fields as the Training History tab.
+function HistoryView({ rows }) {
+  const groups = useMemo(() => groupLeadHistoryByDay(rows), [rows]);
+  if (!rows.length) return <div style={{ padding: "44px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No history yet.</div>;
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) 104px minmax(0, 1fr) 168px", gap: 12, padding: "9px 20px", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>
+        <span>Lead / change</span><span>Action</span><span>Follow-up</span><span style={{ textAlign: "right" }}>By / when</span>
+      </div>
+      {groups.map((g) => (
+        <div key={g.day}>
+          <div style={{ padding: "9px 20px 6px", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: C.textSec, background: C.surfaceHover }}>
+            {g.day === "unknown" ? "Undated" : new Date(`${g.day}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+          </div>
+          {g.items.map((r) => (
+            <div key={r.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) 104px minmax(0, 1fr) 168px", gap: 12, alignItems: "start", padding: "11px 20px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12.5 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 800, color: C.text }}>{r.leadName}</div>
+                {r.notes && <div style={{ marginTop: 3, color: C.textSec, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.notes}</div>}
+              </div>
+              <div>
+                <span style={{ display: "inline-flex", padding: "3px 9px", borderRadius: 999, background: C.priLt, color: C.pri, fontWeight: 800, fontSize: 11 }}>{updateTypeLabel(r.type)}</span>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <CrmHistoryStatusChange prev={r.prevFollowUp} next={r.newFollowUp} />
+              </div>
+              <div style={{ textAlign: "right", minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: C.textSec, wordBreak: "break-word" }}>{r.actor}</div>
+                <div style={{ marginTop: 2, fontSize: 11.5, color: C.textMut }}>{fmtDateTime(r.createdAt)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function UpdatesPanel({ lead, updates, onLog }) {

@@ -442,6 +442,55 @@ export function leadUpdates(lead, updatesByLead) {
   return base ? [...real, base] : [...real];
 }
 
+/**
+ * Global change-history across every CRM lead — one row per logged update, newest
+ * first. Each row records WHO (actor), WHAT lead, the action TYPE, the follow-up
+ * transition (previous date -> new date, for the crossed-off "state change"), the
+ * note, and WHEN. Mirrors the Training History timeline, fed by ignite_lead_updates.
+ */
+export function buildLeadHistoryRows(leads, updatesByLead) {
+  const rows = [];
+  for (const lead of leads || []) {
+    if (!isCrmSubmission(lead)) continue;
+    const leadName = cleanLeadName(lead) || "Lead";
+    // Oldest -> newest so we can read each follow-up transition off the prior one.
+    const ups = leadUpdates(lead, updatesByLead)
+      .slice()
+      .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+    let prevFollowUp = "";
+    for (const u of ups) {
+      const newFollowUp = u.next_follow_up_date || "";
+      rows.push({
+        id: u.id,
+        leadId: lead.id,
+        leadName,
+        actor: u.created_by_name || "Ignite",
+        createdAt: u.created_at || null,
+        type: u.update_type || "note",
+        notes: u.notes || "",
+        prevFollowUp,
+        newFollowUp,
+        system: !!u.system,
+      });
+      if (newFollowUp) prevFollowUp = newFollowUp;
+    }
+  }
+  return rows.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
+
+/** Group history rows by local calendar day (YYYY-MM-DD), newest day first. */
+export function groupLeadHistoryByDay(rows) {
+  const byDay = new Map();
+  for (const r of rows || []) {
+    const day = r.createdAt ? String(r.createdAt).slice(0, 10) : "unknown";
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(r);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+    .map(([day, items]) => ({ day, items }));
+}
+
 /** Row payload inserted into ignite_lead_updates. */
 export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "" }) {
   return {

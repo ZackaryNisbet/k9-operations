@@ -26,6 +26,8 @@ import {
   fmtFileSize,
   capturedUpdate,
   leadUpdates,
+  buildLeadHistoryRows,
+  groupLeadHistoryByDay,
   buildUpdatePayload,
   followUpState,
   recommendedFollowUp,
@@ -201,6 +203,30 @@ describe("received time + résumé attachments", () => {
     expect(fmtFileSize(2 * 1024 * 1024)).toBe("2.0 MB");
     expect(fmtFileSize(0)).toBe("");
     expect(fmtFileSize("nope")).toBe("");
+  });
+});
+
+describe("lead change history (global timeline)", () => {
+  const leads = [{ id: "l1", lead_type: "web_form", first_name: "Pam", last_name: "S", created_at: "2026-05-20T14:30:00Z", raw_email_subject: "New Booking Form Submission Received", form_data: { desired_service: "Boarding" } }];
+  const updatesByLead = {
+    l1: [
+      { id: "u2", lead_id: "l1", update_type: "call", notes: "called", next_follow_up_date: "2026-06-01", created_at: "2026-05-25T10:00:00Z", created_by_name: "Zack" },
+      { id: "u1", lead_id: "l1", update_type: "text", notes: "texted", next_follow_up_date: "2026-05-22", created_at: "2026-05-21T10:00:00Z", created_by_name: "Pat" },
+    ],
+  };
+  it("builds one row per update, newest first, with follow-up transitions", () => {
+    const rows = buildLeadHistoryRows(leads, updatesByLead);
+    expect(rows.map((r) => r.id)).toEqual(["u2", "u1", "captured-l1"]);
+    expect(rows[0]).toMatchObject({ leadName: "Pam S", actor: "Zack", type: "call", prevFollowUp: "2026-05-22", newFollowUp: "2026-06-01" });
+    expect(rows[2]).toMatchObject({ type: "note", prevFollowUp: "", newFollowUp: "2026-05-20", system: true });
+  });
+  it("groups by day, newest day first", () => {
+    const groups = groupLeadHistoryByDay(buildLeadHistoryRows(leads, updatesByLead));
+    expect(groups.map((g) => g.day)).toEqual(["2026-05-25", "2026-05-21", "2026-05-20"]);
+  });
+  it("skips non-CRM leads (appointments, contact-us)", () => {
+    const appt = { id: "a1", lead_type: "web_form", created_at: "2026-05-20T00:00:00Z", raw_email_subject: "New Appointment Received" };
+    expect(buildLeadHistoryRows([appt], {})).toEqual([]);
   });
 });
 
