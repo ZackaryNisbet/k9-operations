@@ -2651,7 +2651,7 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
   }
   if (categoryId === "drops" && subview === "activity") {
     return {
-      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "", notes: "Notes", followUp: "", updates: "" },
       show: { event: true, eventDate: true, status: false, notes: true, followUp: false },
       sortable: { eventDate: false, followUp: false },
       statusVariant: "text",
@@ -2807,9 +2807,15 @@ function DenseGrassrootsTable({
   // Events swap the wide Notes column for a tighter Cost column (notes still live in
   // the Updates expansion), reallocating the freed width to Event + Updates (which now
   // carries the Close button and Overdue/Due-today label).
+  // Drops "activity" feed (cm.updatesMode === "edit") only shows Business · Category ·
+  // Date · Notes · Edit — Status/Follow-up are hidden, so collapse those tracks and
+  // give Notes the lion's share of the width (the note should be readable in-cell).
+  const isActivityFeed = cm.updatesMode === "edit";
   const grid = isEventsTable
     ? "minmax(100px, 1.05fr) minmax(150px, 1.55fr) minmax(140px, 1.35fr) 110px 74px 84px minmax(150px, 1.3fr)"
-    : "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
+    : isActivityFeed
+      ? "minmax(130px, 1fr) 116px 96px 0px minmax(260px, 3fr) 0px 64px"
+      : "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -3166,9 +3172,7 @@ function DenseGrassrootsTable({
                   {isOverdue && <span style={{ fontSize: 9, fontWeight: 800, color: C.dan, background: `${C.dan}18`, padding: "0 3px", borderRadius: 3, letterSpacing: "0.02em", alignSelf: "flex-start" }}>OVERDUE</span>}
                   {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.suc, background: `${C.suc}18`, padding: "0 3px", borderRadius: 3, letterSpacing: "0.02em", alignSelf: "flex-start" }}>TODAY</span>}
                 </div>
-              ) : (
-                <div style={{ color: C.textMut, fontSize: 11 }}>—</div>
-              )}
+              ) : <div />}
 
               {/* Updates: Edit-only (e.g. Drops activity rows) or full count + Log + Edit */}
               {cm.updatesMode === "edit" ? (
