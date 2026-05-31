@@ -5,9 +5,8 @@
 // filter state. Three views (agenda / week / month), per-source filter pills, and
 // prev/today/next navigation. Styling follows DESIGN.md: calm, dense, scannable.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { C } from "./theme";
-import { I } from "./icons";
 import {
   WEEKDAYS_SHORT,
   MONTHS_SHORT,
@@ -23,6 +22,7 @@ import {
   groupByDay,
   filterByActiveSources,
   countBySource,
+  isWithin,
 } from "./calendarGrid";
 
 const VIEWS = [
@@ -31,12 +31,69 @@ const VIEWS = [
   { id: "month", label: "Month" },
 ];
 
-const MONTH_CELL_MIN_HEIGHT = 104;
-const MONTH_MAX_CHIPS = 3;
+// How many event chips a month cell shows before collapsing to "+N more".
+// We never show "+1 more" (it costs the same height as the row it hides), so a
+// day with MONTH_MAX_CHIPS + 1 events shows them all.
+const MONTH_MAX_CHIPS = 4;
+const MONTH_CELL_MIN_HEIGHT = 138;
+const MARQUEE_CSS =
+  "@keyframes k9cal-marquee{to{transform:translateX(-50%)}}" +
+  ".k9cal-marquee-track{display:inline-flex;flex-wrap:nowrap;will-change:transform;animation:k9cal-marquee linear infinite}";
 
 function isSourceActive(activeSources, key) {
   if (!activeSources) return true;
   return activeSources instanceof Set ? activeSources.has(key) : activeSources.includes(key);
+}
+
+function Chevron({ dir = "right" }) {
+  const points = dir === "left" ? "15 18 9 12 15 6" : "9 18 15 12 9 6";
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points={points} />
+    </svg>
+  );
+}
+
+// ── Single-line text that, on hover, scrolls like an airport board when it
+// overflows (revealing the full "Requirement · Person"). Static + ellipsis
+// otherwise; disabled under prefers-reduced-motion. ──────────────────────────
+function MarqueeText({ text, size, weight, color, strike, muted }) {
+  const ref = useRef(null);
+  const [marquee, setMarquee] = useState(false);
+
+  const onEnter = () => {
+    const el = ref.current;
+    if (!el) return;
+    const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduce && el.scrollWidth > el.clientWidth + 2) setMarquee(true);
+  };
+
+  const duration = Math.max(4, Math.min(18, Math.round((text ? text.length : 0) / 4)));
+  const base = {
+    fontSize: size,
+    fontWeight: weight,
+    color,
+    textDecoration: strike ? "line-through" : "none",
+    opacity: muted ? 0.72 : 1,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    minWidth: 0,
+  };
+
+  return (
+    <div onMouseEnter={onEnter} onMouseLeave={() => setMarquee(false)} style={base}>
+      {marquee ? (
+        <div className="k9cal-marquee-track" style={{ animationDuration: `${duration}s` }}>
+          <span style={{ paddingRight: 36 }}>{text}</span>
+          <span style={{ paddingRight: 36 }}>{text}</span>
+        </div>
+      ) : (
+        <div ref={ref} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Small interactive button with a subtle hover, used for nav + view switch ──
@@ -151,7 +208,8 @@ function SourcePill({ meta, count, active, onToggle }) {
   );
 }
 
-// ── A single event presented as a compact chip (month) or row (week/agenda) ───
+// ── A single event: a dense chip (month) shows "Title · Subtitle" on one line;
+// week/agenda show title + subtitle on two lines. No left accent bar. ─────────
 function EventChip({ event, meta, onSelect, dense }) {
   const [hover, setHover] = useState(false);
   const color = meta ? meta.color : C.textMut;
@@ -159,61 +217,37 @@ function EventChip({ event, meta, onSelect, dense }) {
   const clickable = typeof onSelect === "function";
   const overdue = event.tone === "overdue";
   const done = event.tone === "done";
+  const titleColor = overdue ? C.dan : C.text;
+  const combined = dense && event.subtitle ? `${event.title} · ${event.subtitle}` : event.title;
+
   return (
     <button
       type="button"
       onClick={clickable ? () => onSelect(event) : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      title={[event.title, event.subtitle].filter(Boolean).join(" — ")}
+      title={[event.title, event.subtitle].filter(Boolean).join(" · ")}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
+        display: "block",
         width: "100%",
         textAlign: "left",
-        padding: dense ? "2px 6px" : "5px 8px",
+        padding: dense ? "3px 7px" : "6px 9px",
         border: "none",
-        borderLeft: `3px solid ${overdue ? C.dan : color}`,
-        background: hover && clickable ? color + "1F" : tint,
-        borderRadius: 5,
+        background: hover && clickable ? color + "22" : tint,
+        borderRadius: 6,
         cursor: clickable ? "pointer" : "default",
-        opacity: done ? 0.7 : 1,
         transition: "background 120ms",
         minWidth: 0,
       }}
     >
-      <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-        <span
-          style={{
-            display: "block",
-            fontSize: dense ? 11 : 12.5,
-            fontWeight: 600,
-            color: C.text,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            textDecoration: done ? "line-through" : "none",
-          }}
-        >
-          {event.title}
-        </span>
-        {!dense && event.subtitle ? (
-          <span
-            style={{
-              display: "block",
-              fontSize: 11,
-              color: overdue ? C.dan : C.textMut,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              marginTop: 1,
-            }}
-          >
-            {event.subtitle}
-          </span>
-        ) : null}
-      </span>
+      {dense ? (
+        <MarqueeText text={combined} size={11.5} weight={600} color={titleColor} strike={done} muted={done} />
+      ) : (
+        <>
+          <MarqueeText text={event.title} size={12.5} weight={600} color={titleColor} strike={done} muted={done} />
+          {event.subtitle ? <MarqueeText text={event.subtitle} size={11} weight={500} color={overdue ? C.dan : C.textMut} /> : null}
+        </>
+      )}
     </button>
   );
 }
@@ -235,7 +269,9 @@ function MonthView({ cursor, today, eventsByDay, sources, onSelectEvent, onPickD
         {weeks.flat().map((cell) => {
           const dayEvents = eventsByDay.get(cell.key) || [];
           const isToday = cell.key === today;
-          const overflow = dayEvents.length - MONTH_MAX_CHIPS;
+          // Never hide just one row behind "+N more" — show it instead.
+          const visibleCount = dayEvents.length <= MONTH_MAX_CHIPS + 1 ? dayEvents.length : MONTH_MAX_CHIPS;
+          const overflow = dayEvents.length - visibleCount;
           return (
             <div
               key={cell.key}
@@ -272,7 +308,7 @@ function MonthView({ cursor, today, eventsByDay, sources, onSelectEvent, onPickD
                 {cell.day}
               </button>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-                {dayEvents.slice(0, MONTH_MAX_CHIPS).map((ev) => (
+                {dayEvents.slice(0, visibleCount).map((ev) => (
                   <EventChip key={ev.id} event={ev} meta={sources[ev.source]} onSelect={onSelectEvent} dense />
                 ))}
                 {overflow > 0 ? (
@@ -305,7 +341,7 @@ function WeekView({ cursor, today, eventsByDay, sources, onSelectEvent, weekStar
           <div key={key} style={{ background: C.surface, display: "flex", flexDirection: "column", minHeight: 320 }}>
             <div style={{ padding: "8px 8px 6px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.textMut }}>
-                {WEEKDAYS_SHORT[(p ? new Date(key + "T12:00:00").getDay() : 0)]}
+                {WEEKDAYS_SHORT[p ? new Date(key + "T12:00:00").getDay() : 0]}
               </span>
               <span
                 style={{
@@ -328,9 +364,7 @@ function WeekView({ cursor, today, eventsByDay, sources, onSelectEvent, weekStar
               {dayEvents.length === 0 ? (
                 <span style={{ fontSize: 11, color: C.textMut, padding: "4px 2px" }}>—</span>
               ) : (
-                dayEvents.map((ev) => (
-                  <EventChip key={ev.id} event={ev} meta={sources[ev.source]} onSelect={onSelectEvent} />
-                ))
+                dayEvents.map((ev) => <EventChip key={ev.id} event={ev} meta={sources[ev.source]} onSelect={onSelectEvent} />)
               )}
             </div>
           </div>
@@ -384,7 +418,6 @@ function AgendaView({ window: win, today, eventsByDay, sources, onSelectEvent })
 }
 
 function EmptyState({ loading }) {
-  const Icon = I.Calendar;
   return (
     <div
       style={{
@@ -393,19 +426,16 @@ function EmptyState({ loading }) {
         alignItems: "center",
         justifyContent: "center",
         textAlign: "center",
-        gap: 10,
+        gap: 8,
         padding: "64px 24px",
         border: `1.5px dashed ${C.border}`,
         borderRadius: 14,
         background: C.surfaceHover,
       }}
     >
-      <div style={{ width: 48, height: 48, borderRadius: 13, background: `${C.pri}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {Icon ? <Icon style={{ width: 24, height: 24, color: C.pri }} /> : null}
-      </div>
       <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{loading ? "Loading schedule…" : "Nothing scheduled in this range"}</div>
       <div style={{ fontSize: 13, color: C.textMut, maxWidth: 380 }}>
-        {loading ? "Pulling labor, reviews, training, marketing, enrichment, and inventory." : "Adjust the date range or turn a source filter back on to see more."}
+        {loading ? "Pulling the latest schedule." : "Adjust the date range or turn a source filter back on to see more."}
       </div>
     </div>
   );
@@ -427,10 +457,22 @@ export default function AggregatedCalendar({
   onSelectEvent,
   weekStartsOn = 0,
 }) {
+  // Inject the marquee keyframes once.
+  useEffect(() => {
+    if (typeof document === "undefined" || document.getElementById("k9cal-style")) return;
+    const el = document.createElement("style");
+    el.id = "k9cal-style";
+    el.textContent = MARQUEE_CSS;
+    document.head.appendChild(el);
+  }, []);
+
   const win = useMemo(() => viewWindow(view, cursor, today, weekStartsOn), [view, cursor, today, weekStartsOn]);
-  const counts = useMemo(() => countBySource(events), [events]);
+  // Scope to the visible window — the page may prefetch a wider range for snappy
+  // navigation, but counts and cells should only reflect what's on screen.
+  const windowEvents = useMemo(() => events.filter((ev) => isWithin(ev.date, win.startKey, win.endKey)), [events, win.startKey, win.endKey]);
+  const counts = useMemo(() => countBySource(windowEvents), [windowEvents]);
   const allActive = sourceOrder.length > 0 && sourceOrder.every((key) => isSourceActive(activeSources, key));
-  const shown = useMemo(() => filterByActiveSources(events, activeSources), [events, activeSources]);
+  const shown = useMemo(() => filterByActiveSources(windowEvents, activeSources), [windowEvents, activeSources]);
   const eventsByDay = useMemo(() => groupByDay(shown), [shown]);
 
   const title =
@@ -464,13 +506,13 @@ export default function AggregatedCalendar({
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <HoverButton onClick={() => handleStep(-1)} title="Previous" style={{ width: 32, padding: 0 }}>
-            {I.ChevronRight ? <I.ChevronRight style={{ width: 16, height: 16, transform: "rotate(180deg)" }} /> : "‹"}
+            <Chevron dir="left" />
           </HoverButton>
           <HoverButton onClick={() => onCursorChange && onCursorChange(today)} title="Jump to today">
             Today
           </HoverButton>
           <HoverButton onClick={() => handleStep(1)} title="Next" style={{ width: 32, padding: 0 }}>
-            {I.ChevronRight ? <I.ChevronRight style={{ width: 16, height: 16 }} /> : "›"}
+            <Chevron dir="right" />
           </HoverButton>
         </div>
         <div style={{ fontSize: 18, fontWeight: 800, color: C.text, letterSpacing: "-0.01em", marginRight: "auto" }}>
