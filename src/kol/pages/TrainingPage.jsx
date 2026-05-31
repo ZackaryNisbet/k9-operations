@@ -19408,6 +19408,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	          border-bottom: 1px solid ${C.borderLight};
 	          transition: background 150ms ease;
 	        }
+	        .labor-roster-row:nth-of-type(even) {
+	          background: #f6faee;
+	        }
 	        .labor-roster-row:hover,
 	        .labor-roster-row:focus-within {
 	          background: #f8fafc;
