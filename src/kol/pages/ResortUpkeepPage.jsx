@@ -10,8 +10,9 @@ import {
   upkeepVendorMeta,
   upkeepLicenseMeta,
   parseSpreadsheetGrids,
-  detectVendorColumns,
+  detectVendorTables,
   buildVendorRows,
+  buildVendorTemplateBlob,
   VENDOR_IMPORT_FIELDS,
   VENDOR_IMPORT_FIELD_LABELS,
   loadUpkeepIntros,
@@ -955,7 +956,10 @@ const muItemDone = { ...muItem, borderColor: "#BBF7D0", background: "#F0FDF4" };
 const muToggle = { width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: "transparent", cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" };
 const muToggleOn = { ...muToggle, border: `1.5px solid ${C.suc}`, background: C.suc, color: "#fff" };
 const impTh = { textAlign: "left", padding: "7px 9px", fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: C.textMut, whiteSpace: "nowrap" };
-const impTd = { padding: "6px 9px", color: C.text, verticalAlign: "top" };
+const impTd = { padding: "4px 6px", color: C.text, verticalAlign: "middle" };
+const impCellInput = { width: "100%", minWidth: 70, boxSizing: "border-box", border: `1px solid ${C.borderLight}`, borderRadius: 6, background: "transparent", padding: "4px 6px", fontSize: 11.5, fontFamily: "inherit", color: C.text };
+const impCellFocus = (e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = "#fff"; };
+const impCellBlur = (e) => { e.currentTarget.style.borderColor = C.borderLight; e.currentTarget.style.background = "transparent"; };
 
 // Reusable modal shell + labelled field for the Vendors/Licenses/Settings editors.
 function UpkeepModal({ title, subtitle, onClose, children, footer, maxWidth = 640 }) {
@@ -1554,34 +1558,41 @@ function VendorImportModal({ locationId, actor, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fileName, setFileName] = useState("");
-  const [sheets, setSheets] = useState([]); // [{ grid, headerRowIndex, columns }]
-  const [sheetIdx, setSheetIdx] = useState(0);
-  const [excluded, setExcluded] = useState(() => new Set());
+  const [tables, setTables] = useState([]); // [{ grid, headerRowIndex, columns, dataEnd, count }]
+  const [tableIdx, setTableIdx] = useState(0);
+  const [draftRows, setDraftRows] = useState([]); // editable vendor rows for the active table
   const [progress, setProgress] = useState(0);
   const [importedCount, setImportedCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
 
-  const cur = sheets[sheetIdx] || null;
-  const rows = useMemo(() => (cur ? buildVendorRows(cur.grid, cur.headerRowIndex, cur.columns) : []), [cur]);
-  const selectedCount = rows.reduce((n, _r, i) => (excluded.has(i) ? n : n + 1), 0);
+  const cur = tables[tableIdx] || null;
   const fieldOptions = useMemo(() => [{ value: "", label: "Ignore" }, ...VENDOR_IMPORT_FIELDS.map((f) => ({ value: f, label: VENDOR_IMPORT_FIELD_LABELS[f] }))], []);
+  const reseed = (table) => setDraftRows(table ? buildVendorRows(table.grid, table.headerRowIndex, table.columns, table.dataEnd) : []);
 
   const onFile = async (file) => {
     if (!file) return;
     setBusy(true); setError(""); setFileName(file.name || "");
     try {
-      const grids = await parseSpreadsheetGrids(file);
-      const detected = grids
-        .map((grid) => { const d = detectVendorColumns(grid); return { grid, headerRowIndex: d.headerRowIndex, columns: d.columns }; })
-        .filter((s) => s.headerRowIndex >= 0 && s.columns.length);
-      if (!detected.length) {
+      const sheets = await parseSpreadsheetGrids(file);
+      const found = [];
+      sheets.forEach(({ grid, merges }) => {
+        detectVendorTables(grid, merges).forEach((t) => {
+          if (!t.columns.length) return;
+          const count = buildVendorRows(grid, t.headerRowIndex, t.columns, t.dataEnd).length;
+          if (count) found.push({ grid, headerRowIndex: t.headerRowIndex, columns: t.columns, dataEnd: t.dataEnd, count });
+        });
+      });
+      if (!found.length) {
         setError("We couldn't recognise a vendor table in that file. Download the standard template below, fill it in, then re-upload.");
         setBusy(false);
         return;
       }
-      let best = 0; let bestN = -1;
-      detected.forEach((s, i) => { const n = buildVendorRows(s.grid, s.headerRowIndex, s.columns).length; if (n > bestN) { bestN = n; best = i; } });
-      setSheets(detected); setSheetIdx(best); setExcluded(new Set()); setStep("review");
+      // Default to the richest table (rows x mapped columns), so a fuller main
+      // table wins over a longer but sparser one.
+      const score = (t) => t.count * Math.max(1, t.columns.filter((c) => c.field).length);
+      let best = 0;
+      found.forEach((t, i) => { if (score(t) > score(found[best])) best = i; });
+      setTables(found); setTableIdx(best); reseed(found[best]); setStep("review");
     } catch {
       setError("That file could not be read. Upload an .xlsx or .csv file.");
     } finally {
@@ -1589,26 +1600,29 @@ function VendorImportModal({ locationId, actor, onClose, onDone }) {
     }
   };
 
-  const pickSheet = (i) => { setSheetIdx(i); setExcluded(new Set()); };
+  const pickTable = (i) => { setTableIdx(i); reseed(tables[i]); };
   const setColField = (colArrayIndex, field) => {
-    setSheets((prev) => prev.map((s, i) => (i !== sheetIdx ? s : { ...s, columns: s.columns.map((c, ci) => (ci !== colArrayIndex ? c : { ...c, field: field || null })) })));
-    setExcluded(new Set());
+    if (!cur) return;
+    const updated = { ...cur, columns: cur.columns.map((c, ci) => (ci !== colArrayIndex ? c : { ...c, field: field || null })) };
+    setTables((prev) => prev.map((t, i) => (i === tableIdx ? updated : t)));
+    reseed(updated);
   };
-  const toggleRow = (i) => setExcluded((prev) => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; });
-  const allIn = rows.length > 0 && selectedCount === rows.length;
-  const toggleAll = () => setExcluded(allIn ? new Set(rows.map((_r, i) => i)) : new Set());
+  const updateRow = (i, key, value) => setDraftRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
+  const removeRow = (i) => setDraftRows((prev) => prev.filter((_r, idx) => idx !== i));
 
-  const downloadTemplate = () => {
-    const headers = VENDOR_IMPORT_FIELDS.map((f) => VENDOR_IMPORT_FIELD_LABELS[f]);
-    const sample = ["Electrical", "Hutchinson Plumbing", "Chris Vargas", "(856) 555-1234", "chris@example.com", "Y", "Monthly", "250"];
-    const csv = `${headers.join(",")}\n${sample.join(",")}\n`;
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    const a = document.createElement("a"); a.href = url; a.download = "vendor-import-template.csv";
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  const downloadTemplate = async () => {
+    try {
+      const blob = await buildVendorTemplateBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "vendor-import-template.xlsx";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch {
+      setError("The template could not be generated.");
+    }
   };
 
   const runImport = async () => {
-    const toImport = rows.filter((_r, i) => !excluded.has(i));
+    const toImport = draftRows.filter((r) => r.company || r.trade);
     if (!toImport.length) return;
     setStep("importing"); setProgress(0); setImportedCount(0); setFailedCount(0);
     let done = 0; let fail = 0;
@@ -1629,7 +1643,7 @@ function VendorImportModal({ locationId, actor, onClose, onDone }) {
   };
 
   if (step === "importing") {
-    const total = selectedCount || progress;
+    const total = draftRows.length || progress;
     return (
       <UpkeepModal title="Importing vendors" onClose={() => {}} maxWidth={520}>
         <div style={{ fontSize: 13, color: C.textSec }}>Adding vendors to this location…</div>
@@ -1659,34 +1673,37 @@ function VendorImportModal({ locationId, actor, onClose, onDone }) {
         </label>
         {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error}</InlineAlert></div> : null}
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textMut }}>
-          Prefer a clean start? <button type="button" onClick={downloadTemplate} style={inlineLinkButton}>Download the standard template</button>, fill it in, and upload it here.
+          Prefer a clean start? <button type="button" onClick={downloadTemplate} style={inlineLinkButton}>Download the standard template</button> (Excel with Frequency and Contract dropdowns built in), fill it in, and upload it here.
         </div>
       </UpkeepModal>
     );
   }
 
-  const previewCols = ["trade", "company", "contact", "phone", "email", "frequency", "cost"];
+  const yesNo = ["Yes", "No"];
+  const textCell = (i, key, ph) => (
+    <input value={draftRows[i][key]} onChange={(e) => updateRow(i, key, e.target.value)} placeholder={ph} style={impCellInput} onFocus={impCellFocus} onBlur={impCellBlur} />
+  );
   return (
     <UpkeepModal
       title="Review import"
       subtitle={fileName ? `From ${fileName}` : undefined}
       onClose={onClose}
-      maxWidth={880}
+      maxWidth={920}
       footer={(
         <>
-          <button type="button" onClick={() => { setStep("upload"); setSheets([]); setError(""); }} style={secondaryBtn}>Choose another file</button>
+          <button type="button" onClick={() => { setStep("upload"); setTables([]); setDraftRows([]); setError(""); }} style={secondaryBtn}>Choose another file</button>
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{selectedCount} of {rows.length} selected</span>
-          <button type="button" onClick={runImport} disabled={!selectedCount} style={{ ...primaryBtn, opacity: selectedCount ? 1 : 0.6 }}>Import {selectedCount} vendor{selectedCount === 1 ? "" : "s"}</button>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{draftRows.length} vendor{draftRows.length === 1 ? "" : "s"}</span>
+          <button type="button" onClick={runImport} disabled={!draftRows.length} style={{ ...primaryBtn, opacity: draftRows.length ? 1 : 0.6 }}>Import {draftRows.length} vendor{draftRows.length === 1 ? "" : "s"}</button>
         </>
       )}
     >
-      {sheets.length > 1 ? (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          {sheets.map((s, i) => {
-            const n = buildVendorRows(s.grid, s.headerRowIndex, s.columns).length;
-            return <button key={i} type="button" onClick={() => pickSheet(i)} style={i === sheetIdx ? muSmallPrimary : muSmallBtn}>Table {i + 1} · {n}</button>;
-          })}
+      {tables.length > 1 ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 6 }}>Tables found in this file</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {tables.map((t, i) => <button key={i} type="button" onClick={() => pickTable(i)} title={t.columns.map((c) => c.header).filter(Boolean).slice(0, 5).join(", ")} style={i === tableIdx ? muSmallPrimary : muSmallBtn}>Table {i + 1} · {t.count}</button>)}
+          </div>
         </div>
       ) : null}
 
@@ -1707,36 +1724,40 @@ function VendorImportModal({ locationId, actor, onClose, onDone }) {
         })}
       </div>
 
-      {rows.length ? (
+      {draftRows.length ? (
         <>
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Preview · approve or exclude rows</div>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Preview · edit any cell, remove rows you don't want</div>
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
-            <div style={{ maxHeight: 320, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+            <div style={{ maxHeight: 340, overflow: "auto" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 11.5, minWidth: 860, width: "100%" }}>
                 <thead>
-                  <tr style={{ background: C.surfaceHover }}>
-                    <th style={{ ...impTh, width: 34, textAlign: "center", position: "sticky", top: 0, background: C.surfaceHover }}><input type="checkbox" checked={allIn} onChange={toggleAll} /></th>
-                    {previewCols.map((k) => <th key={k} style={{ ...impTh, position: "sticky", top: 0, background: C.surfaceHover }}>{VENDOR_IMPORT_FIELD_LABELS[k]}</th>)}
-                    <th style={{ ...impTh, width: 64, textAlign: "center", position: "sticky", top: 0, background: C.surfaceHover }}>Contract</th>
+                  <tr>
+                    {["Trade", "Company", "Contact", "Phone", "Email", "Frequency", "Cost", "Contract", ""].map((h, hi) => (
+                      <th key={hi} style={{ ...impTh, position: "sticky", top: 0, zIndex: 1, background: C.surfaceHover, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => {
-                    const inc = !excluded.has(i);
-                    return (
-                      <tr key={i} onClick={() => toggleRow(i)} style={{ borderTop: `1px solid ${C.borderLight}`, background: inc ? "#fff" : C.surfaceHover, opacity: inc ? 1 : 0.5, cursor: "pointer" }}>
-                        <td style={{ ...impTd, textAlign: "center" }}><input type="checkbox" checked={inc} onChange={() => toggleRow(i)} onClick={(e) => e.stopPropagation()} /></td>
-                        <td style={impTd}>{r.trade || "—"}</td>
-                        <td style={{ ...impTd, fontWeight: 700 }}>{r.company || "—"}</td>
-                        <td style={impTd}>{r.contact || "—"}</td>
-                        <td style={{ ...impTd, whiteSpace: "nowrap" }}>{r.phone ? fmtPhone(r.phone) : "—"}</td>
-                        <td style={{ ...impTd, color: C.textSec }}>{r.email || "—"}</td>
-                        <td style={impTd}>{r.frequency || "—"}</td>
-                        <td style={{ ...impTd, textAlign: "right", whiteSpace: "nowrap" }}>{r.cost !== "" ? `$${r.cost}` : "—"}</td>
-                        <td style={{ ...impTd, textAlign: "center" }}>{r.contract ? "Yes" : "No"}</td>
-                      </tr>
-                    );
-                  })}
+                  {draftRows.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                      <td style={impTd}>{textCell(i, "trade", "Add trade")}</td>
+                      <td style={{ ...impTd, minWidth: 140 }}>{textCell(i, "company", "Add company")}</td>
+                      <td style={impTd}>{textCell(i, "contact", "Add contact")}</td>
+                      <td style={impTd}>{textCell(i, "phone", "Add phone")}</td>
+                      <td style={{ ...impTd, minWidth: 150 }}>{textCell(i, "email", "Add email")}</td>
+                      <td style={{ ...impTd, minWidth: 116 }}><CustomSelect small value={r.frequency} onChange={(v) => updateRow(i, "frequency", v)} options={UPKEEP_SERVICE_FREQUENCIES} placeholder="Set" /></td>
+                      <td style={{ ...impTd, minWidth: 84 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                          <span style={{ fontSize: 11, color: C.textMut }}>$</span>
+                          <input value={r.cost} onChange={(e) => updateRow(i, "cost", e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" onWheel={(e) => e.currentTarget.blur()} placeholder="0" style={impCellInput} onFocus={impCellFocus} onBlur={impCellBlur} />
+                        </div>
+                      </td>
+                      <td style={{ ...impTd, minWidth: 88 }}><CustomSelect small value={r.contract ? "Yes" : "No"} onChange={(v) => updateRow(i, "contract", v === "Yes")} options={yesNo} placeholder="No" /></td>
+                      <td style={{ ...impTd, textAlign: "center" }}>
+                        <button type="button" onClick={() => removeRow(i)} title="Remove row" style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 6px", fontFamily: "inherit" }}>×</button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

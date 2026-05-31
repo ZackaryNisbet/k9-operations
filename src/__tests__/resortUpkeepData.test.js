@@ -28,7 +28,11 @@ import {
   RESORT_UPKEEP_ATTACHMENT_BUCKET,
   buildUpkeepDueItems,
   detectVendorColumns,
+  detectVendorTables,
+  importFieldForHeader,
   buildVendorRows,
+  VENDOR_IMPORT_FIELDS,
+  VENDOR_IMPORT_FIELD_LABELS,
   upkeepFrequencyFromMonths,
   upkeepFrequencyFromSlug,
   createResortUpkeepSignedUrl,
@@ -724,6 +728,66 @@ describe("vendor spreadsheet import", () => {
   it("returns no header for an unstructured grid", () => {
     expect(detectVendorColumns([["alpha", "beta"], ["1", "2"]]).headerRowIndex).toBe(-1);
     expect(buildVendorRows([["a"]], -1, [])).toEqual([]);
+  });
+
+  it("pairs standard/common header synonyms without external help", () => {
+    expect(importFieldForHeader("Provider")).toBe("company");
+    expect(importFieldForHeader("Supplier")).toBe("company");
+    expect(importFieldForHeader("Cell Number")).toBe("phone");
+    expect(importFieldForHeader("Point of Contact")).toBe("contact");
+    expect(importFieldForHeader("Vendor Contact")).toBe("contact"); // person, not company
+    expect(importFieldForHeader("Vendor Name")).toBe("company");
+    expect(importFieldForHeader("E-Mail Address")).toBe("email");
+    expect(importFieldForHeader("Monthly Rate")).toBe("cost");
+    expect(importFieldForHeader("Service Interval")).toBe("frequency");
+    expect(importFieldForHeader("Random Notes")).toBe(null);
+  });
+
+  it("detects a second utility table under a merged title and bounds each table's rows", () => {
+    const grid = [
+      ["MAIN VENDORS", "", "", ""],
+      ["Trade", "Company", "Contact", "Phone"],
+      ["HVAC", "CoolCo", "Pat", "609-111-2222"],
+      ["Electrical", "Sparky", "Lee", "609-333-4444"],
+      ["UTILITIES", "", "", ""],
+      ["Utility", "Provider", "Account", "Phone"],
+      ["Gas", "South Jersey Gas", "1234", "800-555-0100"],
+      ["Water", "NJ American Water", "5678", "800-555-0123"],
+    ];
+    const merges = [{ r0: 0, c0: 0, r1: 0, c1: 3 }, { r0: 4, c0: 0, r1: 4, c1: 3 }];
+    const tables = detectVendorTables(grid, merges);
+    expect(tables).toHaveLength(2);
+    expect(tables[0].headerRowIndex).toBe(1);
+    expect(tables[1].headerRowIndex).toBe(5);
+
+    const main = buildVendorRows(grid, tables[0].headerRowIndex, tables[0].columns, tables[0].dataEnd);
+    expect(main.map((r) => r.company)).toEqual(["CoolCo", "Sparky"]); // does not bleed into the utility block
+
+    const utils = buildVendorRows(grid, tables[1].headerRowIndex, tables[1].columns, tables[1].dataEnd);
+    expect(utils.map((r) => r.company)).toEqual(["South Jersey Gas", "NJ American Water"]);
+  });
+
+  it("re-imports its own standard template headers cleanly", () => {
+    // Mirrors buildVendorTemplateBlob: header labels + a generic sample row.
+    const grid = [
+      VENDOR_IMPORT_FIELDS.map((f) => VENDOR_IMPORT_FIELD_LABELS[f]),
+      ["Electrical", "Bright Spark Electric", "Jordan Lee", "(555) 555-0142", "service@example.com", "Yes", "Monthly", "250"],
+    ];
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    const rows = buildVendorRows(grid, headerRowIndex, columns);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ trade: "Electrical", company: "Bright Spark Electric", contact: "Jordan Lee", email: "service@example.com", contract: true, frequency: "Monthly", cost: "250" });
+  });
+
+  it("drops exact duplicate rows within a table", () => {
+    const grid = [
+      ["Trade", "Company", "Phone"],
+      ["HVAC", "CoolCo", "609-111-2222"],
+      ["HVAC", "CoolCo", "609-111-2222"],
+      ["Plumbing", "PipeCo", "609-555-0100"],
+    ];
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    expect(buildVendorRows(grid, headerRowIndex, columns).map((r) => r.company)).toEqual(["CoolCo", "PipeCo"]);
   });
 
   it("derives frequency labels from template slugs and license cadence months", () => {
