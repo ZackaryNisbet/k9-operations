@@ -50,7 +50,7 @@ export function FormFields({ lead }) {
   return (
     <div>
       {groups.map((g, i) => (
-        <div key={g.id} style={i > 0 ? { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.borderLight}` } : undefined}>
+        <div key={g.id} style={i > 0 ? { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` } : undefined}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "13px 20px" }}>
             {g.fields.map((f) => <FieldCell key={f.key} f={f} groupId={g.id} />)}
           </div>
