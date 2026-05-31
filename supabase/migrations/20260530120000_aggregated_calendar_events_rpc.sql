@@ -31,7 +31,12 @@ returns table (
 language sql
 stable
 security invoker
-set search_path = ''
+-- search_path = public (not '') on purpose: this function reads tables whose RLS
+-- policies call helper functions (e.g. get_user_location_id) that reference
+-- unqualified public tables and don't pin their own search_path. An empty
+-- search_path would make those helpers fail with "relation does not exist" on the
+-- authenticated path. Our own table refs below stay fully schema-qualified.
+set search_path = public
 as $$
   with inv_sched as (
     select
