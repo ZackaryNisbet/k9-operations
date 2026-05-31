@@ -28,6 +28,9 @@ import {
   leadUpdates,
   buildLeadHistoryRows,
   groupLeadHistoryByDay,
+  buildLeadHistoryFilterOptions,
+  applyLeadHistoryFilters,
+  buildLeadHistoryDayMetrics,
   buildUpdatePayload,
   followUpState,
   recommendedFollowUp,
@@ -227,6 +230,16 @@ describe("lead change history (global timeline)", () => {
   it("skips non-CRM leads (appointments, contact-us)", () => {
     const appt = { id: "a1", lead_type: "web_form", created_at: "2026-05-20T00:00:00Z", raw_email_subject: "New Appointment Received" };
     expect(buildLeadHistoryRows([appt], {})).toEqual([]);
+  });
+  it("filter options, day metrics, and applied filters (training-parity)", () => {
+    const rows = buildLeadHistoryRows(leads, updatesByLead);
+    const opts = buildLeadHistoryFilterOptions(rows);
+    expect(opts.leads.map((o) => o.value)).toContain("Pam S");
+    expect(opts.types.map((o) => o.label)).toEqual(expect.arrayContaining(["Call", "Text", "Note"]));
+    expect(opts.actors.map((o) => o.value)).toEqual(expect.arrayContaining(["Zack", "Pat", "Ignite"]));
+    expect(buildLeadHistoryDayMetrics(rows, "")).toMatchObject({ date: "2026-05-25", activityCount: 1, leadCount: 1 });
+    expect(applyLeadHistoryFilters(rows, { type: "call" }).map((r) => r.id)).toEqual(["u2"]);
+    expect(applyLeadHistoryFilters(rows, { date: "2026-05-20" }).map((r) => r.id)).toEqual(["captured-l1"]);
   });
 });
 

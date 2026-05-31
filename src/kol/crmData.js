@@ -491,6 +491,55 @@ export function groupLeadHistoryByDay(rows) {
     .map(([day, items]) => ({ day, items }));
 }
 
+function uniqueHistoryOptions(rows, accessor) {
+  const seen = new Set();
+  const out = [];
+  for (const r of rows || []) {
+    const v = String(accessor(r) || "").trim();
+    if (v && !seen.has(v.toLowerCase())) { seen.add(v.toLowerCase()); out.push(v); }
+  }
+  out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  return out.map((v) => ({ value: v, label: v }));
+}
+
+/** Lead / Type / Actor dropdown options for the history filters. */
+export function buildLeadHistoryFilterOptions(rows) {
+  return {
+    leads: [{ value: "", label: "All leads" }, ...uniqueHistoryOptions(rows, (r) => r.leadName)],
+    types: [{ value: "", label: "All types" }, ...uniqueHistoryOptions(rows, (r) => updateTypeLabel(r.type))],
+    actors: [{ value: "", label: "All actors" }, ...uniqueHistoryOptions(rows, (r) => r.actor)],
+  };
+}
+
+const historyRowDay = (r) => (r && r.createdAt ? String(r.createdAt).slice(0, 10) : "");
+
+/** Filter history rows by Activity Date / Lead / Type / Actor. */
+export function applyLeadHistoryFilters(rows, filters = {}) {
+  const date = String(filters.date || "").trim();
+  const lead = String(filters.lead || "").trim().toLowerCase();
+  const type = String(filters.type || "").trim().toLowerCase();
+  const actor = String(filters.actor || "").trim().toLowerCase();
+  return (rows || []).filter((r) => {
+    if (date && historyRowDay(r) !== date) return false;
+    if (lead && String(r.leadName || "").trim().toLowerCase() !== lead) return false;
+    if (type && String(updateTypeLabel(r.type) || "").trim().toLowerCase() !== type) return false;
+    if (actor && String(r.actor || "").trim().toLowerCase() !== actor) return false;
+    return true;
+  });
+}
+
+/** Day metrics for the history header: count of changes + distinct leads on the day. */
+export function buildLeadHistoryDayMetrics(rows, dateValue = "") {
+  const list = rows || [];
+  const target = String(dateValue || "").trim() || (list[0] ? historyRowDay(list[0]) : "");
+  const dayRows = list.filter((r) => historyRowDay(r) === target);
+  return {
+    date: target,
+    activityCount: dayRows.length,
+    leadCount: new Set(dayRows.map((r) => String(r.leadName || "").trim()).filter(Boolean)).size,
+  };
+}
+
 /** Row payload inserted into ignite_lead_updates. */
 export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "" }) {
   return {

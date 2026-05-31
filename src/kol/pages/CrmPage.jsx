@@ -6,9 +6,9 @@
 // ignite_leads (lead_type = web_form). Pure logic lives in ../crmData.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, fmtDate, todayStr, addDays } from "../../shared/theme";
+import { C, fmtDate, fmtDateFull, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
+import { Btn, Modal, MiniDatePicker, Badge, Inp, CustomSelect } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import IgnitePipelineDiagram from "../onboarding/IgnitePipelineDiagram";
 import { FormFields } from "./crmFormFields";
@@ -40,7 +40,9 @@ import {
   deriveFollowUp,
   leadUpdates,
   buildLeadHistoryRows,
-  groupLeadHistoryByDay,
+  buildLeadHistoryFilterOptions,
+  applyLeadHistoryFilters,
+  buildLeadHistoryDayMetrics,
   receivedDate,
   receivedTime,
   leadAttachments,
@@ -73,6 +75,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [activeTab, setActiveTab] = useState("booking");
   const [query, setQuery] = useState("");
   const [expand, setExpand] = useState({ id: null, mode: "form" });
+  const [historyFilters, setHistoryFilters] = useState({ date: "", lead: "", type: "", actor: "" });
   const [logLead, setLogLead] = useState(null);
   const [showHealth, setShowHealth] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -304,6 +307,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   }, [leads, activeTab, query, columns]);
 
   const historyRows = useMemo(() => buildLeadHistoryRows(leads, updatesByLead), [leads, updatesByLead]);
+  const historyFilterOptions = useMemo(() => buildLeadHistoryFilterOptions(historyRows), [historyRows]);
+  const filteredHistoryRows = useMemo(() => applyLeadHistoryFilters(historyRows, historyFilters), [historyRows, historyFilters]);
+  const historyDayMetrics = useMemo(() => buildLeadHistoryDayMetrics(historyRows, historyFilters.date), [historyRows, historyFilters.date]);
+  const historyFilterCount = Object.values(historyFilters).filter(Boolean).length;
+  const setHistoryFilter = useCallback((key, value) => setHistoryFilters((cur) => ({ ...cur, [key]: value })), []);
+  const clearHistoryFilters = useCallback(() => setHistoryFilters({ date: "", lead: "", type: "", actor: "" }), []);
 
   const tabs = [
     ...SUBMISSION_CATEGORIES.map((c) => ({ id: c.id, label: c.label, count: categoryCounts[c.id] || 0 })),
@@ -357,7 +366,18 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   if (loading && leads.length === 0) {
     body = <div style={{ padding: "44px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading submissions…</div>;
   } else if (activeTab === "history") {
-    body = <HistoryView rows={historyRows} />;
+    body = (
+      <HistoryView
+        allRows={historyRows}
+        rows={filteredHistoryRows}
+        filterOptions={historyFilterOptions}
+        filters={historyFilters}
+        onFilter={setHistoryFilter}
+        onClear={clearHistoryFilters}
+        filterCount={historyFilterCount}
+        metrics={historyDayMetrics}
+      />
+    );
   } else {
     body = (
       <DenseTable
@@ -513,41 +533,93 @@ function CrmHistoryStatusChange({ prev, next }) {
   );
 }
 
-// Global change-history, grouped by day — what changed on each lead, the follow-up
-// transition, who did it, and when. Same fields as the Training History tab.
-function HistoryView({ rows }) {
-  const groups = useMemo(() => groupLeadHistoryByDay(rows), [rows]);
-  if (!rows.length) return <div style={{ padding: "44px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No history yet.</div>;
+// Global change history — the Training History tab's exact layout: a metrics
+// header (changes logged / leads with activity / "N shown"), a filter toolbar
+// (Activity Date · Lead · Type · Actor), then a table (When · Lead · Action ·
+// Change with the crossed-off follow-up pills · Actor). Fed by ignite_lead_updates.
+function HistoryView({ allRows, rows, filterOptions, filters, onFilter, onClear, filterCount, metrics }) {
+  const TH = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
+  const TD = { padding: "12px 10px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "top" };
+  const TD2 = { ...TD, color: C.textSec, fontWeight: 650 };
+  const metricLabel = { fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" };
+  const metricNum = { fontSize: 22, fontWeight: 900, color: C.text, lineHeight: 1.1 };
+  const metricCap = { fontSize: 11, color: C.textMut, fontStyle: "normal" };
+  const filterLabel = { fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 };
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) 104px minmax(0, 1fr) 168px", gap: 12, padding: "9px 20px", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>
-        <span>Lead / change</span><span>Action</span><span>Follow-up</span><span style={{ textAlign: "right" }}>By / when</span>
-      </div>
-      {groups.map((g) => (
-        <div key={g.day}>
-          <div style={{ padding: "9px 20px 6px", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: C.textSec, background: C.surfaceHover }}>
-            {g.day === "unknown" ? "Undated" : new Date(`${g.day}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-          </div>
-          {g.items.map((r) => (
-            <div key={r.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) 104px minmax(0, 1fr) 168px", gap: 12, alignItems: "start", padding: "11px 20px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12.5 }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 800, color: C.text }}>{r.leadName}</div>
-                {r.notes && <div style={{ marginTop: 3, color: C.textSec, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.notes}</div>}
-              </div>
-              <div>
-                <span style={{ display: "inline-flex", padding: "3px 9px", borderRadius: 999, background: C.priLt, color: C.pri, fontWeight: 800, fontSize: 11 }}>{updateTypeLabel(r.type)}</span>
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <CrmHistoryStatusChange prev={r.prevFollowUp} next={r.newFollowUp} />
-              </div>
-              <div style={{ textAlign: "right", minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: C.textSec, wordBreak: "break-word" }}>{r.actor}</div>
-                <div style={{ marginTop: 2, fontSize: 11.5, color: C.textMut }}>{fmtDateTime(r.createdAt)}</div>
-              </div>
-            </div>
-          ))}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Change history</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Capture, calls, texts, emails, notes, and follow-up changes across all leads.</div>
         </div>
-      ))}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 22, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <span style={metricLabel}>Changes logged</span>
+            <strong style={metricNum}>{metrics.activityCount}</strong>
+            <em style={metricCap}>{metrics.date ? fmtDateFull(metrics.date) : "—"}</em>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <span style={metricLabel}>Leads with activity</span>
+            <strong style={metricNum}>{metrics.leadCount}</strong>
+            <em style={metricCap}>{filters.date ? "selected day" : "latest day"}</em>
+          </div>
+          <Badge color={rows.length > 0 ? "info" : "default"}>{rows.length} shown</Badge>
+        </div>
+      </div>
+      <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(150px, 1fr))", gap: 10, flex: 1, minWidth: 0 }}>
+          <Inp label="Activity Date" type="date" value={filters.date} onChange={(v) => onFilter("date", v)} />
+          <div>
+            <div style={filterLabel}>Lead</div>
+            <CustomSelect value={filters.lead} onChange={(v) => onFilter("lead", v)} options={filterOptions.leads} placeholder="All leads" searchable />
+          </div>
+          <div>
+            <div style={filterLabel}>Type</div>
+            <CustomSelect value={filters.type} onChange={(v) => onFilter("type", v)} options={filterOptions.types} placeholder="All types" />
+          </div>
+          <div>
+            <div style={filterLabel}>Actor</div>
+            <CustomSelect value={filters.actor} onChange={(v) => onFilter("actor", v)} options={filterOptions.actors} placeholder="All actors" searchable />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" size="sm" icon={<I.Calendar />} onClick={() => onFilter("date", todayStr())}>Today</Btn>
+          <Btn variant="ghost" size="sm" onClick={onClear} disabled={filterCount === 0}>Clear Filters{filterCount > 0 ? ` (${filterCount})` : ""}</Btn>
+        </div>
+      </div>
+      {allRows.length === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No change history yet.</div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No history matches the current filters.</div>
+      ) : (
+        <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={TH}>When</th>
+                <th style={TH}>Lead</th>
+                <th style={TH}>Action</th>
+                <th style={TH}>Change</th>
+                <th style={TH}>Actor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...TD2, whiteSpace: "nowrap" }}>{fmtDateTime(r.createdAt)}</td>
+                  <td style={{ ...TD, minWidth: 150 }}>{r.leadName}</td>
+                  <td style={{ ...TD, minWidth: 110 }}>{r.system ? "Lead captured" : updateTypeLabel(r.type)}</td>
+                  <td style={{ ...TD2, minWidth: 280, lineHeight: 1.45 }}>
+                    <div style={{ color: C.text, fontWeight: 800, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.notes || "—"}</div>
+                    {(r.prevFollowUp || r.newFollowUp) && <div style={{ marginTop: 6 }}><CrmHistoryStatusChange prev={r.prevFollowUp} next={r.newFollowUp} /></div>}
+                  </td>
+                  <td style={{ ...TD2, whiteSpace: "nowrap" }}>{r.actor}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
