@@ -504,7 +504,7 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
         </button>
       </div>
       {extraContent}
-      {open && (
+      {open && ReactDOM.createPortal((
         <div
           ref={panelRef}
           style={{
@@ -546,7 +546,7 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
           </div>
           </>}
         </div>
-      )}
+      ), document.body)}
       </div>
       {open && reserveSpace && <div aria-hidden="true" style={{ height: 330 }} />}
     </div>
