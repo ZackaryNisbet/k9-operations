@@ -1673,12 +1673,24 @@ describe("applyLaborRosterFilters", () => {
     expect(buildLaborModulePanelKey({ tab: "attendance", interviewView: "config", attendanceView: "summary" })).toBe("attendance::summary:");
   });
 
-  it("keeps attendance subtabs and marks header free of redundant subtext", () => {
+  it("flattens attendance into one tab bar with no input/summary switcher or policy actions", () => {
     const trainingPageSource = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
     const attendancePageSource = readFileSync(new URL("../kol/pages/AttendancePage.jsx", import.meta.url), "utf8");
 
-    expect(trainingPageSource).toContain('{ id: "input", label: "Attendance Input" }');
-    expect(trainingPageSource).toContain('{ id: "summary", label: "Attendance Summary" }');
+    // The attendance area no longer carries an Input/Summary view switcher; it
+    // mounts a single flat tab bar via the "labor" preset.
+    expect(trainingPageSource).not.toContain('{ id: "input", label: "Attendance Input" }');
+    expect(trainingPageSource).not.toContain('{ id: "summary", label: "Attendance Summary" }');
+    expect(trainingPageSource).toContain('tabPreset="labor"');
+
+    // Flat tab bar = Summary · Marks · History · Reference; Policy Actions is gone
+    // along with the redundant "Attendance Marks" tab label.
+    expect(attendancePageSource).toContain('{ id: "summary", label: "Summary" }');
+    expect(attendancePageSource).toContain('{ id: "log", label: "Marks" }');
+    expect(attendancePageSource).not.toContain("Policy Actions");
+    expect(attendancePageSource).not.toContain("Attendance Marks");
+
+    // Pre-existing guards against redundant subtext.
     expect(trainingPageSource).not.toContain("Attendance marks and policy actions");
     expect(trainingPageSource).not.toContain("Summary, history, and reference guidance");
     expect(attendancePageSource).not.toContain("Record and review attendance marks against canonical labor employee records.");
