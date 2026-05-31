@@ -291,12 +291,28 @@ function getSortName(row = {}) {
   return `${last} ${name}`.toLowerCase();
 }
 
-function buildRosterGroups(rows = []) {
+function roleOrderKey(value) {
+  return safeText(value).toLowerCase();
+}
+
+// Group roster rows by position. Ordering prefers the caller's configured
+// position hierarchy (an ordered list of titles, e.g. the labor settings order
+// the rest of the app uses); any role not in that list — including a brand-new
+// one — falls back to the built-in seniority weight, then alphabetical. Passing
+// no order reproduces the original weight-only ordering.
+function buildRosterGroups(rows = [], positionOrder = []) {
+  const orderIndex = new Map();
+  positionOrder.forEach((title) => {
+    const key = roleOrderKey(title);
+    if (key && !orderIndex.has(key)) orderIndex.set(key, orderIndex.size);
+  });
+  const rankOf = (label) => (orderIndex.has(roleOrderKey(label)) ? orderIndex.get(roleOrderKey(label)) : null);
+
   const groupMap = new Map();
   rows.forEach((row) => {
     const position = safeText(row.position, "Team Member");
     if (!groupMap.has(position)) {
-      groupMap.set(position, { label: position, rows: [], weight: getPositionWeight(position) });
+      groupMap.set(position, { label: position, rows: [], weight: getPositionWeight(position), rank: rankOf(position) });
     }
     groupMap.get(position).rows.push(row);
   });
@@ -306,6 +322,11 @@ function buildRosterGroups(rows = []) {
       rows: group.rows.slice().sort((a, b) => getSortName(a).localeCompare(getSortName(b), undefined, { sensitivity: "base", numeric: true })),
     }))
     .sort((a, b) => {
+      // Roles named in the configured hierarchy come first, in that order.
+      if (a.rank !== null && b.rank !== null) return a.rank - b.rank;
+      if (a.rank !== null) return -1;
+      if (b.rank !== null) return 1;
+      // Everything else falls back to built-in seniority, then alphabetical.
       if (a.weight !== b.weight) return b.weight - a.weight;
       return a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true });
     });
@@ -777,7 +798,8 @@ export async function buildLaborRosterPdfBytes(payload = {}) {
 
   const page = addPage(pdfDoc);
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const groups = buildRosterGroups(rows);
+  const positionOrder = Array.isArray(payload.positionOrder) ? payload.positionOrder : [];
+  const groups = buildRosterGroups(rows, positionOrder);
   const pages = drawRosterGroups(pdfDoc, page, payload, fonts, logoImage, options, groups);
 
   pages.forEach((pdfPage, index) => {
