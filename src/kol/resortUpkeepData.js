@@ -192,7 +192,7 @@ export async function saveUpkeepIntros(locationId, intros, userId = null) {
 export const VENDOR_IMPORT_FIELDS = ["trade", "company", "contact", "phone", "email", "contract", "frequency", "cost"];
 export const VENDOR_IMPORT_FIELD_LABELS = {
   trade: "Trade", company: "Company", contact: "Contact", phone: "Phone",
-  email: "Email", contract: "Contract (Y/N)", frequency: "Frequency", cost: "Cost",
+  email: "Email", contract: "Contract", frequency: "Frequency", cost: "Cost",
 };
 
 function importPeriodFromHeader(header) {
@@ -208,17 +208,29 @@ function importPeriodFromHeader(header) {
   return "";
 }
 
+// Standard/common column-header vocabulary. Spreadsheets and databases reuse a
+// small set of near-synonyms per concept, so matching a header against this list
+// pairs messy, non-standard sheets without any external API or NLP. Order is
+// precedence: more specific concepts are tested first.
+const STANDARD_HEADER_PATTERNS = [
+  ["trade", /\btrade\b|category|discipline|specialt|type of (service|work)|service type|work type|^type$/],
+  ["contact", /\bcontact\b|attn|attention|\brep\b|representative|point of contact|\bpoc\b|account manager|\bowner\b/],
+  ["company", /company|business|vendor|provider|supplier|\bfirm\b|organi[sz]ation|contractor|account name|\bdba\b|^name$/],
+  ["phone", /phone|\btel\b|telephone|mobile|\bcell\b|\bfax\b|contact number|^number$/],
+  ["email", /e-?mail/],
+  ["contract", /contract|agreement|under contract|on file|contracted/],
+  ["frequency", /frequency|cadence|schedule|interval|recurrence|how often/],
+  ["cost", /\bcost\b|\bfee\b|amount|price|\brate\b|charge|\$|monthly cost|annual cost|invoice|\btotal\b/],
+];
+
 export function importFieldForHeader(header) {
   const s = String(header || "").toLowerCase().trim();
   if (!s) return null;
-  if (/\btrade\b|category|type of (service|work)/.test(s)) return "trade";
-  if (/company|business|vendor name|provider/.test(s) || s === "name") return "company";
-  if (/contact|attn|\brep\b/.test(s)) return "contact";
-  if (/phone|\btel\b|mobile|cell/.test(s)) return "phone";
-  if (/mail/.test(s)) return "email";
-  if (/contract/.test(s)) return "contract";
-  if (/frequency|cadence|schedule/.test(s)) return "frequency";
-  if (/\bcost\b|\bfee\b|amount|price|\brate\b/.test(s)) return "cost";
+  // "Vendor Contact" / "Vendor Rep" name a person, not the company.
+  if (/vendor/.test(s) && /\b(contact|rep|representative)\b/.test(s)) return "contact";
+  for (const [field, re] of STANDARD_HEADER_PATTERNS) {
+    if (re.test(s)) return field;
+  }
   return null;
 }
 
@@ -236,19 +248,8 @@ function normalizeGrid(grid) {
   return (Array.isArray(grid) ? grid : []).map((r) => (Array.isArray(r) ? r.map((c) => (c == null ? "" : String(c).trim())) : []));
 }
 
-// Find the most header-like row and propose a column -> field mapping.
-export function detectVendorColumns(grid) {
-  const rows = normalizeGrid(grid);
-  let headerRowIndex = -1;
-  let best = 0;
-  rows.forEach((r, i) => {
-    const s = importRowScore(r);
-    if (s > best && s >= 3) { best = s; headerRowIndex = i; }
-  });
-  if (headerRowIndex < 0) return { headerRowIndex: -1, columns: [] };
-
-  const header = rows[headerRowIndex];
-  const columns = header.map((h, index) => {
+function columnsForHeader(header) {
+  return (header || []).map((h, index) => {
     // Period-qualified "<period> Service / <period> Fee" columns take precedence
     // over the generic field rules so they consolidate into frequency + cost.
     const period = importPeriodFromHeader(h);
@@ -256,8 +257,49 @@ export function detectVendorColumns(grid) {
     if (period && /fee/i.test(h)) return { index, header: h, field: "cost", servicePeriod: null, feePeriod: period };
     return { index, header: h, field: importFieldForHeader(h), servicePeriod: null, feePeriod: null };
   }).filter((c) => String(c.header || "").trim());
+}
 
-  return { headerRowIndex, columns };
+// Rows spanned by a wide (>= 3 columns) merged cell. A merged section title sat
+// above a sub-table is the classic "two tables on one sheet" shape, so the row
+// just beneath one is treated as a strong header candidate.
+function wideMergeTitleRows(merges) {
+  const set = new Set();
+  (merges || []).forEach((m) => {
+    if (m && m.c1 - m.c0 >= 2) { for (let r = m.r0; r <= m.r1; r++) set.add(r); }
+  });
+  return set;
+}
+
+// Detect every vendor-like table in a sheet, not just one. A sheet can carry a
+// main table plus a separately-headed utility block (its own header row, often
+// under a merged title). Each header row starts a table whose data runs until
+// the next header row.
+export function detectVendorTables(grid, merges = []) {
+  const rows = normalizeGrid(grid);
+  const titleRows = wideMergeTitleRows(merges);
+  const headerRows = [];
+  rows.forEach((r, i) => {
+    const score = importRowScore(r);
+    if (score >= 3 || (titleRows.has(i - 1) && score >= 2)) headerRows.push(i);
+  });
+  return headerRows.map((hr, k) => {
+    const nextHeader = headerRows[k + 1] != null ? headerRows[k + 1] : rows.length;
+    // Stop before a merged section title that introduces the next table so its
+    // title row is not mistaken for a vendor row.
+    const dataEnd = nextHeader > 0 && titleRows.has(nextHeader - 1) ? nextHeader - 1 : nextHeader;
+    return { headerRowIndex: hr, columns: columnsForHeader(rows[hr]), dataStart: hr + 1, dataEnd };
+  });
+}
+
+// Back-compat single-table view: the strongest-scoring table on the sheet.
+export function detectVendorColumns(grid) {
+  const rows = normalizeGrid(grid);
+  const tables = detectVendorTables(grid);
+  if (!tables.length) return { headerRowIndex: -1, columns: [] };
+  let best = tables[0];
+  let bestScore = -1;
+  tables.forEach((t) => { const s = importRowScore(rows[t.headerRowIndex]); if (s > bestScore) { bestScore = s; best = t; } });
+  return { headerRowIndex: best.headerRowIndex, columns: best.columns };
 }
 
 function cleanImportCost(value) {
@@ -273,20 +315,23 @@ function cleanImportText(value) {
 }
 
 // Build vendor draft rows from a grid + a (possibly user-edited) column mapping.
-export function buildVendorRows(grid, headerRowIndex, columns) {
+// `endRow` bounds the data range so a single sheet can yield several tables.
+export function buildVendorRows(grid, headerRowIndex, columns, endRow) {
   const rows = normalizeGrid(grid);
   if (headerRowIndex < 0 || !Array.isArray(columns)) return [];
+  const end = Number.isInteger(endRow) ? Math.min(endRow, rows.length) : rows.length;
   const colFor = (field) => columns.find((c) => c.field === field && !c.servicePeriod && !c.feePeriod);
   const serviceCols = columns.filter((c) => c.servicePeriod && c.field === "frequency");
   const feeCols = columns.filter((c) => c.feePeriod && c.field === "cost");
   const tradeIdx = colFor("trade")?.index;
   const companyIdx = colFor("company")?.index;
   const out = [];
+  const seen = new Set();
 
-  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+  for (let i = headerRowIndex + 1; i < end; i++) {
     const r = rows[i];
     if (!r || !r.some((c) => c)) continue;
-    if (importRowScore(r) >= 3) continue; // skip a second header row
+    if (importRowScore(r) >= 3) continue; // skip a stray second header row
     const get = (idx) => (idx == null ? "" : (r[idx] || ""));
     const trade = get(tradeIdx);
     const company = get(companyIdx);
@@ -310,7 +355,7 @@ export function buildVendorRows(grid, headerRowIndex, columns) {
     const contractRaw = get(colFor("contract")?.index).toLowerCase();
     const contract = /^y(es)?$|true|✓|^x$|have/.test(contractRaw.trim());
 
-    out.push({
+    const row = {
       trade,
       company,
       contact: cleanImportText(get(colFor("contact")?.index)),
@@ -319,7 +364,12 @@ export function buildVendorRows(grid, headerRowIndex, columns) {
       contract,
       frequency: frequency || "",
       cost: cleanImportCost(cost),
-    });
+    };
+    // Drop exact duplicates (the same vendor repeated within a table).
+    const key = `${trade}|${company}|${row.phone}|${row.email}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
   }
   return out;
 }
@@ -333,12 +383,34 @@ function importColRefToIndex(ref) {
   return n - 1;
 }
 
-// Read an .xlsx (zip of XML) or .csv into an array of sheet grids. Browser only.
+function cellRefToRowCol(ref) {
+  const m = String(ref).match(/^([A-Za-z]+)(\d+)$/);
+  if (!m) return null;
+  return { col: importColRefToIndex(m[1]), row: parseInt(m[2], 10) - 1 };
+}
+
+function parseMergeRefs(doc) {
+  const merges = [];
+  const els = doc.getElementsByTagName("mergeCell");
+  for (let i = 0; i < els.length; i++) {
+    const parts = String(els[i].getAttribute("ref") || "").split(":");
+    if (parts.length !== 2) continue;
+    const a = cellRefToRowCol(parts[0]);
+    const b = cellRefToRowCol(parts[1]);
+    if (!a || !b) continue;
+    merges.push({ r0: Math.min(a.row, b.row), c0: Math.min(a.col, b.col), r1: Math.max(a.row, b.row), c1: Math.max(a.col, b.col) });
+  }
+  return merges;
+}
+
+// Read an .xlsx (zip of XML) or .csv into sheets of { grid, merges }. Rows are
+// placed at their true 1-based row number so merged-cell ranges line up with the
+// grid. Browser only (jszip + DOMParser; no external API, no NLP).
 export async function parseSpreadsheetGrids(file) {
   const name = String(file?.name || "").toLowerCase();
   if (name.endsWith(".csv")) {
     const text = await file.text();
-    const rows = text.split(/\r?\n/).filter((l) => l.length).map((line) => {
+    const grid = text.split(/\r?\n/).filter((l) => l.length).map((line) => {
       const cells = [];
       let cur = "";
       let inQ = false;
@@ -351,7 +423,7 @@ export async function parseSpreadsheetGrids(file) {
       cells.push(cur.trim());
       return cells;
     });
-    return [rows];
+    return [{ grid, merges: [] }];
   }
 
   const JSZip = (await import("jszip")).default;
@@ -369,13 +441,15 @@ export async function parseSpreadsheetGrids(file) {
     }
   }
   const sheetFiles = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort();
-  const grids = [];
+  const sheets = [];
   for (const sheetName of sheetFiles) {
     const doc = new DOMParser().parseFromString(await zip.file(sheetName).async("string"), "application/xml");
     const rowEls = doc.getElementsByTagName("row");
-    const rows = [];
+    const grid = [];
     for (let ri = 0; ri < rowEls.length; ri++) {
-      const cEls = rowEls[ri].getElementsByTagName("c");
+      const rowEl = rowEls[ri];
+      const rowNum = parseInt(rowEl.getAttribute("r") || "0", 10);
+      const cEls = rowEl.getElementsByTagName("c");
       const cells = [];
       let maxIdx = -1;
       for (let ci = 0; ci < cEls.length; ci++) {
@@ -391,11 +465,54 @@ export async function parseSpreadsheetGrids(file) {
         if (idx > maxIdx) maxIdx = idx;
       }
       for (let k = 0; k <= maxIdx; k++) if (cells[k] == null) cells[k] = "";
-      rows.push(cells);
+      if (rowNum > 0) { while (grid.length < rowNum - 1) grid.push([]); grid[rowNum - 1] = cells; }
+      else grid.push(cells);
     }
-    grids.push(rows);
+    sheets.push({ grid, merges: parseMergeRefs(doc) });
   }
-  return grids;
+  return sheets;
+}
+
+// Generate the standard import template as a real .xlsx with column data
+// validation (Frequency and Contract are constrained dropdowns) and generic
+// sample rows. Returns a Blob. Browser only.
+export async function buildVendorTemplateBlob() {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const colLetter = (i) => String.fromCharCode(65 + i); // 8 columns: A..H
+  const headers = VENDOR_IMPORT_FIELDS.map((f) => VENDOR_IMPORT_FIELD_LABELS[f]);
+  const samples = [
+    ["Electrical", "Bright Spark Electric", "Jordan Lee", "(555) 555-0142", "service@example.com", "Yes", "Monthly", "250"],
+    ["Plumbing", "Clearwater Plumbing Co", "Sam Rivera", "(555) 555-0188", "dispatch@example.com", "No", "Quarterly", "180"],
+  ];
+  const costIdx = VENDOR_IMPORT_FIELDS.indexOf("cost");
+  const cellXml = (value, rowNum, colIdx) => {
+    const ref = `${colLetter(colIdx)}${rowNum}`;
+    if (colIdx === costIdx && value !== "" && Number.isFinite(Number(value))) return `<c r="${ref}"><v>${Number(value)}</v></c>`;
+    return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(value)}</t></is></c>`;
+  };
+  const rowXml = (vals, rowNum) => `<row r="${rowNum}">${vals.map((v, ci) => cellXml(v, rowNum, ci)).join("")}</row>`;
+  const sheetRows = [rowXml(headers, 1), ...samples.map((s, i) => rowXml(s, i + 2))].join("");
+
+  const freqCol = colLetter(VENDOR_IMPORT_FIELDS.indexOf("frequency"));
+  const contractCol = colLetter(VENDOR_IMPORT_FIELDS.indexOf("contract"));
+  const freqList = esc(`"${UPKEEP_SERVICE_FREQUENCIES.join(",")}"`);
+  const dataValidations =
+    '<dataValidations count="2">'
+    + `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${freqCol}2:${freqCol}1000"><formula1>${freqList}</formula1></dataValidation>`
+    + `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${contractCol}2:${contractCol}1000"><formula1>"Yes,No"</formula1></dataValidation>`
+    + '</dataValidations>';
+
+  const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData>${dataValidations}</worksheet>`;
+
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+  zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+  zip.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Vendors" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+  zip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`);
+  zip.file("xl/worksheets/sheet1.xml", sheetXml);
+  return zip.generateAsync({ type: "blob" });
 }
 
 export function upkeepVendorMeta(vendor) {
