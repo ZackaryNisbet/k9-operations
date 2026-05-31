@@ -39,6 +39,8 @@ import {
   leadUpdates,
   receivedDate,
   receivedTime,
+  leadAttachments,
+  fmtFileSize,
   followUpState,
   recommendedFollowUp,
   buildUpdatePayload,
@@ -414,6 +416,49 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
 // Submission Details expander — full form + updates timeline
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Résumé / file attachments captured from the inbound email. Private bucket →
+// mint a short-lived signed URL on click. Renders nothing when there are none.
+function AttachmentLinks({ lead }) {
+  const files = leadAttachments(lead);
+  const [busy, setBusy] = useState("");
+  if (!files.length) return null;
+  const open = async (f) => {
+    setBusy(f.path);
+    try {
+      const { data, error } = await supabase.storage
+        .from("ignite-attachments")
+        .createSignedUrl(f.path, 3600);
+      if (!error && data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={SECTION_LABEL}>Resume / attachments</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+        {files.map((f) => (
+          <button
+            key={f.path}
+            onClick={() => open(f)}
+            disabled={busy === f.path}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "7px 11px",
+              border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface,
+              color: C.text, cursor: busy === f.path ? "default" : "pointer",
+              fontSize: 12.5, textAlign: "left", maxWidth: "100%",
+            }}
+          >
+            <span style={{ fontWeight: 800 }}>{busy === f.path ? "…" : "↓"}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.filename}</span>
+            {fmtFileSize(f.size) ? <span style={{ color: C.textMut }}>· {fmtFileSize(f.size)}</span> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SubmissionDetails({ lead, updates, today, onLog }) {
   const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
 
@@ -423,6 +468,7 @@ function SubmissionDetails({ lead, updates, today, onLog }) {
         <div>
           <div style={SECTION_LABEL}>Form submission</div>
           <FormFields lead={lead} />
+          <AttachmentLinks lead={lead} />
           {lead.raw_email_subject && <div style={{ marginTop: 10, fontSize: 11.5, color: C.textMut }}>Source: {lead.raw_email_subject}</div>}
         </div>
       </div>

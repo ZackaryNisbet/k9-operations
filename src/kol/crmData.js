@@ -277,6 +277,21 @@ export function receivedTime(lead) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+/** Captured file attachments (e.g. employment résumés) for a lead — always an array. */
+export function leadAttachments(lead) {
+  const a = lead && lead.attachments;
+  return Array.isArray(a) ? a.filter((f) => f && f.path) : [];
+}
+
+/** Human-readable file size, e.g. "84 KB". "" when unknown. */
+export function fmtFileSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Where the submission came from, for the captured-event note. */
 export function leadSourceLabel(lead) {
   const text = `${(lead && lead.raw_email_subject) || ""} ${(lead && lead.source_detail) || ""}`.toLowerCase();

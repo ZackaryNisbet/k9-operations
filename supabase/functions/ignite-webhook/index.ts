@@ -826,6 +826,76 @@ const supabaseClient = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
 );
 
+/**
+ * Best-effort capture of inbound email attachments (e.g. employment résumés).
+ * Resend webhooks carry attachment *metadata* only; the content is fetched via
+ * the Attachments API, then stored in the private `ignite-attachments` bucket.
+ * Returns the stored metadata, or null. NEVER throws — a lead must persist even
+ * if attachment capture fails.
+ */
+// deno-lint-ignore no-explicit-any
+async function captureAttachments(
+  emailId: string,
+  attMeta: any[],
+  apiKey: string,
+  locationId: string,
+  leadId: string,
+): Promise<any[] | null> {
+  try {
+    // Prefer the Attachments API (it carries download URLs / content); fall back
+    // to the webhook's metadata-only list if that call is unavailable.
+    let list: any[] = Array.isArray(attMeta) ? attMeta : [];
+    try {
+      const r = await fetch(
+        `https://api.resend.com/emails/receiving/${emailId}/attachments`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      if (r.ok) {
+        const j = await r.json();
+        const fetched = j?.data ?? j?.attachments ?? null;
+        if (Array.isArray(fetched) && fetched.length) list = fetched;
+      }
+    } catch (_) { /* keep webhook metadata */ }
+
+    const out: any[] = [];
+    for (const a of list) {
+      try {
+        const filename = String(a.filename || `attachment-${a.id || out.length + 1}`)
+          .replace(/[^\w.\-]+/g, "_");
+        const contentType = a.content_type || "application/octet-stream";
+        let bytes: Uint8Array | null = null;
+        const dl = a.download_url || a.url;
+        if (dl) {
+          const fr = await fetch(
+            dl,
+            dl.includes("api.resend.com") ? { headers: { Authorization: `Bearer ${apiKey}` } } : {},
+          );
+          if (fr.ok) bytes = new Uint8Array(await fr.arrayBuffer());
+        } else if (typeof a.content === "string" && a.content) {
+          const bin = atob(a.content);
+          bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        }
+        if (!bytes || !bytes.length) continue;
+        const path = `${locationId}/${leadId}/${filename}`;
+        const { error } = await supabaseClient.storage
+          .from("ignite-attachments")
+          .upload(path, bytes, { contentType, upsert: true });
+        if (error) {
+          console.error("[ignite-webhook] attachment upload error:", error.message);
+          continue;
+        }
+        out.push({ filename, content_type: contentType, path, size: bytes.length });
+      } catch (e) {
+        console.error("[ignite-webhook] attachment item failed:", e);
+      }
+    }
+    return out.length ? out : null;
+  } catch (e) {
+    console.error("[ignite-webhook] captureAttachments failed:", e);
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   // CORS preflight
   if (req.method === "OPTIONS") {
@@ -840,6 +910,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const body = await req.json();
     // When the webhook received this request — t1 for synthetic round-trip timing.
     const receivedAt = new Date().toISOString();
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    let inboundEmailId: string | null = null;
+    let inboundAttachments: Array<{ id?: string; filename?: string; content_type?: string }> = [];
 
     // ── Determine mode: Resend webhook vs direct POST ─────────────────
     let from: string;
@@ -849,13 +922,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (body.type === "email.received" && body.data?.email_id) {
       // Resend webhook mode — fetch full email via Resend API
-      const resendApiKey = Deno.env.get("RESEND_API_KEY");
       if (!resendApiKey) {
         return jsonResponse(
           { error: "RESEND_API_KEY not configured" },
           500,
         );
       }
+      inboundEmailId = body.data.email_id;
+      inboundAttachments = Array.isArray(body.data.attachments) ? body.data.attachments : [];
 
       const email = await fetchResendEmail(body.data.email_id, resendApiKey);
       from = email.from || body.data.from || "";
@@ -1125,6 +1199,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .eq("token", probeToken);
       console.log(`[ignite-webhook] Synthetic probe landed: ${probeToken} (${latencyMs}ms)`);
       return jsonResponse({ success: true, synthetic: true, leadId: lead.id, probeToken, latencyMs });
+    }
+
+    // Best-effort: capture inbound attachments (e.g. résumés). Never fails the lead.
+    if (inboundEmailId && inboundAttachments.length && resendApiKey && lead?.id) {
+      const stored = await captureAttachments(
+        inboundEmailId,
+        inboundAttachments,
+        resendApiKey,
+        locationId,
+        lead.id,
+      );
+      if (stored && stored.length) {
+        await supabaseClient.from("ignite_leads").update({ attachments: stored }).eq("id", lead.id);
+        console.log(`[ignite-webhook] Captured ${stored.length} attachment(s) for ${lead.id}`);
+      }
     }
 
     // ── Auto-create or update lite_client for unmatched leads (P8: phone dedup) ──

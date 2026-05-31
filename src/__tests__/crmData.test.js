@@ -16,6 +16,9 @@ import {
   summarizeUpdates,
   deriveFollowUp,
   receivedDate,
+  receivedTime,
+  leadAttachments,
+  fmtFileSize,
   capturedUpdate,
   leadUpdates,
   buildUpdatePayload,
@@ -136,6 +139,34 @@ describe("captured baseline — 1 log entry + follow-up = received date", () => 
     const updates = leadUpdates(lead, byLead);
     expect(updates.length).toBe(2);
     expect(deriveFollowUp(updates)).toBe("2026-06-01");
+  });
+});
+
+describe("received time + résumé attachments", () => {
+  it("receivedTime is a clock string for a valid timestamp, '' otherwise", () => {
+    const t = receivedTime({ created_at: "2026-05-31T14:32:00Z" });
+    expect(typeof t).toBe("string");
+    expect(t.length).toBeGreaterThan(0);
+    expect(receivedTime({})).toBe("");
+    expect(receivedTime({ created_at: "nonsense" })).toBe("");
+  });
+  it("leadAttachments keeps only rows with a storage path", () => {
+    expect(leadAttachments({})).toEqual([]);
+    expect(leadAttachments({ attachments: "x" })).toEqual([]);
+    const files = [
+      { filename: "resume.pdf", path: "loc/lead/resume.pdf", size: 84000 },
+      { filename: "no-path.pdf" },
+    ];
+    const kept = leadAttachments({ attachments: files });
+    expect(kept).toHaveLength(1);
+    expect(kept[0].filename).toBe("resume.pdf");
+  });
+  it("fmtFileSize is human readable", () => {
+    expect(fmtFileSize(512)).toBe("512 B");
+    expect(fmtFileSize(84000)).toBe("82 KB");
+    expect(fmtFileSize(2 * 1024 * 1024)).toBe("2.0 MB");
+    expect(fmtFileSize(0)).toBe("");
+    expect(fmtFileSize("nope")).toBe("");
   });
 });
 
