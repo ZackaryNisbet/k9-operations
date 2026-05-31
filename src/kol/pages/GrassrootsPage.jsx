@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
@@ -2658,14 +2659,18 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
 // required field group is empty), the pencil is PERSISTENT and amber so the gap is
 // obvious at a glance — a quiet "to-do" nudge. Otherwise it's subtle and only
 // appears on cell hover (see .gr-edit-cell CSS). The label shows as a hover tooltip.
-function CellEditButton({ onClick, label, needed = false }) {
+function CellEditButton({ onClick, label, needed = false, onShowTip, onHideTip }) {
+  const show = (e) => onShowTip && onShowTip(label, e.currentTarget.getBoundingClientRect());
+  const hide = () => onHideTip && onHideTip();
   return (
     <button
       type="button"
-      className={`gr-edit-tip ${needed ? "gr-edit-needed" : "gr-edit-reveal"}`}
-      data-tip={label}
+      className={needed ? "gr-edit-needed" : "gr-edit-reveal"}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
-      title={label}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
       aria-label={label}
       style={{ flexShrink: 0, marginLeft: 3, padding: 0, width: needed ? 16 : 14, height: needed ? 16 : 14, border: "none", background: "transparent", cursor: "pointer", color: needed ? C.warn : C.pri, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
     >
@@ -2697,6 +2702,11 @@ function DenseGrassrootsTable({
 
   const [hoveredLinkId, setHoveredLinkId] = useState(null);
   const [copiedLinkId, setCopiedLinkId] = useState(null);
+  // Edit-pencil tooltip rendered via a body portal so it is never clipped by the
+  // table's overflow:hidden (positioned from the hovered pencil's viewport rect).
+  const [editTip, setEditTip] = useState(null); // { text, x, y }
+  const showEditTip = useCallback((text, rect) => setEditTip({ text, x: rect.left + rect.width / 2, y: rect.top }), []);
+  const hideEditTip = useCallback(() => setEditTip(null), []);
 
   const copyLink = (href, id) => {
     navigator.clipboard.writeText(href).then(() => {
@@ -2726,6 +2736,7 @@ function DenseGrassrootsTable({
   };
 
   return (
+    <>
     <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
       {/* Exact clients-style dense header — tightened per variant 1 choice */}
       <div style={{ display: "grid", gridTemplateColumns: grid, columnGap: "8px", padding: "6px 12px", background: "rgb(255,255,255)", borderBottom: "1px solid rgb(226,232,240)", fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
@@ -2810,6 +2821,8 @@ function DenseGrassrootsTable({
                     onClick={() => onOpenCellEditor(target, "organizer")}
                     needed={!!gaps?.organizer}
                     label={gaps?.organizer ? "Add organizer / contact" : "Edit organizer & contact"}
+                    onShowTip={showEditTip}
+                    onHideTip={hideEditTip}
                   />
                 )}
               </div>
@@ -2907,6 +2920,8 @@ function DenseGrassrootsTable({
                       onClick={() => onOpenCellEditor(target, "event")}
                       needed={!!gaps?.event}
                       label={gaps?.event ? `Add ${gaps.eventMissing.join(" & ")}` : "Edit event details (address, type, cost)"}
+                      onShowTip={showEditTip}
+                      onHideTip={hideEditTip}
                     />
                   </>
                 )}
@@ -2920,6 +2935,8 @@ function DenseGrassrootsTable({
                     onClick={() => onOpenCellEditor(target, "date")}
                     needed={!!gaps?.date}
                     label={gaps?.date ? "Add event date" : "Edit event date(s)"}
+                    onShowTip={showEditTip}
+                    onHideTip={hideEditTip}
                   />
                 )}
               </div>
@@ -3117,6 +3134,13 @@ function DenseGrassrootsTable({
         );
       })}
     </div>
+    {editTip && createPortal(
+      <div style={{ position: "fixed", left: editTip.x, top: editTip.y - 8, transform: "translate(-50%, -100%)", background: C.text, color: "#fff", fontSize: 10, fontWeight: 700, letterSpacing: "0.01em", whiteSpace: "nowrap", padding: "3px 7px", borderRadius: 6, boxShadow: "0 4px 12px rgba(15,23,42,0.22)", pointerEvents: "none", zIndex: 10000 }}>
+        {editTip.text}
+      </div>,
+      document.body,
+    )}
+    </>
   );
 }
 
@@ -4897,20 +4921,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .gr-edit-cell:focus-within .gr-edit-reveal { opacity: 0.8; }
         .gr-edit-cell .gr-edit-reveal:hover { opacity: 1; }
         /* Persistent amber pencil = a required field group is empty (a quiet to-do). It
-           stays visible until the info is filled in, so missing data is obvious at rest. */
+           stays visible until the info is filled in, so missing data is obvious at rest.
+           Its tooltip is rendered via a body portal (see editTip) so it is never clipped
+           by the table's overflow:hidden. */
         .gr-edit-needed { opacity: 1; }
-        /* Instant, on-brand tooltip for the pencils (native title is too slow for a
-           zero-training audience). Text comes from data-tip. */
-        .gr-edit-tip { position: relative; }
-        .gr-edit-tip::after {
-          content: attr(data-tip);
-          position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(2px);
-          background: ${C.text}; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.01em;
-          white-space: nowrap; padding: 3px 7px; border-radius: 6px; box-shadow: 0 4px 12px rgba(15,23,42,0.18);
-          opacity: 0; pointer-events: none; transition: opacity 0.12s ease, transform 0.12s ease; z-index: 60;
-        }
-        .gr-edit-tip:hover::after,
-        .gr-edit-tip:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
         .grassroots-event-inline-header {
           position: relative;
           z-index: 1;
@@ -6745,7 +6759,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           title={cellEditor.group === "organizer" ? "Edit organizer & contact" : cellEditor.group === "event" ? "Edit event details" : "Edit event date(s)"}
           onClose={savingDraft ? () => {} : closeEditor}
         >
-          <div style={{ display: "grid", gap: 12, width: "min(420px, 78vw)" }}>
+          <div style={{ display: "grid", gap: 12, width: "100%" }}>
             {cellEditor.group === "organizer" && (
               <>
                 <OrganizerAutocomplete label="Organizer" value={editDraft.organizer} onChange={(v) => updateDraft("organizer", v)} options={organizerOptions} placeholder="Organizer" />
@@ -6784,7 +6798,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         const costText = fmtCurrencyNumber(costNum);
         return (
           <Modal title="Close out event" onClose={savingCloseout ? () => {} : closeCloseout}>
-            <div style={{ display: "grid", gap: 14, width: "min(380px, 80vw)" }}>
+            <div style={{ display: "grid", gap: 14, width: "100%" }}>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{t.name || "Event"}</div>
                 <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
@@ -6793,7 +6807,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
               </div>
               <div>
                 <Label>Leads Captured</Label>
-                <input type="number" min="0" value={closeoutLeads} onChange={(e) => setCloseoutLeads(e.target.value)} placeholder="0" autoFocus style={{ ...INPUT_STYLE, width: "100%" }} />
+                <input
+                  type="number"
+                  min="0"
+                  value={closeoutLeads}
+                  onChange={(e) => setCloseoutLeads(e.target.value)}
+                  onWheel={(e) => e.currentTarget.blur()}
+                  placeholder="0"
+                  autoFocus
+                  style={{ ...INPUT_STYLE, width: "100%" }}
+                />
               </div>
               <div>
                 <Label>CPL — Cost per Lead (auto)</Label>
