@@ -2797,6 +2797,9 @@ function DenseGrassrootsTable({
         const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
         const canCloseEvt = isEventsTable && canCloseGrassrootsEvent(target, today);
         const isClosedEvt = isGrassrootsEventClosed(target);
+        // Among events awaiting closeout, distinguish "overdue" (final day already passed)
+        // from "due today" — drives the small status label beside the Close button.
+        const isOverdueClose = canCloseEvt && getGrassrootsFinalEventDate(target) < today;
         // Persistent "more info needed" nudges only for live (not closed) events.
         const gaps = isEventsTable && onOpenCellEditor && !isClosedEvt ? getGrassrootsEventFieldGaps(target) : null;
 
@@ -3039,14 +3042,21 @@ function DenseGrassrootsTable({
                       Finished
                     </span>
                   ) : (
-                    <button
-                      onClick={() => canCloseEvt && onCloseEvent(target)}
-                      disabled={!canCloseEvt}
-                      title={canCloseEvt ? "Close out this event" : "Available on or after the event's final day"}
-                      style={{ padding: "1px 6px", borderRadius: 4, border: `1px solid ${canCloseEvt ? C.pri : C.border}`, background: canCloseEvt ? `${C.pri}0A` : "transparent", color: canCloseEvt ? C.pri : C.textMut, fontSize: 10, fontWeight: 700, cursor: canCloseEvt ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: canCloseEvt ? 1 : 0.55 }}
-                    >
-                      Close
-                    </button>
+                    <>
+                      {canCloseEvt && (
+                        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", whiteSpace: "nowrap", color: isOverdueClose ? C.dan : C.warn }} title={isOverdueClose ? "This event has passed and still needs closing out" : "This event is today — close it out once it wraps"}>
+                          {isOverdueClose ? "Overdue" : "Due today"}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => canCloseEvt && onCloseEvent(target)}
+                        disabled={!canCloseEvt}
+                        title={canCloseEvt ? "Close out this event" : "Available on or after the event's final day"}
+                        style={{ padding: "1px 6px", borderRadius: 4, border: `1px solid ${canCloseEvt ? C.pri : C.border}`, background: canCloseEvt ? `${C.pri}0A` : "transparent", color: canCloseEvt ? C.pri : C.textMut, fontSize: 10, fontWeight: 700, cursor: canCloseEvt ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: canCloseEvt ? 1 : 0.55 }}
+                      >
+                        Close
+                      </button>
+                    </>
                   )
                 ) : (
                   onEdit && (
@@ -3807,13 +3817,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       list.sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
     }
     // Pin events awaiting closeout (already occurred — today or earlier — and not yet
-    // closed) to the very top: they need action. Stable partition keeps each group's
-    // existing sort order.
+    // closed) to the very top: they need action. Within that group, the MOST overdue
+    // (oldest final day) sits highest; the rest keep the active sort below them.
     const needsClose = [];
     const rest = [];
     for (const t of list) {
       (canCloseGrassrootsEvent(t, today) ? needsClose : rest).push(t);
     }
+    needsClose.sort((a, b) => {
+      const fa = getGrassrootsFinalEventDate(a) || "";
+      const fb = getGrassrootsFinalEventDate(b) || "";
+      return fa.localeCompare(fb) || (a.name || "").localeCompare(b.name || "");
+    });
     return [...needsClose, ...rest];
   }, [activeConfig.id, eventDateSortDirection, followUpSortDirection, visibleTargets]);
 
