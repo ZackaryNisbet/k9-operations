@@ -39,7 +39,7 @@ import {
   getGrassrootsEventFieldGaps,
   getGrassrootsStatusLabel,
   isGrassrootsEventClosed,
-  isGrassrootsEventArchivedFromDefault,
+  isGrassrootsEventInPastView,
   canCloseGrassrootsEvent,
   makeGrassrootsEventCloseout,
   compareGrassrootsHistoryDesc,
@@ -3847,12 +3847,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       list = list.filter(t => normalizeGrassrootsStatus(t.status) === eventsStatusFilter);
     }
     // Events: the default view shows upcoming events AND events awaiting closeout
-    // (occurred but not closed, pinned to the top by the sort above). Only CLOSED
-    // (finished) events move behind the Past Events pill.
+    // (occurred but not closed — pinned to the top by the sort above); it only hides
+    // CLOSED events. The Past Events view is the full "already happened" archive:
+    // every event past its final day (overdue-unclosed included) plus closed ones —
+    // so an overdue event shows in both places.
     if (activeLifecycleTab === 'events') {
+      const td = todayStr();
       list = list.filter(t => showPastEvents
-        ? isGrassrootsEventArchivedFromDefault(t)
-        : !isGrassrootsEventArchivedFromDefault(t));
+        ? isGrassrootsEventInPastView(t, td)
+        : !isGrassrootsEventClosed(t));
     }
     return list;
   }, [sortedVisibleTargets, lifecycleSearch, eventsStatusFilter, showPastEvents, activeLifecycleTab]);

@@ -17,7 +17,7 @@ import {
   getGrassrootsEventDisplayStatus,
   getGrassrootsEventFieldGaps,
   getGrassrootsFinalEventDate,
-  isGrassrootsEventArchivedFromDefault,
+  isGrassrootsEventInPastView,
   isGrassrootsEventClosed,
   isGrassrootsEventPast,
   makeGrassrootsEventCloseout,
@@ -686,11 +686,12 @@ describe("grassrootsData", () => {
       expect(getGrassrootsEventCloseout(closed).leads_captured).toBe(7);
     });
 
-    it("hides only CLOSED events from the default view (occurred-but-unclosed stays visible)", () => {
-      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-20"))).toBe(false); // upcoming
-      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-01"))).toBe(false); // occurred, NOT closed → stays (needs closeout)
-      const closed = { event_dates: [{ event_date: "2026-05-01" }], details: { closeout: { closed_at: "2026-05-02" } } };
-      expect(isGrassrootsEventArchivedFromDefault(closed)).toBe(true); // closed → archived
+    it("Past Events view shows past-by-date (incl. overdue-unclosed) AND closed events", () => {
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-20"), today)).toBe(false); // upcoming → not past
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-11"), today)).toBe(false); // today → not past yet
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-01"), today)).toBe(true); // overdue & unclosed → shown
+      const closedFuture = { event_dates: [{ event_date: "2026-05-20" }], details: { closeout: { closed_at: "2026-05-11" } } };
+      expect(isGrassrootsEventInPastView(closedFuture, today)).toBe(true); // closed → shown
     });
 
     it("renders a closed event's status as Finished without changing the stored status", () => {

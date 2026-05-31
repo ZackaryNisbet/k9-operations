@@ -318,12 +318,13 @@ export function isGrassrootsEventPast(target = {}, today = new Date().toISOStrin
   return Boolean(finalDate) && finalDate < today;
 }
 
-// An event leaves the default tracker view only once it is CLOSED (finished). An
-// event that has already occurred but hasn't been closed yet STAYS in the default
-// view — it still needs action, and the page pins it to the top as a "needs
-// closeout" item rather than hiding it under Past Events.
-export function isGrassrootsEventArchivedFromDefault(target = {}) {
-  return isGrassrootsEventClosed(target);
+// The "Past Events" view shows every event whose final day has already passed —
+// overdue-but-unclosed ones included — plus any that have been closed out. (The
+// default view, by contrast, only hides CLOSED events: an occurred-but-unclosed
+// event still appears there, pinned to the top as a needs-closeout to-do. So an
+// overdue event correctly appears in BOTH the default and Past Events views.)
+export function isGrassrootsEventInPastView(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  return isGrassrootsEventClosed(target) || isGrassrootsEventPast(target, today);
 }
 
 // You can only close out an event once you've reached (or passed) its final day.
