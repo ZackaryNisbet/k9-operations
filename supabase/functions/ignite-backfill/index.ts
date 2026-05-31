@@ -31,6 +31,67 @@ Deno.serve(async (req: Request) => {
   const hours = Math.min(168, Math.max(1, Number(url.searchParams.get("hours") || "24")));
   const sinceMs = Date.now() - hours * 3600 * 1000;
 
+  // ── Diagnostic: how far back does Resend actually retain received emails, and
+  //    do the oldest WEB-FORM emails (employment apps) still carry attachments?
+  //    Answers whether a résumé backfill is even possible.
+  //    ?scan=1&pages=60&subject=web%20form&samples=8
+  if (url.searchParams.get("scan") === "1") {
+    const sampleSubj = (url.searchParams.get("subject") || "web form").toLowerCase();
+    const samples = Math.min(20, Math.max(1, Number(url.searchParams.get("samples") || "8")));
+    const maxPages = Math.min(80, Math.max(1, Number(url.searchParams.get("pages") || "60")));
+    let count = 0, oldest = Infinity, newest = 0, reachedEnd = false;
+    const byType: Record<string, number> = {};
+    const ctypes: Record<string, number> = {};
+    const realAtts: any[] = []; // real file attachments (not .eml forward-wrappers) = candidate résumés
+    const matching: any[] = [];
+    let cur: string | null = null;
+    for (let page = 0; page < maxPages; page++) {
+      const u = new URL("https://api.resend.com/emails/receiving");
+      u.searchParams.set("limit", "100");
+      if (cur) u.searchParams.set("after", cur);
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${resendKey}` } });
+      const text = await r.text();
+      if (!r.ok) return json({ error: `Resend list failed (${r.status})`, body: text.slice(0, 600) }, 502);
+      const body = JSON.parse(text);
+      const rows = body.data ?? body.emails ?? [];
+      if (!rows.length) { reachedEnd = true; break; }
+      for (const it of rows) {
+        const t = new Date(it.created_at ?? 0).getTime();
+        if (Number.isNaN(t)) continue;
+        count++; if (t < oldest) oldest = t; if (t > newest) newest = t;
+        const subj = String(it.subject || "").toLowerCase();
+        const key = subj.includes("phone call") ? "phone_call" : subj.includes("appointment") ? "appointment" : subj.includes("booking") ? "booking_form" : subj.includes("web form") ? "web_form" : "other";
+        byType[key] = (byType[key] || 0) + 1;
+        if (subj.includes(sampleSubj)) matching.push(it);
+        // Aggregate attachment content-types straight from the list payload.
+        const atts = Array.isArray(it.attachments) ? it.attachments : [];
+        for (const a of atts) {
+          const ct = a?.content_type || "?";
+          ctypes[ct] = (ctypes[ct] || 0) + 1;
+          if (ct !== "message/rfc822") {
+            realAtts.push({ id: it.id ?? it.email_id, created_at: it.created_at, type: key, subject: it.subject, filename: a?.filename, content_type: ct, size: a?.size });
+          }
+        }
+      }
+      if (!body.has_more) { reachedEnd = true; break; }
+      cur = (rows[rows.length - 1].id ?? rows[rows.length - 1].email_id) || null;
+      if (!cur) { reachedEnd = true; break; }
+    }
+    matching.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const details: any[] = [];
+    for (const it of matching.slice(0, samples)) {
+      const id = it.id ?? it.email_id;
+      try {
+        const r = await fetch(`https://api.resend.com/emails/receiving/${id}`, { headers: { Authorization: `Bearer ${resendKey}` } });
+        const full = r.ok ? await r.json() : null;
+        const f = full?.data ?? full;
+        const atts = f?.attachments ?? [];
+        details.push({ id, created_at: it.created_at, subject: it.subject, attachment_count: Array.isArray(atts) ? atts.length : 0, attachment_names: Array.isArray(atts) ? atts.map((a: any) => a.filename) : [], att_sample: atts[0] ?? null });
+      } catch (e) { details.push({ id, error: String(e) }); }
+    }
+    return json({ ok: true, scan: true, count, reachedEnd, oldest: oldest === Infinity ? null : new Date(oldest).toISOString(), newest: newest ? new Date(newest).toISOString() : null, byType, attachment_content_types: ctypes, real_attachment_count: realAtts.length, real_attachments: realAtts.slice(0, 30), matching_count: matching.length, oldest_matching_samples: details });
+  }
+
   const out: Record<string, unknown> = { hours, dry, found: 0, leads: 0, duplicates: 0, skipped_seen: 0, synthetic_skipped: 0, failed: 0 };
   const items: unknown[] = [];
   let after: string | null = null;
