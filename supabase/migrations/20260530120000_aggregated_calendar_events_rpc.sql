@@ -117,17 +117,27 @@ as $$
     and t.target_end_date between p_start and p_end
 
   union all
-  -- 4. Marketing: scheduled events
-  select 'marketing', 'mkt-event-'||g.id::text, 'event',
-         g.event_date, null::time,
-         coalesce(nullif(g.title,''), 'Marketing event'),
-         coalesce(nullif(g.venue_name,''), nullif(initcap(replace(g.event_type,'_',' ')),''), 'Event'),
-         null::text,
-         'default',
-         g.id::text
-  from public.grassroots_events g
-  where g.location_id = p_location_id::text
-    and g.event_date between p_start and p_end
+  -- 4. Marketing: scheduled event dates (org-centric grassroots tracker model).
+  -- Events live in grassroots_event_dates (one row per date) joined to the target
+  -- org/contact in grassroots_targets — NOT the legacy grassroots_events table.
+  select 'marketing', 'mkt-eventdate-'||ed.id::text, 'event',
+         ed.event_date, ed.start_time,
+         coalesce(nullif(trim(tg.name),''), nullif(tg.organizer,''), 'Marketing event'),
+         coalesce(nullif(tg.organizer,''),
+           case tg.category
+             when 'events' then 'Events'
+             when 'drops' then 'Drops'
+             when 'corporate_partnerships' then 'Corporate partnership'
+             when 'apartments' then 'Apartments'
+             when 'pet_professional_partnerships' then 'Pet professional'
+             else coalesce(nullif(initcap(replace(tg.category,'_',' ')),''), 'Event') end),
+         tg.status,
+         case when ed.event_date < p_today then 'done' else 'default' end,
+         ed.target_id::text
+  from public.grassroots_event_dates ed
+  join public.grassroots_targets tg on tg.id = ed.target_id
+  where ed.location_id = p_location_id
+    and ed.event_date between p_start and p_end
 
   union all
   -- 5. Marketing: outreach follow-ups (a target's next scheduled contact)
