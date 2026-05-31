@@ -42,6 +42,7 @@ import {
   getGrassrootsFinalEventDate,
   summarizeGrassrootsEventDates,
   getGrassrootsEventFieldGaps,
+  getGrassrootsBusinessFieldGaps,
   getGrassrootsStatusLabel,
   isGrassrootsEventClosed,
   getGrassrootsEventCloseout,
@@ -2938,6 +2939,12 @@ function DenseGrassrootsTable({
         const isOverdueClose = canCloseEvt && getGrassrootsFinalEventDate(target) < today;
         // Persistent "more info needed" nudges only for live (not closed) events.
         const gaps = isEventsTable && onOpenCellEditor && !isClosedEvt ? getGrassrootsEventFieldGaps(target) : null;
+        // Non-event business/partnership rows get their own needs-info gaps + a category
+        // pencil where a category column is shown. Only on TARGET rows (the business
+        // view) — the activity feed's rows are visits, not targets.
+        const showBizPencils = !isEventsTable && onOpenCellEditor && !isActivityFeed;
+        const bizGaps = showBizPencils ? getGrassrootsBusinessFieldGaps(target) : null;
+        const usesCategoryCol = usesBusinessCategoryColumn(categoryConfig);
 
         return (
           <div key={target.id}>
@@ -2952,8 +2959,8 @@ function DenseGrassrootsTable({
                 alignItems: "start",
               }}
             >
-              {/* Organizer — hover reveals a pencil that opens the organizer/contact micro-editor */}
-              <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25 }} title={organizer}>
+              {/* Organizer / Business — hover reveals a pencil that opens the contact micro-editor */}
+              <div className={(isEventsTable && onOpenCellEditor) || showBizPencils ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25 }} title={organizer}>
                 <span style={{ wordBreak: "break-word", minWidth: 0 }}>{organizer}</span>
                 {isEventsTable && onOpenCellEditor && (
                   <CellEditButton
@@ -2964,12 +2971,21 @@ function DenseGrassrootsTable({
                     onHideTip={hideEditTip}
                   />
                 )}
+                {showBizPencils && (
+                  <CellEditButton
+                    onClick={() => onOpenCellEditor(target, "businessContact")}
+                    needed={!!bizGaps?.contact}
+                    label={bizGaps?.contact ? `Add ${bizGaps.contactMissing.join(" / ")}` : "Edit business & contact"}
+                    onShowTip={showEditTip}
+                    onHideTip={hideEditTip}
+                  />
+                )}
               </div>
 
               {/* Event name — hyperlink to the stored link (if any). On hover: type badge,
                   edit pencil (events), and explicit Copy + Open icons. */}
               <div
-                className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined}
+                className={(isEventsTable && onOpenCellEditor) || (showBizPencils && usesCategoryCol) ? "gr-edit-cell" : undefined}
                 style={{
                   fontWeight: 600,
                   color: C.text,
@@ -3063,6 +3079,15 @@ function DenseGrassrootsTable({
                       onHideTip={hideEditTip}
                     />
                   </>
+                )}
+                {showBizPencils && usesCategoryCol && (
+                  <CellEditButton
+                    onClick={() => onOpenCellEditor(target, "category")}
+                    needed={!!bizGaps?.category}
+                    label={bizGaps?.category ? "Set category (required)" : "Edit category"}
+                    onShowTip={showEditTip}
+                    onHideTip={hideEditTip}
+                  />
                 )}
               </div>
 
@@ -6953,8 +6978,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     </>
                   ) : (
                     <>
-                      {/* Non-events edit editor — in a shared modal (no lifted/expand panel). */}
-                      {canEditTargets && editDraft && (
+                      {/* Non-events full edit (via the Edit button) — in a shared modal. The
+                          per-cell pencils open the smaller cellEditor modal instead, so this
+                          only renders when NOT doing a scoped cell edit. */}
+                      {canEditTargets && editDraft && !cellEditor && (
                         <div onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }}>
                           <div style={{ width: "100%", maxWidth: 640 }}>
                             <TargetEditor
@@ -6986,6 +7013,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         onLog={openLogModal}
                         onEdit={(t) => { setNewDraft(null); setEditDraft(buildEditorDraft(t)); }}
                         onSetStatus={activeConfig.id === "drops" ? undefined : setTargetStatus}
+                        onOpenCellEditor={openCellEditor}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
                         followUpSortDirection={followUpSortDirection}
@@ -7096,10 +7124,28 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       {/* Per-column micro-editor — a small modal scoped to the cell's field group. */}
       {cellEditor && editDraft && (
         <Modal
-          title={cellEditor.group === "organizer" ? "Edit organizer & contact" : cellEditor.group === "event" ? "Edit event details" : "Edit event date(s)"}
+          title={{
+            organizer: "Edit organizer & contact",
+            event: "Edit event details",
+            date: "Edit event date(s)",
+            businessContact: "Edit business & contact",
+            category: "Edit category",
+          }[cellEditor.group] || "Edit"}
           onClose={savingDraft ? () => {} : closeEditor}
         >
           <div style={{ display: "grid", gap: 12, width: "100%" }}>
+            {cellEditor.group === "businessContact" && (
+              <>
+                <FieldEditor field={{ key: "name", label: "Business Name", placeholder: "Business name" }} value={editDraft.name} onChange={(v) => updateDraft("name", v)} />
+                <FieldEditor field={{ key: "first_name", label: "Contact Name", placeholder: "Who you speak with" }} value={editDraft.first_name} onChange={(v) => updateDraft("first_name", v)} />
+                <FieldEditor field={{ key: "contact_phone", label: "Phone", placeholder: "Phone number" }} value={editDraft.contact_phone} onChange={(v) => updateDraft("contact_phone", v)} />
+                <FieldEditor field={{ key: "contact_email", label: "Email", type: "email", placeholder: "Email" }} value={editDraft.contact_email} onChange={(v) => updateDraft("contact_email", v)} />
+                <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Contacts will link to the Marketing Directory once it's available.</div>
+              </>
+            )}
+            {cellEditor.group === "category" && (
+              <FieldEditor field={{ key: "business_category", label: "Category", type: "select", options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS, allowCustom: true, placeholder: "Select a category" }} value={editDraft.business_category} onChange={(v) => { updateDraft("business_category", v); updateDraft("drop_category", v); }} />
+            )}
             {cellEditor.group === "organizer" && (
               <>
                 <OrganizerAutocomplete label="Organizer" value={editDraft.organizer} onChange={(v) => updateDraft("organizer", v)} options={organizerOptions} placeholder="Organizer" />

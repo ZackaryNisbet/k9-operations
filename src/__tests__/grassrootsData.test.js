@@ -18,6 +18,7 @@ import {
   getGrassrootsEventCloseout,
   getGrassrootsEventDisplayStatus,
   getGrassrootsEventFieldGaps,
+  getGrassrootsBusinessFieldGaps,
   getGrassrootsFinalEventDate,
   summarizeGrassrootsEventDates,
   isGrassrootsEventInPastView,
@@ -745,6 +746,14 @@ describe("grassrootsData", () => {
       expect(toggleGrassrootsMaterial("", "Coupon")).toBe("Coupon");
       expect(toggleGrassrootsMaterial("Coupon, Pens", "Pens")).toBe("Coupon");
       expect(toggleGrassrootsMaterial("Coupon", "coupon")).toBe(""); // case-insensitive remove
+    });
+
+    it("flags missing business contact + category", () => {
+      expect(getGrassrootsBusinessFieldGaps({ name: "Vet Co", contact_phone: "555", contact_email: "a@b.com", business_category: "Veterinarian" })).toMatchObject({ contact: false, category: false });
+      const partial = getGrassrootsBusinessFieldGaps({ name: "Vet Co", business_category: "Veterinarian" });
+      expect(partial.contact).toBe(true);
+      expect(partial.contactMissing).toEqual(["phone", "email"]);
+      expect(getGrassrootsBusinessFieldGaps({ name: "Vet Co", contact_phone: "5", contact_email: "a@b.com" }).category).toBe(true);
     });
 
     it("makeGrassrootsEventCloseout normalizes the persisted payload", () => {
