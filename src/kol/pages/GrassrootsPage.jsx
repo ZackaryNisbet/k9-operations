@@ -3078,7 +3078,7 @@ function DenseGrassrootsTable({
               <div className={onSetStatus && !isClosedEvt ? "gr-edit-cell" : undefined}>
                 {!cm.show.status ? null : cm.statusVariant === "text" ? (
                   cStatusText
-                    ? <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: "#E5E7EB", color: "#374151", whiteSpace: "nowrap", letterSpacing: "0.02em", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} title={cStatusText}>{cStatusText}</span>
+                    ? <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }} title={cStatusText}>{cStatusText}</span>
                     : <span style={{ color: C.textMut, fontSize: 11 }}>—</span>
                 ) : (onSetStatus && !isClosedEvt) ? (
                   <button
@@ -4497,7 +4497,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setMovePopover(null);
     setLogModal({ target, category });
     setLogNotes("");
-    setLogDate("");
+    // Pre-fill the follow-up with the target's current one (non-drop) so it's visible
+    // and can be cleared by blanking it; drops manage their own per-visit date.
+    setLogDate(category !== "drops" ? (target?.next_contact_date || "") : "");
     setLogActivityDate(todayStr());
     setLogContactName("");
     setLogBusinessQuery(target?.name || "");
@@ -5019,6 +5021,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setActivities((prev) => [insertedActivity, ...prev]);
     if (insertedAttachments.length > 0) {
       setActivityAttachments((prev) => [...insertedAttachments, ...prev]);
+    }
+    // For partnership/development logs (non-drop), the row's follow-up is the target's
+    // next_contact_date. Sync it to the log's date so logging with the date left blank
+    // CLEARS an existing follow-up (you've followed up; nothing more scheduled).
+    if (activityType !== "drop") {
+      const desiredFollowUp = logDate || null;
+      if (desiredFollowUp !== (target.next_contact_date || null)) {
+        await supabase
+          .from("grassroots_targets")
+          .update({ next_contact_date: desiredFollowUp, updated_by_user_id: actor.userId, updated_by_name: actor.name })
+          .eq("id", target.id);
+      }
     }
     await loadGrassroots();
     markFreshActivity(insertedActivity.id);
@@ -6403,7 +6417,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 <>
                   {['All', ...GRASSROOTS_BUSINESS_CATEGORY_OPTIONS].map(cat => {
                     const on = dropActivityCategory === cat || (cat === 'All' && dropActivityCategory === 'All');
-                    const cnt = cat === 'All' ? (dropCategoryCounts?.total || 0) : (dropCategoryCounts?.[cat] || 0);
+                    // buildGrassrootsDropCategoryCounts returns an array of {category,count};
+                    // read it by category (it was previously read like an object → always 0).
+                    const cnt = (dropCategoryCounts.find(c => c.category === cat)?.count) || 0;
                     return (
                       <button
                         key={cat}
@@ -6888,9 +6904,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
 
                             if (insertErr) throw insertErr;
 
-                            // If a follow-up date was set in the composer, update the target
-                            if (nextDate && nextDate !== target.next_contact_date) {
-                              await updateFollowUpDate(target, nextDate);
+                            // Sync the follow-up to the composer's date. Logging with the
+                            // date field left blank CLEARS an existing follow-up (you've
+                            // followed up, nothing more scheduled).
+                            if ((nextDate || null) !== (target.next_contact_date || null)) {
+                              await updateFollowUpDate(target, nextDate || null);
                             }
 
                             // Refresh (loadGrassroots updates targets/activities state itself)
