@@ -17,6 +17,7 @@ import {
   getGrassrootsEventDisplayStatus,
   getGrassrootsEventFieldGaps,
   getGrassrootsFinalEventDate,
+  summarizeGrassrootsEventDates,
   isGrassrootsEventInPastView,
   isGrassrootsEventClosed,
   isGrassrootsEventPast,
@@ -723,6 +724,17 @@ describe("grassrootsData", () => {
       expect(getGrassrootsEventFieldGaps(blank).organizer).toBe(true);
       // legacy single-field address still counts as filled
       expect(getGrassrootsEventFieldGaps({ ...soccerFest, address: "123 Main St", event_type: "B2B" }).event).toBe(false);
+    });
+
+    it("summarizes single, consecutive multi-day, and scattered event dates", () => {
+      expect(summarizeGrassrootsEventDates(singleDay("2026-05-31"))).toMatchObject({ count: 1, isMultiDay: false, isConsecutive: false });
+      const run = summarizeGrassrootsEventDates({ event_dates: [{ event_date: "2026-05-31" }, { event_date: "2026-06-01" }, { event_date: "2026-06-02" }] });
+      expect(run).toMatchObject({ count: 3, isMultiDay: true, isConsecutive: true });
+      expect(run.first.event_date).toBe("2026-05-31");
+      expect(run.last.event_date).toBe("2026-06-02");
+      const scattered = summarizeGrassrootsEventDates({ event_dates: [{ event_date: "2026-05-31" }, { event_date: "2026-06-14" }] });
+      expect(scattered).toMatchObject({ count: 2, isMultiDay: true, isConsecutive: false });
+      expect(summarizeGrassrootsEventDates({})).toMatchObject({ count: 0, isMultiDay: false });
     });
 
     it("makeGrassrootsEventCloseout normalizes the persisted payload", () => {
