@@ -200,7 +200,24 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         header: "Web form",
         width: "minmax(0, 1.9fr)",
         searchValue: (r) => buildFormFieldEntries(r).map((e) => `${e.label} ${e.value}`).join(" "),
-        render: (r) => <FormFields lead={r} compact />,
+        render: (r) => {
+          const count = buildFormFieldEntries(r).length;
+          if (!count) return <span style={{ color: C.textMut }}>—</span>;
+          const expanded = r.id === expandedId;
+          const label = classifySubmissionCategory(r) === "employment" ? "Employment details" : "Booking form details";
+          return (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleExpand(r); }}
+              title={expanded ? "Hide details" : "Show form details"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 30, padding: "0 11px", borderRadius: 8, border: `1px solid ${expanded ? C.pri : C.border}`, background: expanded ? C.priLt : C.surface, color: expanded ? C.pri : C.textSec, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              {label}
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: expanded ? C.pri : C.textMut, background: expanded ? "#fff" : C.surfaceHover, borderRadius: 20, padding: "0 6px", lineHeight: "16px" }}>{count}</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+          );
+        },
       },
       {
         key: "followup",
