@@ -612,3 +612,44 @@ export function buildIncidentRateForPeriod({ cases = [], reservations = [], peri
     ratePercent: ratePerDog === null ? null : ratePerDog * 100,
   };
 }
+
+// ─── Incident follow-ups (first-class workflow) ─────────────────────────────
+// A follow-up is a dated action an incident still needs (vet recheck, owner
+// callback, corrective action). It lives in the first-class `follow_up_at` /
+// `follow_up_completed_at` columns (see migration
+// 20260530120000_incident_follow_up_first_class.sql), not buried in metadata.
+//
+// getIncidentFollowUpState derives the badge state for a row by comparing the
+// due date to "today" using date-only, local-noon math (so time-of-day and DST
+// never flip a day). `tone` is a semantic key the UI maps to colors:
+//   "done"     — completed, no longer actionable
+//   "overdue"  — due before today and not completed
+//   "today"    — due today and not completed
+//   "upcoming" — due in the future and not completed
+
+export function getIncidentFollowUpState(caseRow, asOf = new Date()) {
+  const due = toDateOnly(caseRow?.follow_up_at);
+  if (!due) return { has: false, tone: "none", due: null, dueKey: null, completed: false, overdue: false, dueToday: false, upcoming: false };
+
+  const completed = Boolean(caseRow?.follow_up_completed_at);
+  const base = asOf instanceof Date ? asOf : new Date(asOf);
+  const today = atNoon(base.getFullYear(), base.getMonth(), base.getDate());
+  const dueKey = formatDateKey(due);
+  const todayKey = formatDateKey(today);
+
+  const overdue = !completed && dueKey < todayKey;
+  const dueToday = !completed && dueKey === todayKey;
+  const upcoming = !completed && dueKey > todayKey;
+  const tone = completed ? "done" : overdue ? "overdue" : dueToday ? "today" : "upcoming";
+
+  return { has: true, tone, due, dueKey, completed, overdue, dueToday, upcoming };
+}
+
+// Count incidents with an actionable follow-up: scheduled, not yet completed,
+// and due today or earlier. This is the "Needs follow-up" badge/filter count.
+export function countOpenFollowUps(cases = [], asOf = new Date()) {
+  return cases.reduce((total, caseRow) => {
+    const state = getIncidentFollowUpState(caseRow, asOf);
+    return total + (state.has && (state.overdue || state.dueToday) ? 1 : 0);
+  }, 0);
+}
