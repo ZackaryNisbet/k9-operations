@@ -98,7 +98,7 @@ export default function IgnitePipelineDiagram({ locLabel = "this location" }) {
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, background: C.surfaceHover, overflow: "hidden" }}>
       {/* Simple, end-user flow */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 16px 12px" }}>
-        <SimpleNode tile={<ServiceTile><BookingMark /></ServiceTile>} label="Booking form" sub="k9resorts.com" />
+        <SimpleNode tile={<ServiceTile bg="#FCFBF8" ring={`${C.accDk}55`}><img src="/k9-logo.png" alt="K9 Resorts" width="28" height="28" style={{ objectFit: "contain" }} /></ServiceTile>} label="K9 Resorts" sub="booking form" />
         <Arrow />
         <SimpleNode tile={<ServiceTile ring="#0F6CBD40"><OutlookMark /></ServiceTile>} label={`${locLabel} inbox`} sub="Outlook" />
         <Arrow />
