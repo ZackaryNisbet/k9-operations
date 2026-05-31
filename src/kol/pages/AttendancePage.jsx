@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar, LaborIntro } from "../../shared/ui";
-import { DenseTable, nextSort, sortRows } from "../../shared/listSurface";
+import { nextSort, compareValues } from "../../shared/listSurface";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
@@ -50,54 +50,10 @@ const ATTENDANCE_ROSTER_SORT_COLUMNS = [
   { key: "last", label: "Last Mark" },
 ];
 
-// Compact column codes for the dense Attendance Summary grid. The full label is
-// kept as the header tooltip; the colored dot ties the 30-day / all-time pair of
-// a mark type together without re-stating the name on every column.
-const ATTENDANCE_SUMMARY_SHORT_LABELS = {
-  tardy: "Tardy",
-  early_release: "Early Rel",
-  call_out_2_plus_hours: "Call ≥2h",
-  late_call_out_under_2_hours: "Late <2h",
-  no_call_no_show: "NCNS",
-};
 const ATTENDANCE_SUMMARY_DEFAULT_SORT = { key: "totalAll", direction: "desc" };
-
-const POLICY_REFERENCE_SECTIONS = [
-  {
-    title: "Attendance Mark Types",
-    subtitle: "Use these categories when recording attendance marks. Listed from least to most severe.",
-    items: ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({
-      label: option.label,
-      body: {
-        tardy: "Employee arrived 5 or more minutes after their scheduled shift start time.",
-        early_release: "Employee left their shift before the scheduled end time and was not released early by management due to staffing needs.",
-        call_out_2_plus_hours: "Employee called out at least 2 hours before shift start.",
-        late_call_out_under_2_hours: "Employee called out with less than 2 hours notice before shift start.",
-        no_call_no_show: "Employee did not report to work and did not contact management at all.",
-      }[option.value],
-    })),
-  },
-  {
-    title: "Progressive Counseling Process",
-    subtitle: "Escalate with documentation. Partner with leadership on each step so the formal outcome stays in the employee’s labor history.",
-    items: [
-      { label: "Coaching Note", body: "Use when attendance concerns need formal documentation but have not yet crossed the verbal-warning threshold." },
-      { label: "Verbal Warning", body: "Use for repeated lower-level violations or the first significant attendance breakdown that requires coaching." },
-      { label: "Written Warning", body: "Use when a new attendance violation happens after a verbal warning or the pattern is continuing." },
-      { label: "Final Written Warning", body: "Use when attendance issues continue after prior counseling and the next violation risks termination." },
-      { label: "Termination", body: "Use for final separation tied to repeated attendance violations or a major offense such as a No Call / No Show." },
-    ],
-  },
-  {
-    title: "Important Notes",
-    subtitle: null,
-    items: [
-      { label: "Coverage Responsibility", body: "Employees are expected to actively seek coverage from other trained staff when calling out." },
-      { label: "Emergency Review", body: "Emergency situations are reviewed case-by-case in partnership with leadership and may require documentation." },
-      { label: "Voluntary Resignation", body: "Three consecutive missed scheduled shifts without communication should be treated as a voluntary resignation review item." },
-    ],
-  },
-];
+// Thicker rule that brackets each mark-type group (its 30-day + all-time pair)
+// in the Attendance Summary grid.
+const ATTENDANCE_SUMMARY_GROUP_DIVIDER = "2.5px solid #CBD5E1";
 
 function formatTimestamp(value) {
   if (!value) return "—";
@@ -275,6 +231,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [markTypePills, setMarkTypePills] = useState(() => new Set());
   const [rosterSort, setRosterSort] = useState(ATTENDANCE_DEFAULT_SORT);
   const [summarySort, setSummarySort] = useState(ATTENDANCE_SUMMARY_DEFAULT_SORT);
+  const [summarySearch, setSummarySearch] = useState("");
 
   const [historyEmployeeFilter, setHistoryEmployeeFilter] = useState("");
   const [historySearch, setHistorySearch] = useState("");
@@ -317,7 +274,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       setHistoryEmployeeFilter(employeeId);
       setIncidentEmployeeId((current) => current || employeeId);
     }
-    if (["roster", "incidents", "log", "summary", "history", "reference"].includes(requestedTab)) {
+    if (["roster", "incidents", "log", "summary", "history"].includes(requestedTab)) {
       setTab(requestedTab === "incidents" ? "log" : requestedTab);
     } else if (requestedTab === "input") {
       setTab("log");
@@ -339,7 +296,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         { id: "summary", label: "Summary" },
         { id: "log", label: "Marks" },
         { id: "history", label: "History" },
-        { id: "reference", label: "Reference" },
       ];
     }
     return [
@@ -347,7 +303,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       { id: "log", label: "Marks" },
       { id: "summary", label: "Summary" },
       { id: "history", label: "History" },
-      { id: "reference", label: "Reference" },
     ];
   }, [tabPreset]);
 
@@ -563,99 +518,35 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     });
   }, [attendanceIncidents, laborEmployees]);
 
-  // Dense, app-standard summary grid (shared DenseTable). Every metric is its own
-  // sortable column so managers can rank the roster by any mark type or total in
-  // either direction; the colored dot keeps each type's 30-day/all-time pair tied
-  // together without restating the full label on each column.
-  const summaryColumns = useMemo(() => {
-    const fmtCount = (value) => (value ? value : "—");
-    const stackedHeader = (color, label, period) => (
-      <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 1, lineHeight: 1.1 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0 }} aria-hidden="true" />
-          {label}
-        </span>
-        <span style={{ fontSize: 9, fontWeight: 700, color: C.textMut }}>{period}</span>
-      </span>
-    );
-    const columns = [
-      {
-        key: "employee",
-        header: "Employee",
-        align: "start",
-        sortable: true,
-        width: "minmax(150px, 1.6fr)",
-        sortValue: (row) => (row.__isTotals ? "￿" : String(row.full_name || "").toLowerCase()),
-        render: (row) => (
-          <span style={{ fontWeight: row.__isTotals ? 800 : 700, color: C.text }}>
-            {row.__isTotals ? "All active employees" : row.full_name}
-          </span>
-        ),
-      },
-    ];
-    ATTENDANCE_INCIDENT_OPTIONS.forEach((option) => {
-      const short = ATTENDANCE_SUMMARY_SHORT_LABELS[option.value] || option.label;
-      columns.push({
-        key: `${option.value}_30`,
-        header: stackedHeader(option.color, short, "30d"),
-        headerTitle: `${option.label} — last 30 days`,
-        align: "center",
-        sortable: true,
-        width: 74,
-        sortValue: (row) => row.byType[option.value].last30,
-        render: (row) => fmtCount(row.byType[option.value].last30),
-      });
-      columns.push({
-        key: `${option.value}_all`,
-        header: stackedHeader(option.color, short, "All"),
-        headerTitle: `${option.label} — all time`,
-        align: "center",
-        sortable: true,
-        width: 74,
-        sortValue: (row) => row.byType[option.value].allTime,
-        render: (row) => fmtCount(row.byType[option.value].allTime),
-      });
-    });
-    columns.push({
-      key: "total30",
-      header: stackedHeader(C.text, "Total", "30d"),
-      headerTitle: "Total marks — last 30 days",
-      align: "center",
-      sortable: true,
-      width: 72,
-      sortValue: (row) => row.total30,
-      render: (row) => <strong>{fmtCount(row.total30)}</strong>,
-    });
-    columns.push({
-      key: "totalAll",
-      header: stackedHeader(C.text, "Total", "All"),
-      headerTitle: "Total marks — all time",
-      align: "center",
-      sortable: true,
-      width: 72,
-      sortValue: (row) => row.totalAll,
-      render: (row) => <strong>{fmtCount(row.totalAll)}</strong>,
-    });
-    return columns;
+  // Attendance Summary grid: filter by the employee search, then sort by the
+  // active metric. The grouped header (type → 30-day / all-time sub-columns) is a
+  // hand-built table below; here we just order the employee rows. The totals row
+  // is rendered in the table footer so it stays pinned and never sorts.
+  const summarySortValueOf = useCallback((row, key) => {
+    if (key === "employee") return String(row.full_name || "").toLowerCase();
+    if (key === "total30") return row.total30;
+    if (key === "totalAll") return row.totalAll;
+    const match = /^(.+)_(30|all)$/.exec(key);
+    if (match) {
+      const stat = row.byType[match[1]];
+      return match[2] === "30" ? stat?.last30 : stat?.allTime;
+    }
+    return 0;
   }, []);
 
-  // Controlled sort: order the employee rows ourselves, then pin a totals row to
-  // the bottom so it never sorts into the middle of the grid.
-  const summaryTableRows = useMemo(() => {
-    if (!attendanceSummary.rows.length) return [];
-    const sorted = sortRows(attendanceSummary.rows, summarySort, summaryColumns);
-    return [
-      ...sorted,
-      {
-        id: "__attendance_summary_totals",
-        __isTotals: true,
-        full_name: "All active employees",
-        byType: attendanceSummary.totals.byType,
-        total30: attendanceSummary.totals.total30,
-        totalAll: attendanceSummary.totals.totalAll,
-      },
-    ];
-  }, [attendanceSummary, summarySort, summaryColumns]);
+  const sortedSummaryRows = useMemo(() => {
+    const query = summarySearch.trim().toLowerCase();
+    const base = query
+      ? attendanceSummary.rows.filter((row) => String(row.full_name || "").toLowerCase().includes(query))
+      : attendanceSummary.rows;
+    if (!summarySort || !summarySort.direction) return base;
+    const direction = summarySort.direction === "desc" ? -1 : 1;
+    return [...base].sort((a, b) => {
+      const primary = compareValues(summarySortValueOf(a, summarySort.key), summarySortValueOf(b, summarySort.key)) * direction;
+      if (primary !== 0) return primary;
+      return compareValues(String(a.full_name || "").toLowerCase(), String(b.full_name || "").toLowerCase());
+    });
+  }, [attendanceSummary.rows, summarySearch, summarySort, summarySortValueOf]);
 
   const activityFeed = useMemo(() => {
     return buildAttendanceActivityFeed({
@@ -1870,70 +1761,130 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
 
       {tab === "summary" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 6 }}>Attendance Summary</div>
-          <div style={{ fontSize: 12, color: C.textMut, marginBottom: 16 }}>
-            Active employees only · counts from canonical attendance marks · click any column to sort ascending or descending.
-          </div>
+          {(() => { const __summarySearch = (
+            <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
+              <LaborSearchBar value={summarySearch} onChange={setSummarySearch} placeholder="Search employees…" />
+              <LaborIntro
+                value={introValue}
+                defaultValue={LABOR_INTRO_DEFAULTS.attendance}
+                canEdit={canEditIntro}
+                onSave={onSaveIntro}
+                prefix={<>Active employees only · counts from canonical attendance marks · click any column to sort · </>}
+              />
+            </div>
+          ); return searchSlot ? createPortal(__summarySearch, searchSlot) : __summarySearch; })()}
 
           {attendanceSummary.rows.length === 0 ? (
             <EmptyState title="No active employees to summarize" subtitle="Add employees to the labor roster to start building attendance reporting." />
-          ) : (
-            <DenseTable
-              columns={summaryColumns}
-              rows={summaryTableRows}
-              sort={summarySort}
-              onSortChange={(key) => setSummarySort((current) => nextSort(current, key))}
-              minWidth={1080}
-              rowStyle={(row) => (row.__isTotals ? { background: C.priLt, borderTop: `2px solid ${C.pri}`, fontWeight: 800 } : null)}
-              emptyText="No active employees to summarize."
-            />
-          )}
-        </Card>
-      )}
-
-      {tab === "reference" && (
-        <>
-          {POLICY_REFERENCE_SECTIONS.map((section) => (
-            <Card key={section.title} style={{ marginBottom: 18, padding: 18 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 4 }}>{section.title}</div>
-              {section.subtitle && <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12 }}>{section.subtitle}</div>}
-              <div style={{ display: "grid", gap: 10 }}>
-                {section.items.map((item) => (
-                  <div key={item.label} style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>{item.label}</div>
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>{item.body}</div>
-                  </div>
-                ))}
+          ) : (() => {
+            const isActiveSort = (key) => Boolean(summarySort && summarySort.key === key && summarySort.direction);
+            const sortArrow = (key) => (isActiveSort(key) ? (summarySort.direction === "asc" ? " ▲" : " ▼") : "");
+            const onSort = (key) => setSummarySort((current) => nextSort(current, key));
+            const subHead = (key, label, groupStart) => (
+              <th
+                key={key}
+                onClick={() => onSort(key)}
+                title="Click to sort ascending / descending"
+                style={{ padding: "6px 8px", background: "#F1F5F9", color: isActiveSort(key) ? C.pri : C.textMut, fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", borderLeft: groupStart ? ATTENDANCE_SUMMARY_GROUP_DIVIDER : undefined, borderBottom: `1.5px solid ${C.border}` }}
+              >
+                {label}{sortArrow(key)}
+              </th>
+            );
+            return (
+              <div style={{ overflowX: "auto", border: `1.5px solid ${C.border}`, borderRadius: 10 }}>
+                <table style={{ width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th
+                        rowSpan={2}
+                        onClick={() => onSort("employee")}
+                        title="Click to sort ascending / descending"
+                        style={{ padding: "8px 12px", background: "#F1F5F9", color: isActiveSort("employee") ? C.pri : C.textMut, fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", borderBottom: `1.5px solid ${C.border}` }}
+                      >
+                        Employee{sortArrow("employee")}
+                      </th>
+                      {ATTENDANCE_INCIDENT_OPTIONS.map((option) => (
+                        <th key={option.value} colSpan={2} style={{ padding: "7px 10px", background: option.color, color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center", whiteSpace: "nowrap", borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>
+                          {option.label}
+                        </th>
+                      ))}
+                      <th colSpan={2} style={{ padding: "7px 10px", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center", whiteSpace: "nowrap", borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>
+                        Total
+                      </th>
+                    </tr>
+                    <tr>
+                      {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                        subHead(`${option.value}_30`, "30 Days", true),
+                        subHead(`${option.value}_all`, "All Time", false),
+                      ]))}
+                      {subHead("total30", "30 Days", true)}
+                      {subHead("totalAll", "All Time", false)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedSummaryRows.map((row, index) => (
+                      <tr key={row.id} style={{ background: index % 2 === 1 ? "#F6FAEE" : "#FFFFFF" }}>
+                        <td style={{ padding: "7px 12px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{row.full_name}</td>
+                        {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                          <td key={`${row.id}-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", color: C.text, borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>{row.byType[option.value].last30 || "—"}</td>,
+                          <td key={`${row.id}-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center", color: C.text }}>{row.byType[option.value].allTime || "—"}</td>,
+                        ]))}
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800, color: C.text, borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>{row.total30 || "—"}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800, color: C.text }}>{row.totalAll || "—"}</td>
+                      </tr>
+                    ))}
+                    {sortedSummaryRows.length === 0 && (
+                      <tr>
+                        <td colSpan={3 + ATTENDANCE_INCIDENT_OPTIONS.length * 2} style={{ padding: 20, textAlign: "center", color: C.textMut }}>
+                          No active employees match “{summarySearch.trim()}”.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: C.pri, color: "#fff", fontWeight: 800 }}>
+                      <td style={{ padding: "8px 12px", textAlign: "left", whiteSpace: "nowrap" }}>Total</td>
+                      {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                        <td key={`totals-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", borderLeft: "2.5px solid rgba(255,255,255,0.35)" }}>{attendanceSummary.totals.byType[option.value].last30 || "—"}</td>,
+                        <td key={`totals-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center" }}>{attendanceSummary.totals.byType[option.value].allTime || "—"}</td>,
+                      ]))}
+                      <td style={{ padding: "6px 8px", textAlign: "center", borderLeft: "2.5px solid rgba(255,255,255,0.35)" }}>{attendanceSummary.totals.total30 || "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "center" }}>{attendanceSummary.totals.totalAll || "—"}</td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-            </Card>
-          ))}
-        </>
+            );
+          })()}
+        </Card>
       )}
 
       {tab === "history" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Attendance History</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Feed of attendance marks.</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 240 }}>
-                <CustomSelect
-                  value={historyEmployeeFilter}
-                  onChange={setHistoryEmployeeFilter}
-                options={employeeSelectOptions}
-                placeholder="Filter employee"
-                small
-                searchable
-                searchPlaceholder="Search employees"
+          {(() => { const __historySearch = (
+            <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
+              <LaborSearchBar value={historySearch} onChange={setHistorySearch} placeholder="Search history by employee, mark, or note…">
+                <div style={{ minWidth: 220 }}>
+                  <CustomSelect
+                    value={historyEmployeeFilter}
+                    onChange={setHistoryEmployeeFilter}
+                    options={employeeSelectOptions}
+                    placeholder="Filter employee"
+                    small
+                    searchable
+                    searchPlaceholder="Search employees"
+                  />
+                </div>
+              </LaborSearchBar>
+              <LaborIntro
+                value={introValue}
+                defaultValue={LABOR_INTRO_DEFAULTS.attendance}
+                canEdit={canEditIntro}
+                onSave={onSaveIntro}
+                prefix={<>Feed of attendance marks · {filteredHistory.length} shown · </>}
               />
-              </div>
-              <div style={{ minWidth: 220 }}>
-                <Inp value={historySearch} onChange={setHistorySearch} placeholder="Search history" />
-              </div>
             </div>
-          </div>
+          ); return searchSlot ? createPortal(__historySearch, searchSlot) : __historySearch; })()}
 
           {filteredHistory.length === 0 ? (
             <EmptyState title="No history matches the current filters" subtitle="Try clearing the filters or log the first attendance activity." />
