@@ -478,6 +478,21 @@ export function getGrassrootsEventFieldGaps(target = {}) {
   };
 }
 
+// Which required fields are missing on a business/partnership target — drives the
+// persistent amber "more info needed" pencils on the non-event tables. Contact is
+// incomplete if the name, phone, or email is blank; category is mandatory.
+export function getGrassrootsBusinessFieldGaps(target = {}) {
+  const hasName = Boolean(String(target.name || target.organizer || "").trim());
+  const hasPhone = Boolean(String(target.contact_phone || "").trim());
+  const hasEmail = Boolean(String(target.contact_email || "").trim());
+  const hasCategory = Boolean(getGrassrootsBusinessCategory(target));
+  const contactMissing = [];
+  if (!hasName) contactMissing.push("name");
+  if (!hasPhone) contactMissing.push("phone");
+  if (!hasEmail) contactMissing.push("email");
+  return { contact: contactMissing.length > 0, category: !hasCategory, contactMissing };
+}
+
 // Pure builder for the details.closeout payload written when an event is closed out.
 // disposition: "completed" (attended → leads/CPL) or "cancelled" (couldn't attend —
 // the cost is sunk, leads are 0/none). Cancelled events still leave the active view
