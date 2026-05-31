@@ -3043,11 +3043,6 @@ function DenseGrassrootsTable({
                     </span>
                   ) : (
                     <>
-                      {canCloseEvt && (
-                        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", whiteSpace: "nowrap", color: isOverdueClose ? C.dan : C.warn }} title={isOverdueClose ? "This event has passed and still needs closing out" : "This event is today — close it out once it wraps"}>
-                          {isOverdueClose ? "Overdue" : "Due today"}
-                        </span>
-                      )}
                       <button
                         onClick={() => canCloseEvt && onCloseEvent(target)}
                         disabled={!canCloseEvt}
@@ -3056,6 +3051,11 @@ function DenseGrassrootsTable({
                       >
                         Close
                       </button>
+                      {canCloseEvt && (
+                        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", whiteSpace: "nowrap", color: isOverdueClose ? C.dan : C.warn }} title={isOverdueClose ? "This event has passed and still needs closing out" : "This event is today — close it out once it wraps"}>
+                          {isOverdueClose ? "Overdue" : "Due today"}
+                        </span>
+                      )}
                     </>
                   )
                 ) : (
