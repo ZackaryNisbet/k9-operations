@@ -131,6 +131,30 @@ export async function reopenMaintenancePeriod(periodId, reason, actorName = null
   return data;
 }
 
+const UPKEEP_INTRO_SETTING_KEY = "resort_upkeep_intros";
+
+export async function loadUpkeepIntros(locationId) {
+  if (!locationId) return {};
+  const { data, error } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", UPKEEP_INTRO_SETTING_KEY)
+    .maybeSingle();
+  if (error) return {};
+  return data?.setting_value && typeof data.setting_value === "object" ? data.setting_value : {};
+}
+
+export async function saveUpkeepIntros(locationId, intros, userId = null) {
+  const { error } = await supabase
+    .from("lite_settings")
+    .upsert(
+      { location_id: locationId, setting_key: UPKEEP_INTRO_SETTING_KEY, setting_value: intros, updated_by: userId },
+      { onConflict: "location_id,setting_key" },
+    );
+  if (error) throw error;
+}
+
 export function upkeepVendorMeta(vendor) {
   const md = vendor?.metadata && typeof vendor.metadata === "object" ? vendor.metadata : {};
   return { trade: md.trade || "", frequency: md.frequency || "", cost: md.cost ?? "" };
@@ -176,6 +200,18 @@ export async function archiveVendor(vendorId, reason, actorName = null) {
   });
   if (error) throw error;
   return data;
+}
+
+export async function loadVendorLogCounts(locationId) {
+  if (!locationId) return {};
+  const { data, error } = await supabase
+    .from("resort_upkeep_vendor_logs")
+    .select("vendor_id")
+    .eq("location_id", locationId);
+  if (error) return {};
+  const counts = {};
+  (data || []).forEach((row) => { counts[row.vendor_id] = (counts[row.vendor_id] || 0) + 1; });
+  return counts;
 }
 
 export async function loadVendorLogs(locationId, vendorId) {
