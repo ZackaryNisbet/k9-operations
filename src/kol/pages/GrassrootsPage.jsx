@@ -2686,7 +2686,7 @@ function DenseGrassrootsTable({
   targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
   expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, onShowFollowUpInfo,
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
-  savingLog, isEventsTable = false, onOpenCellEditor, onCloseEvent
+  savingLog, isEventsTable = false, onOpenCellEditor, onCloseEvent, onSetStatus
 }) {
   // Use the shared K9 brand palette (forest green primary + lime accent, neutral
   // slate text) — no local navy/gold override.
@@ -2707,6 +2707,8 @@ function DenseGrassrootsTable({
   const [editTip, setEditTip] = useState(null); // { text, x, y }
   const showEditTip = useCallback((text, rect) => setEditTip({ text, x: rect.left + rect.width / 2, y: rect.top }), []);
   const hideEditTip = useCallback(() => setEditTip(null), []);
+  // Inline status dropdown, anchored to the clicked status pill (body portal).
+  const [statusMenu, setStatusMenu] = useState(null); // { targetId, x, y }
 
   const copyLink = (href, id) => {
     navigator.clipboard.writeText(href).then(() => {
@@ -2945,11 +2947,32 @@ function DenseGrassrootsTable({
               </div>
 
               {/* Status — status pill (default), plain-text chip (e.g. Drops Outcome), or hidden */}
-              <div>
+              <div className={isEventsTable && onSetStatus && !isClosedEvt ? "gr-edit-cell" : undefined}>
                 {!cm.show.status ? null : cm.statusVariant === "text" ? (
                   cStatusText
                     ? <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: "#E5E7EB", color: "#374151", whiteSpace: "nowrap", letterSpacing: "0.02em", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} title={cStatusText}>{cStatusText}</span>
                     : <span style={{ color: C.textMut, fontSize: 11 }}>—</span>
+                ) : (isEventsTable && onSetStatus && !isClosedEvt) ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setStatusMenu((prev) => (prev && prev.targetId === target.id) ? null : { targetId: target.id, x: r.left, y: r.bottom });
+                    }}
+                    title="Change status"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 3,
+                      fontSize: 10, fontWeight: 800, padding: "1px 6px 1px 8px", borderRadius: 999,
+                      background: st.bg, color: st.fg, whiteSpace: "nowrap", letterSpacing: "0.02em",
+                      border: "none", cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    {getGrassrootsStatusLabel(target.status)}
+                    <span className="gr-edit-reveal" style={{ display: "inline-flex", alignItems: "center" }}>
+                      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                    </span>
+                  </button>
                 ) : (
                   <span style={{
                     display: "inline-block",
@@ -3150,6 +3173,33 @@ function DenseGrassrootsTable({
       </div>,
       document.body,
     )}
+    {statusMenu && onSetStatus && (() => {
+      const tg = targets.find((t) => t.id === statusMenu.targetId);
+      if (!tg) return null;
+      return createPortal(
+        <>
+          <div onClick={() => setStatusMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
+          <div style={{ position: "fixed", left: statusMenu.x, top: statusMenu.y + 4, zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(15,23,42,0.18)", padding: 4, minWidth: 156 }}>
+            {GRASSROOTS_STATUS_OPTIONS.map((opt) => {
+              const current = normalizeGrassrootsStatus(tg.status) === opt.value;
+              const s = STATUS_STYLES[opt.value] || STATUS_STYLES.default;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { setStatusMenu(null); onSetStatus(tg, opt.value); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 9px", border: "none", background: current ? C.bg : "transparent", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: current ? 800 : 600, color: C.text, textAlign: "left" }}
+                >
+                  <span style={{ width: 9, height: 9, borderRadius: 999, background: s.bg, border: `1.5px solid ${s.fg}`, flexShrink: 0 }} />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </>,
+        document.body,
+      );
+    })()}
     </>
   );
 }
@@ -3835,7 +3885,31 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   // Apply the literal-port header filters (search, status pills, Past Events) on top of the category/sorted list.
   // This makes the ported Customer Lifecycle chrome actually drive the table (Events tab primary).
   const lifecycleDisplayTargets = useMemo(() => {
-    let list = sortedVisibleTargets || [];
+    let list;
+    if (activeLifecycleTab === 'events' && eventsStatusFilter) {
+      // A status pill is a pure status filter across EVERY event in the category —
+      // active or not, past or closed. This is what makes "Abandoned" work: abandoned
+      // events are inactive and never appear in the default (active-only) view, so the
+      // pill sources straight from categoryTargets instead of the active-filtered list.
+      const td = todayStr();
+      list = categoryTargets
+        .filter(t => normalizeGrassrootsStatus(t.status) === eventsStatusFilter)
+        .slice()
+        .sort((a, b) => compareGrassrootsEventSchedule(a, b, td, eventDateSortDirection || "asc"));
+    } else {
+      list = sortedVisibleTargets || [];
+      // Events: the default view shows upcoming events AND events awaiting closeout
+      // (occurred but not closed — pinned to the top by the sort above); it only hides
+      // CLOSED events. The Past Events view is the full "already happened" archive:
+      // every event past its final day (overdue-unclosed included) plus closed ones —
+      // so an overdue event shows in both places.
+      if (activeLifecycleTab === 'events') {
+        const td = todayStr();
+        list = list.filter(t => showPastEvents
+          ? isGrassrootsEventInPastView(t, td)
+          : !isGrassrootsEventClosed(t));
+      }
+    }
     const q = (lifecycleSearch || "").trim().toLowerCase();
     if (q) {
       list = list.filter(t =>
@@ -3843,22 +3917,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         String(t.notes || t.proposal || t.address || "").toLowerCase().includes(q)
       );
     }
-    if (activeLifecycleTab === 'events' && eventsStatusFilter) {
-      list = list.filter(t => normalizeGrassrootsStatus(t.status) === eventsStatusFilter);
-    }
-    // Events: the default view shows upcoming events AND events awaiting closeout
-    // (occurred but not closed — pinned to the top by the sort above); it only hides
-    // CLOSED events. The Past Events view is the full "already happened" archive:
-    // every event past its final day (overdue-unclosed included) plus closed ones —
-    // so an overdue event shows in both places.
-    if (activeLifecycleTab === 'events') {
-      const td = todayStr();
-      list = list.filter(t => showPastEvents
-        ? isGrassrootsEventInPastView(t, td)
-        : !isGrassrootsEventClosed(t));
-    }
     return list;
-  }, [sortedVisibleTargets, lifecycleSearch, eventsStatusFilter, showPastEvents, activeLifecycleTab]);
+  }, [sortedVisibleTargets, categoryTargets, lifecycleSearch, eventsStatusFilter, showPastEvents, activeLifecycleTab, eventDateSortDirection]);
 
   // "Activity" tab — what's legit/confirmed: booked Events + all Visits, in one feed.
   // Strategic/long-term categories (Corporate, Apartments, PPP) stay in their own tabs.
@@ -4087,6 +4147,34 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setNewDraft(null);
     setEditDraft(null);
     setCellEditor(null);
+  };
+
+  // Inline status change from the status cell's dropdown — saves immediately.
+  const setEventStatus = async (target, status) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
+    const normalized = normalizeGrassrootsStatus(status);
+    if (!target || !locationId || normalized === normalizeGrassrootsStatus(target.status)) return;
+    const draft = buildEditorDraft(target);
+    draft.status = normalized;
+    draft.is_active = normalized === "abandoned" ? false : true;
+    setSaveState("saving");
+    const payload = buildTargetPayload(draft, locationId, actor);
+    const { error } = await supabase.rpc(
+      GRASSROOTS_EVENT_SAVE_RPC,
+      buildGrassrootsEventSaveRpcArgs({ ...payload, id: draft.id }, draft),
+    );
+    if (error) {
+      setSaveState("error");
+      toast(error.message || "Failed to update status", "error");
+      return;
+    }
+    await loadGrassroots();
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+    toast(`Status set to ${getGrassrootsStatusLabel(normalized)}`);
   };
 
   // Open the per-column micro-editor for an event cell (organizer / event / date).
@@ -6544,6 +6632,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         onLog={startInlineLog}
                         onOpenCellEditor={openCellEditor}
                         onCloseEvent={openCloseout}
+                        onSetStatus={setEventStatus}
                         onUpdateFollowUp={updateFollowUpDate}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
