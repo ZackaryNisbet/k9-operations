@@ -19,6 +19,9 @@ import {
   loadLicenseLogs,
   loadLicenseLogCounts,
   loadMaintenancePeriodSnapshot,
+  loadMaintenancePeriodAttachments,
+  recordResortUpkeepPeriodAttachment,
+  deleteResortUpkeepPeriodAttachment,
   loadMaintenancePeriods,
   loadMaintenanceTemplates,
   loadResortUpkeepDashboard,
@@ -614,15 +617,22 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
 
   const reload = useCallback(async () => {
     try {
-      const snap = await withUpkeepTimeout(loadMaintenancePeriodSnapshot(period.id), "Checklist took too long to load.");
+      const [snap, atts] = await withUpkeepTimeout(
+        Promise.all([
+          loadMaintenancePeriodSnapshot(period.id),
+          loadMaintenancePeriodAttachments(locationId, period.id).catch(() => []),
+        ]),
+        "Checklist took too long to load."
+      );
       setSnapshot(snap);
+      setFiles(atts);
       setError("");
     } catch (e) {
       setError(friendlyErrorMessage(e, "This checklist could not be loaded."));
     } finally {
       setLoading(false);
     }
-  }, [period.id]);
+  }, [period.id, locationId]);
 
   useEffect(() => { setLoading(true); reload(); }, [reload]);
 
@@ -636,7 +646,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
   const computedStatus = snapshot?.computedStatus || period.computed_status || period.status;
   const submitted = ["submitted", "submitted_late", "late_submitted"].includes(computedStatus);
   const pastDue = !!period.due_date && todayStr() > String(period.due_date).slice(0, 10);
-  const editable = canComplete && (snapshot?.canEdit ?? true) && !submitted && !pastDue;
+  const editable = canComplete && (snapshot?.canEdit ?? true) && !submitted;
   const canEdit = editable && editMode;
 
   const pickFiles = async (fileList) => {
@@ -645,14 +655,11 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
     setUploading(true);
     setError("");
     try {
-      const next = [];
       for (const file of chosen) {
         const uploaded = await uploadResortUpkeepAttachment({ locationId, file, pathParts: ["maintenance", period.id, "completion"] });
-        let url = "";
-        try { url = await createResortUpkeepSignedUrl({ storage_path: uploaded.path }); } catch { /* best-effort */ }
-        next.push({ id: uploaded.id, name: file.name || uploaded.safeName, size: file.size || 0, url });
+        await recordResortUpkeepPeriodAttachment({ locationId, periodId: period.id, file, storagePath: uploaded.path, fileName: file.name || uploaded.safeName, actorName: actor });
       }
-      setFiles((current) => [...current, ...next]);
+      await reload();
       if (toast) toast(chosen.length > 1 ? "Attachments uploaded" : "Attachment uploaded");
     } catch (e) {
       setError(friendlyErrorMessage(e, "That attachment could not be uploaded."));
@@ -660,7 +667,12 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
       setUploading(false);
     }
   };
-  const removeFile = (id) => setFiles((current) => current.filter((f) => f.id !== id));
+  const removeFile = async (id) => {
+    setError("");
+    try { await deleteResortUpkeepPeriodAttachment(id, actor); await reload(); }
+    catch (e) { setError(friendlyErrorMessage(e, "That attachment could not be removed.")); }
+  };
+  const openAttachment = async (a) => { try { const url = await createResortUpkeepSignedUrl(a); if (url) window.open(url, "_blank", "noopener,noreferrer"); } catch { /* non-blocking */ } };
 
   const submit = async () => {
     if (submitting) return;
@@ -705,7 +717,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
                 type="button"
                 onClick={() => editable && setEditMode((v) => !v)}
                 disabled={!editable}
-                title={pastDue ? "Read-only after the due date" : editMode ? "Done editing" : "Edit checklist"}
+                title={editMode ? "Done editing" : "Edit checklist"}
                 style={{ ...secondaryBtn, opacity: editable ? 1 : 0.5, cursor: editable ? "pointer" : "default", ...(editMode && editable ? { borderColor: C.pri, color: C.pri, background: C.priLt } : null) }}
               >
                 {editMode && editable ? "Done" : "Edit"}
@@ -724,10 +736,17 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
             <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: allComplete ? C.suc : C.pri, transition: "width 0.3s" }} />
           </div>
 
-          {!loading && (!editMode || !editable) ? (
-            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: pastDue && !submitted ? C.dan : C.textMut }}>
-              {submitted ? "Submitted — read-only." : pastDue ? "Past the due date — read-only." : !canComplete ? "Read-only access." : "Click Edit to make changes."}
+          {pastDue && !submitted ? (
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, color: "#92400E", background: C.warnLt, border: "1px solid #FDE68A", borderRadius: 8, padding: "7px 10px" }}>
+              Past due — completing now will be recorded as a late submission.
             </div>
+          ) : null}
+          {!loading && (submitted || !canComplete) ? (
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: C.textMut }}>
+              {submitted ? "Submitted — read-only." : "Read-only access."}
+            </div>
+          ) : !loading && editable && !editMode ? (
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: C.textMut }}>Click Edit to make changes.</div>
           ) : null}
 
           <div style={{ marginTop: 14 }}>
@@ -744,7 +763,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                 {files.map((f) => (
                   <span key={f.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", borderRadius: 999, background: C.surfaceHover, border: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, color: C.text }}>
-                    {f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: "none" }}>{String(f.name).slice(0, 26)}</a> : String(f.name).slice(0, 26)}
+                    <button type="button" onClick={() => openAttachment(f)} title={f.file_name || "Attachment"} style={{ border: "none", background: "none", padding: 0, cursor: "pointer", color: C.text, fontWeight: 700, fontSize: 11, fontFamily: "inherit" }}>{String(f.file_name || "Attachment").slice(0, 28)}</button>
                     {canEdit ? <button type="button" onClick={() => removeFile(f.id)} title="Remove attachment" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, fontWeight: 900, fontSize: 14, lineHeight: 1, padding: 0 }}>×</button> : null}
                   </span>
                 ))}
@@ -779,7 +798,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
 
         <div style={muFoot}>
           <div style={{ fontSize: 12, color: C.textMut, flex: 1, minWidth: 0 }}>
-            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pastDue ? "Past the due date — read-only." : files.length ? "Ready to submit with the uploaded attachment(s)." : allComplete ? "All items complete." : "Progress is saved as you go. Finish the items or upload an attachment to submit."}
+            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : files.length ? "Ready to submit with the uploaded attachment(s)." : allComplete ? (pastDue ? "All items complete — submitting will be recorded as late." : "All items complete.") : "Progress is saved as you go. Finish the items or upload an attachment to submit."}
           </div>
           <button type="button" onClick={submit} disabled={submitDisabled} style={{ ...primaryBtn, opacity: submitDisabled ? 0.5 : 1 }}>
             {submitting ? "Submitting…" : "Submit checklist"}
