@@ -344,6 +344,42 @@ export function getGrassrootsDisplayStatusLabel(target = {}) {
   return getGrassrootsStatusLabel(target.status);
 }
 
+// Which required field groups on an event row are not yet filled in. Drives the
+// persistent "more info needed" affordance on the tracker so missing data is
+// obvious without training. Returns per-group booleans plus the missing labels
+// (used to build a specific tooltip). Cost is intentionally NOT required here —
+// it's prompted in context and only needed at closeout for CPL.
+export function getGrassrootsEventFieldGaps(target = {}) {
+  const split = getGrassrootsSplitAddress(target);
+  const hasAddress = Boolean(
+    String(target.address || "").trim()
+    || split.address_line_1 || split.address_city || split.address_state || split.address_postal_code,
+  );
+  const hasType = Boolean(normalizeGrassrootsEventType(target.event_type));
+  const hasOrganizer = Boolean(
+    String(target.organizer || "").trim()
+    || String(target.first_name || "").trim()
+    || String(target.last_name || "").trim()
+    || String(target.contact_source || "").trim(),
+  );
+  const hasDate = Boolean(getGrassrootsFinalEventDate(target));
+
+  const eventMissing = [];
+  if (!hasAddress) eventMissing.push("address");
+  if (!hasType) eventMissing.push("type");
+  const organizerMissing = hasOrganizer ? [] : ["organizer"];
+  const dateMissing = hasDate ? [] : ["date"];
+
+  return {
+    organizer: organizerMissing.length > 0,
+    event: eventMissing.length > 0,
+    date: dateMissing.length > 0,
+    organizerMissing,
+    eventMissing,
+    dateMissing,
+  };
+}
+
 // Pure builder for the details.closeout payload written when an event is closed out.
 export function makeGrassrootsEventCloseout({ leadsCaptured, cpl, notes, closedAt, closedByUserId, closedByName } = {}) {
   return {
