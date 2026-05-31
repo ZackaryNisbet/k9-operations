@@ -1,5 +1,6 @@
 {
   "ports": [
+    { "port": 5201, "label": "F2 — Nav + route scaffolding" },
     { "port": 5210, "label": "X1 — Incidents redesign" }
   ]
 }
