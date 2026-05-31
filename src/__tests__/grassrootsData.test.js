@@ -686,11 +686,11 @@ describe("grassrootsData", () => {
       expect(getGrassrootsEventCloseout(closed).leads_captured).toBe(7);
     });
 
-    it("hides closed OR past events from the default view", () => {
-      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-20"), today)).toBe(false);
-      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-01"), today)).toBe(true); // past
-      const closedFuture = { event_dates: [{ event_date: "2026-05-20" }], details: { closeout: { closed_at: "2026-05-11" } } };
-      expect(isGrassrootsEventArchivedFromDefault(closedFuture, today)).toBe(true); // closed
+    it("hides only CLOSED events from the default view (occurred-but-unclosed stays visible)", () => {
+      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-20"))).toBe(false); // upcoming
+      expect(isGrassrootsEventArchivedFromDefault(singleDay("2026-05-01"))).toBe(false); // occurred, NOT closed → stays (needs closeout)
+      const closed = { event_dates: [{ event_date: "2026-05-01" }], details: { closeout: { closed_at: "2026-05-02" } } };
+      expect(isGrassrootsEventArchivedFromDefault(closed)).toBe(true); // closed → archived
     });
 
     it("renders a closed event's status as Finished without changing the stored status", () => {
