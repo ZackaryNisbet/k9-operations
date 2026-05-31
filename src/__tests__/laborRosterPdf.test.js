@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildLaborRosterPdfBytes,
   normalizeLaborRosterPdfOptions,
+  resolveLaborRosterPageSize,
+  LABOR_ROSTER_PAGE_SIZES,
 } from "../kol/laborRosterPdf";
 
 function readPublicAsset(path) {
@@ -218,5 +220,35 @@ describe("labor roster PDF", () => {
     expect(text).toContain("associate.1@example.com");
     expect(text).toContain("associate.45@example.com");
     expect(text).toContain("Pet Care Technician");
+  });
+
+  it("defaults to Letter landscape dimensions", async () => {
+    const bytes = await buildLaborRosterPdfBytes(basePayload);
+    const pdfDoc = await PDFDocument.load(bytes);
+    const { width, height } = pdfDoc.getPage(0).getSize();
+    expect([Math.round(width), Math.round(height)]).toEqual([792, 612]);
+    expect(resolveLaborRosterPageSize(undefined)).toEqual({ width: 792, height: 612 });
+  });
+
+  it("renders born at the requested poster size without losing content", async () => {
+    const poster = LABOR_ROSTER_PAGE_SIZES.find((size) => size.id === "poster-18x24");
+    const letterText = await extractPdfText(await buildLaborRosterPdfBytes(basePayload));
+    const bytes = await buildLaborRosterPdfBytes({ ...basePayload, pageSize: "poster-18x24" });
+    const pdfDoc = await PDFDocument.load(bytes);
+    const { width, height } = pdfDoc.getPage(0).getSize();
+    const posterText = await extractPdfText(bytes);
+
+    // Exact 24 × 18 in sheet (1 in = 72 pt), still a single page.
+    expect([Math.round(width), Math.round(height)]).toEqual([poster.width, poster.height]);
+    expect([Math.round(width), Math.round(height)]).toEqual([1728, 1296]);
+    expect(pdfDoc.getPageCount()).toBe(1);
+    // Scaling the page up must not drop or clip any roster text.
+    expect(posterText).toBe(letterText);
+    expect(posterText).toContain("zackary.nisbet@example.com");
+  });
+
+  it("accepts an explicit { width, height } page size", () => {
+    expect(resolveLaborRosterPageSize({ width: 1000, height: 800 })).toEqual({ width: 1000, height: 800 });
+    expect(resolveLaborRosterPageSize("nonexistent-id")).toEqual({ width: 792, height: 612 });
   });
 });
