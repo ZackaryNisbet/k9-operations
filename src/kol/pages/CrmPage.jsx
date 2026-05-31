@@ -11,6 +11,7 @@ import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
+import { computeIgniteHealth } from "../onboarding/igniteHealth";
 import {
   DenseTable,
   ListSearchRow,
@@ -141,6 +142,10 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   }, []);
 
   const categoryCounts = useMemo(() => countByCategory(leads), [leads]);
+  const health = useMemo(
+    () => computeIgniteHealth({ configured: configured === true, lastLeadAt: leads[0] && leads[0].created_at, recentLeads: leads, now: new Date() }),
+    [configured, leads]
+  );
 
   const columns = useMemo(
     () => [
@@ -278,6 +283,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         </p>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        {loadState !== "schema" && <HealthBadge health={health} />}
         {loadState === "ok" && <span style={{ fontSize: 12, color: C.textMut }}>{filterSubmissions(leads, {}).length} forms</span>}
         {canSetup && (
           <button type="button" onClick={() => setShowWizard(true)} title="Set up or update Ignite for this location" style={iconBtn(configured === false)}>
@@ -512,6 +518,21 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
 // ─────────────────────────────────────────────────────────────────────────────
 // Setup states (launch the onboarding wizard)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Dashboard-style pipeline health pill (colored dot + label, detail on hover).
+function HealthBadge({ health }) {
+  const colors = { success: C.suc, warning: C.warn, danger: C.dan, neutral: C.textMut };
+  const c = colors[health.tone] || C.textMut;
+  return (
+    <span
+      title={health.detail}
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${c}40`, background: `${c}0F`, fontSize: 12.5, fontWeight: 700, color: c, cursor: "default", whiteSpace: "nowrap" }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: 99, background: c, boxShadow: `0 0 6px ${c}80` }} />
+      {health.label}
+    </span>
+  );
+}
 
 function SetupBanner({ onStart }) {
   return (

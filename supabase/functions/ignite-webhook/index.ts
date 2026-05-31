@@ -889,7 +889,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // Idempotency check — use ignite lead ID from URLs if available
     const quickLeadId = html.match(/[?&]lid=(\d+)/)?.[1] || null;
-    if (quickLeadId) {
+    if (quickLeadId && body.dryRun !== true && body.mode !== "validate") {
       const { data: existing } = await supabaseClient
         .from("ignite_leads")
         .select("id")
@@ -1001,6 +1001,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
         },
         422,
       );
+    }
+
+    // Dry-run / validate mode: parse + routing have succeeded end-to-end on our
+    // side. Return the result WITHOUT writing a lead — this is how the health
+    // check + wizard test validate the pipeline with zero dummy data.
+    if (body.dryRun === true || body.mode === "validate") {
+      return jsonResponse({
+        success: true,
+        dryRun: true,
+        locationId,
+        leadType: parsed.leadType,
+        clientName: parsed.clientName,
+        hasEmail: !!parsed.email,
+        hasPhone: !!parsed.phone,
+        fields: Object.keys(parsed.formData),
+        routedBy: parsed.igniteProfileId ? "profile_id" : "slug",
+      });
     }
 
     // Match to existing clients via gingr_owners

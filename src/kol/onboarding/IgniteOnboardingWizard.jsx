@@ -25,13 +25,12 @@ import {
   buildIgniteConfigPayload,
   buildLiteSettingsValue,
   deriveConfigStatus,
-  buildTestEmail,
   interpretTestResult,
   igniteWebhookUrl,
   IGNITE_INBOUND_ADDRESS,
   canManageIgnite,
-  TEST_SAMPLES,
 } from "./igniteOnboarding";
+import { buildBridgeProbeEmail } from "./igniteHealth";
 
 const WORKING_STEPS = ["profile", "forwarding", "activate"];
 
@@ -188,7 +187,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
   const [profileId, setProfileId] = useState("");
   const [inboundEmail, setInboundEmail] = useState("");
   const [gmailConfirmed, setGmailConfirmed] = useState(false);
-  const [testSample, setTestSample] = useState("web_form");
+  const [locationSlug, setLocationSlug] = useState("");
 
   const [locationName, setLocationName] = useState("");
   const [existingStatus, setExistingStatus] = useState("not_configured");
@@ -211,7 +210,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     (async () => {
       const [{ data: cfg }, { data: loc }] = await Promise.all([
         supabase.from("ignite_config").select("*").eq("location_id", locationId).limit(1),
-        supabase.from("locations").select("name").eq("id", locationId).limit(1),
+        supabase.from("locations").select("name, slug").eq("id", locationId).limit(1),
       ]);
       if (cancelled) return;
       const row = cfg && cfg[0];
@@ -220,7 +219,10 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
         if (row.inbound_email) setInboundEmail(row.inbound_email);
         setExistingStatus(deriveConfigStatus(row));
       }
-      if (loc && loc[0] && loc[0].name) setLocationName(loc[0].name);
+      if (loc && loc[0]) {
+        if (loc[0].name) setLocationName(loc[0].name);
+        if (loc[0].slug) setLocationSlug(loc[0].slug);
+      }
       setLoaded(true);
     })();
     return () => {
@@ -265,7 +267,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
   }, [locationId, profileId, inboundEmail, profile]);
 
   const runTest = useCallback(async () => {
-    const body = buildTestEmail(TEST_SAMPLES[testSample], profileId);
+    const body = buildBridgeProbeEmail(locationSlug);
     const resp = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -278,7 +280,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
       /* non-JSON response */
     }
     return interpretTestResult({ ok: resp.ok, status: resp.status, data });
-  }, [webhookUrl, testSample, profileId]);
+  }, [webhookUrl, locationSlug]);
 
   const activateAndTest = useCallback(async () => {
     if (saving) return;
@@ -439,22 +441,13 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     bodyEl = (
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ fontSize: 12.5, color: C.textSec, lineHeight: 1.7 }}>
-          We'll save Ignite config for <strong style={{ color: C.text }}>{locLabel}</strong> (Profile{" "}
-          <strong style={{ color: C.text }}>{profileId || "—"}</strong>), mark it active, and push a sample lead through the live pipeline to prove it
-          works end-to-end.
+          We'll save Ignite config for <strong style={{ color: C.text }}>{locLabel}</strong> (account{" "}
+          <strong style={{ color: C.text }}>{extractProfileId(profileId) || "—"}</strong>), mark it active, and validate the booking-form pipeline
+          end-to-end. <strong style={{ color: C.text }}>No test data is created</strong> — we run a dry-run through the live parser & router.
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <select
-            value={testSample}
-            onChange={(e) => setTestSample(e.target.value)}
-            style={{ padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 13, fontFamily: "inherit" }}
-          >
-            <option value="web_form">Sample: Web form lead</option>
-            <option value="phone_call">Sample: Phone call lead</option>
-            <option value="ad_click">Sample: Ad click lead</option>
-          </select>
-          <Btn onClick={activateAndTest} disabled={saving} icon={<I.Send />}>
-            {saving ? "Working…" : activated ? "Re-run live test" : "Save & run live test"}
+          <Btn onClick={activateAndTest} disabled={saving} icon={<I.Sparkle />}>
+            {saving ? "Working…" : activated ? "Re-validate" : "Save & validate pipeline"}
           </Btn>
         </div>
         {saveError && <ResultBanner tone="error">{saveError}</ResultBanner>}

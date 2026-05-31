@@ -208,6 +208,9 @@ export function friendlyTestError(message) {
  */
 export function interpretTestResult({ ok, status, data } = {}) {
   if (ok && data && data.success) {
+    if (data.dryRun) {
+      return { success: true, message: "Pipeline validated — a booking form routes to this location and parses cleanly. No test data was created." };
+    }
     const status_ = data.matchStatus ? ` (${data.matchStatus})` : "";
     return { success: true, message: `Test lead received${status_}. The pipeline is live.` };
   }
