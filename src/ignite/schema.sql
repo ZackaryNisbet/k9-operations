@@ -45,13 +45,42 @@ CREATE TABLE IF NOT EXISTS ignite_config (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   location_id         uuid NOT NULL UNIQUE REFERENCES locations(id),
   ignite_profile_id   text,
-  forwarding_email    text,
+  inbound_email       text,
   is_active           boolean NOT NULL DEFAULT true,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
 COMMENT ON TABLE ignite_config IS 'Per-location Ignite integration settings';
+
+-- ─── ignite_lead_updates (CRM follow-up log) ─────────────────────────────────
+-- Relational outreach log (one row per touch), modeled on grassroots_activity.
+CREATE TABLE IF NOT EXISTS ignite_lead_updates (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  location_id         uuid NOT NULL,
+  lead_id             uuid NOT NULL REFERENCES ignite_leads(id) ON DELETE CASCADE,
+  update_type         text NOT NULL DEFAULT 'note' CHECK (update_type IN ('call','text','email','note')),
+  notes               text,
+  next_follow_up_date date,
+  created_by_user_id  uuid,
+  created_by_name     text,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ignite_lead_updates_lead     ON ignite_lead_updates(lead_id);
+CREATE INDEX IF NOT EXISTS idx_ignite_lead_updates_location ON ignite_lead_updates(location_id);
+
+-- ─── ignite_health (pipeline health snapshots, written hourly) ───────────────
+CREATE TABLE IF NOT EXISTS ignite_health (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  location_id   uuid NOT NULL,
+  checked_at    timestamptz NOT NULL DEFAULT now(),
+  level         text NOT NULL,           -- ok | warn | down | unconfigured
+  bridge_ok     boolean,                 -- dry-run parse+routing validated
+  resend_ok     boolean,                 -- Resend account/API reachable
+  last_lead_at  timestamptz,             -- freshness of real submissions
+  detail        text
+);
+CREATE INDEX IF NOT EXISTS idx_ignite_health_location ON ignite_health(location_id, checked_at DESC);
 
 -- ─── RLS Policies ─────────────────────────────────────────────────────────────
 
