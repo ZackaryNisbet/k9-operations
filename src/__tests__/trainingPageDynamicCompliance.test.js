@@ -325,4 +325,17 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("visibleComplianceRequirements");
     expect(source).toContain("No requirements match your search.");
   });
+
+  it("saves/deletes compliance requirements with the lightweight refresh (no white flash)", () => {
+    const saveStart = source.indexOf("const handleSaveComplianceRequirement = useCallback");
+    const deleteStart = source.indexOf("const handleDeleteComplianceRequirement = useCallback", saveStart);
+    const afterDelete = source.indexOf("const handleRestartSelectedReviewInstance", deleteStart);
+    expect(saveStart).toBeGreaterThan(-1);
+    expect(deleteStart).toBeGreaterThan(saveStart);
+    const requirementMutations = source.slice(saveStart, afterDelete > -1 ? afterDelete : undefined);
+    // Assigning a group / saving / deleting must NOT call the heavy refreshLaborData (which flips the
+    // global loading flag and remounts the page white); it uses the support-bundle refresh instead.
+    expect(requirementMutations).toContain("await refreshLaborSupportData();");
+    expect(requirementMutations).not.toContain("refreshLaborData(");
+  });
 });

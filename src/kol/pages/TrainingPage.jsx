@@ -13341,7 +13341,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setLaborCompliancePolicyLoaded(true);
       closeComplianceRequirementEditor();
       addGlobalToast(complianceRequirementEditingId ? "Compliance requirement updated" : "Compliance requirement added", "success");
-      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      // Lightweight support refresh (no global loading flip) so saving/assigning a group doesn't
+      // flash the whole labor page white. The optimistic state update above already reflects it.
+      await refreshLaborSupportData();
     } catch (error) {
       console.error("Compliance requirement save error:", error);
       addGlobalToast(error?.message || "Failed to save Compliance requirement", "error");
@@ -13359,7 +13361,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     complianceRequirementGroup,
     complianceRequirementTitle,
     laborCompliancePolicyRequirements,
-    refreshLaborData,
+    refreshLaborSupportData,
     resolveComplianceGroupKeyFromInput,
     resolvedLaborLocationId,
   ]);
@@ -13395,7 +13397,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ));
       setLaborCompliancePolicyLoaded(true);
       addGlobalToast("Compliance requirement deleted", "success");
-      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      await refreshLaborSupportData();
     } catch (error) {
       console.error("Compliance requirement delete error:", error);
       addGlobalToast(error?.message || "Failed to delete Compliance requirement", "error");
@@ -13406,7 +13408,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     actorUserId,
     addGlobalToast,
     canManageCompliancePolicy,
-    refreshLaborData,
+    refreshLaborSupportData,
   ]);
 
   const handleRestartSelectedReviewInstance = useCallback(async (targetReviewTemplate = null) => {
