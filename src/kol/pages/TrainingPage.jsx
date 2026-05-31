@@ -7306,6 +7306,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : "";
   const [tab, setTab] = useState(routeLaborTab);
   const [tabSearchSlot, setTabSearchSlot] = useState(null);
+  // Free-text search for the persistent Compliance header on the non-Employees sub-views (Employees
+  // has its own grid search). View-aware: filters the Summary roster, the Requirements list, or the
+  // History rows. Cleared whenever the sub-view changes.
+  const [complianceSearch, setComplianceSearch] = useState("");
   const [capacitySearch, setCapacitySearch] = useState("");
   const [laborIntros, setLaborIntros] = useState({});
   const [loading, setLoading] = useState(true);
@@ -7472,6 +7476,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const changeComplianceView = useCallback((nextView) => {
     const normalizedView = normalizeComplianceView(nextView);
     setComplianceView(normalizedView);
+    setComplianceSearch("");
     navigateLaborRoute("performance-reviews", { complianceView: normalizedView });
   }, [navigateLaborRoute]);
 
@@ -9673,9 +9678,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const complianceHistoryFilterOptions = useMemo(() => (
     buildComplianceHistoryFilterOptions(complianceHistoryRows)
   ), [complianceHistoryRows]);
-  const filteredComplianceHistoryRows = useMemo(() => (
-    applyTrainingHistoryFilters(complianceHistoryRows, complianceHistoryFilters)
-  ), [complianceHistoryFilters, complianceHistoryRows]);
+  const filteredComplianceHistoryRows = useMemo(() => {
+    const base = applyTrainingHistoryFilters(complianceHistoryRows, complianceHistoryFilters);
+    const query = complianceSearch.trim().toLowerCase();
+    if (!query) return base;
+    return base.filter((event) => [event.employeeName, event.actionLabel, event.summary, event.actorDisplayName]
+      .some((value) => String(value || "").toLowerCase().includes(query)));
+  }, [complianceHistoryFilters, complianceHistoryRows, complianceSearch]);
   const complianceHistoryDayMetrics = useMemo(() => (
     buildTrainingHistoryDayMetrics(complianceHistoryRows, complianceHistoryFilters.date)
   ), [complianceHistoryFilters.date, complianceHistoryRows]);
@@ -9729,6 +9738,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const customs = toObjectRows(laborCompliancePolicyRequirements).filter(isCustomComplianceRequirement);
     return [...defaults, ...customs].sort(compareCompliancePolicyRequirements);
   }, [laborCompliancePolicyRequirements]);
+  const visibleComplianceRequirements = useMemo(() => {
+    const query = complianceSearch.trim().toLowerCase();
+    if (!query) return allComplianceReviewRequirements;
+    return allComplianceReviewRequirements.filter((requirement) => (
+      [normalizeComplianceRequirementLabel(requirement), requirement.description]
+        .some((value) => String(value || "").toLowerCase().includes(query))
+    ));
+  }, [allComplianceReviewRequirements, complianceSearch]);
 
   // === Requirements matrix (Compliance → Requirements): per-position applicability ===
   // Columns = roster positions; cell = labor_compliance_role_applicability row.
@@ -15605,14 +15622,20 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   }, [sortedHourAnalysisRows, capacitySearch]);
   // Roster-wide Compliance metrics (dynamic per-requirement + per-group, # overdue / # due in 7
   // days / compliant %). Mirrors the Training tab's metric header and powers ComplianceMetricsHeader.
-  const complianceMetrics = useMemo(() => buildLaborComplianceMetrics({
-    employees: activePerformanceReviewRows.map((row) => ({
-      id: getLaborEmployeeRowId(row),
-      requirements: row.performance_review_policy_employee?.requirements || row.requirements || [],
-    })),
-    requirements: toObjectRows(laborCompliancePolicyRequirements),
-    today: todayStr(),
-  }), [activePerformanceReviewRows, laborCompliancePolicyRequirements]);
+  const complianceMetrics = useMemo(() => {
+    const query = complianceSearch.trim().toLowerCase();
+    const employees = activePerformanceReviewRows
+      .filter((row) => !query || [row.full_name, row.position_title].some((value) => String(value || "").toLowerCase().includes(query)))
+      .map((row) => ({
+        id: getLaborEmployeeRowId(row),
+        requirements: row.performance_review_policy_employee?.requirements || row.requirements || [],
+      }));
+    return buildLaborComplianceMetrics({
+      employees,
+      requirements: toObjectRows(laborCompliancePolicyRequirements),
+      today: todayStr(),
+    });
+  }, [activePerformanceReviewRows, complianceSearch, laborCompliancePolicyRequirements]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -25155,6 +25178,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <LaborIntro value={laborIntros["hour-analysis"]} defaultValue={LABOR_INTRO_DEFAULTS["hour-analysis"]} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("hour-analysis", t)} />
           </div>
         )}
+        {/* Compliance Employees portals its own search+filter bar into the slot below. The other
+            Compliance sub-views (Summary/Requirements/History) render the same header here so the
+            search region never goes empty as you switch sub-views. */}
+        {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && complianceView !== "employees" && (
+          <div>
+            <LaborSearchBar
+              value={complianceSearch}
+              onChange={setComplianceSearch}
+              placeholder={complianceView === "requirements" ? "Search requirements…" : complianceView === "history" ? "Search compliance history…" : "Search employees by name or position…"}
+            />
+            <LaborIntro value={laborIntros["performance-reviews"]} defaultValue={LABOR_INTRO_DEFAULTS["performance-reviews"]} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("performance-reviews", t)} />
+          </div>
+        )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
       </div>
 
@@ -25910,7 +25946,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </tr>
                     </thead>
                     <tbody>
-                      {allComplianceReviewRequirements.map((requirement) => {
+                      {visibleComplianceRequirements.map((requirement) => {
                         const positionSet = requirementPositionMap[requirement.id];
                         const appliesToAll = !positionSet || positionSet.size === 0;
                         const isCustom = isCustomComplianceRequirement(requirement);
@@ -25994,10 +26030,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           </tr>
                         );
                       })}
-                      {allComplianceReviewRequirements.length === 0 && (
+                      {visibleComplianceRequirements.length === 0 && (
                         <tr>
                           <td colSpan={5 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
-                            No compliance requirements yet. Add one here and it will appear on the Employees grid.
+                            {complianceSearch.trim()
+                              ? "No requirements match your search."
+                              : "No compliance requirements yet. Add one here and it will appear on the Employees grid."}
                           </td>
                         </tr>
                       )}
