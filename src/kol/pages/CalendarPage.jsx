@@ -13,21 +13,20 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { C, todayStr } from "../../shared/theme";
-import { I } from "../../shared/icons";
 import { supabase } from "../../supabaseClient";
 import AggregatedCalendar from "../../shared/AggregatedCalendar";
 import { viewWindow } from "../../shared/calendarGrid";
 import { SOURCE_ORDER, mapCalendarRows } from "./calendarSources";
 
 // Visual registry for the six sources: a restrained categorical palette (calm,
-// distinguishable hues) with the brand green reserved for enrichment (play/brain).
+// distinguishable hues), each just a colored dot + label.
 const SOURCE_META = {
-  labor: { label: "Labor starts", color: "#2563EB", tint: "#EFF6FF", Icon: I.Users },
-  review: { label: "Reviews", color: "#7C3AED", tint: "#F5F3FF", Icon: I.ClipboardCheck },
-  training: { label: "Training due", color: "#0891B2", tint: "#ECFEFF", Icon: I.GraduationCap },
-  marketing: { label: "Marketing", color: "#DB2777", tint: "#FDF2F8", Icon: I.Send },
-  enrichment: { label: "Enrichment", color: "#4D7C0F", tint: "#F7FEE7", Icon: I.Sparkle },
-  inventory: { label: "Inventory", color: "#D97706", tint: "#FFFBEB", Icon: I.Package },
+  labor: { label: "Labor starts", color: "#2563EB", tint: "#EFF6FF" },
+  compliance: { label: "Compliance", color: "#7C3AED", tint: "#F5F3FF" },
+  training: { label: "Training due", color: "#0891B2", tint: "#ECFEFF" },
+  marketing: { label: "Marketing", color: "#DB2777", tint: "#FDF2F8" },
+  enrichment: { label: "Enrichment", color: "#4D7C0F", tint: "#F7FEE7" },
+  inventory: { label: "Inventory", color: "#D97706", tint: "#FFFBEB" },
 };
 
 // Where each source deep-links when an event is clicked (only well-known routes).
@@ -96,6 +95,10 @@ export default function CalendarPage({ profile, nav, locationId, addGlobalToast 
     });
   }, []);
 
+  const setAllSources = useCallback((on) => {
+    setActiveSources(on ? new Set(SOURCE_ORDER) : new Set());
+  }, []);
+
   const handleSelectEvent = useCallback(
     (event) => {
       const slug = NAV_SLUG[event?.source];
@@ -151,6 +154,7 @@ export default function CalendarPage({ profile, nav, locationId, addGlobalToast 
             today={today}
             activeSources={activeSources}
             onToggleSource={toggleSource}
+            onSetAllSources={setAllSources}
             loading={loading}
             onSelectEvent={handleSelectEvent}
           />
