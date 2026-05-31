@@ -9,6 +9,8 @@ import {
   UPKEEP_SERVICE_FREQUENCIES,
   upkeepVendorMeta,
   upkeepLicenseMeta,
+  loadUpkeepIntros,
+  saveUpkeepIntros,
   deactivateLicense,
   fmtUpkeepDate,
   fmtUpkeepStatus,
@@ -45,6 +47,7 @@ import {
   StatusPill as SharedStatusPill,
   StackBadge,
 } from "../../shared/listSurface";
+import { CustomSelect, LaborIntro } from "../../shared/ui";
 
 const TABS = [
   { id: "due", label: "Due" },
@@ -252,6 +255,7 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   const [dashboard, setDashboard] = useState(EMPTY_DASHBOARD);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [intros, setIntros] = useState({});
   const loadSeq = useRef(0);
   const loadedLocationRef = useRef("");
 
@@ -294,6 +298,23 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
   }, [load, locationId]);
 
   const toast = useCallback((message) => addGlobalToast({ type: "success", message }), [addGlobalToast]);
+
+  // Per-location editable tab intros (location admins and up), persisted in lite_settings.
+  const canEditIntro = ["owner", "role_owner", "enterprise_admin", "multi_location_admin", "multi_loc_admin", "location_admin"].includes(profile?.role);
+  useEffect(() => {
+    if (!locationId) return undefined;
+    let cancelled = false;
+    loadUpkeepIntros(locationId).then((data) => { if (!cancelled) setIntros(data || {}); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [locationId]);
+  const saveIntro = useCallback(async (key, text) => {
+    const next = { ...intros };
+    if (text && text.trim()) next[key] = text.trim(); else delete next[key];
+    setIntros(next);
+    try { await saveUpkeepIntros(locationId, next, profile?.user_id || profile?.id || null); }
+    catch { addGlobalToast({ type: "error", message: "Couldn't save text" }); }
+  }, [intros, locationId, profile, addGlobalToast]);
+
   const tabStats = useMemo(() => ({
     due: (dashboard.maintenanceSummary?.overdue || 0) + (dashboard.licenses?.non_compliant || 0) + (dashboard.licenses?.expiring_soon || 0),
     vendors: dashboard.vendors?.active || 0,
@@ -310,6 +331,15 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
       tabs={TABS.map((item) => ({ id: item.id, label: item.label, count: tabStats[item.id] }))}
       activeId={tab}
       onChange={setTab}
+    />
+  );
+
+  const explainer = (
+    <LaborIntro
+      value={intros[tab]}
+      defaultValue={INTRO_DEFAULTS[tab] || ""}
+      canEdit={canEditIntro}
+      onSave={(text) => saveIntro(tab, text)}
     />
   );
 
@@ -337,10 +367,10 @@ export default function ResortUpkeepPage({ profile, locationId: selectedLocation
         <SettingsPanel locationId={locationId} actor={actor} canManage={canManage} onClose={() => setSettingsOpen(false)} toast={toast} />
       ) : (
         <>
-          {tab === "due" && <DuePanel tabsBar={tabsBar} locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onOpenTab={setTab} onRefresh={load} toast={toast} />}
-          {tab === "vendors" && <VendorsPanel tabsBar={tabsBar} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
-          {tab === "licenses" && <LicensesPanel tabsBar={tabsBar} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
-          {tab === "guide" && <TroubleshootingPanel tabsBar={tabsBar} articles={dashboard.troubleshooting || []} />}
+          {tab === "due" && <DuePanel tabsBar={tabsBar} explainer={explainer} locationId={locationId} actor={actor} dashboard={dashboard} canComplete={canComplete} canManage={canManage} onOpenTab={setTab} onRefresh={load} toast={toast} />}
+          {tab === "vendors" && <VendorsPanel tabsBar={tabsBar} explainer={explainer} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
+          {tab === "licenses" && <LicensesPanel tabsBar={tabsBar} explainer={explainer} locationId={locationId} actor={actor} canManage={canManage} toast={toast} />}
+          {tab === "guide" && <TroubleshootingPanel tabsBar={tabsBar} explainer={explainer} articles={dashboard.troubleshooting || []} />}
         </>
       )}
     </Shell>
@@ -355,6 +385,13 @@ function GearIcon() {
     </svg>
   );
 }
+
+const INTRO_DEFAULTS = {
+  due: "Everything overdue or coming due across building maintenance, licenses, and vendor contracts. Open a maintenance row to complete its checklist.",
+  vendors: "The facility vendor and utility call list: trade, company, contact, contract, service frequency and cost. A full company directory (multiple contacts and documents per company) is planned; for now this is the call list.",
+  licenses: "Permits and compliance requirements with renewal frequency, due dates, compliance status, proof documents, and an update log.",
+  guide: "Field reference and escalation paths for common facility issues. Expanded for fast scanning under operational pressure.",
+};
 
 const DUE_WINDOWS = [
   { id: 30, label: "30d" },
@@ -389,7 +426,7 @@ function formatDueRange(item) {
 // (active maintenance periods from the dashboard, plus licenses and vendor
 // contracts). Maintenance rows open a completion modal; license/vendor rows
 // jump to their own tab. No new RPC, no migration.
-function DuePanel({ tabsBar, locationId, actor, dashboard, canComplete, onOpenTab, onRefresh, toast }) {
+function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplete, onOpenTab, onRefresh, toast }) {
   const [licenses, setLicenses] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -523,9 +560,7 @@ function DuePanel({ tabsBar, locationId, actor, dashboard, canComplete, onOpenTa
         ))}
       </ListSearchRow>
       {tabsBar}
-      <ListExplainer>
-        Everything overdue or coming due across building maintenance, licenses, and vendor contracts. Open a maintenance row to complete its checklist.
-      </ListExplainer>
+      {explainer}
 
       {error ? (
         <div style={{ marginTop: 12 }}>
@@ -1343,7 +1378,7 @@ function buildTemplateItemKey(slug, label, usedKeys) {
   return candidate;
 }
 
-function VendorsPanel({ tabsBar, locationId, actor, canManage, toast }) {
+function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast }) {
   const [vendors, setVendors] = useState([]);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -1396,9 +1431,7 @@ function VendorsPanel({ tabsBar, locationId, actor, canManage, toast }) {
         {canManage ? <button type="button" onClick={() => setSelected(blankVendorRecord(locationId))} style={muSmallPrimary}>+ New</button> : null}
       </ListSearchRow>
       {tabsBar}
-      <ListExplainer>
-        The facility vendor and utility call list: trade, company, contact, contract, service frequency and cost. A full company directory (multiple contacts and documents per company) is planned; for now this is the call list.
-      </ListExplainer>
+      {explainer}
 
       {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div> : null}
 
@@ -1448,13 +1481,34 @@ function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSa
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const [contractFile, setContractFile] = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [logSummary, setLogSummary] = useState("");
+  const [logNote, setLogNote] = useState("");
+
+  useEffect(() => {
+    if (!vendor.id) return undefined;
+    let cancelled = false;
+    Promise.all([
+      loadResortUpkeepAttachments(locationId, { vendor_id: vendor.id }).catch(() => []),
+      loadVendorLogs(locationId, vendor.id).catch(() => []),
+      loadResortUpkeepAuditEvents(locationId, { entity_type: "resort_upkeep_vendors", entity_id: vendor.id }).catch(() => []),
+    ]).then(([att, lg, ev]) => { if (!cancelled) { setAttachments(att); setLogs(lg); setAudit(ev); } });
+    return () => { cancelled = true; };
+  }, [vendor.id, locationId]);
+
+  const contractFiles = attachments.filter((a) => a.attachment_scope === "vendor_contract" && !a.deleted_at);
+
   const save = async () => {
     if (!canManage) { setError("Only managers can save vendors."); return; }
     if (!company.trim() && !trade.trim()) { setError("Add a trade or company name."); return; }
+    if (hasContract && !contractFile && contractFiles.length === 0) { setError("Upload the contract document, or turn off Contract on file."); return; }
     setSaving(true);
     setError("");
     try {
-      await saveVendor({
+      const payload = {
         ...(vendor.id ? { id: vendor.id } : {}),
         location_id: vendor.location_id || locationId,
         business_name: company.trim() || trade.trim(),
@@ -1462,7 +1516,13 @@ function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSa
         contact_info: mergePrimaryContact(vendor.contact_info, { name: contactName, role: "", phone, email, notes: "" }),
         is_archived: !!vendor.is_archived,
         metadata: { ...(vendor.metadata || {}), trade: trade.trim(), frequency, cost: cost === "" ? "" : Number(cost) },
-      }, actor);
+      };
+      const saved = await saveVendor(payload, actor);
+      if (hasContract && contractFile) {
+        const uploaded = await uploadResortUpkeepAttachment({ locationId: saved.location_id, file: contractFile, pathParts: ["vendors", saved.id, "contracts"] });
+        await recordResortUpkeepAttachment({ locationId: saved.location_id, attachmentScope: "vendor_contract", vendorId: saved.id, file: contractFile, fileName: contractFile.name || uploaded.safeName, storagePath: uploaded.path, actorName: actor });
+      }
+      if (logSummary || logNote) await addVendorLog({ location_id: saved.location_id, vendor_id: saved.id, summary: logSummary || "Vendor update", notes: logNote }, actor);
       await onSaved();
     } catch (e) {
       setError(friendlyErrorMessage(e, "Vendor could not be saved."));
@@ -1476,6 +1536,8 @@ function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSa
     try { await archiveVendor(vendor.id, "Archived from web", actor); await onSaved(); }
     catch (e) { setError(friendlyErrorMessage(e, "Vendor could not be archived.")); setSaving(false); }
   };
+
+  const openAttachment = async (a) => { try { const url = await createResortUpkeepSignedUrl(a); if (url) window.open(url, "_blank", "noopener,noreferrer"); } catch { /* non-blocking */ } };
 
   return (
     <UpkeepModal
@@ -1495,20 +1557,72 @@ function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSa
         <MField label="Phone"><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-5555" style={input} /></MField>
         <MField label="Email"><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" style={input} /></MField>
         <MField label="Frequency">
-          <select value={frequency} onChange={(e) => setFrequency(e.target.value)} style={mSelect}>
-            <option value="">—</option>
-            {UPKEEP_SERVICE_FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
+          <CustomSelect value={frequency} onChange={setFrequency} options={UPKEEP_SERVICE_FREQUENCIES} placeholder="Select frequency" />
         </MField>
-        <MField label="Cost" hint="Cost per the selected frequency."><input value={cost} onChange={(e) => setCost(e.target.value)} type="number" placeholder="0" style={input} /></MField>
-        <MField label="Contract">
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, textTransform: "none", letterSpacing: 0, color: C.text }}>
-            <input type="checkbox" checked={hasContract} onChange={(e) => setHasContract(e.target.checked)} /> Contract on file
-          </label>
+        <MField label="Cost" hint="$ per the selected frequency.">
+          <input value={cost} onChange={(e) => setCost(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" onWheel={(e) => e.currentTarget.blur()} placeholder="0" style={input} />
         </MField>
       </div>
+
+      <div style={{ marginTop: 2, marginBottom: 14, padding: 12, border: `1px solid ${C.border}`, borderRadius: 12, background: C.surfaceHover }}>
+        <ToggleSwitch checked={hasContract} onChange={setHasContract} label={hasContract ? "Contract on file" : "No contract"} />
+        {hasContract ? (
+          <div style={{ marginTop: 10 }}>
+            <label style={{ ...secondaryBtn, display: "inline-flex", justifyContent: "center" }}>
+              {contractFile ? contractFile.name : "Upload contract (PDF)"}
+              <input type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
+            </label>
+            {contractFiles.length ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {contractFiles.map((a) => <button key={a.id} type="button" onClick={() => openAttachment(a)} style={muSmallBtn}>{a.file_name ? String(a.file_name).slice(0, 24) : "Contract"}</button>)}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {vendor.id ? (
+        <>
+          <MField label="Add update / log">
+            <input value={logSummary} onChange={(e) => setLogSummary(e.target.value)} placeholder="Summary (e.g. Renegotiated rate)" style={{ ...input, marginBottom: 6 }} />
+            <input value={logNote} onChange={(e) => setLogNote(e.target.value)} placeholder="Note (optional)" style={input} />
+          </MField>
+          {(logs.length || audit.length) ? (
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>History</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {logs.slice(0, 4).map((lg) => (
+                  <div key={`lg-${lg.id}`} style={{ padding: 9, borderRadius: 8, background: C.surfaceHover }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{lg.summary}</div>
+                    {lg.notes ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{lg.notes}</div> : null}
+                    <div style={{ marginTop: 2, fontSize: 10, color: C.textMut }}>{lg.created_by_name || ""}{lg.created_at ? ` · ${fmtAuditDate(lg.created_at)}` : ""}</div>
+                  </div>
+                ))}
+                {audit.slice(0, 5).map((ev) => (
+                  <div key={`ev-${ev.id}`} style={{ padding: "7px 9px", borderRadius: 8, background: "#fff", border: `1px solid ${C.borderLight}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec }}>{ev.summary || fmtUpkeepStatus(ev.event_type)}</div>
+                    <div style={{ marginTop: 1, fontSize: 10, color: C.textMut }}>{ev.actor_name || "System"}{ev.event_at ? ` · ${fmtAuditDate(ev.event_at)}` : ""}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       {error ? <div style={{ marginTop: 4 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
     </UpkeepModal>
+  );
+}
+
+function ToggleSwitch({ checked, onChange, label }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} style={{ display: "inline-flex", alignItems: "center", gap: 10, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+      <span style={{ width: 40, height: 23, borderRadius: 999, background: checked ? C.pri : C.border, position: "relative", transition: "background 0.15s", flexShrink: 0 }}>
+        <span style={{ position: "absolute", top: 2, left: checked ? 19 : 2, width: 19, height: 19, borderRadius: "50%", background: "#fff", transition: "left 0.15s", boxShadow: "0 1px 2px rgba(0,0,0,0.25)" }} />
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{label}</span>
+    </button>
   );
 }
 
@@ -1675,7 +1789,7 @@ function VendorEditor({ vendor, actor, canManage, onClose, onSaved }) {
   );
 }
 
-function LicensesPanel({ tabsBar, locationId, actor, canManage, toast }) {
+function LicensesPanel({ tabsBar, explainer, locationId, actor, canManage, toast }) {
   const [licenses, setLicenses] = useState([]);
   const [logCounts, setLogCounts] = useState({});
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -1763,9 +1877,7 @@ function LicensesPanel({ tabsBar, locationId, actor, canManage, toast }) {
         {canManage ? <button type="button" onClick={() => setSelected(blankLicenseRecord(locationId))} style={muSmallPrimary}>+ New</button> : null}
       </ListSearchRow>
       {tabsBar}
-      <ListExplainer>
-        Permits and compliance requirements with renewal frequency, due dates, compliance status, proof documents, and an update log.
-      </ListExplainer>
+      {explainer}
 
       {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error} <button type="button" onClick={() => load()} style={inlineLinkButton}>Retry</button></InlineAlert></div> : null}
 
@@ -1884,10 +1996,7 @@ function LicenseEditorModal({ license, locationId, actor, canManage, onClose, on
         <MField label="License"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fire inspection, Kennel permit…" style={input} /></MField>
         <MField label="Issuing organization"><input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="City, State, vendor…" style={input} /></MField>
         <MField label="Frequency">
-          <select value={frequency} onChange={(e) => setFrequency(e.target.value)} style={mSelect}>
-            <option value="">—</option>
-            {UPKEEP_SERVICE_FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
+          <CustomSelect value={frequency} onChange={setFrequency} options={UPKEEP_SERVICE_FREQUENCIES} placeholder="Select frequency" />
         </MField>
         <MField label="Due date"><input value={due} onChange={(e) => setDue(e.target.value)} type="date" style={input} /></MField>
       </div>
@@ -2041,7 +2150,7 @@ function LicenseEditor({ license, actor, canManage, onClose, onSaved }) {
   );
 }
 
-function TroubleshootingPanel({ tabsBar, articles }) {
+function TroubleshootingPanel({ tabsBar, explainer, articles }) {
   const [query, setQuery] = useState("");
   const list = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -2061,9 +2170,7 @@ function TroubleshootingPanel({ tabsBar, articles }) {
     <div>
       <ListSearchRow value={query} onChange={setQuery} placeholder="Search the field reference…" />
       {tabsBar}
-      <ListExplainer>
-        Field reference and escalation paths for common facility issues. Expanded for fast scanning under operational pressure.
-      </ListExplainer>
+      {explainer}
 
       <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 10, background: C.warnLt, border: "1px solid #FDE68A", color: "#92400E", fontSize: 12, fontWeight: 700, lineHeight: 1.45 }}>
         Emergency or same-day service: call Mike Williams at (623) 261-3294. Non-emergency: mike.williams@k9resorts.com.
