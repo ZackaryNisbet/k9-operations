@@ -528,7 +528,7 @@ function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplet
       header: "Due",
       width: "minmax(118px, 1.1fr)",
       sortable: true,
-      sortValue: (r) => (r.daysLeft == null ? Number.POSITIVE_INFINITY : r.daysLeft),
+      sortValue: (r) => (r.attention && r.daysLeft == null ? Number.NEGATIVE_INFINITY : r.daysLeft == null ? Number.POSITIVE_INFINITY : r.daysLeft),
       render: (r) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{formatDueRange(r)}</span>
@@ -542,7 +542,7 @@ function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplet
       width: 112,
       sortable: true,
       sortValue: (r) => r.statusLabel,
-      render: (r) => <SharedStatusPill tone={dueToneToStatus(r.tone)}>{r.statusLabel}</SharedStatusPill>,
+      render: (r) => <SharedStatusPill tone={r.statusTone || dueToneToStatus(r.tone)}>{r.statusLabel}</SharedStatusPill>,
     },
   ]), []);
 
@@ -578,6 +578,7 @@ function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplet
             getRowKey={(r) => r.id}
             minWidth={660}
             onRowClick={handleRow}
+            defaultSort={{ key: "due", direction: "asc" }}
             emptyText={counts.overdue ? "Nothing matches these filters." : "You're current. Widen the window to look further ahead."}
           />
         )}
@@ -607,8 +608,9 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [pdf, setPdf] = useState(null);
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [editMode, setEditMode] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -633,39 +635,47 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
   const allComplete = total > 0 && done >= total;
   const computedStatus = snapshot?.computedStatus || period.computed_status || period.status;
   const submitted = ["submitted", "submitted_late", "late_submitted"].includes(computedStatus);
-  const canEdit = canComplete && (snapshot?.canEdit ?? true) && !submitted;
+  const pastDue = !!period.due_date && todayStr() > String(period.due_date).slice(0, 10);
+  const editable = canComplete && (snapshot?.canEdit ?? true) && !submitted && !pastDue;
+  const canEdit = editable && editMode;
 
-  const pickPdf = async (file) => {
-    if (!file) return;
+  const pickFiles = async (fileList) => {
+    const chosen = Array.from(fileList || []);
+    if (!chosen.length) return;
     setUploading(true);
     setError("");
     try {
-      const uploaded = await uploadResortUpkeepAttachment({ locationId, file, pathParts: ["maintenance", period.id, "completion"] });
-      let url = "";
-      try { url = await createResortUpkeepSignedUrl({ storage_path: uploaded.path }); } catch { /* link is best-effort */ }
-      setPdf({ name: file.name || uploaded.safeName, size: file.size || 0, url });
-      if (toast) toast("Checklist PDF attached");
+      const next = [];
+      for (const file of chosen) {
+        const uploaded = await uploadResortUpkeepAttachment({ locationId, file, pathParts: ["maintenance", period.id, "completion"] });
+        let url = "";
+        try { url = await createResortUpkeepSignedUrl({ storage_path: uploaded.path }); } catch { /* best-effort */ }
+        next.push({ id: uploaded.id, name: file.name || uploaded.safeName, size: file.size || 0, url });
+      }
+      setFiles((current) => [...current, ...next]);
+      if (toast) toast(chosen.length > 1 ? "Attachments uploaded" : "Attachment uploaded");
     } catch (e) {
-      setError(friendlyErrorMessage(e, "That PDF could not be uploaded."));
+      setError(friendlyErrorMessage(e, "That attachment could not be uploaded."));
     } finally {
       setUploading(false);
     }
   };
+  const removeFile = (id) => setFiles((current) => current.filter((f) => f.id !== id));
 
   const submit = async () => {
     if (submitting) return;
     setSubmitting(true);
     setError("");
     try {
-      if (!allComplete && pdf) {
-        // The uploaded PDF is the record of completion: mark each item done.
+      if (!allComplete && files.length) {
+        // Uploaded attachments are the record of completion: mark each item done.
         for (const item of items) {
           if (!item.state?.checked) {
-            await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked: true, notes: item.state?.notes || `Completed via uploaded PDF (${pdf.name})`, actorName: actor });
+            await saveMaintenanceItemState({ periodId: period.id, itemKey: item.key, checked: true, notes: item.state?.notes || "Completed via uploaded attachment", actorName: actor });
           }
         }
       }
-      await submitMaintenancePeriod(period.id, actor, pdf ? `Completed via uploaded PDF: ${pdf.name}` : "");
+      await submitMaintenancePeriod(period.id, actor, files.length ? `Completed with ${files.length} uploaded attachment(s)` : "");
       if (toast) toast("Checklist submitted");
       if (onChanged) onChanged();
       onClose();
@@ -677,7 +687,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
 
   const title = period.template_name || period.template_slug || "Maintenance checklist";
   const range = [period.period_start, period.period_end].filter(Boolean).map(fmtUpkeepDate).join(" – ");
-  const submitDisabled = submitting || submitted || !canComplete || (!allComplete && !pdf);
+  const submitDisabled = submitting || submitted || !canComplete || (!allComplete && files.length === 0);
 
   return (
     <div style={muOverlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -689,27 +699,57 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
               {range || "Current period"}{computedStatus ? ` · ${fmtUpkeepStatus(computedStatus)}` : ""}
             </div>
           </div>
-          <button type="button" onClick={onClose} style={secondaryBtn}>Close</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {!submitted ? (
+              <button
+                type="button"
+                onClick={() => editable && setEditMode((v) => !v)}
+                disabled={!editable}
+                title={pastDue ? "Read-only after the due date" : editMode ? "Done editing" : "Edit checklist"}
+                style={{ ...secondaryBtn, opacity: editable ? 1 : 0.5, cursor: editable ? "pointer" : "default", ...(editMode && editable ? { borderColor: C.pri, color: C.pri, background: C.priLt } : null) }}
+              >
+                {editMode && editable ? "Done" : "Edit"}
+              </button>
+            ) : null}
+            <button type="button" onClick={onClose} style={secondaryBtn}>Close</button>
+          </div>
         </div>
 
         <div style={muBody}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{done}/{total} items complete</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{pct}%</div>
-              {pdf?.url ? (
-                <a href={pdf.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.pri }} title={pdf.name}>PDF attached ✓</a>
-              ) : null}
-              {canEdit ? (
-                <label style={{ ...muSmallBtn, opacity: uploading ? 0.6 : 1, cursor: uploading ? "default" : "pointer" }} title="Attach a signed, scanned checklist PDF as the record of completion">
-                  {uploading ? "Uploading…" : pdf ? "Replace PDF" : "Attach PDF"}
-                  <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={uploading} onChange={(e) => pickPdf(e.target.files?.[0])} />
-                </label>
-              ) : null}
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{pct}%</div>
           </div>
           <div style={muProgressTrack}>
             <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: allComplete ? C.suc : C.pri, transition: "width 0.3s" }} />
+          </div>
+
+          {!loading && (!editMode || !editable) ? (
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: pastDue && !submitted ? C.dan : C.textMut }}>
+              {submitted ? "Submitted — read-only." : pastDue ? "Past the due date — read-only." : !canComplete ? "Read-only access." : "Click Edit to make changes."}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={sectionLabel}>Attachments</div>
+              {canEdit ? (
+                <label style={{ ...muSmallBtn, opacity: uploading ? 0.6 : 1, cursor: uploading ? "default" : "pointer" }} title="Upload one or more files as the record of completion">
+                  {uploading ? "Uploading…" : "Upload attachment"}
+                  <input type="file" multiple style={{ display: "none" }} disabled={uploading} onChange={(e) => pickFiles(e.target.files)} />
+                </label>
+              ) : null}
+            </div>
+            {files.length ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {files.map((f) => (
+                  <span key={f.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", borderRadius: 999, background: C.surfaceHover, border: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, color: C.text }}>
+                    {f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, textDecoration: "none" }}>{String(f.name).slice(0, 26)}</a> : String(f.name).slice(0, 26)}
+                    {canEdit ? <button type="button" onClick={() => removeFile(f.id)} title="Remove attachment" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, fontWeight: 900, fontSize: 14, lineHeight: 1, padding: 0 }}>×</button> : null}
+                  </span>
+                ))}
+              </div>
+            ) : <div style={{ marginTop: 6, fontSize: 12, color: C.textMut }}>No attachments yet.</div>}
           </div>
 
           <div style={{ marginTop: 16 }}>
@@ -739,7 +779,7 @@ function MaintenanceCompletionModal({ period, locationId, actor, canComplete, on
 
         <div style={muFoot}>
           <div style={{ fontSize: 12, color: C.textMut, flex: 1, minWidth: 0 }}>
-            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pdf ? "Ready to submit with the attached PDF." : allComplete ? "All items complete." : "Progress is saved as you go. Finish the items or attach a PDF to submit."}
+            {submitted ? "This checklist has already been submitted." : !canComplete ? "You have read-only access." : pastDue ? "Past the due date — read-only." : files.length ? "Ready to submit with the uploaded attachment(s)." : allComplete ? "All items complete." : "Progress is saved as you go. Finish the items or upload an attachment to submit."}
           </div>
           <button type="button" onClick={submit} disabled={submitDisabled} style={{ ...primaryBtn, opacity: submitDisabled ? 0.5 : 1 }}>
             {submitting ? "Submitting…" : "Submit checklist"}

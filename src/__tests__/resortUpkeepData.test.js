@@ -647,7 +647,7 @@ describe("buildUpkeepDueItems", () => {
     ]);
     expect(items[0]).toMatchObject({ id: "license:l2", attention: true, tone: "danger", dueBadge: "No date", statusLabel: "Non-compliant" });
     const m1 = items.find((item) => item.id === "maintenance:m1");
-    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "Overdue", targetTab: "maintenance", frequency: "Quarterly", dueStart: "2026-04-01", dueEnd: "2026-06-30" });
+    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "In Progress", statusTone: "primary", targetTab: "maintenance", frequency: "Quarterly", dueStart: "2026-04-01", dueEnd: "2026-06-30" });
     expect(m1.subtitle).toBe(""); // the item column no longer carries dates
   });
 

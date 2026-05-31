@@ -482,6 +482,8 @@ export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors =
     const daysLeft = upkeepDaysUntil(anchor, dueDate);
     const overdue = status === "overdue" || (daysLeft !== null && daysLeft < 0);
     if (!overdue && daysLeft !== null && daysLeft > horizon) return;
+    const progress = p.progress || {};
+    const started = (progress.completedRequired || 0) > 0 || ["in_progress", "amending", "ready_to_submit"].includes(status);
     items.push({
       id: `maintenance:${p.id}`,
       kind: "maintenance",
@@ -494,7 +496,8 @@ export function buildUpkeepDueItems({ maintenance = [], licenses = [], vendors =
       dueDate,
       daysLeft,
       tone: overdue ? "danger" : upkeepTone(daysLeft, { soonDays: 7 }),
-      statusLabel: fmtUpkeepStatus(status),
+      statusLabel: started ? "In Progress" : "Not Started",
+      statusTone: started ? "primary" : "neutral",
       dueBadge: upkeepDueBadge(daysLeft),
       attention: overdue,
       targetTab: "maintenance",
