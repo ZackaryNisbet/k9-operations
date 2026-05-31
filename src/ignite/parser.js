@@ -7,7 +7,15 @@
  * regex-based parser for Supabase Edge Function / Deno context.
  */
 
-import { IGNITE_SENDER_EMAIL, LEAD_TYPES } from './constants.js';
+import { IGNITE_SENDER_EMAIL, ACCEPTED_SENDER_MARKERS, LEAD_TYPES } from './constants.js';
+
+/** Turn a form label ("Desired Service: ") into a snake_case key. */
+function labelToKey(label) {
+  return String(label || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
 /**
  * Normalize a phone number to a digits-only format (E.164-ish).
@@ -69,15 +77,16 @@ export function parseBrowser(rawHtml) {
     }
   });
 
-  // Fallback: parse table rows as label → value pairs
+  // Fallback: parse table rows as label → value pairs. Handles both
+  // <td>Label</td><td>Value</td> and the booking form's <th>Label</th><td>Value</td>.
   if (Object.keys(fields).length === 0) {
     doc.querySelectorAll('tr').forEach((row) => {
-      const cells = row.querySelectorAll('td');
+      const cells = row.querySelectorAll('th, td');
       if (cells.length >= 2) {
         const label = cells[0].textContent.trim();
         const value = cells[1].textContent.trim();
-        if (label && value) {
-          const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '');
+        const key = labelToKey(label);
+        if (key && value) {
           fields[key] = value;
           // Check for recording links
           const link = cells[1].querySelector('a');
@@ -114,14 +123,15 @@ export function parseRegex(rawHtml) {
     fields.call_recording_url = m[1];
   }
 
-  // Fallback: extract table rows <td>Label</td><td>Value</td>
+  // Fallback: extract table rows. Handles <td>Label</td><td>Value</td> and the
+  // booking form's <th>Label</th><td><div>Value</div></td> layout.
   if (Object.keys(fields).length === 0) {
-    const rowRe = /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+    const rowRe = /<tr[^>]*>\s*<t[hd][^>]*>([\s\S]*?)<\/t[hd]>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
     while ((m = rowRe.exec(rawHtml)) !== null) {
       const label = m[1].replace(/<[^>]+>/g, '').trim();
-      let value = m[2].replace(/<[^>]+>/g, '').trim();
-      if (label && value) {
-        const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '');
+      const value = m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      const key = labelToKey(label);
+      if (key && value) {
         fields[key] = value;
       }
       // Check for recording link
@@ -150,15 +160,18 @@ export function parseIgniteEmail(rawHtml, headers = {}, options = {}) {
     return { error: 'No email HTML provided', raw: null };
   }
 
-  // Verify sender if headers are provided
-  const from = headers.from || '';
-  if (from && !from.includes(IGNITE_SENDER_EMAIL)) {
-    return { error: `Unexpected sender: ${from}`, raw: rawHtml };
-  }
-
-  // Pick parser
+  // Pick parser, then extract fields.
   const useBrowser = !options.useRegex && typeof DOMParser !== 'undefined';
   const fields = useBrowser ? parseBrowser(rawHtml) : parseRegex(rawHtml);
+
+  // Sender is only a soft signal: the booking form is forwarded (Outlook →
+  // inbound), which rewrites From. Reject only when the sender is unknown AND no
+  // recognizable fields were extracted — otherwise trust the parsed content.
+  const from = (headers.from || '').toLowerCase();
+  const senderKnown = !from || ACCEPTED_SENDER_MARKERS.some((mk) => from.includes(mk));
+  if (Object.keys(fields).length === 0) {
+    return { error: 'No recognizable lead fields found in email', raw: rawHtml, senderKnown };
+  }
 
   const subject = headers.subject || '';
   const leadType = detectLeadType(subject, fields.lead_type || '');
@@ -185,10 +198,12 @@ export function parseIgniteEmail(rawHtml, headers = {}, options = {}) {
     phoneRaw: fields.phone || null,
     callRecordingUrl: fields.call_recording_url || null,
     sourceDetail: fields.source || fields.ad_campaign || fields.tracking_number || null,
+    formName: fields.form_name || null,
     formData,
     igniteProfileId: fields.ignite_profile_id || null,
     igniteLocationId: fields.ignite_location_id || null,
     rawSubject: subject,
+    senderKnown,
     parsedAt: new Date().toISOString(),
   };
 }
