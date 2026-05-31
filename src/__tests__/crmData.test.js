@@ -3,6 +3,8 @@ import {
   leadTypeLabel,
   isWebForm,
   classifySubmissionCategory,
+  isAppointment,
+  isCrmSubmission,
   countByCategory,
   filterSubmissions,
   cleanLeadName,
@@ -86,6 +88,24 @@ describe("name + phone presentation", () => {
     expect(formatPhonePretty("+1 (856) 701-8139")).toBe("(856) 701-8139");
     expect(formatPhonePretty("")).toBe("");
     expect(formatPhonePretty("12345")).toBe("12345"); // unknown → passthrough
+  });
+});
+
+describe("isAppointment — Gingr appointments excluded from the CRM", () => {
+  const appt = { id: "a1", lead_type: "web_form", raw_email_subject: "New Appointment Received | Cherry Hill", form_data: { estimated_subtotal: "435.00", estimated_tax: "22.26" } };
+  const booking = { id: "b1", lead_type: "web_form", raw_email_subject: "New Booking Form Submission Received", form_data: { desired_service: "Boarding", form_name: "Booking" } };
+  const webform = { id: "w1", lead_type: "web_form", raw_email_subject: "New Web Form Received | Cherry Hill", form_data: { desired_service: "Daycare" } };
+
+  it("flags appointment confirmations, not form submissions", () => {
+    expect(isAppointment(appt)).toBe(true);
+    expect(isAppointment(booking)).toBe(false);
+    expect(isAppointment(webform)).toBe(false);
+  });
+  it("keeps real form submissions, drops appointments from the CRM + counts", () => {
+    const leads = [appt, booking, webform];
+    expect(filterSubmissions(leads, { category: "booking" }).map((l) => l.id)).toEqual(["b1", "w1"]);
+    expect(countByCategory(leads).booking).toBe(2);
+    expect(isCrmSubmission(appt)).toBe(false);
   });
 });
 

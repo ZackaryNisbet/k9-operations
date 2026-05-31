@@ -78,12 +78,31 @@ export function classifySubmissionCategory(lead) {
   return EMPLOYMENT_KEYWORDS.some((kw) => haystack.includes(kw)) ? "employment" : "booking";
 }
 
+// Gingr "Appointment Received" emails are confirmations/invoices for bookings
+// ALREADY made (estimated subtotal/tax/total, drop-off/pick-up) — not website
+// booking/availability FORM submissions. They're excluded from the lead CRM.
+// Detected by subject/source, with a pricing-field fallback.
+const APPOINTMENT_MARKERS = ["appointment received", "appointment confirmed", "appointment scheduled"];
+export function isAppointment(lead) {
+  if (!lead) return false;
+  const text = `${lead.raw_email_subject || ""} ${lead.source_detail || ""}`.toLowerCase();
+  if (APPOINTMENT_MARKERS.some((m) => text.includes(m))) return true;
+  const fd = lead.form_data;
+  if (fd && typeof fd === "object" && (fd.estimated_total != null || fd.estimated_subtotal != null || fd.estimated_tax != null)) return true;
+  return false;
+}
+
+/** A lead belongs in the CRM only if it's a web form AND not a Gingr appointment. */
+export function isCrmSubmission(lead) {
+  return isWebForm(lead) && !isAppointment(lead);
+}
+
 /** Count web-form submissions per live category (for subtab badges). */
 export function countByCategory(leads) {
   const counts = Object.create(null);
   for (const id of LIVE_CATEGORY_IDS) counts[id] = 0;
   for (const lead of leads || []) {
-    if (!isWebForm(lead)) continue;
+    if (!isCrmSubmission(lead)) continue;
     const id = classifySubmissionCategory(lead);
     counts[id] = (counts[id] || 0) + 1;
   }
@@ -93,7 +112,7 @@ export function countByCategory(leads) {
 /** Filter to web forms in the active category. */
 export function filterSubmissions(leads, { category } = {}) {
   return (leads || []).filter((lead) => {
-    if (!isWebForm(lead)) return false;
+    if (!isCrmSubmission(lead)) return false;
     if (category && classifySubmissionCategory(lead) !== category) return false;
     return true;
   });
