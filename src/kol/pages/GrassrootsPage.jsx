@@ -6748,19 +6748,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       ) : (
         <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
               {canEditTargets && newDraft && activeConfig.id !== "events" && (
-                <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor">
-                  <TargetEditor
-                    draft={newDraft}
-                    categoryConfig={activeConfig}
-                    saving={savingDraft}
-                    attachmentsByActivity={attachmentsByActivity}
-                    canLog={canLogActivity}
-                    onChange={updateDraft}
-                    onSave={saveDraft}
-                    onCancel={closeEditor}
-                    onPreviewAttachment={previewGrassrootsAttachment}
-                    previewingAttachmentId={previewingAttachmentId}
-                  />
+                <div onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }}>
+                  <div style={{ width: "100%", maxWidth: 640 }}>
+                    <TargetEditor
+                      draft={newDraft}
+                      categoryConfig={activeConfig}
+                      saving={savingDraft}
+                      attachmentsByActivity={attachmentsByActivity}
+                      canLog={canLogActivity}
+                      onChange={updateDraft}
+                      onSave={saveDraft}
+                      onCancel={closeEditor}
+                      onPreviewAttachment={previewGrassrootsAttachment}
+                      previewingAttachmentId={previewingAttachmentId}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -6816,19 +6818,20 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 <>
                   {activeConfig.id === "events" ? (
                     <>
-                      {/* New event inline editor — quick-capture composer for a brand-new
-                          event (no existing row to expand into, so it stays above the table). */}
+                      {/* New event — quick-capture in a shared modal (not an inline row). */}
                       {canEditTargets && newDraft && (
-                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
-                          <EventTargetInlineEditor
-                            key="new-event-draft"
-                            draft={newDraft}
-                            saving={savingDraft}
-                            onChange={updateDraft}
-                            onSave={saveDraft}
-                            onCancel={closeEditor}
-                            organizerOptions={organizerOptions}
-                          />
+                        <div onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }}>
+                          <div style={{ width: "100%", maxWidth: 640 }}>
+                            <EventTargetInlineEditor
+                              key="new-event-draft"
+                              draft={newDraft}
+                              saving={savingDraft}
+                              onChange={updateDraft}
+                              onSave={saveDraft}
+                              onCancel={closeEditor}
+                              organizerOptions={organizerOptions}
+                            />
+                          </div>
                         </div>
                       )}
                       {/* Editing an existing event happens via the per-column cell pencils
