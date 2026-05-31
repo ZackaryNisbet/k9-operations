@@ -49,6 +49,30 @@ export const DEFAULT_LABOR_ROSTER_PDF_OPTIONS = {
   showEmail: true,
 };
 
+// Print sizes the roster can be rendered at, in PDF points (72 per inch),
+// landscape to match the design. The roster is laid out once at the design
+// size (Letter landscape) and then scaled up to the chosen sheet, so the output
+// is fully vector + 300-DPI logo at every size — sharp at any enlargement.
+// Poster dimensions map to the color posters Staples prints (listed 18×24 and
+// 24×36; printed here landscape) so the PDF can be ordered at 100%.
+export const LABOR_ROSTER_PAGE_SIZES = [
+  { id: "letter", label: "Letter — 11 × 8.5 in", hint: "Standard paper, for desk printing", width: 792, height: 612 },
+  { id: "tabloid", label: "Tabloid — 17 × 11 in", hint: "Large office paper", width: 1224, height: 792 },
+  { id: "poster-18x24", label: "Poster — 24 × 18 in", hint: "Staples color poster (~$10–15) · recommended for a wall print", width: 1728, height: 1296 },
+  { id: "poster-24x36", label: "Poster — 36 × 24 in", hint: "Staples large color poster (~$20–30)", width: 2592, height: 1728 },
+];
+
+export const DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID = "letter";
+
+export function resolveLaborRosterPageSize(pageSize) {
+  if (pageSize && typeof pageSize === "object" && pageSize.width > 0 && pageSize.height > 0) {
+    return { width: pageSize.width, height: pageSize.height };
+  }
+  const preset = LABOR_ROSTER_PAGE_SIZES.find((size) => size.id === pageSize)
+    || LABOR_ROSTER_PAGE_SIZES.find((size) => size.id === DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID);
+  return { width: preset.width, height: preset.height };
+}
+
 export function normalizeLaborRosterPdfOptions(options = {}) {
   return {
     ...DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
@@ -591,6 +615,21 @@ function addPage(pdfDoc) {
   return page;
 }
 
+// Scale every finished (Letter-landscape) page up to the requested sheet,
+// centered. The whole design is vector + a 300-DPI logo, so this is a lossless
+// enlargement — the PDF is "born" at the print size and orders at 100%.
+function applyRosterPageSize(pdfDoc, target) {
+  if (!target || (target.width === PAGE_WIDTH && target.height === PAGE_HEIGHT)) return;
+  const scale = Math.min(target.width / PAGE_WIDTH, target.height / PAGE_HEIGHT);
+  const offsetX = (target.width - PAGE_WIDTH * scale) / 2;
+  const offsetY = (target.height - PAGE_HEIGHT * scale) / 2;
+  pdfDoc.getPages().forEach((page) => {
+    page.scaleContent(scale, scale);
+    page.translateContent(offsetX, offsetY);
+    page.setSize(target.width, target.height);
+  });
+}
+
 function drawFooter(page, fonts, pageNumber, pageCount) {
   const width = PAGE_WIDTH - MARGIN_X * 2;
   drawRule(page, MARGIN_X, FOOTER_Y + 10, width, 0.65, BRAND.line);
@@ -726,6 +765,8 @@ export async function buildLaborRosterPdfBytes(payload = {}) {
   pages.forEach((pdfPage, index) => {
     drawFooter(pdfPage, fonts, index + 1, pages.length);
   });
+
+  applyRosterPageSize(pdfDoc, resolveLaborRosterPageSize(payload.pageSize));
 
   return pdfDoc.save();
 }
