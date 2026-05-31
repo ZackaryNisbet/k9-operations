@@ -2731,6 +2731,34 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
       },
     };
   }
+  if (categoryId === "localBusinessPartnerships" || categoryId === "local_business_partnerships") {
+    return {
+      headers: { organizer: "Business", event: "Category", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No local business partnerships match this view.",
+      get: {
+        organizer: (t) => t.name || "—",
+        event: (t) => t.business_category || "—",
+        eventDate: () => "",
+      },
+    };
+  }
+  if (categoryId === "schools") {
+    return {
+      headers: { organizer: "School", event: "", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: false, eventDate: false, status: true, notes: true, followUp: true },
+      sortable: { eventDate: false, followUp: true },
+      statusVariant: "pill",
+      updatesMode: "log",
+      allowEventLink: false,
+      emptyText: "No schools match this view.",
+      get: { organizer: (t) => t.name || "—", eventDate: () => "" },
+    };
+  }
   return events;
 }
 
@@ -6428,8 +6456,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             { id: 'events', label: 'Events', color: C.pri },
             { id: 'drops', label: 'Visits', color: C.pri },
             { id: 'corporate', label: 'Corporate Partnerships', color: C.pri },
-            { id: 'apartments', label: 'Apartments', color: C.pri },
+            { id: 'localBusiness', label: 'Local Business Partnerships', color: C.pri },
             { id: 'ppp', label: 'Pet Professional Partnerships', color: C.pri },
+            { id: 'apartments', label: 'Apartments', color: C.pri },
+            { id: 'schools', label: 'Schools', color: C.pri },
           ].map(tab => {
             const active = tab.id === activeLifecycleTab;
             const count = tab.id === 'all'
@@ -6442,6 +6472,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                   if (tab.id === 'corporate') return t.category === 'corporate_partnerships';
                   if (tab.id === 'apartments') return t.category === 'apartments';
                   if (tab.id === 'ppp') return t.category === 'pet_professional_partnerships';
+                  if (tab.id === 'localBusiness') return t.category === 'local_business_partnerships';
+                  if (tab.id === 'schools') return t.category === 'schools';
                   return false;
                 }).length;
             return (
@@ -6449,7 +6481,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 key={tab.id}
                 onClick={() => {
                   setActiveLifecycleTab(tab.id);
-                  const map = { events: 'events', drops: 'drops', corporate: 'corporatePartnerships', apartments: 'apartments', ppp: 'petProfessionalPartnerships', all: 'events' };
+                  const map = { events: 'events', drops: 'drops', corporate: 'corporatePartnerships', apartments: 'apartments', ppp: 'petProfessionalPartnerships', localBusiness: 'localBusinessPartnerships', schools: 'schools', all: 'events' };
                   setActiveCategory(map[tab.id] || 'events');
                   if (tab.id !== 'events') setEventsStatusFilter(null);
                 }}
@@ -6498,7 +6530,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           {activeLifecycleTab === 'corporate' && "Corporate partnership targets. Filter by status and log follow-ups. Past events toggle shows completed outreach."}
           {activeLifecycleTab === 'apartments' && "Apartment complex outreach and partnerships. Same status + follow-up workflow as other categories."}
           {activeLifecycleTab === 'ppp' && "Pet professional and service partner pipeline. Full status filtering and manual next-contact control."}
-          {activeLifecycleTab === 'all' && "What's legit — booked events and logged visits in one feed. The longer-term partnership pipelines (Corporate, Apartments, Pet Professional) live in their own tabs."}
+          {activeLifecycleTab === 'localBusiness' && "Local businesses — coffee shops, retailers, and other neighborhood partners. Same status + follow-up workflow as the other pipelines."}
+          {activeLifecycleTab === 'schools' && "Schools and education partners. Track outreach status and manual follow-ups."}
         </div>
       </div>
 
