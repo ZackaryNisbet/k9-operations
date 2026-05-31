@@ -20,17 +20,7 @@ import {
   countBySource,
   rangeLabel,
 } from "../shared/calendarGrid";
-import {
-  SOURCE_ORDER,
-  normalizeLaborStarts,
-  normalizeReviews,
-  normalizeTraining,
-  normalizeMarketingEvents,
-  normalizeMarketingFollowups,
-  normalizeEnrichment,
-  buildInventoryDueEvents,
-  aggregateEvents,
-} from "../kol/pages/calendarSources";
+import { SOURCE_ORDER, mapCalendarRows } from "../kol/pages/calendarSources";
 
 describe("calendarGrid date math", () => {
   it("builds and parses keys", () => {
@@ -153,116 +143,60 @@ describe("rangeLabel", () => {
   });
 });
 
-describe("source normalizers", () => {
-  const today = "2026-05-30";
-  const win = { startKey: "2026-05-01", endKey: "2026-05-31" };
-
-  it("labor: emits start + distinct first-shift inside the window only", () => {
-    const employees = [
-      { id: "e1", full_name: "Alex Vance", position_title: "CSR", start_date: "2026-05-12", first_shift_date: "2026-05-14" },
-      { id: "e2", full_name: "Same Day", position_title: "PCT", start_date: "2026-05-20", first_shift_date: "2026-05-20" },
-      { id: "e3", full_name: "Out Of Range", position_title: "PCT", start_date: "2026-07-01" },
+describe("mapCalendarRows (get_calendar_events adapter)", () => {
+  it("maps RPC rows into the event shape and normalizes the time", () => {
+    const rows = [
+      {
+        source: "inventory",
+        event_id: "inventory-2026-05-10",
+        kind: "count_due",
+        event_date: "2026-05-10",
+        event_time: "19:00:00",
+        title: "Inventory count due",
+        subtitle: "Weekly count",
+        status: null,
+        tone: "overdue",
+        ref_id: null,
+      },
     ];
-    const out = normalizeLaborStarts(employees, { window: win, today });
-    const ids = out.map((e) => e.id);
-    expect(ids).toContain("labor-start-e1");
-    expect(ids).toContain("labor-shift-e1"); // distinct first shift
-    expect(ids).toContain("labor-start-e2");
-    expect(ids).not.toContain("labor-shift-e2"); // same day -> no duplicate
-    expect(ids).not.toContain("labor-start-e3"); // out of window
-    expect(out.every((e) => e.source === "labor")).toBe(true);
-  });
-
-  it("reviews: only 30/60/90 cycles, names from the employee map, overdue/done tone", () => {
-    const empMap = new Map([["e1", { full_name: "Alex Vance" }]]);
-    const instances = [
-      { id: "r1", labor_employee_id: "e1", review_cycle: "30_day", due_date: "2026-05-10", status: "scheduled" },
-      { id: "r2", labor_employee_id: "e1", review_cycle: "90_day", due_date: "2026-06-15", status: "completed" },
-      { id: "r3", labor_employee_id: "e1", review_cycle: "ad_hoc", due_date: "2026-05-12", status: "scheduled" },
-      { id: "r4", labor_employee_id: "e1", review_cycle: "60_day", due_date: null, status: "scheduled" },
-    ];
-    const out = normalizeReviews(instances, empMap, { today });
-    expect(out.map((e) => e.id)).toEqual(["review-r1", "review-r2"]); // ad_hoc + null-due dropped
-    expect(out[0].title).toBe("Alex Vance · 30-Day review");
-    expect(out[0].tone).toBe("overdue"); // due 05-10 < today 05-30
-    expect(out[1].tone).toBe("done"); // completed
-    expect(out[1].subtitle).toBe("Completed");
-  });
-
-  it("training: excludes completed, surfaces progress and overdue tone", () => {
-    const records = [
-      { id: "t1", employee_full_name: "Pat Lee", target_role: "PCT", target_end_date: "2026-05-15", overall_status: "in_progress", progress_percent: 40 },
-      { id: "t2", employee_full_name: "Done Deal", target_role: "CSR", target_end_date: "2026-05-20", overall_status: "completed", progress_percent: 100 },
-      { id: "t3", employee_full_name: "Future", target_role: "PCT", target_end_date: "2026-06-30", overall_status: "not_started", progress_percent: 0 },
-    ];
-    const out = normalizeTraining(records, { today });
-    expect(out.map((e) => e.id)).toEqual(["training-t1", "training-t3"]);
-    expect(out[0].subtitle).toBe("PCT · 40%");
-    expect(out[0].tone).toBe("overdue");
-    expect(out[1].subtitle).toBe("PCT"); // 0% -> no percent suffix
-    expect(out[1].tone).toBe("default");
-  });
-
-  it("marketing: events and follow-ups both map under the marketing source", () => {
-    const events = [{ id: "g1", title: "Yappy Hour", event_type: "community_event", venue_name: "Dog Park", event_date: "2026-05-18" }];
-    const targets = [
-      { id: "tg1", name: "Acme Apartments", category: "apartments", status: "outreach", next_contact_date: "2026-05-12" },
-      { id: "tg2", name: "", organizer: "Jane Doe", category: "corporate_partnerships", next_contact_date: "2026-05-25" },
-    ];
-    const evOut = normalizeMarketingEvents(events);
-    const flOut = normalizeMarketingFollowups(targets, { today });
-    expect(evOut[0]).toMatchObject({ source: "marketing", kind: "event", title: "Yappy Hour", subtitle: "Dog Park" });
-    expect(flOut[0]).toMatchObject({ source: "marketing", kind: "follow_up", title: "Follow up · Acme Apartments", subtitle: "Apartments", tone: "overdue" });
-    expect(flOut[1].title).toBe("Follow up · Jane Doe"); // falls back to organizer when name blank
-  });
-
-  it("enrichment: maps events with subtitle fallback to category", () => {
-    const out = normalizeEnrichment([
-      { id: "x1", title: "Bubble Day", subtitle: "Splash zone", category: "Weekly Theme", status: "planned", event_date: "2026-05-22" },
-      { id: "x2", title: "Scent Work", category: "brainwork", event_date: "2026-05-24" },
+    expect(mapCalendarRows(rows)).toEqual([
+      {
+        id: "inventory-2026-05-10",
+        source: "inventory",
+        kind: "count_due",
+        date: "2026-05-10",
+        time: "19:00", // "19:00:00" -> "HH:MM"
+        title: "Inventory count due",
+        subtitle: "Weekly count",
+        status: null,
+        tone: "overdue",
+        meta: { refId: null },
+      },
     ]);
-    expect(out[0]).toMatchObject({ source: "enrichment", title: "Bubble Day", subtitle: "Splash zone" });
-    expect(out[1].subtitle).toBe("brainwork");
   });
-});
 
-describe("buildInventoryDueEvents", () => {
-  it("materializes weekly occurrences inside the window from a fixed anchor", () => {
-    const schedule = { cadenceDays: 7, dueWeekday: 1, dueTime: "09:00", anchorDate: "2026-05-04" };
-    const out = buildInventoryDueEvents(schedule, {
-      window: { startKey: "2026-05-01", endKey: "2026-05-31" },
-      today: "2026-05-30",
-    });
-    expect(out.map((e) => e.date)).toEqual([
-      "2026-05-04", "2026-05-11", "2026-05-18", "2026-05-25",
+  it("treats a null event_time as all-day and synthesizes an id when absent", () => {
+    const [ev] = mapCalendarRows([
+      { source: "labor", kind: "start", event_date: "2026-05-04", event_time: null, title: "Alex", subtitle: "Starts", ref_id: "emp-1" },
     ]);
-    expect(out.every((e) => e.source === "inventory" && e.time === "09:00")).toBe(true);
-    expect(out.find((e) => e.date === "2026-05-04").tone).toBe("overdue"); // before today
+    expect(ev.time).toBeUndefined();
+    expect(ev.id).toBe("labor-emp-1"); // `${source}-${ref_id}` fallback
+    expect(ev.tone).toBe("default"); // default tone when missing
+    expect(ev.meta).toEqual({ refId: "emp-1" });
   });
 
-  it("supports a biweekly cadence and snaps to the first in-window occurrence", () => {
-    const schedule = { cadenceDays: 14, dueWeekday: 1, dueTime: "08:00", anchorDate: "2026-05-04" };
-    const out = buildInventoryDueEvents(schedule, {
-      window: { startKey: "2026-05-10", endKey: "2026-06-10" },
-      today: "2026-05-30",
-    });
-    expect(out.map((e) => e.date)).toEqual(["2026-05-18", "2026-06-01"]);
-  });
-
-  it("returns nothing without a valid window", () => {
-    expect(buildInventoryDueEvents({}, {})).toEqual([]);
-  });
-});
-
-describe("aggregateEvents", () => {
-  it("merges arrays and sorts chronologically; SOURCE_ORDER is stable", () => {
-    const merged = aggregateEvents([
-      [{ id: "a", source: "labor", date: "2026-05-20", title: "z" }],
-      [{ id: "b", source: "review", date: "2026-05-05", title: "y" }],
+  it("drops rows with an unknown source or an invalid date, and sorts the rest", () => {
+    const out = mapCalendarRows([
+      { source: "labor", event_id: "l1", event_date: "2026-05-20", title: "later" },
+      { source: "bogus", event_id: "x", event_date: "2026-05-01", title: "drop me" },
+      { source: "review", event_id: "r1", event_date: "not-a-date", title: "drop me too" },
+      { source: "review", event_id: "r2", event_date: "2026-05-05", title: "earlier" },
       null,
-      [{ id: "c", source: "inventory", date: "2026-05-05", title: "x" }],
     ]);
-    expect(merged.map((e) => e.id)).toEqual(["c", "b", "a"]); // 05-05 by title (x<y), then 05-20
+    expect(out.map((e) => e.id)).toEqual(["r2", "l1"]); // invalid rows removed; sorted by date
+  });
+
+  it("keeps SOURCE_ORDER stable for the filter pills", () => {
     expect(SOURCE_ORDER).toEqual(["labor", "review", "training", "marketing", "enrichment", "inventory"]);
   });
 });

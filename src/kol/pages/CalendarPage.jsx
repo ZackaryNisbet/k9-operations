@@ -2,31 +2,22 @@
 //
 // One schedule across six operational sources: labor start dates, 30/60/90-day
 // reviews, training due dates, marketing events + outreach follow-ups, enrichment
-// events, and the recurring inventory count. Each source is read independently
-// (Promise.allSettled) and folded into a normalized event list by calendarSources,
-// then handed to the shared AggregatedCalendar. A source that errors or is empty
-// (e.g. RLS, sparse data) simply contributes nothing — the rest still render.
+// events, and the recurring inventory count. All aggregation + compute happens
+// server-side in the `get_calendar_events` Postgres function (one round-trip per
+// window); the page just maps the normalized rows and hands them to the shared
+// AggregatedCalendar. The function is SECURITY INVOKER, so each source is still
+// gated by its existing per-table RLS.
 //
 // The "calendar" route, its "Calendar Access" permission, and the Home launcher
 // card are wired in KolApp.jsx.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { C, todayStr } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { supabase } from "../../supabaseClient";
 import AggregatedCalendar from "../../shared/AggregatedCalendar";
 import { viewWindow } from "../../shared/calendarGrid";
-import {
-  SOURCE_ORDER,
-  aggregateEvents,
-  buildInventoryDueEvents,
-  normalizeEnrichment,
-  normalizeLaborStarts,
-  normalizeMarketingEvents,
-  normalizeMarketingFollowups,
-  normalizeReviews,
-  normalizeTraining,
-} from "./calendarSources";
+import { SOURCE_ORDER, mapCalendarRows } from "./calendarSources";
 
 // Visual registry for the six sources: a restrained categorical palette (calm,
 // distinguishable hues) with the brand green reserved for enrichment (play/brain).
@@ -47,10 +38,6 @@ const NAV_SLUG = {
   inventory: "inventory",
 };
 
-function firstData(result) {
-  return result.status === "fulfilled" && result.value && !result.value.error ? result.value.data : null;
-}
-
 export default function CalendarPage({ profile, nav, locationId, addGlobalToast }) {
   const [today] = useState(() => todayStr());
   const [view, setView] = useState("month");
@@ -69,98 +56,36 @@ export default function CalendarPage({ profile, nav, locationId, addGlobalToast 
     setLoading(true);
     const win = viewWindow(view, cursor, today);
 
-    (async () => {
-      // Employees first — they back the labor-starts source and the name lookup
-      // for review instances (which carry no location_id of their own).
-      let employees = [];
-      try {
-        const { data, error } = await supabase
-          .from("labor_employees")
-          .select("id, full_name, position_title, start_date, first_shift_date, employment_status, end_date")
-          .eq("location_id", locationId);
-        if (!error && Array.isArray(data)) employees = data;
-      } catch {
-        employees = [];
-      }
-      if (cancelled) return;
-
-      const empMap = new Map(employees.map((e) => [e.id, e]));
-      const empIds = employees.map((e) => e.id);
-
-      const results = await Promise.allSettled([
-        empIds.length
-          ? supabase
-              .from("employee_review_instances")
-              .select("id, labor_employee_id, review_cycle, due_date, status")
-              .in("labor_employee_id", empIds)
-              .gte("due_date", win.startKey)
-              .lte("due_date", win.endKey)
-          : Promise.resolve({ data: [], error: null }),
-        supabase
-          .from("training_records")
-          .select("id, employee_full_name, target_role, target_end_date, overall_status, progress_percent")
-          .eq("location_id", locationId)
-          .gte("target_end_date", win.startKey)
-          .lte("target_end_date", win.endKey),
-        supabase
-          .from("grassroots_events")
-          .select("id, title, event_type, venue_name, event_date")
-          .eq("location_id", locationId)
-          .gte("event_date", win.startKey)
-          .lte("event_date", win.endKey),
-        supabase
-          .from("grassroots_targets")
-          .select("id, name, organizer, category, status, next_contact_date")
-          .eq("location_id", locationId)
-          .gte("next_contact_date", win.startKey)
-          .lte("next_contact_date", win.endKey),
-        supabase
-          .from("enrichment_events")
-          .select("id, title, subtitle, category, status, event_date")
-          .eq("location_id", locationId)
-          .gte("event_date", win.startKey)
-          .lte("event_date", win.endKey),
-        supabase
-          .from("lite_settings")
-          .select("setting_value")
-          .eq("location_id", locationId)
-          .eq("setting_key", "inventory_schedule")
-          .maybeSingle(),
-      ]);
-      if (cancelled) return;
-
-      const reviews = firstData(results[0]) || [];
-      const training = firstData(results[1]) || [];
-      const marketingEvents = firstData(results[2]) || [];
-      const targets = firstData(results[3]) || [];
-      const enrichment = firstData(results[4]) || [];
-      const scheduleValue = firstData(results[5])?.setting_value || null;
-
-      const merged = aggregateEvents([
-        normalizeLaborStarts(employees, { window: win, today }),
-        normalizeReviews(reviews, empMap, { today }),
-        normalizeTraining(training, { today }),
-        normalizeMarketingEvents(marketingEvents),
-        normalizeMarketingFollowups(targets, { today }),
-        normalizeEnrichment(enrichment),
-        buildInventoryDueEvents(scheduleValue, { window: win, today }),
-      ]);
-
-      setEvents(merged);
-      setLoading(false);
-    })().catch(() => {
-      if (!cancelled) {
-        setLoading(false);
-        addGlobalToast?.("Could not load the calendar. Please try again.", "error");
-      }
-    });
+    supabase
+      .rpc("get_calendar_events", {
+        p_location_id: locationId,
+        p_start: win.startKey,
+        p_end: win.endKey,
+        p_today: today,
+      })
+      .then(
+        ({ data, error }) => {
+          if (cancelled) return;
+          if (error) {
+            setEvents([]);
+            setLoading(false);
+            addGlobalToast?.("Could not load the calendar. Please try again.", "error");
+            return;
+          }
+          setEvents(mapCalendarRows(data || []));
+          setLoading(false);
+        },
+        () => {
+          if (cancelled) return;
+          setEvents([]);
+          setLoading(false);
+        },
+      );
 
     return () => {
       cancelled = true;
     };
-    // activeSources is intentionally excluded: filtering is client-side and needs no refetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationId, view, cursor, today]);
+  }, [locationId, view, cursor, today, addGlobalToast]);
 
   const toggleSource = useCallback((key) => {
     setActiveSources((prev) => {
