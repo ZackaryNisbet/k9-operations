@@ -32,7 +32,8 @@ import {
   cleanLeadName,
   leadSortName,
   formatPhonePretty,
-  buildFormFieldEntries,
+  canonicalFormFields,
+  populatedFieldCount,
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
@@ -223,9 +224,9 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         key: "details",
         header: "Web form",
         width: "minmax(0, 1.9fr)",
-        searchValue: (r) => buildFormFieldEntries(r).map((e) => `${e.label} ${e.value}`).join(" "),
+        searchValue: (r) => canonicalFormFields(r).filter((e) => e.value).map((e) => `${e.label} ${e.value}`).join(" "),
         render: (r) => {
-          const count = buildFormFieldEntries(r).length;
+          const count = populatedFieldCount(r);
           if (!count) return <span style={{ color: C.textMut }}>—</span>;
           const expanded = r.id === expandedId;
           const label = classifySubmissionCategory(r) === "employment" ? "Employment details" : "Booking form details";

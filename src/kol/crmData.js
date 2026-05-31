@@ -181,36 +181,77 @@ export function humanizeFieldKey(key) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Keys promoted elsewhere or that are plumbing/noise (mostly from the legacy
-// Gingr appointment feed) — excluded from the details column.
-export const FORM_FIELD_HIDDEN_KEYS = new Set([
-  "lead_type", "first_name", "last_name", "caller_name", "email", "phone",
-  "ignite_profile_id", "ignite_location_id", "ignite_lead_id",
-  "landing_page_url", "lead_page_url", "agreed_to_terms", "device", "browser",
-  "country", "services", "sales_value", "estimated_tax", "estimated_subtotal",
-  "estimated_total", "multi_unit_name", "is_this_lead_quotable_yes_yes",
-  "booking_title",
-  ...NAME_FIELD_KEYS, // promoted into the Name column — don't repeat in details
-]);
+// ─────────────────────────────────────────────────────────────────────────────
+// Canonical field schema — ONE defined, ordered list per category, so every
+// expanded record is structured identically. The upstream forms capture the same
+// data under different keys (email/email_address, zip/zip_code, phone/phone_number,
+// first+last/full_name); each canonical field pulls the first synonym that's
+// present. A field the record didn't capture renders as a placeholder — never a
+// dropped or reordered row. `lead` = a top-level column to prefer; `from` =
+// ordered form_data keys; `long` = free-text that spans the full width.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Flatten a submission's contact-form fields into [{ key, label, value }] for the
- * details column: email first, then every distinct non-empty scalar field.
- */
-export function buildFormFieldEntries(lead) {
-  const entries = [];
-  if (lead && lead.email) entries.push({ key: "email", label: "Email", value: String(lead.email) });
-  const fd = lead && lead.form_data;
-  if (fd && typeof fd === "object") {
-    for (const [key, value] of Object.entries(fd)) {
-      if (FORM_FIELD_HIDDEN_KEYS.has(key)) continue;
-      if (value == null || typeof value === "object") continue;
-      const clean = collapseSpaces(value);
-      if (!clean || clean.length > 240) continue; // skip blanks + giant blobs
-      entries.push({ key, label: humanizeFieldKey(key), value: clean });
+const CONTACT_FIELDS = [
+  { key: "email", label: "Email", lead: "email", from: ["email_address", "email"] },
+  { key: "phone", label: "Phone", lead: "phone", from: ["phone", "phone_number"], format: formatPhonePretty },
+  { key: "preferred_time", label: "Preferred time to reach", from: ["preferred_time_to_be_reached"] },
+  { key: "desired_service", label: "Desired service", from: ["desired_service", "service_interest"] },
+  { key: "desired_dates", label: "Desired date(s)", from: ["desired_date_of_boarding_or_day_care"] },
+  { key: "zip", label: "ZIP", from: ["zip_code", "zip"] },
+  { key: "city", label: "City", from: ["city"] },
+  { key: "state", label: "State", from: ["state"] },
+  { key: "details", label: "Details", from: ["details", "how_can_we_help_you", "message"], long: true },
+];
+
+const EMPLOYMENT_FIELDS = [
+  { key: "email", label: "Email", lead: "email", from: ["email_address", "email"] },
+  { key: "phone", label: "Phone", lead: "phone", from: ["phone", "phone_number"], format: formatPhonePretty },
+  { key: "zip", label: "ZIP", from: ["zip_code", "zip"] },
+  { key: "city", label: "City", from: ["city"] },
+  { key: "state", label: "State", from: ["state"] },
+  { key: "position", label: "Position of interest", from: ["what_type_of_position_are_you_interested_in"] },
+  { key: "availability", label: "Full-time or part-time", from: ["are_you_interested_in_full_time_or_part_time"] },
+  { key: "reason", label: "Reason for contact", from: ["reason_for_contact"] },
+  { key: "skills", label: "Special skills", from: ["what_are_some_special_skills_you_may_have"], long: true },
+  { key: "about", label: "About the applicant", from: ["tell_us_a_bit_about_yourself"], long: true },
+];
+
+export const FORM_FIELD_SCHEMAS = { booking: CONTACT_FIELDS, employment: EMPLOYMENT_FIELDS };
+
+function pickFieldValue(lead, fd, f) {
+  if (f.lead && lead && lead[f.lead] != null) {
+    const v = collapseSpaces(lead[f.lead]);
+    if (v) return v;
+  }
+  for (const k of f.from) {
+    const raw = fd[k];
+    if (raw != null && typeof raw !== "object") {
+      const v = collapseSpaces(raw);
+      if (v) return v;
     }
   }
-  return entries;
+  return "";
+}
+
+/**
+ * The canonical, ordered field list for a submission, chosen by category. Always
+ * returns the same fields in the same order — value "" when the record didn't
+ * capture that field — so every expanded record is structured identically.
+ * Returns [{ key, label, value, long }].
+ */
+export function canonicalFormFields(lead) {
+  const fd = (lead && lead.form_data && typeof lead.form_data === "object") ? lead.form_data : {};
+  const schema = classifySubmissionCategory(lead) === "employment" ? EMPLOYMENT_FIELDS : CONTACT_FIELDS;
+  return schema.map((f) => {
+    let value = pickFieldValue(lead, fd, f);
+    if (value && f.format) value = f.format(value);
+    return { key: f.key, label: f.label, value, long: !!f.long };
+  });
+}
+
+/** How many of the canonical fields the record actually captured (badge count + search). */
+export function populatedFieldCount(lead) {
+  return canonicalFormFields(lead).filter((f) => f.value).length;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

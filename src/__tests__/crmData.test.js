@@ -11,7 +11,8 @@ import {
   leadSortName,
   formatPhonePretty,
   humanizeFieldKey,
-  buildFormFieldEntries,
+  canonicalFormFields,
+  populatedFieldCount,
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
@@ -178,31 +179,45 @@ describe("cleanLeadName — falls back to a form_data name field", () => {
     expect(cleanLeadName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("Audrey Bodnar");
     expect(leadSortName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("audrey bodnar");
   });
-  it("hides the promoted name field from the details", () => {
-    const entries = buildFormFieldEntries({ form_data: { full_name: "Audrey Bodnar", zip: "08002" } });
-    expect(entries.find((e) => e.value === "Audrey Bodnar")).toBeUndefined();
-    expect(entries.find((e) => e.key === "zip")).toBeTruthy();
+  it("never surfaces the name in the field list (it's promoted to its own column)", () => {
+    const fields = canonicalFormFields({ form_data: { full_name: "Audrey Bodnar", zip: "08002" } });
+    expect(fields.some((f) => String(f.value).includes("Audrey"))).toBe(false);
+    expect(fields.find((f) => f.key === "zip").value).toBe("08002");
   });
 });
 
-describe("web-form details", () => {
-  it("humanizes keys", () => {
+describe("canonical form fields — one defined list per category", () => {
+  it("humanizes keys (utility)", () => {
     expect(humanizeFieldKey("desired_service")).toBe("Desired Service");
     expect(humanizeFieldKey("zip_code")).toBe("Zip Code");
   });
 
-  it("lists email first then every distinct field, hiding noise", () => {
-    const entries = buildFormFieldEntries(bookingLead);
-    const labels = entries.map((e) => e.label);
-    expect(labels[0]).toBe("Email");
-    expect(labels).toContain("Desired Service");
-    expect(labels).toContain("Zip Code");
-    expect(labels).toContain("Details");
-    expect(labels).not.toContain("Ignite Lead Id"); // hidden noise
+  it("booking renders one fixed, ordered list, normalizing synonym keys", () => {
+    const fields = canonicalFormFields(bookingLead);
+    expect(fields.map((f) => f.label)).toEqual([
+      "Email", "Phone", "Preferred time to reach", "Desired service",
+      "Desired date(s)", "ZIP", "City", "State", "Details",
+    ]);
+    expect(fields.find((f) => f.key === "email").value).toBe("JMBMartinez.jmm@gmail.com");
+    expect(fields.find((f) => f.key === "phone").value).toBe("(856) 701-8139");
+    expect(fields.find((f) => f.key === "zip").value).toBe("08003"); // zip_code synonym → ZIP
+    expect(fields.find((f) => f.key === "desired_service").value).toBe("Dog Boarding");
   });
 
-  it("returns [] when there's nothing to show", () => {
-    expect(buildFormFieldEntries({})).toEqual([]);
+  it("keeps the SAME structure when a record is sparse (missing → '')", () => {
+    const sparseLead = { lead_type: "web_form", form_data: { email_address: "a@b.com", zip: "08002" } };
+    const sparse = canonicalFormFields(sparseLead);
+    expect(sparse.map((f) => f.label)).toEqual(canonicalFormFields(bookingLead).map((f) => f.label));
+    expect(sparse.find((f) => f.key === "email").value).toBe("a@b.com"); // email_address synonym → Email
+    expect(sparse.find((f) => f.key === "city").value).toBe("");
+    expect(populatedFieldCount(sparseLead)).toBe(2);
+  });
+
+  it("employment uses its own defined list", () => {
+    const labels = canonicalFormFields(employmentLead).map((f) => f.label);
+    expect(labels).toContain("Position of interest");
+    expect(labels).toContain("About the applicant");
+    expect(labels).not.toContain("Desired service");
   });
 });
 
