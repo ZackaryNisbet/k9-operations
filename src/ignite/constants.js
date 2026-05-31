@@ -5,6 +5,14 @@
 
 export const IGNITE_SENDER_EMAIL = 'noreply@leads.idigitalstrategies.com';
 
+// The real customer booking/availability form is delivered by a Mailgun
+// whitelabel (cloudbackend.net) to the resort's customer-facing inbox, then
+// forwarded to our inbound address. Forwarding rewrites the From, so sender is
+// only a soft signal — these markers are used to recognize known lead senders,
+// not to hard-reject everything else.
+export const BOOKING_FORM_SENDER_EMAIL = 'no-reply@cloudbackend.net';
+export const ACCEPTED_SENDER_MARKERS = ['idigitalstrategies', 'cloudbackend', 'k9resorts'];
+
 export const LEAD_TYPES = {
   WEB_FORM: 'web_form',
   PHONE_CALL: 'phone_call',

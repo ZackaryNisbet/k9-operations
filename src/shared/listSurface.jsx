@@ -256,11 +256,13 @@ export function DenseTable({
                   ))}
                 </div>
                 {expanded && renderExpansion && (
+                  // Inline detail reads as a recessed drawer via a subtle tonal
+                  // shift + hairline top/bottom borders — not a colored side-stripe.
                   <div
                     style={{
-                      background: C.bg,
-                      borderBottom: `1px solid ${C.borderLight}`,
-                      borderLeft: `${LIST_TOKENS.expansion.borderLeft} solid ${C.pri}`,
+                      background: C.surfaceHover,
+                      borderTop: `1px solid ${C.border}`,
+                      borderBottom: `1px solid ${C.border}`,
                     }}
                   >
                     {renderExpansion(row)}
