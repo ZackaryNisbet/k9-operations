@@ -14,6 +14,10 @@ import {
   buildGrassrootsDropCategoryCounts,
   buildGrassrootsDropActivityRows,
   GRASSROOTS_BUSINESS_CATEGORY_OPTIONS,
+  GRASSROOTS_VISIT_OUTCOME_OPTIONS,
+  GRASSROOTS_VISIT_MATERIALS_OPTIONS,
+  parseGrassrootsMaterialsLeft,
+  toggleGrassrootsMaterial,
   GRASSROOTS_EVENT_SAVE_RPC,
   GRASSROOTS_EVENT_TYPE_OPTIONS,
   GRASSROOTS_FILTER_OP_LABELS,
@@ -3640,43 +3644,55 @@ function LogActivityModal({
                   autoFocus={Boolean(logModal?.target)}
                 />
               </label>
-              <label>
-                <Label>Materials Left</Label>
-                <input
-                  value={materialsLeft}
-                  onChange={(event) => onMaterialsLeftChange(event.target.value)}
-                  placeholder="Rack cards, flyers, business cards"
-                  style={INPUT_STYLE}
-                />
-              </label>
-              <label>
+              <label style={{ display: "block" }}>
                 <Label>Outcome</Label>
-                <input
-                  value={outcome}
+                <select
+                  value={outcome || ""}
                   onChange={(event) => onOutcomeChange(event.target.value)}
-                  placeholder="Warm intro, left with front desk"
-                  style={INPUT_STYLE}
-                />
+                  style={{ ...INPUT_STYLE, cursor: "pointer" }}
+                >
+                  <option value="">Select an outcome…</option>
+                  {GRASSROOTS_VISIT_OUTCOME_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  {outcome && !GRASSROOTS_VISIT_OUTCOME_OPTIONS.includes(outcome) && <option value={outcome}>{outcome}</option>}
+                </select>
               </label>
             </div>
-            <div className="grassroots-log-flag-row">
-              <button type="button" className={followUpPriority ? "is-active" : ""} onClick={() => onFollowUpPriorityChange(!followUpPriority)}>
-                <I.Clock /> Follow-up needed
-              </button>
+            <div style={{ marginTop: 12 }}>
+              <Label>Materials Left</Label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
+                {(() => {
+                  const selected = parseGrassrootsMaterialsLeft(materialsLeft);
+                  const selectedLower = new Set(selected.map((s) => s.toLowerCase()));
+                  const extras = selected.filter((s) => !GRASSROOTS_VISIT_MATERIALS_OPTIONS.some((o) => o.toLowerCase() === s.toLowerCase()));
+                  return [...GRASSROOTS_VISIT_MATERIALS_OPTIONS, ...extras].map((opt) => {
+                    const on = selectedLower.has(opt.toLowerCase());
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => onMaterialsLeftChange(toggleGrassrootsMaterial(materialsLeft, opt))}
+                        style={{ padding: "4px 10px", borderRadius: 999, border: `1.5px solid ${on ? C.pri : C.border}`, background: on ? C.priLt : "transparent", color: on ? C.pri : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+            <div className="grassroots-log-flag-row" style={{ marginTop: 12 }}>
               <button type="button" className={partnershipPotential ? "is-active" : ""} onClick={() => onPartnershipPotentialChange(!partnershipPotential)}>
                 <I.Sparkle /> Partnership potential
               </button>
             </div>
-            {followUpPriority && (
-              <div className="grassroots-log-followup-date">
-                <Label>Follow-Up Date Optional</Label>
-                <CalendarPicker
-                  value={nextDate}
-                  onChange={onNextDateChange}
-                  extraContent={<div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Set this only when there is a specific follow-up window.</div>}
-                />
-              </div>
-            )}
+            <div className="grassroots-log-followup-date" style={{ marginTop: 12 }}>
+              <Label>Follow-Up Date (optional)</Label>
+              <CalendarPicker
+                value={nextDate}
+                onChange={onNextDateChange}
+                extraContent={<div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Set a date if this visit needs a follow-up.</div>}
+              />
+            </div>
           </section>
         )}
 
@@ -3686,13 +3702,6 @@ function LogActivityModal({
           {/* For Events (Grassroots development): larger, prominent note area + Next Follow-Up Date below it (per user request) */}
           {!isDropLog ? (
             <>
-              {/* Light formatting toolbar kept for convenience */}
-              <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "**bold**")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontWeight: 700 }} title="Append bold">B</button>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "*italic*")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontStyle: "italic" }} title="Append italic">I</button>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "\n- ")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer" }} title="Append bullet">•</button>
-              </div>
-
               <textarea
                 value={notes}
                 onChange={(event) => onNotesChange(event.target.value)}
@@ -3703,7 +3712,7 @@ function LogActivityModal({
               />
 
               <div style={{ marginTop: 14 }}>
-                <Label>Next Follow-Up Date *</Label>
+                <Label>Next Follow-Up Date (optional)</Label>
                 <CalendarPicker
                   value={nextDate}
                   onChange={onNextDateChange}
@@ -3713,11 +3722,6 @@ function LogActivityModal({
           ) : (
             // Drops keep the existing more structured layout
             <>
-              <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "**bold**")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontWeight: 700 }} title="Append bold">B</button>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "*italic*")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer", fontStyle: "italic" }} title="Append italic">I</button>
-                <button type="button" onClick={() => onNotesChange((notes || "") + "\n- ")} style={{ fontSize: 10, padding: "2px 6px", border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", cursor: "pointer" }} title="Append bullet">•</button>
-              </div>
               <textarea
                 value={notes}
                 onChange={(event) => onNotesChange(event.target.value)}
@@ -4857,7 +4861,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       person_spoken_with: logContactName.trim(),
       materials_left: logMaterialsLeft.trim(),
       outcome: logOutcome.trim(),
-      follow_up_priority: logFollowUpPriority,
+      // "Follow-up needed" toggle was removed — a visit needs follow-up simply when
+      // a follow-up date is set.
+      follow_up_priority: Boolean((logDate || "").trim()),
       partnership_potential: logPartnershipPotential,
     } : {};
     if (editingActivity?.id) {
@@ -6416,7 +6422,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             { id: 'corporate', label: 'Corporate Partnerships', color: C.pri },
             { id: 'apartments', label: 'Apartments', color: C.pri },
             { id: 'ppp', label: 'Pet Professional Partnerships', color: C.pri },
-            { id: 'all', label: 'Activity', color: C.pri },
           ].map(tab => {
             const active = tab.id === activeLifecycleTab;
             const count = tab.id === 'all'

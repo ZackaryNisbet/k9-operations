@@ -11,6 +11,8 @@ import {
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
   canCloseGrassrootsEvent,
+  parseGrassrootsMaterialsLeft,
+  toggleGrassrootsMaterial,
   compareGrassrootsEventSchedule,
   getGrassrootsDisplayStatusLabel,
   getGrassrootsEventCloseout,
@@ -735,6 +737,14 @@ describe("grassrootsData", () => {
       const scattered = summarizeGrassrootsEventDates({ event_dates: [{ event_date: "2026-05-31" }, { event_date: "2026-06-14" }] });
       expect(scattered).toMatchObject({ count: 2, isMultiDay: true, isConsecutive: false });
       expect(summarizeGrassrootsEventDates({})).toMatchObject({ count: 0, isMultiDay: false });
+    });
+
+    it("parses and toggles visit materials (comma-joined, legacy-safe)", () => {
+      expect(parseGrassrootsMaterialsLeft("Consumer brochure, Pens")).toEqual(["Consumer brochure", "Pens"]);
+      expect(parseGrassrootsMaterialsLeft("")).toEqual([]);
+      expect(toggleGrassrootsMaterial("", "Coupon")).toBe("Coupon");
+      expect(toggleGrassrootsMaterial("Coupon, Pens", "Pens")).toBe("Coupon");
+      expect(toggleGrassrootsMaterial("Coupon", "coupon")).toBe(""); // case-insensitive remove
     });
 
     it("makeGrassrootsEventCloseout normalizes the persisted payload", () => {
