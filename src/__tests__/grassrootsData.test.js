@@ -54,7 +54,7 @@ import {
   inferGrassrootsBusinessCategoryFromPlace,
   parseFreeformGrassrootsAddress,
   parseGooglePlaceAddress,
-} from "../kol/pages/GrassrootsPage.jsx";
+} from "../kol/grassrootsAddress.js";
 
 describe("grassrootsData", () => {
   it("renames legacy Deerfield employees to local employees", () => {
