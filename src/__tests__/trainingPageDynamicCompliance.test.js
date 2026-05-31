@@ -273,8 +273,9 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('from("labor_compliance_requirements")');
     expect(source).toContain(".update({");
     expect(source).toContain("is_active: false");
-    // Custom columns persist a configurable display_group (resolved from the free-text group field).
-    expect(source).toContain("display_group: resolveComplianceGroupKeyFromInput(complianceRequirementGroup)");
+    // Custom columns persist a configurable display_group (resolved from the mandatory group field).
+    expect(source).toContain("const groupKey = resolveComplianceGroupKeyFromInput(complianceRequirementGroup)");
+    expect(source).toContain("display_group: groupKey");
     expect(source).toContain("setComplianceRequirementGroup");
     expect(source).toContain('ui_kind: "custom_yes_no"');
     expect(source).not.toContain("Review policy");
@@ -315,6 +316,10 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("resolveComplianceGroupKeyFromInput");
     // Group suggestions derive only from groups actually in use (no hardcoded seed list).
     expect(source).not.toContain('new Set(["custom"');
+    // Group is mandatory: required marker, disabled save, server-side validation, no silent fallback.
+    expect(source).toContain('"Group is required"');
+    expect(source).toContain("!complianceRequirementGroup.trim()");
+    expect(source).not.toContain('if (!trimmed) return "custom"');
   });
 
   it("keeps a Compliance search header on every sub-view, not just Employees", () => {

@@ -13226,7 +13226,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // matches a known label/key, otherwise slugify it into a new group. Blank falls back to "custom".
   const resolveComplianceGroupKeyFromInput = useCallback((text) => {
     const trimmed = String(text || "").trim();
-    if (!trimmed) return "custom";
+    if (!trimmed) return "";
     const match = complianceGroupOptions.find((option) => (
       option.label.toLowerCase() === trimmed.toLowerCase() || option.key === getComplianceGroupKey(trimmed)
     ));
@@ -13269,6 +13269,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       addGlobalToast("Requirement name is required", "error");
       return;
     }
+    const groupKey = resolveComplianceGroupKeyFromInput(complianceRequirementGroup);
+    if (!groupKey) {
+      addGlobalToast("Group is required", "error");
+      return;
+    }
     const locationId = normalizeOptionalUuid(resolvedLaborLocationId);
     if (!locationId) {
       addGlobalToast("Compliance requirements need a resolved labor location", "error");
@@ -13291,7 +13296,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       title,
       description: complianceRequirementDescription.trim() || null,
       evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
-      display_group: resolveComplianceGroupKeyFromInput(complianceRequirementGroup),
+      display_group: groupKey,
       updated_by_user_id: actorUserId || null,
     };
     const nowIso = new Date().toISOString();
@@ -16590,7 +16595,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           placeholder="Optional context"
         />
         <label style={{ display: "block" }}>
-          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Group</span>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Group<span style={{ color: C.dan }}> *</span></span>
           <ComplianceGroupCombobox
             value={complianceRequirementGroup}
             onChange={setComplianceRequirementGroup}
@@ -16611,7 +16616,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </label>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
           <Btn variant="ghost" onClick={closeComplianceRequirementEditor} disabled={savingComplianceRequirement}>Cancel</Btn>
-          <Btn variant="primary" onClick={handleSaveComplianceRequirement} disabled={savingComplianceRequirement || !complianceRequirementTitle.trim()}>
+          <Btn variant="primary" onClick={handleSaveComplianceRequirement} disabled={savingComplianceRequirement || !complianceRequirementTitle.trim() || !complianceRequirementGroup.trim()}>
             {savingComplianceRequirement ? "Saving..." : complianceRequirementEditingRow ? "Save Changes" : "Save Column"}
           </Btn>
         </div>
