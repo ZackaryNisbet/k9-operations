@@ -838,6 +838,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
+    // When the webhook received this request — t1 for synthetic round-trip timing.
+    const receivedAt = new Date().toISOString();
 
     // ── Determine mode: Resend webhook vs direct POST ─────────────────
     let from: string;
@@ -886,6 +888,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!html) {
       return jsonResponse({ error: "No HTML body provided" }, 400);
     }
+
+    // Synthetic health-check probe? ignite-health-check sends a tagged email
+    // through the REAL pipeline every 15 min; we flag the resulting lead so it
+    // never reaches the CRM, and record its round-trip timing in
+    // ignite_health_probe. The marker travels as a visible form field.
+    const probeToken = html.match(/IGNITE-HEALTH-PROBE:([A-Za-z0-9_-]+)/)?.[1] || null;
+    const isSynthetic = !!probeToken;
 
     // Idempotency check — use ignite lead ID from URLs if available
     const quickLeadId = html.match(/[?&]lid=(\d+)/)?.[1] || null;
@@ -1049,6 +1058,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .from("ignite_leads")
       .insert({
         location_id: locationId,
+        is_synthetic: isSynthetic,
+        probe_token: probeToken,
         lead_type: parsed.leadType,
         first_name: parsed.firstName || null,
         last_name: parsed.lastName || null,
@@ -1088,6 +1099,33 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.log(
       `[ignite-webhook] Lead stored: ${lead.id} (${matchStatus})`,
     );
+
+    // Synthetic probe: stamp the round-trip timing and stop here — never create a
+    // lite_client or any downstream side-effect for a health-check email.
+    if (isSynthetic) {
+      const insertedAt = new Date().toISOString();
+      const { data: probeRows } = await supabaseClient
+        .from("ignite_health_probe")
+        .select("sent_at")
+        .eq("token", probeToken)
+        .limit(1);
+      const sentAt = probeRows && probeRows[0] ? probeRows[0].sent_at : null;
+      const latencyMs = sentAt
+        ? Math.max(0, new Date(insertedAt).getTime() - new Date(sentAt).getTime())
+        : null;
+      await supabaseClient
+        .from("ignite_health_probe")
+        .update({
+          received_at: receivedAt,
+          inserted_at: insertedAt,
+          lead_id: lead.id,
+          latency_ms: latencyMs,
+          status: "landed",
+        })
+        .eq("token", probeToken);
+      console.log(`[ignite-webhook] Synthetic probe landed: ${probeToken} (${latencyMs}ms)`);
+      return jsonResponse({ success: true, synthetic: true, leadId: lead.id, probeToken, latencyMs });
+    }
 
     // ── Auto-create or update lite_client for unmatched leads (P8: phone dedup) ──
     let liteClientId: string | null = null;

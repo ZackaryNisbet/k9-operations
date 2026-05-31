@@ -369,7 +369,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     const v = validateInboundEmail(inboundEmail);
     bodyEl = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <IgnitePipelineDiagram locLabel={locLabel} />
+        <IgnitePipelineDiagram locLabel={locLabel} inboundEmail={inboundEmail} />
 
         <div>
           <div style={labelStyle}>{locLabel}'s booking inbox</div>

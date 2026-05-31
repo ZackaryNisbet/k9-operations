@@ -11,7 +11,7 @@ import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
-import { computeIgniteHealth, isSnapshotFresh, healthFromSnapshot } from "../onboarding/igniteHealth";
+import { computeIgniteHealth, isSnapshotFresh, describeHealthBadge, healthChecks, formatAgo, formatUntil, formatClock } from "../onboarding/igniteHealth";
 import {
   DenseTable,
   ListSearchRow,
@@ -63,6 +63,8 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [logLead, setLogLead] = useState(null);
+  const [showHealth, setShowHealth] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const today = todayStr();
   const canSetup = canManageIgnite(profile); // Ignite setup is admin-only, once per location
@@ -92,6 +94,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           .select("*")
           .eq("location_id", locationId)
           .eq("lead_type", "web_form")
+          .eq("is_synthetic", false)
           .order("created_at", { ascending: false })
           .limit(500),
         supabase.from("ignite_lead_updates").select("*").eq("location_id", locationId).order("created_at", { ascending: false }),
@@ -131,7 +134,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   useEffect(() => {
     if (!locationId) return undefined;
     const channel = supabase.channel(`crm-${locationId}`);
-    ["ignite_leads", "ignite_lead_updates"].forEach((table) => {
+    ["ignite_leads", "ignite_lead_updates", "ignite_health"].forEach((table) => {
       channel.on("postgres_changes", { event: "*", schema: "public", table, filter: `location_id=eq.${locationId}` }, () => loadData({ silent: true }));
     });
     channel.subscribe();
@@ -140,6 +143,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     };
   }, [locationId, loadData]);
 
+  // Tick the "verified Xm ago / next run" relative times without a refetch.
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
   const openLog = useCallback((lead) => setLogLead(lead), []);
   const toggleExpand = useCallback((lead) => {
     setExpandedId((cur) => (cur === lead.id ? null : lead.id));
@@ -147,11 +156,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
 
   const categoryCounts = useMemo(() => countByCategory(leads), [leads]);
   const health = useMemo(() => {
-    // Prefer the hourly server snapshot (it also validated the bridge + Resend);
-    // fall back to a client-side guess from freshness + parse-quality.
-    if (serverHealth && isSnapshotFresh(serverHealth)) return healthFromSnapshot(serverHealth);
-    return computeIgniteHealth({ configured: configured === true, lastLeadAt: leads[0] && leads[0].created_at, recentLeads: leads, now: new Date() });
-  }, [serverHealth, configured, leads]);
+    // Prefer the live server snapshot (validated bridge + Resend + DB + round-trip);
+    // fall back to a client-side guess from freshness when there's no fresh snapshot.
+    if (serverHealth && isSnapshotFresh(serverHealth)) return describeHealthBadge(serverHealth, nowTick);
+    const guess = computeIgniteHealth({ configured: configured === true, lastLeadAt: leads[0] && leads[0].created_at, recentLeads: leads, now: new Date() });
+    return { ...guess, ok: guess.level === "ok", verifiedAgo: null, nextClock: null, nextUntil: null };
+  }, [serverHealth, configured, leads, nowTick]);
 
   const columns = useMemo(
     () => [
@@ -289,7 +299,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         </p>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-        {loadState !== "schema" && <HealthBadge health={health} />}
+        {loadState !== "schema" && <HealthBadge model={health} onOpen={() => setShowHealth(true)} />}
         {loadState === "ok" && <span style={{ fontSize: 12, color: C.textMut }}>{filterSubmissions(leads, {}).length} forms</span>}
         {canSetup && (
           <button type="button" onClick={() => setShowWizard(true)} title="Set up or update Ignite for this location" style={iconBtn(configured === false)}>
@@ -363,6 +373,10 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
             loadData();
           }}
         />
+      )}
+
+      {showHealth && (
+        <HealthDetailModal locationId={locationId} snapshot={serverHealth} onClose={() => setShowHealth(false)} />
       )}
     </div>
   );
@@ -525,18 +539,140 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
 // Setup states (launch the onboarding wizard)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Dashboard-style pipeline health pill (colored dot + label, detail on hover).
-function HealthBadge({ health }) {
-  const colors = { success: C.suc, warning: C.warn, danger: C.dan, neutral: C.textMut };
-  const c = colors[health.tone] || C.textMut;
+// At-a-glance pipeline health pill: green check + "Verified Xm ago · next 4:15".
+// Click to open the full detail panel. Detail/cadence live in the tooltip too.
+const HEALTH_COLORS = { success: C.suc, warning: C.warn, danger: C.dan, neutral: C.textMut };
+
+function HealthBadge({ model, onOpen }) {
+  const c = HEALTH_COLORS[model.tone] || C.textMut;
+  const primary = model.ok && model.verifiedAgo ? `Verified ${model.verifiedAgo}` : model.label;
+  const title = [model.detail, model.nextClock ? `Next run ${model.nextClock} (every 15 min)` : null].filter(Boolean).join(" · ");
   return (
-    <span
-      title={health.detail}
-      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${c}40`, background: `${c}0F`, fontSize: 12.5, fontWeight: 700, color: c, cursor: "default", whiteSpace: "nowrap" }}
+    <button
+      type="button"
+      onClick={onOpen}
+      title={title || model.detail}
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${c}40`, background: `${c}0F`, fontSize: 12.5, fontWeight: 700, color: c, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}
     >
-      <span style={{ width: 8, height: 8, borderRadius: 99, background: c, boxShadow: `0 0 6px ${c}80` }} />
-      {health.label}
-    </span>
+      {model.ok ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill={c} /><path d="M5 8.2l2 2 4-4.6" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      ) : (
+        <span style={{ width: 8, height: 8, borderRadius: 99, background: c, boxShadow: `0 0 6px ${c}80` }} />
+      )}
+      {primary}
+      {model.nextClock ? <span style={{ color: C.textMut, fontWeight: 600 }}>· next {model.nextClock}</span> : null}
+    </button>
+  );
+}
+
+// Full pipeline-health panel — every check + the per-run latencies, in detail.
+function HealthDetailModal({ locationId, snapshot, onClose }) {
+  const [runs, setRuns] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    supabase
+      .from("ignite_health")
+      .select("*")
+      .eq("location_id", locationId)
+      .order("checked_at", { ascending: false })
+      .limit(25)
+      .then(({ data }) => { if (alive) setRuns(data || []); }, () => { if (alive) setRuns([]); });
+    return () => { alive = false; };
+  }, [locationId]);
+
+  const latest = snapshot || (runs && runs[0]) || null;
+  const checks = healthChecks(latest);
+  const lvlTone = { ok: "success", warn: "warning", down: "danger", unconfigured: "neutral" };
+  const headC = HEALTH_COLORS[lvlTone[latest && latest.level] || "neutral"];
+  const headLabel = latest
+    ? { ok: "Healthy", warn: "Needs attention", down: "Pipeline down", unconfigured: "Not connected" }[latest.level] || "Unknown"
+    : "No data yet";
+  const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" };
+  const dot = (ok) => <span style={{ width: 9, height: 9, borderRadius: 99, flexShrink: 0, background: ok === true ? C.suc : ok === false ? C.dan : C.textMut }} />;
+  const cols = "1.3fr 0.7fr 0.8fr 0.8fr 0.6fr 0.9fr";
+
+  return (
+    <Modal title="Pipeline health" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 10, border: `1px solid ${headC}40`, background: `${headC}0D` }}>
+          <span style={{ width: 11, height: 11, borderRadius: 99, background: headC, marginTop: 3, flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{headLabel}</div>
+            <div style={{ fontSize: 12.5, color: C.textSec, marginTop: 2 }}>{(latest && latest.detail) || "Awaiting the first health run."}</div>
+            <div style={{ fontSize: 11.5, color: C.textMut, marginTop: 6 }}>
+              {latest && latest.checked_at ? `Last verified ${formatAgo(latest.checked_at)}` : "Not yet verified"}
+              {latest && latest.next_run_at ? ` · next run ${formatClock(latest.next_run_at)} (${formatUntil(latest.next_run_at) || "soon"})` : ""}
+              {" · every 15 min"}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style={SECTION_LABEL}>Checks · latest run</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {checks.map((ch) => (
+              <div key={ch.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {dot(ch.ok)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>{ch.label}</div>
+                  <div style={{ fontSize: 11, color: C.textMut }}>{ch.note}</div>
+                </div>
+                <div style={{ ...mono, fontSize: 11.5, fontWeight: 700, color: ch.ok === false ? C.dan : C.textSec, whiteSpace: "nowrap" }}>
+                  {ch.ms != null ? `${ch.ms} ms` : ch.ok == null ? "idle" : ch.ok ? "ok" : "fail"}
+                </div>
+              </div>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {dot(latest && latest.last_lead_at ? true : null)}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>Real-lead freshness</div>
+                <div style={{ fontSize: 11, color: C.textMut }}>Newest non-synthetic submission</div>
+              </div>
+              <div style={{ ...mono, fontSize: 11.5, fontWeight: 700, color: C.textSec, whiteSpace: "nowrap" }}>{latest && latest.last_lead_at ? formatAgo(latest.last_lead_at) : "none"}</div>
+            </div>
+          </div>
+        </div>
+
+        {latest && latest.probe_sent_at ? (
+          <div>
+            <div style={SECTION_LABEL}>Last synthetic round-trip</div>
+            <div style={{ ...mono, fontSize: 12, color: C.textSec, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span>sent_at &nbsp;&nbsp;&nbsp;{formatClock(latest.probe_sent_at)}</span>
+              <span>received_at {latest.probe_received_at ? formatClock(latest.probe_received_at) : "—"}</span>
+              <span>inserted_at {latest.probe_inserted_at ? formatClock(latest.probe_inserted_at) : "—"}</span>
+              <span>latency &nbsp;&nbsp;&nbsp;{latest.roundtrip_ms != null ? `${latest.roundtrip_ms} ms` : "—"}</span>
+            </div>
+          </div>
+        ) : null}
+
+        <div>
+          <div style={SECTION_LABEL}>Recent runs</div>
+          {runs == null ? (
+            <div style={{ fontSize: 12, color: C.textMut }}>Loading…</div>
+          ) : runs.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.textMut }}>No runs recorded yet.</div>
+          ) : (
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", ...mono }}>
+              <div style={{ display: "grid", gridTemplateColumns: cols, fontSize: 10, fontWeight: 800, color: C.textMut, padding: "6px 10px", borderBottom: `1px solid ${C.border}`, background: C.surfaceHover, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                <span>time</span><span>level</span><span>bridge</span><span>resend</span><span>db</span><span>round-trip</span>
+              </div>
+              <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                {runs.map((r) => (
+                  <div key={r.id} style={{ display: "grid", gridTemplateColumns: cols, fontSize: 10.5, color: C.textSec, padding: "5px 10px", borderBottom: `1px solid ${C.border}` }}>
+                    <span>{formatClock(r.checked_at)}</span>
+                    <span style={{ fontWeight: 700, color: r.level === "ok" ? C.suc : r.level === "down" ? C.dan : C.warn }}>{r.level}</span>
+                    <span>{r.bridge_ms != null ? `${r.bridge_ms}ms` : r.bridge_ok ? "ok" : "—"}</span>
+                    <span>{r.resend_ms != null ? `${r.resend_ms}ms` : r.resend_ok == null ? "—" : r.resend_ok ? "ok" : "fail"}</span>
+                    <span>{r.db_ms != null ? `${r.db_ms}ms` : "—"}</span>
+                    <span>{r.roundtrip_ms != null ? `${r.roundtrip_ms}ms` : r.roundtrip_ok == null ? "idle" : r.roundtrip_ok ? "ok" : "miss"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -118,3 +118,70 @@ export function computeIgniteHealth({ configured, bridgeOk, lastLeadAt, now = ne
     detail: days === 0 ? "Submission received today." : `Last submission ${days} day${days === 1 ? "" : "s"} ago.`,
   };
 }
+
+// ── At-a-glance badge + detail helpers (read the per-run ignite_health snapshot) ──
+
+/** Compact relative age: "12s ago" / "3m ago" / "2h ago" / "5d ago". */
+export function formatAgo(from, now = Date.now()) {
+  if (!from) return null;
+  const ms = now - new Date(from).getTime();
+  if (Number.isNaN(ms)) return null;
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+/** Time remaining to a future instant: "in 12m" / "in 2h" / "due now". */
+export function formatUntil(to, now = Date.now()) {
+  if (!to) return null;
+  const ms = new Date(to).getTime() - now;
+  if (Number.isNaN(ms)) return null;
+  if (ms <= 0) return "due now";
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `in ${m}m` : `in ${Math.round(m / 60)}h`;
+}
+
+/** Local wall-clock "4:15 PM". */
+export function formatClock(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/** Badge model from the latest snapshot — what the at-a-glance pill renders. */
+export function describeHealthBadge(snapshot, now = Date.now()) {
+  if (!snapshot || !snapshot.checked_at) return null;
+  const level = snapshot.level || "unconfigured";
+  return {
+    level,
+    tone: HEALTH_TONES[level] || HEALTH_TONES.unconfigured,
+    ok: level === "ok",
+    label: SNAPSHOT_LABELS[level] || "Unknown",
+    verifiedAgo: formatAgo(snapshot.checked_at, now),
+    nextClock: formatClock(snapshot.next_run_at),
+    nextUntil: formatUntil(snapshot.next_run_at, now),
+    detail: snapshot.detail || "",
+  };
+}
+
+/** Per-dependency check rows for the detail panel (excruciating detail). */
+export function healthChecks(snapshot) {
+  if (!snapshot) return [];
+  return [
+    { key: "bridge", label: "Parser & routing", ok: snapshot.bridge_ok, ms: snapshot.bridge_ms, note: "Dry-run through the live webhook — no data written" },
+    { key: "resend", label: "Resend API", ok: snapshot.resend_ok, ms: snapshot.resend_ms, note: "Inbound relay reachable (catches key / billing / outage)" },
+    { key: "db", label: "Database write path", ok: snapshot.db_ok, ms: snapshot.db_ms, note: "Postgres round-trip latency" },
+    {
+      key: "roundtrip",
+      label: "Synthetic round-trip",
+      ok: snapshot.roundtrip_ok,
+      ms: snapshot.roundtrip_ms,
+      note: snapshot.roundtrip_ok == null ? "Idle — set IGNITE_INBOUND_ADDRESS to enable the canary" : "Tagged email sent through the real pipeline, confirmed in ignite_leads",
+    },
+  ];
+}

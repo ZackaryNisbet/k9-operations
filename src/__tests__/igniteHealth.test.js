@@ -7,6 +7,11 @@ import {
   computeIgniteHealth,
   isSnapshotFresh,
   healthFromSnapshot,
+  formatAgo,
+  formatUntil,
+  formatClock,
+  describeHealthBadge,
+  healthChecks,
 } from "../kol/onboarding/igniteHealth";
 
 const wellFormed = { first_name: "A", last_name: "B", email: "a@b.com", phone: "1" };
@@ -99,5 +104,57 @@ describe("computeIgniteHealth", () => {
     const h = computeIgniteHealth({ configured: true, lastLeadAt: "2026-05-30T00:00:00Z", now, recentLeads: [wellFormed] });
     expect(h.level).toBe("ok");
     expect(h.label).toBe("Live");
+  });
+});
+
+describe("formatAgo / formatUntil", () => {
+  const now = Date.parse("2026-05-31T05:00:00Z");
+  it("formats elapsed time compactly", () => {
+    expect(formatAgo("2026-05-31T04:59:30Z", now)).toBe("30s ago");
+    expect(formatAgo("2026-05-31T04:57:00Z", now)).toBe("3m ago");
+    expect(formatAgo("2026-05-31T03:00:00Z", now)).toBe("2h ago");
+    expect(formatAgo("2026-05-29T05:00:00Z", now)).toBe("2d ago");
+    expect(formatAgo(null, now)).toBeNull();
+  });
+  it("formats time remaining to the next run", () => {
+    expect(formatUntil("2026-05-31T05:12:00Z", now)).toBe("in 12m");
+    expect(formatUntil("2026-05-31T04:50:00Z", now)).toBe("due now");
+    expect(formatUntil(null, now)).toBeNull();
+  });
+});
+
+describe("formatClock", () => {
+  it("renders a clock string for a valid time, null otherwise", () => {
+    expect(typeof formatClock("2026-05-31T05:15:00Z")).toBe("string");
+    expect(formatClock(null)).toBeNull();
+    expect(formatClock("not-a-date")).toBeNull();
+  });
+});
+
+describe("describeHealthBadge", () => {
+  const now = Date.parse("2026-05-31T05:00:00Z");
+  it("summarizes an ok snapshot with verified + next-run timing", () => {
+    const b = describeHealthBadge(
+      { level: "ok", checked_at: "2026-05-31T04:58:00Z", next_run_at: "2026-05-31T05:15:00Z", detail: "Pipeline validated" },
+      now
+    );
+    expect(b.ok).toBe(true);
+    expect(b.tone).toBe("success");
+    expect(b.verifiedAgo).toBe("2m ago");
+    expect(b.nextUntil).toBe("in 15m");
+  });
+  it("is not ok for warn, and is null without a snapshot", () => {
+    expect(describeHealthBadge({ level: "warn", checked_at: "2026-05-31T04:58:00Z" }, now).ok).toBe(false);
+    expect(describeHealthBadge(null)).toBeNull();
+  });
+});
+
+describe("healthChecks", () => {
+  it("lists the four dependency checks with latencies", () => {
+    const rows = healthChecks({ bridge_ok: true, bridge_ms: 217, resend_ok: true, resend_ms: 98, db_ok: true, db_ms: 19, roundtrip_ok: null });
+    expect(rows.map((r) => r.key)).toEqual(["bridge", "resend", "db", "roundtrip"]);
+    expect(rows[0].ms).toBe(217);
+    expect(rows[3].ok).toBeNull(); // round-trip idle when the canary is disabled
+    expect(healthChecks(null)).toEqual([]);
   });
 });
