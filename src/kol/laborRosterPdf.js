@@ -311,23 +311,6 @@ function buildRosterGroups(rows = []) {
     });
 }
 
-function splitLargeGroups(groups, options) {
-  const detailMode = options.showCommitment || options.showPhone || options.showEmail;
-  const maxRowsPerGroup = detailMode ? 4 : 8;
-  return groups.flatMap((group) => {
-    if (group.rows.length <= maxRowsPerGroup) return [group];
-    const chunkSize = detailMode ? maxRowsPerGroup : Math.ceil(group.rows.length / 2);
-    const chunks = [];
-    for (let index = 0; index < group.rows.length; index += chunkSize) {
-      chunks.push({
-        ...group,
-        rows: group.rows.slice(index, index + chunkSize),
-      });
-    }
-    return chunks;
-  });
-}
-
 function getDetailLines(row, options) {
   const lines = [];
   const topLine = [];
@@ -570,13 +553,16 @@ function drawGroup(page, group, x, topY, width, fonts, options, scale = 1) {
     color: color(BRAND.blue),
     maxWidth: width - inset - 45,
   });
-  drawTextInBox(page, `${group.rows.length}`, x + width - 34, topY - headerHeight, headerHeight, {
-    font: fonts.bodyBold,
-    size: (detailMode ? 9 : 8.8) * scale,
-    color: color(BRAND.gold),
-    maxWidth: 22,
-    align: "right",
-  });
+  const countLabel = group.count === null ? "" : `${group.count ?? group.rows.length}`;
+  if (countLabel) {
+    drawTextInBox(page, countLabel, x + width - 34, topY - headerHeight, headerHeight, {
+      font: fonts.bodyBold,
+      size: (detailMode ? 9 : 8.8) * scale,
+      color: color(BRAND.gold),
+      maxWidth: 22,
+      align: "right",
+    });
+  }
 
   let y = detailMode ? topY - headerHeight : topY - 39 * scale;
   group.rows.forEach((row, index) => {
@@ -658,40 +644,76 @@ async function embedLogo(pdfDoc, assets = {}) {
   }
 }
 
-// Pick the emptiest column the group still fits in, matching the original
-// behaviour: among columns whose remaining height clears CONTENT_BOTTOM, take
-// the one with the highest cursor (ties resolve to the lowest index).
-function firstFitColumnIndex(columns, groupHeight) {
-  let bestIndex = -1;
-  let bestY = -Infinity;
-  columns.forEach((y, index) => {
-    if (y - groupHeight >= CONTENT_BOTTOM && y > bestY) {
-      bestIndex = index;
-      bestY = y;
+// Content top for any page after the first — mirrors drawMasthead's `pageNumber > 1`
+// branch, used to flow overflow rows on the rare multi-page fallback.
+const CONTINUATION_CONTENT_TOP = PAGE_HEIGHT - 104;
+
+// One segment of a role: the slice of rows drawn as a single card. The first
+// segment of a role carries its full headcount; continuations hide the count
+// and append "(cont.)" so a role reads as one list even when it spans columns.
+function makeRosterSegment(group, rows, continued) {
+  return {
+    label: continued ? `${group.label} (cont.)` : group.label,
+    rows,
+    count: continued ? null : group.rows.length,
+  };
+}
+
+// Flow the roles down each column and into the next, slicing a role only when it
+// genuinely runs off the bottom of a column — never into fixed-size chunks, and
+// never two pieces of the same role stacked in one column. Returns the placed
+// segments and the page count (1 when the whole roster fits a single sheet).
+function planRosterFlow(groups, options, fonts, columnWidth, columnGap, contentTop, scale) {
+  const placements = [];
+  let page = 0;
+  let column = 0;
+  let cursorY = contentTop;
+  const topForPage = (pageIndex) => (pageIndex === 0 ? contentTop : CONTINUATION_CONTENT_TOP);
+  const advanceColumn = () => {
+    column += 1;
+    if (column >= ROSTER_COLUMN_COUNT) {
+      page += 1;
+      column = 0;
     }
-  });
-  return bestIndex;
-}
+    cursorY = topForPage(page);
+  };
+  const segmentHeight = (group, rows, continued) =>
+    measureGroupHeight(makeRosterSegment(group, rows, continued), options, fonts, columnWidth, scale);
 
-// Dry-run the column packer to learn whether every group fits on a single page
-// at the given density. Mirrors drawRosterGroups exactly (sans drawing).
-function fitsOnSinglePage(groups, options, fonts, columnWidth, contentTop, scale) {
-  const columns = Array.from({ length: ROSTER_COLUMN_COUNT }, () => contentTop);
   for (const group of groups) {
-    const groupHeight = measureGroupHeight(group, options, fonts, columnWidth, scale);
-    const index = firstFitColumnIndex(columns, groupHeight);
-    if (index < 0) return false;
-    columns[index] = columns[index] - groupHeight - INTER_GROUP_GAP * scale;
+    let start = 0;
+    let continued = false;
+    while (start < group.rows.length) {
+      if (cursorY - segmentHeight(group, group.rows.slice(start, start + 1), continued) < CONTENT_BOTTOM) {
+        // Header + one row won't fit here. If the column is already empty, the
+        // density is too small to place anything — bail so the caller scales down.
+        if (cursorY >= topForPage(page)) return { placements, pageCount: Infinity };
+        advanceColumn();
+        continue;
+      }
+      let end = start + 1;
+      while (end < group.rows.length
+        && cursorY - segmentHeight(group, group.rows.slice(start, end + 1), continued) >= CONTENT_BOTTOM) {
+        end += 1;
+      }
+      const segment = makeRosterSegment(group, group.rows.slice(start, end), continued);
+      placements.push({ page, x: MARGIN_X + column * (columnWidth + columnGap), topY: cursorY, segment });
+      cursorY -= measureGroupHeight(segment, options, fonts, columnWidth, scale) + INTER_GROUP_GAP * scale;
+      start = end;
+      continued = true;
+      if (start < group.rows.length) advanceColumn();
+    }
   }
-  return true;
+  return { placements, pageCount: page + 1 };
 }
 
-// Largest density (<= 1) at which the whole roster fits on one page. Returns 1
-// whenever the natural layout already fits, so normal team sizes render exactly
-// as before; binary-searches down to MIN_FIT_SCALE for larger teams.
-function computeRosterFitScale(groups, options, fonts, columnWidth, contentTop) {
+// Largest density (<= 1) at which the roster flows onto a single page. Returns 1
+// whenever it already fits, so normal team sizes render exactly as before;
+// binary-searches down to MIN_FIT_SCALE for larger teams.
+function computeRosterFitScale(groups, options, fonts, columnWidth, columnGap, contentTop) {
   if (!groups.length) return 1;
-  const fits = (scale) => fitsOnSinglePage(groups, options, fonts, columnWidth, contentTop, scale);
+  const fits = (scale) =>
+    planRosterFlow(groups, options, fonts, columnWidth, columnGap, contentTop, scale).pageCount === 1;
   if (fits(1)) return 1;
   if (!fits(MIN_FIT_SCALE)) return MIN_FIT_SCALE;
   let low = MIN_FIT_SCALE;
@@ -708,37 +730,33 @@ function drawRosterGroups(pdfDoc, firstPage, payload, fonts, logoImage, options,
   const detailMode = options.showCommitment || options.showPhone || options.showEmail;
   const gap = detailMode ? 12 : 16;
   const columnWidth = (PAGE_WIDTH - MARGIN_X * 2 - gap * (ROSTER_COLUMN_COUNT - 1)) / ROSTER_COLUMN_COUNT;
-  const pages = [firstPage];
-  let page = firstPage;
-  let contentTop = drawMasthead(page, payload, fonts, logoImage, options, 1);
+  const contentTop = drawMasthead(firstPage, payload, fonts, logoImage, options, 1);
 
   if (!groups.length) {
-    drawText(page, "No active employees found.", MARGIN_X, contentTop - 18, {
+    drawText(firstPage, "No active employees found.", MARGIN_X, contentTop - 18, {
       font: fonts.bodyBold,
       size: 10,
       color: color(BRAND.bronze),
       maxWidth: PAGE_WIDTH - MARGIN_X * 2,
     });
-    return pages;
+    return [firstPage];
   }
 
-  const scale = computeRosterFitScale(groups, options, fonts, columnWidth, contentTop);
-  let columns = Array.from({ length: ROSTER_COLUMN_COUNT }, () => contentTop);
+  const scale = computeRosterFitScale(groups, options, fonts, columnWidth, gap, contentTop);
+  const { placements, pageCount } = planRosterFlow(groups, options, fonts, columnWidth, gap, contentTop, scale);
 
-  groups.forEach((group) => {
-    const groupHeight = measureGroupHeight(group, options, fonts, columnWidth, scale);
-    let columnIndex = firstFitColumnIndex(columns, groupHeight);
-    if (columnIndex < 0) {
-      page = addPage(pdfDoc);
-      pages.push(page);
-      contentTop = drawMasthead(page, payload, fonts, logoImage, options, pages.length);
-      columns = Array.from({ length: ROSTER_COLUMN_COUNT }, () => contentTop);
-      columnIndex = firstFitColumnIndex(columns, groupHeight);
-      if (columnIndex < 0) columnIndex = 0;
-    }
-    const x = MARGIN_X + columnIndex * (columnWidth + gap);
-    const topY = columns[columnIndex];
-    columns[columnIndex] = drawGroup(page, group, x, topY, columnWidth, fonts, options, scale) - INTER_GROUP_GAP * scale;
+  const pages = [firstPage];
+  const totalPages = Number.isFinite(pageCount) ? pageCount : 1;
+  for (let pageIndex = 1; pageIndex < totalPages; pageIndex += 1) {
+    const nextPage = addPage(pdfDoc);
+    pages.push(nextPage);
+    drawMasthead(nextPage, payload, fonts, logoImage, options, pageIndex + 1);
+  }
+
+  placements.forEach((placement) => {
+    const page = pages[placement.page];
+    if (!page) return;
+    drawGroup(page, placement.segment, placement.x, placement.topY, columnWidth, fonts, options, scale);
   });
   return pages;
 }
@@ -759,7 +777,7 @@ export async function buildLaborRosterPdfBytes(payload = {}) {
 
   const page = addPage(pdfDoc);
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const groups = splitLargeGroups(buildRosterGroups(rows), options);
+  const groups = buildRosterGroups(rows);
   const pages = drawRosterGroups(pdfDoc, page, payload, fonts, logoImage, options, groups);
 
   pages.forEach((pdfPage, index) => {
