@@ -2889,16 +2889,18 @@ function DenseGrassrootsTable({
                 </div>
               ) : (
                 <div
+                  onClick={isActivityFeed && onEdit ? () => onEdit(target) : undefined}
                   style={{
                     fontSize: 11,
                     color: C.textSec,
                     lineHeight: 1.35,
                     display: "-webkit-box",
-                    WebkitLineClamp: 3,
+                    WebkitLineClamp: isActivityFeed ? 4 : 3,
                     WebkitBoxOrient: "vertical",
                     overflow: "hidden",
+                    cursor: isActivityFeed && onEdit ? "pointer" : undefined,
                   }}
-                  title={cm.show.notes ? notePreview : undefined}
+                  title={isActivityFeed ? "Click to edit this visit" : (cm.show.notes ? notePreview : undefined)}
                 >
                   {cm.show.notes ? notePreview : null}
                 </div>
