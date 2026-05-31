@@ -123,13 +123,11 @@ export const GRASSROOTS_DEFAULT_FILTERS = {
 };
 
 export function getGrassrootsDefaultFilters(category = "events") {
-  const config = getGrassrootsCategoryConfig(category);
-  if (config.id === "events") {
-    return {
-      ...GRASSROOTS_DEFAULT_FILTERS,
-      leads_captured: { op: "=", val: "0" },
-    };
-  }
+  // `category` is retained for API compatibility. Events used to also hide
+  // leads_captured>0 by default, but that proxy made an event vanish the moment
+  // results were logged. Closed (details.closeout) and past events are now archived
+  // out of the default view by the page's closeout/past-event logic instead, so the
+  // default filter is just "active records" for every category.
   return { ...GRASSROOTS_DEFAULT_FILTERS };
 }
 
@@ -293,6 +291,69 @@ export function getGrassrootsNextEventDate(target = {}, today = new Date().toISO
   const dates = normalizeGrassrootsEventDates(target);
   if (dates.length === 0) return "";
   return dates.find((row) => row.event_date >= today)?.event_date || dates[dates.length - 1]?.event_date || "";
+}
+
+// The last calendar day of the event (multi-day events end on their latest date).
+export function getGrassrootsFinalEventDate(target = {}) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length > 0) return dates[dates.length - 1].event_date;
+  return target.event_end_date || target.event_start_date || "";
+}
+
+// Closeout lives in details.closeout (the save RPC already persists `details`),
+// so a "Finished" event needs no DB schema/status change.
+export function getGrassrootsEventCloseout(target = {}) {
+  const closeout = target?.details?.closeout;
+  return closeout && typeof closeout === "object" ? closeout : null;
+}
+
+export function isGrassrootsEventClosed(target = {}) {
+  return Boolean(getGrassrootsEventCloseout(target)?.closed_at);
+}
+
+// An event is "past" only once the day AFTER its final day arrives — i.e. the final
+// event date is strictly before today. Today's / in-progress events are NOT past.
+export function isGrassrootsEventPast(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  const finalDate = getGrassrootsFinalEventDate(target);
+  return Boolean(finalDate) && finalDate < today;
+}
+
+// An event drops out of the default tracker view once it is closed OR past.
+export function isGrassrootsEventArchivedFromDefault(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  return isGrassrootsEventClosed(target) || isGrassrootsEventPast(target, today);
+}
+
+// You can only close out an event once you've reached (or passed) its final day.
+export function canCloseGrassrootsEvent(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  if (isGrassrootsEventClosed(target)) return false;
+  const finalDate = getGrassrootsFinalEventDate(target);
+  return Boolean(finalDate) && finalDate <= today;
+}
+
+export const GRASSROOTS_FINISHED_STATUS = "finished";
+
+// Display-only status: a closed event reads as "Finished" even though its stored DB
+// status stays one of the four canonical values (the CHECK constraint forbids others).
+export function getGrassrootsEventDisplayStatus(target = {}) {
+  if (isGrassrootsEventClosed(target)) return GRASSROOTS_FINISHED_STATUS;
+  return normalizeGrassrootsStatus(target.status);
+}
+
+export function getGrassrootsDisplayStatusLabel(target = {}) {
+  if (isGrassrootsEventClosed(target)) return "Finished";
+  return getGrassrootsStatusLabel(target.status);
+}
+
+// Pure builder for the details.closeout payload written when an event is closed out.
+export function makeGrassrootsEventCloseout({ leadsCaptured, cpl, notes, closedAt, closedByUserId, closedByName } = {}) {
+  return {
+    closed_at: closedAt || new Date().toISOString().slice(0, 10),
+    leads_captured: parseInteger(leadsCaptured) ?? 0,
+    cpl: parseDecimal(cpl) ?? null,
+    notes: String(notes || "").trim(),
+    closed_by_user_id: closedByUserId || null,
+    closed_by_name: closedByName || null,
+  };
 }
 
 export function compareGrassrootsEventSchedule(left = {}, right = {}, today = new Date().toISOString().slice(0, 10), direction = "asc") {
