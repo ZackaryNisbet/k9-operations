@@ -9,7 +9,7 @@
 
 import { isDateKey, compareEvents } from "../../shared/calendarGrid";
 
-export const SOURCE_ORDER = ["labor", "review", "training", "marketing", "enrichment", "inventory"];
+export const SOURCE_ORDER = ["labor", "compliance", "training", "marketing", "enrichment", "inventory"];
 
 const SOURCE_SET = new Set(SOURCE_ORDER);
 
