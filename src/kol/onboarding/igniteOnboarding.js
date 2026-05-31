@@ -29,7 +29,27 @@ export const TEST_SAMPLES = {
   ad_click: SAMPLE_AD_CLICK_EMAIL,
 };
 
+// Ignite is paired once per location and the setup is restricted to location
+// admins and up (a CSR shouldn't be wiring integrations). These are the raw
+// role strings that resolve to location_admin or higher.
+export const IGNITE_ADMIN_ROLES = new Set([
+  "location_admin", "admin",
+  "multi_location_admin", "multi_loc_admin", "regional",
+  "enterprise_admin", "owner", "developer",
+  "role_owner", "role_enterprise_admin",
+]);
+
+export function canManageIgnite(profile) {
+  const role = String((profile && (profile.role || profile.role_code)) || "").toLowerCase().trim();
+  return IGNITE_ADMIN_ROLES.has(role);
+}
+
 export const IGNITE_WEBHOOK_PATH = "/functions/v1/ignite-webhook";
+
+// The single K9 Ops inbound address every location forwards booking-form emails
+// to. Routing to the right location happens by the website slug in the email
+// body, so one shared address works for all locations.
+export const IGNITE_INBOUND_ADDRESS = "leads@inbound.k9operations.com";
 
 /** Build the edge-function URL from a Supabase project URL. */
 export function igniteWebhookUrl(supabaseUrl) {
@@ -61,9 +81,32 @@ export function normalizeProfileId(raw) {
   return String(raw == null ? "" : raw).trim();
 }
 
+/** Does this input look like a pasted URL rather than a bare code? */
+export function inputLooksLikeUrl(input) {
+  return /https?:\/\/|idigitalstrategies|\/profile\/|\.com/i.test(String(input || ""));
+}
+
+/**
+ * Pull the numeric account/profile ID out of either a bare code or a pasted
+ * Ignite URL — e.g. "leads.idigitalstrategies.com/profile/156865/leads" → "156865",
+ * or "156865" → "156865". Returns "" when nothing usable is found.
+ */
+export function extractProfileId(input) {
+  const raw = String(input == null ? "" : input).trim();
+  if (!raw) return "";
+  const profileMatch = raw.match(/profile\/(\d+)/i); // .../profile/156865/...
+  if (profileMatch) return profileMatch[1];
+  if (/^\d+$/.test(raw)) return raw; // bare numeric code
+  if (inputLooksLikeUrl(raw)) {
+    const digits = raw.match(/(\d{4,})/); // a URL with a long digit run
+    if (digits) return digits[1];
+  }
+  return "";
+}
+
 export function validateProfileId(raw) {
-  const value = normalizeProfileId(raw);
-  if (!value) return { ok: false, error: "Enter this location's Ignite Profile ID." };
+  const value = extractProfileId(raw);
+  if (!value) return { ok: false, error: "Paste your Ignite leads URL or type the numeric ID." };
   return { ok: true, value };
 }
 

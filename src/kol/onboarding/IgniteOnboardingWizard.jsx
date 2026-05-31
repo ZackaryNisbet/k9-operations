@@ -19,6 +19,8 @@ import {
   stepIndex,
   canAdvance,
   validateProfileId,
+  extractProfileId,
+  inputLooksLikeUrl,
   validateInboundEmail,
   buildIgniteConfigPayload,
   buildLiteSettingsValue,
@@ -26,6 +28,8 @@ import {
   buildTestEmail,
   interpretTestResult,
   igniteWebhookUrl,
+  IGNITE_INBOUND_ADDRESS,
+  canManageIgnite,
   TEST_SAMPLES,
 } from "./igniteOnboarding";
 
@@ -84,6 +88,99 @@ function ResultBanner({ tone, children }) {
       {children}
     </div>
   );
+}
+
+// ── URL anatomy chip (one labeled segment of the address) ───────────────────
+function UrlSeg({ children, label, highlight }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+      <span
+        style={{
+          padding: "3px 7px",
+          borderRadius: 5,
+          fontWeight: highlight ? 800 : 600,
+          background: highlight ? `${C.pri}14` : C.surfaceHover,
+          color: highlight ? C.pri : C.textSec,
+          border: `1px solid ${highlight ? `${C.pri}55` : C.border}`,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </span>
+      {label ? (
+        <span style={{ fontSize: 9.5, color: highlight ? C.pri : C.textMut, fontWeight: highlight ? 800 : 500 }}>{label}</span>
+      ) : (
+        <span style={{ height: 9.5 }} />
+      )}
+    </div>
+  );
+}
+
+// ── Future-proof wireframe browser showing where the account ID lives in the
+// Ignite URL. Generic + theme-matched (no screenshots), so it never goes stale.
+function IgniteUrlGraphic({ id }) {
+  const shown = id || "156865";
+  return (
+    <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: C.surfaceHover, borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: "flex", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 99, background: "#E2E8F0" }} />
+          <span style={{ width: 9, height: 9, borderRadius: 99, background: "#E2E8F0" }} />
+          <span style={{ width: 9, height: 9, borderRadius: 99, background: "#E2E8F0" }} />
+        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, marginLeft: 6, padding: "6px 12px", borderRadius: 99, background: C.bg, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "monospace", color: C.textMut, overflow: "hidden", whiteSpace: "nowrap" }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" style={{ flexShrink: 0 }}>
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            leads.idigitalstrategies.com/profile/
+            <span style={{ background: `${C.pri}1A`, color: C.pri, fontWeight: 800, padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}55` }}>{shown}</span>
+            /leads
+          </span>
+        </div>
+      </div>
+      <div style={{ padding: "14px 14px 12px", display: "flex", alignItems: "flex-start", gap: 2, fontSize: 11, fontFamily: "monospace", flexWrap: "wrap" }}>
+        <UrlSeg label="">leads.idigitalstrategies.com</UrlSeg>
+        <span style={{ color: C.textMut, padding: "3px 2px", fontWeight: 700 }}>/</span>
+        <UrlSeg label="">profile</UrlSeg>
+        <span style={{ color: C.textMut, padding: "3px 2px", fontWeight: 700 }}>/</span>
+        <UrlSeg label="your account ID" highlight>{shown}</UrlSeg>
+        <span style={{ color: C.textMut, padding: "3px 2px", fontWeight: 700 }}>/</span>
+        <UrlSeg label="">leads</UrlSeg>
+      </div>
+    </div>
+  );
+}
+
+// ── Small forwarding-flow diagram (Booking form → inbox → CRM) ──────────────
+function FlowNode({ icon, label, accent }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, flex: 1, minWidth: 0 }}>
+      <div
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 9,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: accent ? C.pri : C.textSec,
+          background: accent ? `${C.pri}14` : C.surface,
+          border: `1px solid ${accent ? `${C.pri}40` : C.border}`,
+        }}
+      >
+        {icon}
+      </div>
+      <span style={{ fontSize: 10.5, fontWeight: 700, color: accent ? C.pri : C.textMut, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function FlowArrow() {
+  return <span style={{ color: C.textMut, fontSize: 16, flexShrink: 0, marginBottom: 16 }}>→</span>;
 }
 
 export default function IgniteOnboardingWizard({ locationId, profile, onClose, onComplete }) {
@@ -145,7 +242,8 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
   const advanceOk = canAdvance(stepId, draft);
 
   const saveConfig = useCallback(async () => {
-    const payload = buildIgniteConfigPayload({ locationId, profileId, inboundEmail, isActive: true });
+    const cleanId = extractProfileId(profileId);
+    const payload = buildIgniteConfigPayload({ locationId, profileId: cleanId, inboundEmail, isActive: true });
     const { data: existing } = await supabase.from("ignite_config").select("id").eq("location_id", locationId).limit(1);
     const res =
       existing && existing.length
@@ -159,7 +257,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
         {
           location_id: locationId,
           setting_key: "ignite_config",
-          setting_value: buildLiteSettingsValue({ profileId, inboundEmail, connected: true }),
+          setting_value: buildLiteSettingsValue({ profileId: cleanId, inboundEmail, connected: true }),
           updated_by: (profile && profile.id) || null,
         },
         { onConflict: "location_id,setting_key" }
@@ -204,7 +302,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
   }, [saving, saveConfig, runTest]);
 
   const finish = useCallback(() => {
-    if (typeof onComplete === "function") onComplete({ profileId, status: "active" });
+    if (typeof onComplete === "function") onComplete({ profileId: extractProfileId(profileId), status: "active" });
     else if (typeof onClose === "function") onClose();
   }, [onComplete, onClose, profileId]);
 
@@ -218,6 +316,12 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     bodyEl = (
       <ResultBanner tone="error">
         No location is selected for your profile, so there's nowhere to connect Ignite. Pick a location first, then reopen this wizard.
+      </ResultBanner>
+    );
+  } else if (!canManageIgnite(profile)) {
+    bodyEl = (
+      <ResultBanner tone="error">
+        Ignite setup is limited to location admins. Ask an admin at this location to run the one-time connection.
       </ResultBanner>
     );
   } else if (stepId === "intro") {
@@ -246,55 +350,82 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
       </div>
     );
   } else if (stepId === "profile") {
-    const v = validateProfileId(profileId);
+    const extracted = extractProfileId(profileId);
+    const isUrl = inputLooksLikeUrl(profileId);
     bodyEl = (
-      <div>
-        <div style={labelStyle}>What's {locLabel}'s Ignite Profile ID?</div>
-        <div style={helpStyle}>
-          The unique ID for this location in your iDigital Strategies (Ignite) account, used to route phone-lead emails.
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={labelStyle}>Find {locLabel}'s Ignite account ID</div>
+          <div style={helpStyle}>
+            Open <strong style={{ color: C.text }}>Ignite</strong> and set the profile at the top-left to{" "}
+            <strong style={{ color: C.text }}>{locLabel}</strong> — on the generic “All” view the ID won't appear. It's the number in your browser's
+            address bar:
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.7, marginBottom: 12, padding: "10px 12px", background: C.surfaceHover, border: `1px solid ${C.border}`, borderRadius: 9 }}>
-          <strong style={{ color: C.text }}>Where to find it:</strong>
-          <ol style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            <li>Sign in to your iDigital Strategies / Ignite dashboard.</li>
-            <li>Open this location's profile (Settings → Account).</li>
-            <li>Copy the <em>Profile ID / Account ID</em> — it's the number shown on lead notification emails.</li>
-          </ol>
-          <div style={{ marginTop: 4, color: C.textMut }}>Booking-form-only locations can leave the prefilled value or a placeholder.</div>
+
+        <IgniteUrlGraphic id={extracted} />
+
+        <div>
+          <div style={{ ...labelStyle, marginBottom: 6 }}>Paste the URL, or type the ID</div>
+          <input
+            value={profileId}
+            onChange={(e) => setProfileId(e.target.value)}
+            placeholder="Paste the Ignite URL, or type the 6-digit ID"
+            style={inputStyle}
+            autoFocus
+          />
+          {extracted && isUrl && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.pri, fontWeight: 700 }}>
+              <span style={{ display: "inline-flex" }}>
+                <I.CheckCircle />
+              </span>
+              Pulled account ID{" "}
+              <span style={{ fontFamily: "monospace", background: `${C.pri}14`, padding: "1px 7px", borderRadius: 5 }}>{extracted}</span> from your URL —
+              hit Continue to confirm.
+            </div>
+          )}
+          {!extracted && profileId.trim().length > 0 && (
+            <div style={{ fontSize: 12, color: C.dan, marginTop: 6 }}>
+              Couldn't find an ID in that — paste the full Ignite URL or type the numeric ID.
+            </div>
+          )}
         </div>
-        <input value={profileId} onChange={(e) => setProfileId(e.target.value)} placeholder="e.g. 156865" style={inputStyle} autoFocus />
-        {!v.ok && profileId.length > 0 && <div style={{ fontSize: 12, color: C.dan, marginTop: 6 }}>{v.error}</div>}
       </div>
     );
   } else if (stepId === "forwarding") {
     const v = validateInboundEmail(inboundEmail);
     bodyEl = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surfaceHover }}>
+          <FlowNode icon={<I.MessageSquare />} label="Booking form" />
+          <FlowArrow />
+          <FlowNode icon={<I.Send />} label={`${locLabel} inbox`} accent />
+          <FlowArrow />
+          <FlowNode icon={<I.Sparkle />} label="K9 Ops CRM" />
+        </div>
+
         <div>
-          <div style={labelStyle}>What's {locLabel}'s customer-facing email address?</div>
-          <div style={helpStyle}>
-            The inbox your website's booking / availability form submissions arrive in — the address on your Contact &amp; Booking page. We pull new
-            submissions from here into the CRM.
-          </div>
-          <input value={inboundEmail} onChange={(e) => setInboundEmail(e.target.value)} placeholder="cherryhill@k9resorts.com" style={inputStyle} />
+          <div style={labelStyle}>{locLabel}'s booking inbox</div>
+          <div style={helpStyle}>The inbox your website's booking / availability form submissions land in. We forward new submissions from here into the CRM.</div>
+          <input value={inboundEmail} onChange={(e) => setInboundEmail(e.target.value)} placeholder="bookings@yourresort.com" style={inputStyle} />
           {!v.ok && <div style={{ fontSize: 12, color: C.dan, marginTop: 6 }}>{v.error}</div>}
         </div>
 
         <div>
-          <div style={{ ...labelStyle, marginBottom: 8 }}>One-time forwarding (Outlook)</div>
+          <div style={{ ...labelStyle, marginBottom: 8 }}>One-time forwarding rule (Outlook)</div>
           <div style={{ fontSize: 12.5, color: C.textSec, lineHeight: 1.75 }}>
-            Add a rule in that inbox to forward booking-form emails straight into K9 Ops — no personal inbox in between, forward directly.
+            In that inbox, add a rule to forward booking-form emails to K9 Ops — directly, no personal inbox in between.
             <ol style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-              <li>Sign in to Outlook / Microsoft 365 for <strong style={{ color: C.text }}>{inboundEmail || "this inbox"}</strong>.</li>
+              <li>Sign in to Outlook / Microsoft 365 for <strong style={{ color: C.text }}>{inboundEmail || "that inbox"}</strong>.</li>
               <li>Settings (gear) → <strong style={{ color: C.text }}>Mail → Rules → Add new rule</strong>.</li>
-              <li>Condition: <strong style={{ color: C.text }}>From</strong> includes <span style={{ fontWeight: 700, color: C.pri }}>{BOOKING_FORM_SENDER_EMAIL}</span> (or <strong style={{ color: C.text }}>Subject</strong> includes “Form Submission”).</li>
-              <li>Action: <strong style={{ color: C.text }}>Forward to</strong> your K9 Ops inbound address.</li>
-              <li>Save — new submissions now flow straight into this CRM.</li>
+              <li>Condition: <strong style={{ color: C.text }}>From</strong> includes <span style={{ fontWeight: 700, color: C.pri }}>{BOOKING_FORM_SENDER_EMAIL}</span>.</li>
+              <li>Action: <strong style={{ color: C.text }}>Forward to</strong> the K9 Ops address below.</li>
+              <li>Save.</li>
             </ol>
           </div>
-          <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMut }}>Advanced (Resend side): the inbound address delivers to this webhook —</div>
+          <div style={{ marginTop: 10, fontSize: 11.5, fontWeight: 700, color: C.textMut }}>Forward to this K9 Ops address</div>
           <div style={{ marginTop: 6 }}>
-            <CopyField value={webhookUrl} />
+            <CopyField value={IGNITE_INBOUND_ADDRESS} />
           </div>
         </div>
 
@@ -364,7 +495,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
   const workingPos = WORKING_STEPS.indexOf(stepId);
 
   let footer = null;
-  if (loaded && locationId) {
+  if (loaded && locationId && canManageIgnite(profile)) {
     if (stepId === "intro") {
       footer = (
         <>

@@ -10,6 +10,7 @@ import { C, fmtDate, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
+import { canManageIgnite } from "../onboarding/igniteOnboarding";
 import {
   DenseTable,
   ListSearchRow,
@@ -62,6 +63,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [logLead, setLogLead] = useState(null);
 
   const today = todayStr();
+  const canSetup = canManageIgnite(profile); // Ignite setup is admin-only, once per location
 
   const toast = useCallback(
     (message, type = "info") => {
@@ -277,10 +279,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
         {loadState === "ok" && <span style={{ fontSize: 12, color: C.textMut }}>{filterSubmissions(leads, {}).length} forms</span>}
-        <button type="button" onClick={() => setShowWizard(true)} title="Set up or update Ignite for this location" style={iconBtn(configured === false)}>
-          <I.Settings />
-          Ignite setup
-        </button>
+        {canSetup && (
+          <button type="button" onClick={() => setShowWizard(true)} title="Set up or update Ignite for this location" style={iconBtn(configured === false)}>
+            <I.Settings />
+            Ignite setup
+          </button>
+        )}
       </div>
     </div>
   );
@@ -309,10 +313,10 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     <div style={{ maxWidth: 1160, margin: "0 auto", padding: "4px 0" }}>
       {header}
 
-      {loadState !== "schema" && configured === false && !loading && <SetupBanner onStart={() => setShowWizard(true)} />}
+      {loadState !== "schema" && configured === false && !loading && canSetup && <SetupBanner onStart={() => setShowWizard(true)} />}
 
       {loadState === "schema" ? (
-        <SetupNotice onStart={() => setShowWizard(true)} />
+        <SetupNotice onStart={() => setShowWizard(true)} canStart={canSetup} />
       ) : (
         <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface }}>
           <ListSearchRow value={query} onChange={setQuery} placeholder="Search by name, phone, or form details…" />
@@ -524,7 +528,7 @@ function SetupBanner({ onStart }) {
   );
 }
 
-function SetupNotice({ onStart }) {
+function SetupNotice({ onStart, canStart }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 14, padding: "64px 24px", border: `1.5px dashed ${C.border}`, borderRadius: 16, background: C.surfaceHover }}>
       <div style={{ width: 56, height: 56, borderRadius: 14, background: `${C.pri}12`, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri }}>
@@ -532,10 +536,13 @@ function SetupNotice({ onStart }) {
       </div>
       <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>Booking-form intake isn't connected yet</div>
       <div style={{ fontSize: 13, color: C.textMut, maxWidth: 460 }}>
-        Connect your website's booking/availability form for this location and submissions will start flowing in automatically. The guided setup
-        takes about a minute — no developer needed.
+        {canStart
+          ? "Connect your website's booking/availability form for this location and submissions will start flowing in automatically. The guided setup takes about a minute — no developer needed."
+          : "This location isn't connected to its booking form yet. Ask a location admin to run the one-time Ignite setup."}
       </div>
-      <Btn onClick={onStart} icon={<I.Sparkle />}>Set up Ignite</Btn>
+      {canStart && (
+        <Btn onClick={onStart} icon={<I.Sparkle />}>Set up Ignite</Btn>
+      )}
     </div>
   );
 }

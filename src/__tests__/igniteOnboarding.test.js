@@ -5,6 +5,9 @@ import {
   stepIndex,
   normalizeProfileId,
   validateProfileId,
+  extractProfileId,
+  inputLooksLikeUrl,
+  canManageIgnite,
   validateInboundEmail,
   canAdvance,
   buildIgniteConfigPayload,
@@ -54,6 +57,45 @@ describe("validation", () => {
     expect(canAdvance("profile", { profileId: "156865" })).toBe(true);
     expect(canAdvance("forwarding", { inboundEmail: "bad" })).toBe(false);
     expect(canAdvance("forwarding", { inboundEmail: "" })).toBe(true);
+  });
+});
+
+describe("extractProfileId", () => {
+  it("pulls the ID out of a pasted Ignite URL", () => {
+    expect(extractProfileId("leads.idigitalstrategies.com/profile/156865/leads")).toBe("156865");
+    expect(extractProfileId("https://leads.idigitalstrategies.com/profile/156865/leads")).toBe("156865");
+    expect(extractProfileId("  https://leads.idigitalstrategies.com/profile/156865/dashboard  ")).toBe("156865");
+  });
+
+  it("accepts a bare numeric code", () => {
+    expect(extractProfileId("156865")).toBe("156865");
+    expect(extractProfileId(" 156865 ")).toBe("156865");
+  });
+
+  it("returns '' when there's nothing usable", () => {
+    expect(extractProfileId("")).toBe("");
+    expect(extractProfileId("not an id")).toBe("");
+  });
+
+  it("flags URL-shaped input", () => {
+    expect(inputLooksLikeUrl("leads.idigitalstrategies.com/profile/156865/leads")).toBe(true);
+    expect(inputLooksLikeUrl("156865")).toBe(false);
+  });
+});
+
+describe("canManageIgnite", () => {
+  it("allows location admins and up", () => {
+    ["location_admin", "admin", "multi_location_admin", "regional", "enterprise_admin", "owner", "developer"].forEach((role) => {
+      expect(canManageIgnite({ role })).toBe(true);
+    });
+  });
+
+  it("blocks managers and below", () => {
+    ["manager", "supervisor", "csr", "pct"].forEach((role) => {
+      expect(canManageIgnite({ role })).toBe(false);
+    });
+    expect(canManageIgnite({})).toBe(false);
+    expect(canManageIgnite(null)).toBe(false);
   });
 });
 
