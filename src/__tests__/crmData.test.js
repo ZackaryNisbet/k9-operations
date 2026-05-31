@@ -14,6 +14,7 @@ import {
   leadEmail,
   humanizeFieldKey,
   canonicalFormFields,
+  groupedFormFields,
   populatedFieldCount,
   groupUpdatesByLead,
   summarizeUpdates,
@@ -222,8 +223,8 @@ describe("canonical form fields — one defined list per category", () => {
   it("booking renders one fixed, ordered list, normalizing synonym keys", () => {
     const fields = canonicalFormFields(bookingLead);
     expect(fields.map((f) => f.label)).toEqual([
-      "Email", "Phone", "Preferred time to reach", "Desired service",
-      "Desired date(s)", "ZIP", "City", "State", "Details",
+      "Email", "Phone", "Preferred time to reach", "ZIP", "City", "State",
+      "Desired service", "Desired date(s)", "Details",
     ]);
     expect(fields.find((f) => f.key === "email").value).toBe("JMBMartinez.jmm@gmail.com");
     expect(fields.find((f) => f.key === "phone").value).toBe("(856) 701-8139");
@@ -245,6 +246,20 @@ describe("canonical form fields — one defined list per category", () => {
     expect(labels).toContain("Position of interest");
     expect(labels).toContain("About the applicant");
     expect(labels).not.toContain("Desired service");
+  });
+
+  it("groups Contact → Location → Request, emphasizing the request", () => {
+    const groups = groupedFormFields(bookingLead);
+    expect(groups.map((g) => g.id)).toEqual(["contact", "location", "request"]);
+    expect(groups.map((g) => g.label)).toEqual(["Contact", "Location", "Request"]);
+    expect(groups[0].fields.map((f) => f.key)).toEqual(["email", "phone", "preferred_time"]);
+    expect(groups[1].fields.map((f) => f.key)).toEqual(["zip", "city", "state"]);
+    expect(groups[2].fields.map((f) => f.key)).toEqual(["desired_service", "desired_dates", "details"]);
+    expect(groups[2].fields.find((f) => f.key === "desired_service").emphasis).toBe(true);
+  });
+
+  it("employment's last section is the Application", () => {
+    expect(groupedFormFields(employmentLead).map((g) => g.label)).toEqual(["Contact", "Location", "Application"]);
   });
 });
 

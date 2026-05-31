@@ -209,39 +209,48 @@ export function humanizeFieldKey(key) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Canonical field schema — ONE defined, ordered list per category, so every
-// expanded record is structured identically. The upstream forms capture the same
+// Canonical field schema — ONE defined, ordered list per category, grouped into
+// Contact → Location → Request so every expanded record is laid out identically
+// and reads at a glance (CRM best practice: chunk into labelled sections, bold
+// the few key values, mute the metadata). The upstream forms capture the same
 // data under different keys (email/email_address, zip/zip_code, phone/phone_number,
-// first+last/full_name); each canonical field pulls the first synonym that's
-// present. A field the record didn't capture renders as a placeholder — never a
-// dropped or reordered row. `lead` = a top-level column to prefer; `from` =
-// ordered form_data keys; `long` = free-text that spans the full width.
+// first+last/full_name); each field pulls the first synonym present (`resolve`
+// or `from`), and a field the record didn't capture renders as a placeholder —
+// never a dropped or reordered row. `group` = section; `emphasis` = a key value
+// to bold; `long` = free-text that spans the full width (rendered as a callout).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONTACT_FIELDS = [
-  { key: "email", label: "Email", resolve: leadEmail },
-  { key: "phone", label: "Phone", resolve: leadPhone, format: formatPhonePretty },
-  { key: "preferred_time", label: "Preferred time to reach", from: ["preferred_time_to_be_reached"] },
-  { key: "desired_service", label: "Desired service", from: ["desired_service", "service_interest"] },
-  { key: "desired_dates", label: "Desired date(s)", from: ["desired_date_of_boarding_or_day_care"] },
-  { key: "zip", label: "ZIP", from: ["zip_code", "zip"] },
-  { key: "city", label: "City", from: ["city"] },
-  { key: "state", label: "State", from: ["state"] },
-  { key: "details", label: "Details", from: ["details", "how_can_we_help_you", "message"], long: true },
+  { key: "email", label: "Email", group: "contact", resolve: leadEmail },
+  { key: "phone", label: "Phone", group: "contact", resolve: leadPhone, format: formatPhonePretty },
+  { key: "preferred_time", label: "Preferred time to reach", group: "contact", from: ["preferred_time_to_be_reached"] },
+  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
+  { key: "city", label: "City", group: "location", from: ["city"] },
+  { key: "state", label: "State", group: "location", from: ["state"] },
+  { key: "desired_service", label: "Desired service", group: "request", emphasis: true, from: ["desired_service", "service_interest"] },
+  { key: "desired_dates", label: "Desired date(s)", group: "request", emphasis: true, from: ["desired_date_of_boarding_or_day_care"] },
+  { key: "details", label: "Details", group: "request", long: true, from: ["details", "how_can_we_help_you", "message"] },
 ];
 
 const EMPLOYMENT_FIELDS = [
-  { key: "email", label: "Email", resolve: leadEmail },
-  { key: "phone", label: "Phone", resolve: leadPhone, format: formatPhonePretty },
-  { key: "zip", label: "ZIP", from: ["zip_code", "zip"] },
-  { key: "city", label: "City", from: ["city"] },
-  { key: "state", label: "State", from: ["state"] },
-  { key: "position", label: "Position of interest", from: ["what_type_of_position_are_you_interested_in"] },
-  { key: "availability", label: "Full-time or part-time", from: ["are_you_interested_in_full_time_or_part_time"] },
-  { key: "reason", label: "Reason for contact", from: ["reason_for_contact"] },
-  { key: "skills", label: "Special skills", from: ["what_are_some_special_skills_you_may_have"], long: true },
-  { key: "about", label: "About the applicant", from: ["tell_us_a_bit_about_yourself"], long: true },
+  { key: "email", label: "Email", group: "contact", resolve: leadEmail },
+  { key: "phone", label: "Phone", group: "contact", resolve: leadPhone, format: formatPhonePretty },
+  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
+  { key: "city", label: "City", group: "location", from: ["city"] },
+  { key: "state", label: "State", group: "location", from: ["state"] },
+  { key: "position", label: "Position of interest", group: "request", emphasis: true, from: ["what_type_of_position_are_you_interested_in"] },
+  { key: "availability", label: "Full-time or part-time", group: "request", emphasis: true, from: ["are_you_interested_in_full_time_or_part_time"] },
+  { key: "reason", label: "Reason for contact", group: "request", from: ["reason_for_contact"] },
+  { key: "skills", label: "Special skills", group: "request", long: true, from: ["what_are_some_special_skills_you_may_have"] },
+  { key: "about", label: "About the applicant", group: "request", long: true, from: ["tell_us_a_bit_about_yourself"] },
 ];
+
+const FORM_FIELD_GROUP_ORDER = ["contact", "location", "request"];
+const FORM_FIELD_GROUP_LABELS = {
+  contact: { booking: "Contact", employment: "Contact" },
+  location: { booking: "Location", employment: "Location" },
+  request: { booking: "Request", employment: "Application" },
+};
 
 export const FORM_FIELD_SCHEMAS = { booking: CONTACT_FIELDS, employment: EMPLOYMENT_FIELDS };
 
@@ -265,7 +274,7 @@ function pickFieldValue(lead, fd, f) {
  * The canonical, ordered field list for a submission, chosen by category. Always
  * returns the same fields in the same order — value "" when the record didn't
  * capture that field — so every expanded record is structured identically.
- * Returns [{ key, label, value, long }].
+ * Returns [{ key, label, value, long, group, emphasis }].
  */
 export function canonicalFormFields(lead) {
   const fd = (lead && lead.form_data && typeof lead.form_data === "object") ? lead.form_data : {};
@@ -273,8 +282,26 @@ export function canonicalFormFields(lead) {
   return schema.map((f) => {
     let value = pickFieldValue(lead, fd, f);
     if (value && f.format) value = f.format(value);
-    return { key: f.key, label: f.label, value, long: !!f.long };
+    return { key: f.key, label: f.label, value, long: !!f.long, group: f.group, emphasis: !!f.emphasis };
   });
+}
+
+/**
+ * Canonical fields grouped into ordered sections (Contact → Location → Request),
+ * each with a category-aware label. Returns [{ id, label, fields }] for the
+ * grouped detail layout — contact for outreach, a muted address, the request last
+ * and emphasized.
+ */
+export function groupedFormFields(lead) {
+  const cat = classifySubmissionCategory(lead) === "employment" ? "employment" : "booking";
+  const byGroup = new Map();
+  for (const f of canonicalFormFields(lead)) {
+    if (!byGroup.has(f.group)) byGroup.set(f.group, []);
+    byGroup.get(f.group).push(f);
+  }
+  return FORM_FIELD_GROUP_ORDER
+    .filter((g) => byGroup.has(g))
+    .map((g) => ({ id: g, label: FORM_FIELD_GROUP_LABELS[g][cat], fields: byGroup.get(g) }));
 }
 
 /** How many of the canonical fields the record actually captured (badge count + search). */
