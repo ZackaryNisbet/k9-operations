@@ -55,6 +55,28 @@ export const GRASSROOTS_CATEGORY_CONFIGS = [
     nameLabel: "Business",
     emptyName: "Untitled business",
   },
+  {
+    id: "localBusinessPartnerships",
+    dbValue: "local_business_partnerships",
+    label: "Local Business Partnerships",
+    singular: "Local Business Partnership",
+    activityLabel: "Development",
+    logLabel: "Log Development",
+    countLabel: "Developments",
+    nameLabel: "Business",
+    emptyName: "Untitled business",
+  },
+  {
+    id: "schools",
+    dbValue: "schools",
+    label: "Schools",
+    singular: "School",
+    activityLabel: "Development",
+    logLabel: "Log Development",
+    countLabel: "Developments",
+    nameLabel: "School",
+    emptyName: "Untitled school",
+  },
 ];
 
 export const GRASSROOTS_CATEGORY_BY_ID = Object.fromEntries(
@@ -87,6 +109,47 @@ export const GRASSROOTS_BUSINESS_CATEGORY_OPTIONS = [
 ];
 
 export const GRASSROOTS_DROP_CATEGORY_OPTIONS = GRASSROOTS_BUSINESS_CATEGORY_OPTIONS;
+
+// Predefined visit outcomes (pick-list, no free typing) and the materials you can
+// leave at a business. Stored as text on the activity, so no schema change.
+export const GRASSROOTS_VISIT_OUTCOME_OPTIONS = [
+  "Staff receptive — would return",
+  "Staff not receptive — would not return",
+  "No one available to speak with",
+  "Business was closed",
+  "Spoke with a decision-maker",
+  "Dropped materials only",
+];
+
+export const GRASSROOTS_VISIT_MATERIALS_OPTIONS = [
+  "Consumer brochure",
+  "Pricing insert",
+  "Business cards",
+  "Coupon",
+  "Pens",
+  "Poop bag holders",
+  "Poop bag dispensers",
+  "Food scoops",
+  "Dog leashes",
+];
+
+// Materials are persisted as a comma-joined string. These helpers convert to/from
+// the selected-set the chip picker works with, preserving any legacy free-text.
+export function parseGrassrootsMaterialsLeft(value) {
+  return String(value || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function toggleGrassrootsMaterial(value, material) {
+  const current = parseGrassrootsMaterialsLeft(value);
+  const exists = current.some((item) => item.toLowerCase() === String(material).toLowerCase());
+  const next = exists
+    ? current.filter((item) => item.toLowerCase() !== String(material).toLowerCase())
+    : [...current, material];
+  return next.join(", ");
+}
 
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET = "grassroots-activity-attachments";
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES = 5;
@@ -123,13 +186,11 @@ export const GRASSROOTS_DEFAULT_FILTERS = {
 };
 
 export function getGrassrootsDefaultFilters(category = "events") {
-  const config = getGrassrootsCategoryConfig(category);
-  if (config.id === "events") {
-    return {
-      ...GRASSROOTS_DEFAULT_FILTERS,
-      leads_captured: { op: "=", val: "0" },
-    };
-  }
+  // `category` is retained for API compatibility. Events used to also hide
+  // leads_captured>0 by default, but that proxy made an event vanish the moment
+  // results were logged. Closed (details.closeout) and past events are now archived
+  // out of the default view by the page's closeout/past-event logic instead, so the
+  // default filter is just "active records" for every category.
   return { ...GRASSROOTS_DEFAULT_FILTERS };
 }
 
@@ -293,6 +354,160 @@ export function getGrassrootsNextEventDate(target = {}, today = new Date().toISO
   const dates = normalizeGrassrootsEventDates(target);
   if (dates.length === 0) return "";
   return dates.find((row) => row.event_date >= today)?.event_date || dates[dates.length - 1]?.event_date || "";
+}
+
+// The last calendar day of the event (multi-day events end on their latest date).
+export function getGrassrootsFinalEventDate(target = {}) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length > 0) return dates[dates.length - 1].event_date;
+  return target.event_end_date || target.event_start_date || "";
+}
+
+// Two YYYY-MM-DD dates exactly one calendar day apart (b is the day after a)?
+function areGrassrootsDatesConsecutive(a, b) {
+  if (!a || !b) return false;
+  const da = new Date(`${a}T12:00:00`);
+  const db = new Date(`${b}T12:00:00`);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
+  return Math.round((db - da) / 86400000) === 1;
+}
+
+// Structured summary of an event's date(s) for the tracker display: how many days,
+// whether it spans a single day vs multiple, and (for multi-day) whether those days
+// are consecutive (a real multi-day run, shown as a range) or scattered (separate
+// dates that are linked, shown with a chain indicator).
+export function summarizeGrassrootsEventDates(target = {}) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length === 0) return { count: 0, isMultiDay: false, isConsecutive: false, first: null, last: null, dates: [] };
+  let isConsecutive = true;
+  for (let i = 1; i < dates.length; i += 1) {
+    if (!areGrassrootsDatesConsecutive(dates[i - 1].event_date, dates[i].event_date)) { isConsecutive = false; break; }
+  }
+  return {
+    count: dates.length,
+    isMultiDay: dates.length > 1,
+    isConsecutive: dates.length > 1 ? isConsecutive : false,
+    first: dates[0],
+    last: dates[dates.length - 1],
+    dates,
+  };
+}
+
+// Closeout lives in details.closeout (the save RPC already persists `details`),
+// so a "Finished" event needs no DB schema/status change.
+export function getGrassrootsEventCloseout(target = {}) {
+  const closeout = target?.details?.closeout;
+  return closeout && typeof closeout === "object" ? closeout : null;
+}
+
+export function isGrassrootsEventClosed(target = {}) {
+  return Boolean(getGrassrootsEventCloseout(target)?.closed_at);
+}
+
+// An event is "past" only once the day AFTER its final day arrives — i.e. the final
+// event date is strictly before today. Today's / in-progress events are NOT past.
+export function isGrassrootsEventPast(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  const finalDate = getGrassrootsFinalEventDate(target);
+  return Boolean(finalDate) && finalDate < today;
+}
+
+// The "Past Events" view shows every event whose final day has already passed —
+// overdue-but-unclosed ones included — plus any that have been closed out. (The
+// default view, by contrast, only hides CLOSED events: an occurred-but-unclosed
+// event still appears there, pinned to the top as a needs-closeout to-do. So an
+// overdue event correctly appears in BOTH the default and Past Events views.)
+export function isGrassrootsEventInPastView(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  return isGrassrootsEventClosed(target) || isGrassrootsEventPast(target, today);
+}
+
+// You can only close out an event once you've reached (or passed) its final day.
+export function canCloseGrassrootsEvent(target = {}, today = new Date().toISOString().slice(0, 10)) {
+  if (isGrassrootsEventClosed(target)) return false;
+  const finalDate = getGrassrootsFinalEventDate(target);
+  return Boolean(finalDate) && finalDate <= today;
+}
+
+export const GRASSROOTS_FINISHED_STATUS = "finished";
+
+// Display-only status: a closed event reads as "Finished" even though its stored DB
+// status stays one of the four canonical values (the CHECK constraint forbids others).
+export function getGrassrootsEventDisplayStatus(target = {}) {
+  if (isGrassrootsEventClosed(target)) return GRASSROOTS_FINISHED_STATUS;
+  return normalizeGrassrootsStatus(target.status);
+}
+
+export function getGrassrootsDisplayStatusLabel(target = {}) {
+  const closeout = getGrassrootsEventCloseout(target);
+  if (closeout?.closed_at) return closeout.disposition === "cancelled" ? "Cancelled" : "Finished";
+  return getGrassrootsStatusLabel(target.status);
+}
+
+// Which required field groups on an event row are not yet filled in. Drives the
+// persistent "more info needed" affordance on the tracker so missing data is
+// obvious without training. Returns per-group booleans plus the missing labels
+// (used to build a specific tooltip). Cost is intentionally NOT required here —
+// it's prompted in context and only needed at closeout for CPL.
+export function getGrassrootsEventFieldGaps(target = {}) {
+  const split = getGrassrootsSplitAddress(target);
+  const hasAddress = Boolean(
+    String(target.address || "").trim()
+    || split.address_line_1 || split.address_city || split.address_state || split.address_postal_code,
+  );
+  const hasType = Boolean(normalizeGrassrootsEventType(target.event_type));
+  const hasOrganizer = Boolean(
+    String(target.organizer || "").trim()
+    || String(target.first_name || "").trim()
+    || String(target.last_name || "").trim()
+    || String(target.contact_source || "").trim(),
+  );
+  const hasDate = Boolean(getGrassrootsFinalEventDate(target));
+
+  const eventMissing = [];
+  if (!hasAddress) eventMissing.push("address");
+  if (!hasType) eventMissing.push("type");
+  const organizerMissing = hasOrganizer ? [] : ["organizer"];
+  const dateMissing = hasDate ? [] : ["date"];
+
+  return {
+    organizer: organizerMissing.length > 0,
+    event: eventMissing.length > 0,
+    date: dateMissing.length > 0,
+    organizerMissing,
+    eventMissing,
+    dateMissing,
+  };
+}
+
+// Which required fields are missing on a business/partnership target — drives the
+// persistent amber "more info needed" pencils on the non-event tables. Contact is
+// incomplete if the name, phone, or email is blank; category is mandatory.
+export function getGrassrootsBusinessFieldGaps(target = {}) {
+  const hasName = Boolean(String(target.name || target.organizer || "").trim());
+  const hasPhone = Boolean(String(target.contact_phone || "").trim());
+  const hasEmail = Boolean(String(target.contact_email || "").trim());
+  const hasCategory = Boolean(getGrassrootsBusinessCategory(target));
+  const contactMissing = [];
+  if (!hasName) contactMissing.push("name");
+  if (!hasPhone) contactMissing.push("phone");
+  if (!hasEmail) contactMissing.push("email");
+  return { contact: contactMissing.length > 0, category: !hasCategory, contactMissing };
+}
+
+// Pure builder for the details.closeout payload written when an event is closed out.
+// disposition: "completed" (attended → leads/CPL) or "cancelled" (couldn't attend —
+// the cost is sunk, leads are 0/none). Cancelled events still leave the active view
+// and keep their cost on the books as marketing spend.
+export function makeGrassrootsEventCloseout({ leadsCaptured, cpl, notes, closedAt, closedByUserId, closedByName, disposition } = {}) {
+  const resolvedDisposition = disposition === "cancelled" ? "cancelled" : "completed";
+  return {
+    closed_at: closedAt || new Date().toISOString().slice(0, 10),
+    disposition: resolvedDisposition,
+    leads_captured: resolvedDisposition === "cancelled" ? 0 : (parseInteger(leadsCaptured) ?? 0),
+    cpl: resolvedDisposition === "cancelled" ? null : (parseDecimal(cpl) ?? null),
+    notes: String(notes || "").trim(),
+    closed_by_user_id: closedByUserId || null,
+    closed_by_name: closedByName || null,
+  };
 }
 
 export function compareGrassrootsEventSchedule(left = {}, right = {}, today = new Date().toISOString().slice(0, 10), direction = "asc") {
