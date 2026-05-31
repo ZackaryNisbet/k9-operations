@@ -19,6 +19,7 @@ import {
   filterByActiveSources,
   countBySource,
   rangeLabel,
+  AGENDA_DAYS,
 } from "../shared/calendarGrid";
 import { SOURCE_ORDER, mapCalendarRows } from "../kol/pages/calendarSources";
 
@@ -91,7 +92,7 @@ describe("windows", () => {
 
   it("viewWindow dispatches on view", () => {
     expect(viewWindow("week", "2026-05-30", "2026-05-30")).toEqual(weekWindow("2026-05-30"));
-    expect(viewWindow("agenda", "2026-05-30", "2026-05-30")).toEqual(agendaWindow("2026-05-30", 42));
+    expect(viewWindow("agenda", "2026-05-30", "2026-05-30")).toEqual(agendaWindow("2026-05-30", AGENDA_DAYS));
     expect(viewWindow("month", "2026-05-15", "2026-05-30")).toEqual(monthWindow(2026, 4));
     // falls back to today when cursor is missing
     expect(viewWindow("month", null, "2026-05-30")).toEqual(monthWindow(2026, 4));
@@ -197,6 +198,6 @@ describe("mapCalendarRows (get_calendar_events adapter)", () => {
   });
 
   it("keeps SOURCE_ORDER stable for the filter pills", () => {
-    expect(SOURCE_ORDER).toEqual(["labor", "compliance", "training", "marketing", "enrichment", "inventory"]);
+    expect(SOURCE_ORDER).toEqual(["labor", "compliance", "training", "marketing", "enrichment", "inventory", "holiday"]);
   });
 });

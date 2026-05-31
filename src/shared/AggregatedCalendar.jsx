@@ -23,6 +23,7 @@ import {
   filterByActiveSources,
   countBySource,
   isWithin,
+  AGENDA_DAYS,
 } from "./calendarGrid";
 
 const VIEWS = [
@@ -489,7 +490,7 @@ export default function AggregatedCalendar({
     } else if (view === "week") {
       onCursorChange(addDaysKey(cursor || today, dir * 7));
     } else {
-      onCursorChange(addDaysKey(cursor || today, dir * 14));
+      onCursorChange(addDaysKey(cursor || today, dir * AGENDA_DAYS));
     }
   };
 
