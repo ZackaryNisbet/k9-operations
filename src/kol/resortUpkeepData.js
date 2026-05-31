@@ -183,6 +183,221 @@ export async function saveUpkeepIntros(locationId, intros, userId = null) {
   if (error) throw error;
 }
 
+// ─── Vendor spreadsheet import ───────────────────────────────────────────────
+// Parse any .xlsx/.csv client-side (jszip + DOMParser; no external API, no NLP),
+// then heuristically pair columns to vendor fields. The detection/build steps
+// are pure (operate on a 2D grid) so they are unit-testable; only the file
+// reader touches the browser.
+
+export const VENDOR_IMPORT_FIELDS = ["trade", "company", "contact", "phone", "email", "contract", "frequency", "cost"];
+export const VENDOR_IMPORT_FIELD_LABELS = {
+  trade: "Trade", company: "Company", contact: "Contact", phone: "Phone",
+  email: "Email", contract: "Contract (Y/N)", frequency: "Frequency", cost: "Cost",
+};
+
+function importPeriodFromHeader(header) {
+  const s = String(header || "").toLowerCase();
+  if (/semi-?annual|bi-?annual/.test(s)) return "Biannually";
+  if (/quarter/.test(s)) return "Quarterly";
+  if (/bi-?month/.test(s)) return "Bi-monthly";
+  if (/bi-?week/.test(s)) return "Bi-weekly";
+  if (/month/.test(s)) return "Monthly";
+  if (/week/.test(s)) return "Weekly";
+  if (/dai?ly/.test(s)) return "Daily";
+  if (/year|annual/.test(s)) return "Annually";
+  return "";
+}
+
+export function importFieldForHeader(header) {
+  const s = String(header || "").toLowerCase().trim();
+  if (!s) return null;
+  if (/\btrade\b|category|type of (service|work)/.test(s)) return "trade";
+  if (/company|business|vendor name|provider/.test(s) || s === "name") return "company";
+  if (/contact|attn|\brep\b/.test(s)) return "contact";
+  if (/phone|\btel\b|mobile|cell/.test(s)) return "phone";
+  if (/mail/.test(s)) return "email";
+  if (/contract/.test(s)) return "contract";
+  if (/frequency|cadence|schedule/.test(s)) return "frequency";
+  if (/\bcost\b|\bfee\b|amount|price|\brate\b/.test(s)) return "cost";
+  return null;
+}
+
+function importRowScore(row) {
+  let score = 0;
+  (row || []).forEach((cell) => {
+    const c = String(cell || "");
+    if (importFieldForHeader(c)) score += 1;
+    else if (/service|fee/i.test(c) && importPeriodFromHeader(c)) score += 1;
+  });
+  return score;
+}
+
+function normalizeGrid(grid) {
+  return (Array.isArray(grid) ? grid : []).map((r) => (Array.isArray(r) ? r.map((c) => (c == null ? "" : String(c).trim())) : []));
+}
+
+// Find the most header-like row and propose a column -> field mapping.
+export function detectVendorColumns(grid) {
+  const rows = normalizeGrid(grid);
+  let headerRowIndex = -1;
+  let best = 0;
+  rows.forEach((r, i) => {
+    const s = importRowScore(r);
+    if (s > best && s >= 3) { best = s; headerRowIndex = i; }
+  });
+  if (headerRowIndex < 0) return { headerRowIndex: -1, columns: [] };
+
+  const header = rows[headerRowIndex];
+  const columns = header.map((h, index) => {
+    // Period-qualified "<period> Service / <period> Fee" columns take precedence
+    // over the generic field rules so they consolidate into frequency + cost.
+    const period = importPeriodFromHeader(h);
+    if (period && /service/i.test(h)) return { index, header: h, field: "frequency", servicePeriod: period, feePeriod: null };
+    if (period && /fee/i.test(h)) return { index, header: h, field: "cost", servicePeriod: null, feePeriod: period };
+    return { index, header: h, field: importFieldForHeader(h), servicePeriod: null, feePeriod: null };
+  }).filter((c) => String(c.header || "").trim());
+
+  return { headerRowIndex, columns };
+}
+
+function cleanImportCost(value) {
+  const s = String(value || "").replace(/[^0-9.]/g, "");
+  if (!s) return "";
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? String(n) : "";
+}
+
+function cleanImportText(value) {
+  const s = String(value || "").trim();
+  return /^(n\/?a|none|-+|tbd)$/i.test(s) ? "" : s;
+}
+
+// Build vendor draft rows from a grid + a (possibly user-edited) column mapping.
+export function buildVendorRows(grid, headerRowIndex, columns) {
+  const rows = normalizeGrid(grid);
+  if (headerRowIndex < 0 || !Array.isArray(columns)) return [];
+  const colFor = (field) => columns.find((c) => c.field === field && !c.servicePeriod && !c.feePeriod);
+  const serviceCols = columns.filter((c) => c.servicePeriod && c.field === "frequency");
+  const feeCols = columns.filter((c) => c.feePeriod && c.field === "cost");
+  const tradeIdx = colFor("trade")?.index;
+  const companyIdx = colFor("company")?.index;
+  const out = [];
+
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r.some((c) => c)) continue;
+    if (importRowScore(r) >= 3) continue; // skip a second header row
+    const get = (idx) => (idx == null ? "" : (r[idx] || ""));
+    const trade = get(tradeIdx);
+    const company = get(companyIdx);
+    if (!trade && !company) continue;
+
+    let frequency = get(colFor("frequency")?.index);
+    let cost = get(colFor("cost")?.index);
+    if (!frequency && serviceCols.length) {
+      const marked = serviceCols.find((c) => {
+        const v = (r[c.index] || "").toLowerCase();
+        return v && v !== "n/a" && v !== "-" && v !== "0";
+      });
+      if (marked) {
+        frequency = marked.servicePeriod;
+        if (!cost) {
+          const fee = feeCols.find((c) => c.feePeriod === marked.servicePeriod) || feeCols[0];
+          if (fee) cost = r[fee.index] || "";
+        }
+      }
+    }
+    const contractRaw = get(colFor("contract")?.index).toLowerCase();
+    const contract = /^y(es)?$|true|✓|^x$|have/.test(contractRaw.trim());
+
+    out.push({
+      trade,
+      company,
+      contact: cleanImportText(get(colFor("contact")?.index)),
+      phone: cleanImportText(get(colFor("phone")?.index)),
+      email: cleanImportText(get(colFor("email")?.index)),
+      contract,
+      frequency: frequency || "",
+      cost: cleanImportCost(cost),
+    });
+  }
+  return out;
+}
+
+function importColRefToIndex(ref) {
+  const m = String(ref).match(/^([A-Za-z]+)/);
+  if (!m) return 0;
+  let n = 0;
+  const s = m[1].toUpperCase();
+  for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+// Read an .xlsx (zip of XML) or .csv into an array of sheet grids. Browser only.
+export async function parseSpreadsheetGrids(file) {
+  const name = String(file?.name || "").toLowerCase();
+  if (name.endsWith(".csv")) {
+    const text = await file.text();
+    const rows = text.split(/\r?\n/).filter((l) => l.length).map((line) => {
+      const cells = [];
+      let cur = "";
+      let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+        else if (ch === "," && !inQ) { cells.push(cur.trim()); cur = ""; }
+        else cur += ch;
+      }
+      cells.push(cur.trim());
+      return cells;
+    });
+    return [rows];
+  }
+
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(file);
+  const sharedStrings = [];
+  const ssFile = zip.file("xl/sharedStrings.xml");
+  if (ssFile) {
+    const doc = new DOMParser().parseFromString(await ssFile.async("string"), "application/xml");
+    const siEls = doc.getElementsByTagName("si");
+    for (let i = 0; i < siEls.length; i++) {
+      const tEls = siEls[i].getElementsByTagName("t");
+      let s = "";
+      for (let k = 0; k < tEls.length; k++) s += tEls[k].textContent || "";
+      sharedStrings.push(s);
+    }
+  }
+  const sheetFiles = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort();
+  const grids = [];
+  for (const sheetName of sheetFiles) {
+    const doc = new DOMParser().parseFromString(await zip.file(sheetName).async("string"), "application/xml");
+    const rowEls = doc.getElementsByTagName("row");
+    const rows = [];
+    for (let ri = 0; ri < rowEls.length; ri++) {
+      const cEls = rowEls[ri].getElementsByTagName("c");
+      const cells = [];
+      let maxIdx = -1;
+      for (let ci = 0; ci < cEls.length; ci++) {
+        const c = cEls[ci];
+        const idx = importColRefToIndex(c.getAttribute("r") || "");
+        const t = c.getAttribute("t");
+        const vEl = c.getElementsByTagName("v")[0];
+        let val = "";
+        if (t === "s") val = sharedStrings[Number(vEl?.textContent)] ?? "";
+        else if (t === "inlineStr") val = c.getElementsByTagName("t")[0]?.textContent || "";
+        else val = vEl?.textContent || "";
+        cells[idx] = String(val).trim();
+        if (idx > maxIdx) maxIdx = idx;
+      }
+      for (let k = 0; k <= maxIdx; k++) if (cells[k] == null) cells[k] = "";
+      rows.push(cells);
+    }
+    grids.push(rows);
+  }
+  return grids;
+}
+
 export function upkeepVendorMeta(vendor) {
   const md = vendor?.metadata && typeof vendor.metadata === "object" ? vendor.metadata : {};
   return { trade: md.trade || "", frequency: md.frequency || "", cost: md.cost ?? "" };
