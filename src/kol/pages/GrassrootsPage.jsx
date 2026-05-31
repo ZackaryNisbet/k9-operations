@@ -2684,7 +2684,7 @@ function CellEditButton({ onClick, label, needed = false, onShowTip, onHideTip }
 
 function DenseGrassrootsTable({
   targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
-  expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, onShowFollowUpInfo,
+  expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, costSortDirection, onToggleCostSort, onShowFollowUpInfo,
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
   savingLog, isEventsTable = false, onOpenCellEditor, onCloseEvent, onSetStatus
 }) {
@@ -2696,7 +2696,12 @@ function DenseGrassrootsTable({
 
   // 7-col dense grid — Follow-up placed immediately left of Updates (per request).
   // Tuned widths for better visual balance and tighter overall spacing.
-  const grid = "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
+  // Events swap the wide Notes column for a tighter Cost column (notes still live in
+  // the Updates expansion), reallocating the freed width to Event + Updates (which now
+  // carries the Close button and Overdue/Due-today label).
+  const grid = isEventsTable
+    ? "minmax(105px, 1.15fr) minmax(160px, 1.85fr) 95px 112px 92px 84px minmax(150px, 1.35fr)"
+    : "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -2752,7 +2757,17 @@ function DenseGrassrootsTable({
           {cm.show.eventDate ? cm.headers.eventDate : ""}{cm.sortable.eventDate && eventDateSortDirection === "asc" ? " ▲" : cm.sortable.eventDate && eventDateSortDirection === "desc" ? " ▼" : ""}
         </div>
         <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.status ? cm.headers.status : ""}</div>
-        <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.notes ? cm.headers.notes : ""}</div>
+        {isEventsTable ? (
+          <div
+            onClick={onToggleCostSort}
+            style={{ cursor: onToggleCostSort ? "pointer" : "default", userSelect: "none", color: costSortDirection ? C.pri : "rgb(71,85,105)", fontWeight: costSortDirection ? 800 : 700, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
+            title="Sort by cost"
+          >
+            Cost{costSortDirection === "asc" ? " ▲" : costSortDirection === "desc" ? " ▼" : ""}
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.show.notes ? cm.headers.notes : ""}</div>
+        )}
         <div
           onClick={cm.sortable.followUp ? onToggleFollowUpSort : undefined}
           style={{ cursor: cm.sortable.followUp ? "pointer" : "default", userSelect: "none", color: (cm.sortable.followUp && followUpSortDirection) ? C.pri : "rgb(71,85,105)", fontWeight: (cm.sortable.followUp && followUpSortDirection) ? 800 : 700, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minHeight: 18 }}
@@ -2790,6 +2805,9 @@ function DenseGrassrootsTable({
         const eventName = cm.get.event ? cm.get.event(target, targetActivities) : (target.name || categoryConfig.emptyName || "Untitled event");
         const eventType = normalizeGrassrootsEventType(target.event_type);
         const cStatusText = cm.get.statusText ? cm.get.statusText(target, targetActivities) : null;
+        // Cost column (events): budget now; cost + CPL once the event is closed out.
+        const costVal = parseNumberField(target.cost);
+        const costText = fmtCurrencyNumber(costVal);
 
         const primaryLinkRaw = (Array.isArray(target.details?.links) ? target.details.links : [])
           .map((l) => l?.url || l?.href || "")
@@ -2990,21 +3008,38 @@ function DenseGrassrootsTable({
                 )}
               </div>
 
-              {/* Notes — 3-line wrap */}
-              <div
-                style={{
-                  fontSize: 11,
-                  color: C.textSec,
-                  lineHeight: 1.35,
-                  display: "-webkit-box",
-                  WebkitLineClamp: 3,
-                  WebkitBoxOrient: "vertical",
-                  overflow: "hidden",
-                }}
-                title={cm.show.notes ? notePreview : undefined}
-              >
-                {cm.show.notes ? notePreview : null}
-              </div>
+              {/* Events: Cost (+ CPL once closed). Other categories: Notes preview. */}
+              {isEventsTable ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "flex-start", whiteSpace: "nowrap", lineHeight: 1.25 }}>
+                  {costText ? (
+                    <>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>${costText}</span>
+                      {isClosedEvt && (() => {
+                        const cplVal = parseNumberField(target.cpl) ?? calculateGrassrootsCpl(costVal, parseNumberField(target.leads_captured));
+                        const cplText = fmtCurrencyNumber(cplVal);
+                        return cplText ? <span style={{ fontSize: 9, fontWeight: 700, color: C.textMut }}>${cplText}/lead</span> : null;
+                      })()}
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 11, color: C.textMut }}>—</span>
+                  )}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: C.textSec,
+                    lineHeight: 1.35,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                  title={cm.show.notes ? notePreview : undefined}
+                >
+                  {cm.show.notes ? notePreview : null}
+                </div>
+              )}
 
               {/* Follow-Up — click shows "set/created" timestamp popover (exact reference behavior from Customer Lifecycle created field) */}
               {cm.show.followUp ? (
@@ -3740,6 +3775,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [dropActivityCategory, setDropActivityCategory] = useState("All");
   const [eventDateSortDirection, setEventDateSortDirection] = useState("asc");
   const [followUpSortDirection, setFollowUpSortDirection] = useState(null);
+  const [costSortDirection, setCostSortDirection] = useState(null);
   const [targets, setTargets] = useState([]);
   const organizerOptions = useMemo(() => {
     const set = new Set();
@@ -3813,11 +3849,19 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   }, []);
   const toggleEventDateSort = useCallback(() => {
     setFollowUpSortDirection(null);
+    setCostSortDirection(null);
     setEventDateSortDirection((current) => (current === "asc" ? "desc" : "asc"));
   }, []);
   const toggleFollowUpSort = useCallback(() => {
     setEventDateSortDirection("asc");
+    setCostSortDirection(null);
     setFollowUpSortDirection((current) => (current === "asc" ? "desc" : current === "desc" ? null : "asc"));
+  }, []);
+  const toggleCostSort = useCallback(() => {
+    setFollowUpSortDirection(null);
+    setEventDateSortDirection("asc");
+    // Default to most-expensive-first, then asc, then off.
+    setCostSortDirection((current) => (current === "desc" ? "asc" : current === "asc" ? null : "desc"));
   }, []);
   const [freshActivityId, setFreshActivityId] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
@@ -3853,7 +3897,19 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (activeConfig.id !== "events") return visibleTargets;
     const today = todayStr();
     let list = [...visibleTargets];
-    if (followUpSortDirection) {
+    if (costSortDirection) {
+      list.sort((a, b) => {
+        const ca = parseNumberField(a.cost);
+        const cb = parseNumberField(b.cost);
+        const na = ca == null ? null : Number(ca);
+        const nb = cb == null ? null : Number(cb);
+        if (na == null && nb == null) return (a.name || "").localeCompare(b.name || "");
+        if (na == null) return 1; // unpriced rows sink to the bottom either way
+        if (nb == null) return -1;
+        const cmp = costSortDirection === "desc" ? nb - na : na - nb;
+        return cmp || (a.name || "").localeCompare(b.name || "");
+      });
+    } else if (followUpSortDirection) {
       list.sort((a, b) => {
         const da = a.next_contact_date || "";
         const db = b.next_contact_date || "";
@@ -3880,7 +3936,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       return fa.localeCompare(fb) || (a.name || "").localeCompare(b.name || "");
     });
     return [...needsClose, ...rest];
-  }, [activeConfig.id, eventDateSortDirection, followUpSortDirection, visibleTargets]);
+  }, [activeConfig.id, eventDateSortDirection, followUpSortDirection, costSortDirection, visibleTargets]);
 
   // Apply the literal-port header filters (search, status pills, Past Events) on top of the category/sorted list.
   // This makes the ported Customer Lifecycle chrome actually drive the table (Events tab primary).
@@ -6640,6 +6696,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         onToggleEventDateSort={toggleEventDateSort}
                         followUpSortDirection={followUpSortDirection}
                         onToggleFollowUpSort={toggleFollowUpSort}
+                        costSortDirection={costSortDirection}
+                        onToggleCostSort={toggleCostSort}
                         onShowFollowUpInfo={(target, clickX, clickY) => {
                           const targetActivities = activitiesByTarget[target.id] || [];
                           const latestFollowUpActivity = [...targetActivities]
