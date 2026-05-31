@@ -10,6 +10,7 @@ import { C, fmtDate, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
+import IgnitePipelineDiagram from "../onboarding/IgnitePipelineDiagram";
 import { FormFields } from "./crmFormFields";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
 import { computeIgniteHealth, isSnapshotFresh, describeHealthBadge, healthChecks, formatAgo, formatUntil, formatClock } from "../onboarding/igniteHealth";
@@ -37,6 +38,7 @@ import {
   deriveFollowUp,
   leadUpdates,
   receivedDate,
+  receivedTime,
   followUpState,
   recommendedFollowUp,
   buildUpdatePayload,
@@ -184,14 +186,20 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
       {
         key: "received",
         header: "Received",
-        width: "114px",
+        width: "120px",
         sortable: true,
         searchable: false,
         sortValue: (r) => r.created_at || "",
-        render: (r) =>
-          receivedDate(r)
-            ? <span style={{ color: C.textSec, whiteSpace: "nowrap" }}>{fmtDate(r.created_at)}</span>
-            : <span style={{ color: C.textMut }}>—</span>,
+        render: (r) => {
+          if (!receivedDate(r)) return <span style={{ color: C.textMut }}>—</span>;
+          const time = receivedTime(r);
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 1, whiteSpace: "nowrap" }}>
+              <span style={{ color: C.textSec }}>{fmtDate(r.created_at)}</span>
+              {time ? <span style={{ fontSize: 11, color: C.textMut }}>{time}</span> : null}
+            </div>
+          );
+        },
       },
       {
         key: "phone",
@@ -576,6 +584,7 @@ function HealthBadge({ model, onOpen }) {
 // Full pipeline-health panel — every check + the per-run latencies, in detail.
 function HealthDetailModal({ locationId, snapshot, onClose }) {
   const [runs, setRuns] = useState(null);
+  const [showHow, setShowHow] = useState(false);
   useEffect(() => {
     let alive = true;
     supabase
@@ -613,6 +622,18 @@ function HealthDetailModal({ locationId, snapshot, onClose }) {
               {" · every 15 min"}
             </div>
           </div>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowHow((v) => !v)}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surfaceHover, color: C.text, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+          >
+            How it works — pipeline architecture and data flow
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ transform: showHow ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          {showHow ? <div style={{ marginTop: 12 }}><IgnitePipelineDiagram /></div> : null}
         </div>
 
         <div>

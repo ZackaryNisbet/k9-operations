@@ -269,6 +269,14 @@ export function receivedDate(lead) {
   return ts ? String(ts).slice(0, 10) : "";
 }
 
+/** Local wall-clock time the lead came in, e.g. "10:32 AM" — "" if unknown. */
+export function receivedTime(lead) {
+  const ts = lead && lead.created_at;
+  if (!ts) return "";
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 /** Where the submission came from, for the captured-event note. */
 export function leadSourceLabel(lead) {
   const text = `${(lead && lead.raw_email_subject) || ""} ${(lead && lead.source_detail) || ""}`.toLowerCase();
