@@ -92,6 +92,79 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, scan: true, count, reachedEnd, oldest: oldest === Infinity ? null : new Date(oldest).toISOString(), newest: newest ? new Date(newest).toISOString() : null, byType, attachment_content_types: ctypes, real_attachment_count: realAtts.length, real_attachments: realAtts.slice(0, 30), matching_count: matching.length, oldest_matching_samples: details });
   }
 
+  // ── Diagnostic: pull the FULL record (incl. raw MIME) for attachment-bearing
+  //    and recent web-form emails, and hunt the raw MIME for nested file
+  //    attachments (résumés inside a forwarded .eml won't show at top level).
+  //    ?inspect=1&n=20&subject=web%20form
+  if (url.searchParams.get("inspect") === "1") {
+    const want = Math.min(40, Math.max(1, Number(url.searchParams.get("n") || "20")));
+    const subjFilter = (url.searchParams.get("subject") || "web form").toLowerCase();
+    const cands: any[] = [];
+    let cur: string | null = null;
+    for (let page = 0; page < 80 && cands.length < 800; page++) {
+      const u = new URL("https://api.resend.com/emails/receiving");
+      u.searchParams.set("limit", "100");
+      if (cur) u.searchParams.set("after", cur);
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${resendKey}` } });
+      if (!r.ok) break;
+      const body = await r.json();
+      const rows = body.data ?? body.emails ?? [];
+      if (!rows.length) break;
+      for (const it of rows) {
+        const subj = String(it.subject || "").toLowerCase();
+        const hasAtt = Array.isArray(it.attachments) && it.attachments.length;
+        if (subj.includes(subjFilter) || hasAtt) cands.push(it);
+      }
+      if (!body.has_more) break;
+      cur = (rows[rows.length - 1].id ?? rows[rows.length - 1].email_id) || null;
+      if (!cur) break;
+    }
+    cands.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const withAtt = cands.filter((c) => Array.isArray(c.attachments) && c.attachments.length);
+    const seen = new Set<string>();
+    const pick = [...withAtt, ...cands].filter((it) => { const id = it.id ?? it.email_id; if (seen.has(id)) return false; seen.add(id); return true; }).slice(0, want);
+    const results: any[] = [];
+    for (const it of pick) {
+      const id = it.id ?? it.email_id;
+      try {
+        const r = await fetch(`https://api.resend.com/emails/receiving/${id}`, { headers: { Authorization: `Bearer ${resendKey}` } });
+        const full = r.ok ? await r.json() : null;
+        const f = full?.data ?? full ?? {};
+        const raw = typeof f.raw === "string" ? f.raw : "";
+        const fnames = [...raw.matchAll(/name="?([^"\r\n;]+\.(?:pdf|docx?|rtf|txt|png|jpe?g))"?/gi)].map((m) => m[1]);
+        results.push({ id, created_at: it.created_at, subject: it.subject, top_attachments: (f.attachments || []).map((a: any) => ({ filename: a.filename, content_type: a.content_type, size: a.size })), raw_len: raw.length, raw_has_pdf: /Content-Type:\s*application\/pdf/i.test(raw), raw_has_attachment_disp: /Content-Disposition:\s*attachment/i.test(raw), raw_filenames: [...new Set(fnames)].slice(0, 12) });
+      } catch (e) { results.push({ id, error: String(e) }); }
+    }
+    return json({ ok: true, inspect: true, candidates: cands.length, with_attachments: withAtt.length, inspected: results.length, results });
+  }
+
+  // ── Diagnostic: download an email's attachments via the Attachments API and
+  //    look INSIDE (a forwarded .eml may nest the original résumé). Validates the
+  //    exact Attachments API shape the webhook capture relies on. ?peek=<email_id>
+  if (url.searchParams.get("peek")) {
+    const id = url.searchParams.get("peek")!;
+    const la = await fetch(`https://api.resend.com/emails/receiving/${id}/attachments`, { headers: { Authorization: `Bearer ${resendKey}` } });
+    const laText = await la.text();
+    let attList: any = null; try { attList = JSON.parse(laText); } catch { /* */ }
+    const arr = attList?.data ?? attList?.attachments ?? [];
+    const out2: any[] = [];
+    for (const a of Array.isArray(arr) ? arr : []) {
+      const dl = a.download_url || a.url;
+      let content = "", bytes = 0, how = "none";
+      try {
+        if (dl) {
+          const fr = await fetch(dl, String(dl).includes("api.resend.com") ? { headers: { Authorization: `Bearer ${resendKey}` } } : {});
+          if (fr.ok) { const buf = new Uint8Array(await fr.arrayBuffer()); bytes = buf.length; content = new TextDecoder().decode(buf.slice(0, 300000)); how = "download_url"; }
+        } else if (typeof a.content === "string" && a.content) {
+          const bin = atob(a.content); bytes = bin.length; content = bin.slice(0, 300000); how = "base64";
+        }
+      } catch (e) { how = `err:${String(e).slice(0, 80)}`; }
+      const fnames = [...content.matchAll(/name="?([^"\r\n;]+\.(?:pdf|docx?|rtf|txt))"?/gi)].map((m) => m[1]);
+      out2.push({ filename: a.filename, content_type: a.content_type, size: a.size, attachment_keys: Object.keys(a), downloaded_bytes: bytes, fetched_via: how, nested_has_pdf: /Content-Type:\s*application\/pdf/i.test(content), nested_has_attachment_disp: /Content-Disposition:\s*attachment/i.test(content), nested_filenames: [...new Set(fnames)].slice(0, 12) });
+    }
+    return json({ ok: true, peek: id, attachments_api_status: la.status, attachments_api_top_keys: attList ? Object.keys(attList) : null, raw_list_head: laText.slice(0, 400), attachments: out2 });
+  }
+
   const out: Record<string, unknown> = { hours, dry, found: 0, leads: 0, duplicates: 0, skipped_seen: 0, synthetic_skipped: 0, failed: 0 };
   const items: unknown[] = [];
   let after: string | null = null;
