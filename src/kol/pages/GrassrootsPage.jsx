@@ -6807,16 +6807,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
               </div>
               <div>
                 <Label>Leads Captured</Label>
-                <input
-                  type="number"
-                  min="0"
-                  value={closeoutLeads}
-                  onChange={(e) => setCloseoutLeads(e.target.value)}
-                  onWheel={(e) => e.currentTarget.blur()}
-                  placeholder="0"
-                  autoFocus
-                  style={{ ...INPUT_STYLE, width: "100%" }}
-                />
+                <input type="number" min="0" value={closeoutLeads} onChange={(e) => setCloseoutLeads(e.target.value)} placeholder="0" autoFocus style={{ ...INPUT_STYLE, width: "100%" }} />
               </div>
               <div>
                 <Label>CPL — Cost per Lead (auto)</Label>
