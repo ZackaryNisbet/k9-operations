@@ -251,4 +251,29 @@ describe("labor roster PDF", () => {
     expect(resolveLaborRosterPageSize({ width: 1000, height: 800 })).toEqual({ width: 1000, height: 800 });
     expect(resolveLaborRosterPageSize("nonexistent-id")).toEqual({ width: 792, height: 612 });
   });
+
+  it("keeps a single large role as one continuous list, not repeated cards", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      name: `Pet Care Tech ${i + 1}`,
+      position: "Pet Care Technician",
+      phone: `(856) 555-${String(2000 + i).slice(-4)}`,
+      email: `pct.${i + 1}@example.com`,
+    }));
+    const bytes = await buildLaborRosterPdfBytes({
+      ...basePayload,
+      totalEmployees: 30,
+      rows,
+      options: { showPhone: true, showEmail: true },
+    });
+    const pdfDoc = await PDFDocument.load(bytes);
+    const text = await extractPdfText(bytes);
+
+    expect(pdfDoc.getPageCount()).toBe(1);
+    // A role that spans columns reads as a continuation, never as independent cards.
+    expect(text).toContain("(cont.)");
+    // Every technician appears exactly once — the column flow drops and duplicates nobody.
+    for (let i = 1; i <= 30; i += 1) {
+      expect(text.split(`pct.${i}@example.com`).length - 1).toBe(1);
+    }
+  });
 });
