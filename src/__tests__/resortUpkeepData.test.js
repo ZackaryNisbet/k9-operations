@@ -27,6 +27,8 @@ vi.mock("../supabaseClient", () => ({ supabase: supabaseMock }));
 import {
   RESORT_UPKEEP_ATTACHMENT_BUCKET,
   buildUpkeepDueItems,
+  detectVendorColumns,
+  buildVendorRows,
   upkeepFrequencyFromMonths,
   upkeepFrequencyFromSlug,
   createResortUpkeepSignedUrl,
@@ -683,6 +685,45 @@ describe("buildUpkeepDueItems", () => {
   it("returns an empty array for empty or missing input", () => {
     expect(buildUpkeepDueItems({})).toEqual([]);
     expect(buildUpkeepDueItems()).toEqual([]);
+  });
+});
+
+describe("vendor spreadsheet import", () => {
+  // Mirrors the real Cherry Hill sheet: title rows, a header not in row 0 with a
+  // leading empty column, and per-period Service/Fee columns.
+  const grid = [
+    ["Facility Vendor & Utility Contact List", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "TRADE", "COMPANY NAME", "CONTACT", "PHONE #", "E-MAIL", "Contract Y/N", "Monthly Service", "Monthly Fee", "Yearly Service", "Yearly Fee", "Notes"],
+    ["Have contract", "Electrical", "Hutchinson", "Chris", "856-420-7053", "chris@h.com", "Y", "", "", "X", "1,200", "note"],
+    ["", "HVAC", "CoolCo", "Pat", "609-111-2222", "N/A", "N", "X", "$85.00", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", "Just a stray note with no trade or company"],
+  ];
+
+  it("detects the header row and pairs columns, period Service/Fee taking precedence", () => {
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    expect(headerRowIndex).toBe(2);
+    const plain = (f) => columns.find((c) => c.field === f && !c.servicePeriod && !c.feePeriod);
+    expect(plain("trade").index).toBe(1);
+    expect(plain("company").index).toBe(2);
+    expect(plain("email").index).toBe(5);
+    expect(columns.find((c) => c.servicePeriod === "Monthly" && c.field === "frequency")).toBeTruthy();
+    expect(columns.find((c) => c.feePeriod === "Annually" && c.field === "cost")).toBeTruthy();
+  });
+
+  it("builds vendor rows, consolidating period Service/Fee into frequency + cost and cleaning placeholders", () => {
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    const rows = buildVendorRows(grid, headerRowIndex, columns);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ trade: "Electrical", company: "Hutchinson", contact: "Chris", email: "chris@h.com", contract: true, frequency: "Annually", cost: "1200" });
+    expect(rows[1]).toMatchObject({ trade: "HVAC", company: "CoolCo", contract: false, frequency: "Monthly", cost: "85" });
+    expect(rows[1].email).toBe(""); // "N/A" cleaned away
+  });
+
+  it("returns no header for an unstructured grid", () => {
+    expect(detectVendorColumns([["alpha", "beta"], ["1", "2"]]).headerRowIndex).toBe(-1);
+    expect(buildVendorRows([["a"]], -1, [])).toEqual([]);
   });
 
   it("derives frequency labels from template slugs and license cadence months", () => {
