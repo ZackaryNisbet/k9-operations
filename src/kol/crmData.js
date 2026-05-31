@@ -1,17 +1,17 @@
-// K9 Operations — CRM (Ignite intake) model (pure, framework-free)
+// K9 Operations — CRM (booking/availability form intake) model (pure, framework-free)
 //
-// The logic half of the CRM page (src/kol/pages/CrmPage.jsx): classifying Ignite
-// submissions into booking vs employment, shaping the parsed form data for the
-// Submission Details expander, and managing the per-submission outreach log.
+// Logic half of the CRM page (src/kol/pages/CrmPage.jsx): the web-form-only view
+// of submissions, the cleaned Name + pretty Phone presentation, the flattened
+// web-form details, and the relational follow-up "updates" (ignite_lead_updates).
 //
-// Deliberately free of React and of ./theme/supabase so every helper is
-// unit-testable in isolation (see src/__tests__/crmData.test.js). The only
-// import is the framework-free Ignite constants module.
+// Free of React / theme / supabase so every helper is unit-testable in isolation
+// (see src/__tests__/crmData.test.js). Only imports the framework-free Ignite
+// constants module.
 
-import { LEAD_TYPES, MATCH_STATUSES } from "../ignite/constants.js";
+import { LEAD_TYPES } from "../ignite/constants.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lead types + match status
+// Lead types — this CRM view is web-forms only (phone-call leads are excluded).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const LEAD_TYPE_LABELS = {
@@ -20,97 +20,48 @@ export const LEAD_TYPE_LABELS = {
   [LEAD_TYPES.AD_CLICK]: "Ad Click",
 };
 
-/** Human label for a lead_type enum value. */
 export function leadTypeLabel(type) {
   return LEAD_TYPE_LABELS[type] || "Submission";
 }
 
-// Pill meta for a lead's match status. `tone` keys into the list-surface
-// STATUS_PALETTE so the CRM table reuses the canonical status-pill colors.
-export const MATCH_STATUS_META = {
-  [MATCH_STATUSES.MATCHED]: { label: "Matched", tone: "success" },
-  [MATCH_STATUSES.REVIEW]: { label: "Needs Review", tone: "warning" },
-  [MATCH_STATUSES.NO_MATCH]: { label: "New Lead", tone: "info" },
-  [MATCH_STATUSES.NEW]: { label: "New", tone: "info" },
-};
-
-/** Resolve { label, tone } for a lead's match status, defaulting to neutral. */
-export function matchStatusMeta(status) {
-  return MATCH_STATUS_META[status] || { label: humanizeFieldKey(status || "New"), tone: "neutral" };
-}
-
-/**
- * Coarse status bucket used by the quick-filter pills. `matched` and `review`
- * map 1:1; everything else (new / no_match / unknown) is a fresh "new" lead.
- */
-export function statusBucket(lead) {
-  const s = lead && lead.match_status;
-  if (s === MATCH_STATUSES.MATCHED) return "matched";
-  if (s === MATCH_STATUSES.REVIEW) return "review";
-  return "new";
-}
-
-/** Match confidence (0–1) as a whole percentage, or null when absent. */
-export function confidencePct(confidence) {
-  if (confidence == null || Number.isNaN(Number(confidence))) return null;
-  return Math.round(Number(confidence) * 100);
+/** This view only shows web-form submissions. */
+export function isWebForm(lead) {
+  return (lead && lead.lead_type) === LEAD_TYPES.WEB_FORM;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Submission categories (subtabs) + classification
+// Subtabs — the booking/availability form (+ employment, ignored for now)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Tokens that mark a submission as an employment / hiring inquiry rather than a
-// booking inquiry. Matched as substrings against a lowercased haystack built
-// from the subject, source detail, and form-data keys + values.
 export const EMPLOYMENT_KEYWORDS = [
-  "employ", "career", "job", "hiring", "hire", "apply", "applicant",
-  "application", "resume", "résumé", "position", "vacancy", "recruit",
-  "openings", "work with us", "join our team", "join the team",
+  "employ", "career", "job", "hiring", "hire", "applicant", "application",
+  "resume", "résumé", "position", "vacancy", "recruit",
 ];
 
-// The CRM subtabs. `live` categories render the submissions table; the rest are
-// reserved (coming-soon) tabs for future Ignite intake streams.
 export const SUBMISSION_CATEGORIES = [
   {
     id: "booking",
-    label: "Booking",
+    label: "Booking Availability Form",
     live: true,
-    explainer:
-      "Prospective clients asking about daycare, boarding, grooming, and tours — captured from Ignite and ready for first outreach.",
+    explainer: "Booking & availability form submissions captured from your website — ready for outreach.",
   },
   {
     id: "employment",
     label: "Employment",
     live: true,
-    explainer:
-      "Job and hiring inquiries captured from Ignite careers forms — route these to the hiring manager and follow up.",
-  },
-  {
-    id: "partnerships",
-    label: "Partnerships",
-    live: false,
-    explainer: "Vendor, rescue, and cross-referral partnership inquiries will land here.",
-  },
-  {
-    id: "events",
-    label: "Events",
-    live: false,
-    explainer: "Facility rental and private-event inquiries will land here.",
+    explainer: "Job and hiring inquiries.",
   },
 ];
 
 export const LIVE_CATEGORY_IDS = SUBMISSION_CATEGORIES.filter((c) => c.live).map((c) => c.id);
 
-/** Look up a category definition by id. */
 export function getCategory(id) {
   return SUBMISSION_CATEGORIES.find((c) => c.id === id) || null;
 }
 
-/** Lowercased text blob used to sniff a submission's category. */
 export function buildClassifierHaystack(lead) {
   if (!lead) return "";
-  const parts = [lead.raw_email_subject, lead.source_detail];
+  const parts = [lead.raw_email_subject, lead.source_detail, lead.form_data && lead.form_data.form_name];
   const fd = lead.form_data;
   if (fd && typeof fd === "object") {
     for (const [key, value] of Object.entries(fd)) {
@@ -121,76 +72,70 @@ export function buildClassifierHaystack(lead) {
   return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
-/**
- * Classify a submission into a live category. Employment inquiries are detected
- * by keyword; everything else is treated as a booking inquiry (the default).
- */
+/** Booking is the default; only obvious hiring inquiries go to employment. */
 export function classifySubmissionCategory(lead) {
   const haystack = buildClassifierHaystack(lead);
   return EMPLOYMENT_KEYWORDS.some((kw) => haystack.includes(kw)) ? "employment" : "booking";
 }
 
-/** Count submissions per live category (for the subtab badges). */
+/** Count web-form submissions per live category (for subtab badges). */
 export function countByCategory(leads) {
   const counts = Object.create(null);
   for (const id of LIVE_CATEGORY_IDS) counts[id] = 0;
   for (const lead of leads || []) {
+    if (!isWebForm(lead)) continue;
     const id = classifySubmissionCategory(lead);
     counts[id] = (counts[id] || 0) + 1;
   }
   return counts;
 }
 
-/** Count submissions per status bucket (for the quick-filter pills). */
-export function countByStatusBucket(leads) {
-  const counts = { all: 0, new: 0, matched: 0, review: 0 };
-  for (const lead of leads || []) {
-    counts.all += 1;
-    counts[statusBucket(lead)] += 1;
-  }
-  return counts;
+/** Filter to web forms in the active category. */
+export function filterSubmissions(leads, { category } = {}) {
+  return (leads || []).filter((lead) => {
+    if (!isWebForm(lead)) return false;
+    if (category && classifySubmissionCategory(lead) !== category) return false;
+    return true;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Contact + form-data shaping
+// Name + phone presentation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Display name "First Last", or a stable fallback when both are blank. */
-export function leadDisplayName(lead) {
-  const name = [lead && lead.first_name, lead && lead.last_name]
-    .map((s) => (s || "").trim())
+function collapseSpaces(s) {
+  return String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+}
+
+/** Combine first + last into one clean name, fixing stray/double spaces. */
+export function cleanLeadName(lead) {
+  return [collapseSpaces(lead && lead.first_name), collapseSpaces(lead && lead.last_name)]
     .filter(Boolean)
     .join(" ");
-  return name || "Unknown contact";
 }
 
-/** Sort key for a lead's name (last name first, lowercased). */
 export function leadSortName(lead) {
-  return [(lead && lead.last_name) || "", (lead && lead.first_name) || ""].join(" ").trim().toLowerCase();
+  return collapseSpaces([(lead && lead.last_name) || "", (lead && lead.first_name) || ""].join(" ")).toLowerCase();
 }
 
-function firstNonEmpty(...values) {
-  for (const v of values) {
-    if (v != null && String(v).trim() !== "") return String(v).trim();
-  }
-  return "";
+/**
+ * Format a phone number as: country-code (area) three - four
+ * e.g. "8567018139" → "1 (856) 701 - 8139". Unrecognized inputs pass through.
+ */
+export function formatPhonePretty(phone) {
+  const d = String(phone == null ? "" : phone).replace(/\D/g, "");
+  let cc = "1";
+  let rest = d;
+  if (d.length === 11 && d[0] === "1") rest = d.slice(1);
+  else if (d.length === 10) rest = d;
+  else return collapseSpaces(phone);
+  return `${cc} (${rest.slice(0, 3)}) ${rest.slice(3, 6)} - ${rest.slice(6, 10)}`;
 }
 
-/** A representative "interest / role" for the table's middle column. */
-export function leadPrimaryInterest(lead) {
-  const fd = (lead && lead.form_data) || {};
-  return firstNonEmpty(
-    fd.service_interest,
-    fd.interest,
-    fd.service,
-    fd.position,
-    fd.role,
-    fd.job_title,
-    fd.desired_position,
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Web-form details — every distinct field from the contact form
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Turn a snake_case / camelCase form-data key into a Title Case label. */
 export function humanizeFieldKey(key) {
   return String(key || "")
     .replace(/[_-]+/g, " ")
@@ -200,103 +145,103 @@ export function humanizeFieldKey(key) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Keys already surfaced as dedicated fields elsewhere in the UI — hidden from
-// the generic "parsed fields" list in the Submission Details expander.
-export const FORM_DATA_HIDDEN_KEYS = new Set([
-  "first_name", "last_name", "email", "phone", "lead_type",
-  "ignite_profile_id", "ignite_location_id",
+// Keys promoted elsewhere or that are plumbing/noise (mostly from the legacy
+// Gingr appointment feed) — excluded from the details column.
+export const FORM_FIELD_HIDDEN_KEYS = new Set([
+  "lead_type", "first_name", "last_name", "caller_name", "email", "phone",
+  "ignite_profile_id", "ignite_location_id", "ignite_lead_id",
+  "landing_page_url", "lead_page_url", "agreed_to_terms", "device", "browser",
+  "country", "services", "sales_value", "estimated_tax", "estimated_subtotal",
+  "estimated_total", "multi_unit_name", "is_this_lead_quotable_yes_yes",
+  "booking_title",
 ]);
 
 /**
- * Flatten a lead's form_data into [{ key, label, value }] for the details
- * expander: scalar values only, hidden keys removed, blanks skipped.
+ * Flatten a submission's contact-form fields into [{ key, label, value }] for the
+ * details column: email first, then every distinct non-empty scalar field.
  */
-export function buildFormDataEntries(lead) {
+export function buildFormFieldEntries(lead) {
+  const entries = [];
+  if (lead && lead.email) entries.push({ key: "email", label: "Email", value: String(lead.email) });
   const fd = lead && lead.form_data;
-  if (!fd || typeof fd !== "object") return [];
-  return Object.entries(fd)
-    .filter(([key, value]) =>
-      !FORM_DATA_HIDDEN_KEYS.has(key) &&
-      value != null &&
-      typeof value !== "object" &&
-      String(value).trim() !== "")
-    .map(([key, value]) => ({ key, label: humanizeFieldKey(key), value: String(value) }));
+  if (fd && typeof fd === "object") {
+    for (const [key, value] of Object.entries(fd)) {
+      if (FORM_FIELD_HIDDEN_KEYS.has(key)) continue;
+      if (value == null || typeof value === "object") continue;
+      const clean = collapseSpaces(value);
+      if (!clean || clean.length > 240) continue; // skip blanks + giant blobs
+      entries.push({ key, label: humanizeFieldKey(key), value: clean });
+    }
+  }
+  return entries;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Outreach log
+// Updates (relational ignite_lead_updates) — follow-up log
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const OUTREACH_CHANNELS = [
+export const UPDATE_TYPES = [
   { id: "call", label: "Call" },
   { id: "text", label: "Text" },
   { id: "email", label: "Email" },
   { id: "note", label: "Note" },
 ];
 
-export const OUTREACH_CHANNEL_LABELS = OUTREACH_CHANNELS.reduce((acc, c) => {
-  acc[c.id] = c.label;
+export const UPDATE_TYPE_LABELS = UPDATE_TYPES.reduce((acc, t) => {
+  acc[t.id] = t.label;
   return acc;
 }, {});
 
-/** A lead's outreach log as an array (tolerant of a missing/!array column). */
-export function getOutreachLog(lead) {
-  const log = lead && lead.outreach_log;
-  return Array.isArray(log) ? log : [];
+export function updateTypeLabel(type) {
+  return UPDATE_TYPE_LABELS[type] || "Note";
 }
 
-export function outreachCount(lead) {
-  return getOutreachLog(lead).length;
+/** Group ignite_lead_updates rows by lead_id. */
+export function groupUpdatesByLead(rows) {
+  const map = Object.create(null);
+  for (const r of rows || []) {
+    if (!r || !r.lead_id) continue;
+    (map[r.lead_id] || (map[r.lead_id] = [])).push(r);
+  }
+  return map;
 }
 
-/** The most recently logged outreach entry, or null. */
-export function latestOutreach(lead) {
-  const log = getOutreachLog(lead);
-  if (!log.length) return null;
-  return log.reduce((latest, entry) =>
-    new Date(entry.loggedAt).getTime() >= new Date(latest.loggedAt).getTime() ? entry : latest);
+function byCreatedAtDesc(a, b) {
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 }
 
-/** The pending follow-up date (newFollowUp of the latest entry), or "". */
-export function currentFollowUp(lead) {
-  const latest = latestOutreach(lead);
-  return (latest && latest.newFollowUp) || "";
+/** { count, latest } summary for the Updates column. */
+export function summarizeUpdates(updates) {
+  const list = Array.isArray(updates) ? updates : [];
+  if (!list.length) return { count: 0, latest: null };
+  return { count: list.length, latest: [...list].sort(byCreatedAtDesc)[0] };
 }
 
-/**
- * Build a new outreach log entry. `now` may be a Date or a value the Date
- * constructor accepts; defaults to the current time.
- */
-export function makeOutreachEntry({
-  channel = "note",
-  notes = "",
-  nextFollowUp = "",
-  previousFollowUp = "",
-  loggedBy = "",
-  now = new Date(),
-} = {}) {
-  const at = now instanceof Date ? now : new Date(now);
-  const rand = Math.random().toString(36).slice(2, 7);
+/** The pending follow-up date: newest update's next_follow_up_date, or "". */
+export function deriveFollowUp(updates) {
+  const list = Array.isArray(updates) ? updates : [];
+  for (const u of [...list].sort(byCreatedAtDesc)) {
+    if (u.next_follow_up_date) return u.next_follow_up_date;
+  }
+  return "";
+}
+
+/** Row payload inserted into ignite_lead_updates. */
+export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "" }) {
   return {
-    id: `out_${at.getTime().toString(36)}_${rand}`,
-    channel: OUTREACH_CHANNEL_LABELS[channel] ? channel : "note",
-    notes: String(notes || "").trim(),
-    previousFollowUp: previousFollowUp || "",
-    newFollowUp: nextFollowUp || "",
-    loggedBy: loggedBy || "",
-    loggedAt: at.toISOString(),
+    lead_id: leadId,
+    location_id: locationId,
+    update_type: UPDATE_TYPE_LABELS[type] ? type : "note",
+    notes: String(notes || "").trim() || null,
+    next_follow_up_date: nextFollowUp || null,
+    created_by_user_id: createdById || null,
+    created_by_name: String(createdByName || "").trim() || null,
   };
-}
-
-/** Return a new outreach log with `entry` appended (does not mutate `lead`). */
-export function appendOutreachEntry(lead, entry) {
-  return [...getOutreachLog(lead), entry];
 }
 
 /**
  * Classify a follow-up date relative to `today` ("YYYY-MM-DD"):
- *   none → not yet contacted · overdue · today · scheduled (future).
- * String comparison is valid for zero-padded ISO dates.
+ *   none · overdue · today · scheduled (future). String compare is valid for ISO.
  */
 export function followUpState(dateStr, today) {
   if (!dateStr) return "none";
@@ -306,28 +251,8 @@ export function followUpState(dateStr, today) {
   return "scheduled";
 }
 
-/**
- * Recommended next follow-up date for a category. Booking inquiries are
- * high-intent (+1 day); employment inquiries get a +2 day default. `addDaysFn`
- * is injected (theme's addDays) to keep this module framework-free.
- */
+/** Recommended next follow-up: booking +1 day (high-intent), employment +2. */
 export function recommendedFollowUp(category, today, addDaysFn) {
   const offset = category === "employment" ? 2 : 1;
   return typeof addDaysFn === "function" ? addDaysFn(today, offset) : today;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Filtering
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Filter decorated submissions by active category + status bucket. Search is
- * handled separately by the list-surface filterRows() over the table columns.
- */
-export function filterSubmissions(leads, { category, status = "all" } = {}) {
-  return (leads || []).filter((lead) => {
-    if (category && classifySubmissionCategory(lead) !== category) return false;
-    if (status && status !== "all" && statusBucket(lead) !== status) return false;
-    return true;
-  });
 }

@@ -1,271 +1,177 @@
 import { describe, expect, it } from "vitest";
 import {
   leadTypeLabel,
-  matchStatusMeta,
-  statusBucket,
-  confidencePct,
+  isWebForm,
   classifySubmissionCategory,
-  buildClassifierHaystack,
   countByCategory,
-  countByStatusBucket,
-  leadDisplayName,
+  filterSubmissions,
+  cleanLeadName,
   leadSortName,
-  leadPrimaryInterest,
+  formatPhonePretty,
   humanizeFieldKey,
-  buildFormDataEntries,
-  getOutreachLog,
-  outreachCount,
-  latestOutreach,
-  currentFollowUp,
-  makeOutreachEntry,
-  appendOutreachEntry,
+  buildFormFieldEntries,
+  groupUpdatesByLead,
+  summarizeUpdates,
+  deriveFollowUp,
+  buildUpdatePayload,
   followUpState,
   recommendedFollowUp,
-  filterSubmissions,
+  updateTypeLabel,
   SUBMISSION_CATEGORIES,
   LIVE_CATEGORY_IDS,
 } from "../kol/crmData";
 
 const bookingLead = {
   id: "l1",
-  first_name: "Sarah",
-  last_name: "Johnson",
-  email: "sarah.johnson@gmail.com",
-  phone: "(856) 555-0142",
   lead_type: "web_form",
-  raw_email_subject: "New Web Form Submission - K9 Operations Cherry Hill",
-  match_status: "no_match",
-  form_data: { service_interest: "Doggy Daycare", dog_name: "Max", dog_breed: "Golden Retriever", message: "Tour?" },
+  first_name: "Janelle",
+  last_name: "Martinez",
+  email: "JMBMartinez.jmm@gmail.com",
+  phone: "8567018139",
+  raw_email_subject: "New Booking Form Submission Received",
+  form_data: {
+    zip_code: "08003",
+    desired_service: "Dog Boarding",
+    desired_date_of_boarding_or_day_care: "June 25th to July 1st",
+    details: "1 dog, email or text is good",
+    form_name: "Booking",
+    ignite_lead_id: "232458871", // noise — hidden
+  },
 };
 
-const employmentLead = {
-  id: "l2",
-  first_name: "Devon",
-  last_name: "Reyes",
-  email: "devon@example.com",
-  phone: "8565550199",
-  lead_type: "web_form",
-  raw_email_subject: "New Careers Application - Kennel Technician",
-  match_status: "matched",
-  match_confidence: 0.95,
-  form_data: { position: "Kennel Technician", availability: "Weekends" },
-};
+const phoneLead = { id: "l2", lead_type: "phone_call", first_name: "Carl", last_name: "Trimbach" };
+const employmentLead = { id: "l3", lead_type: "web_form", first_name: "Devon", last_name: "Reyes", form_data: { message: "I'd like to apply for a job" } };
 
-describe("leadTypeLabel", () => {
-  it("maps known enum values and falls back", () => {
+describe("lead type", () => {
+  it("labels and identifies web forms", () => {
     expect(leadTypeLabel("web_form")).toBe("Web Form");
-    expect(leadTypeLabel("phone_call")).toBe("Phone Call");
-    expect(leadTypeLabel("ad_click")).toBe("Ad Click");
-    expect(leadTypeLabel("mystery")).toBe("Submission");
+    expect(isWebForm(bookingLead)).toBe(true);
+    expect(isWebForm(phoneLead)).toBe(false);
   });
 });
 
-describe("matchStatusMeta + statusBucket", () => {
-  it("resolves pill meta for known statuses", () => {
-    expect(matchStatusMeta("matched")).toEqual({ label: "Matched", tone: "success" });
-    expect(matchStatusMeta("review")).toEqual({ label: "Needs Review", tone: "warning" });
-    expect(matchStatusMeta("no_match")).toEqual({ label: "New Lead", tone: "info" });
-  });
-
-  it("falls back to a neutral humanized label", () => {
-    expect(matchStatusMeta("weird_state")).toEqual({ label: "Weird State", tone: "neutral" });
-  });
-
-  it("buckets statuses into new / matched / review", () => {
-    expect(statusBucket({ match_status: "matched" })).toBe("matched");
-    expect(statusBucket({ match_status: "review" })).toBe("review");
-    expect(statusBucket({ match_status: "no_match" })).toBe("new");
-    expect(statusBucket({ match_status: "new" })).toBe("new");
-    expect(statusBucket({})).toBe("new");
-  });
-});
-
-describe("confidencePct", () => {
-  it("converts a 0–1 score to a whole percentage", () => {
-    expect(confidencePct(0.95)).toBe(95);
-    expect(confidencePct(1)).toBe(100);
-    expect(confidencePct(0)).toBe(0);
-  });
-
-  it("returns null for missing / non-numeric values", () => {
-    expect(confidencePct(null)).toBeNull();
-    expect(confidencePct(undefined)).toBeNull();
-    expect(confidencePct("nope")).toBeNull();
-  });
-});
-
-describe("classifySubmissionCategory", () => {
-  it("defaults a booking inquiry to booking", () => {
+describe("categories", () => {
+  it("defaults to booking, detects employment", () => {
     expect(classifySubmissionCategory(bookingLead)).toBe("booking");
-  });
-
-  it("detects employment from the subject", () => {
     expect(classifySubmissionCategory(employmentLead)).toBe("employment");
   });
 
-  it("detects employment from form-data values", () => {
-    const lead = { raw_email_subject: "New Web Form Submission", form_data: { message: "I'd like to apply for a job" } };
-    expect(classifySubmissionCategory(lead)).toBe("employment");
+  it("counts only web forms per live category", () => {
+    expect(countByCategory([bookingLead, phoneLead, employmentLead])).toEqual({ booking: 1, employment: 1 });
   });
 
-  it("is case-insensitive and tolerant of missing fields", () => {
-    expect(classifySubmissionCategory({ source_detail: "CAREER PAGE" })).toBe("employment");
-    expect(classifySubmissionCategory({})).toBe("booking");
-    expect(classifySubmissionCategory(null)).toBe("booking");
+  it("filters out phone calls and off-category leads", () => {
+    expect(filterSubmissions([bookingLead, phoneLead, employmentLead], { category: "booking" })).toEqual([bookingLead]);
+    expect(filterSubmissions([bookingLead, phoneLead], { category: "booking" }).every(isWebForm)).toBe(true);
   });
 
-  it("builds a lowercased haystack from subject, source, and form data", () => {
-    const hay = buildClassifierHaystack(employmentLead);
-    expect(hay).toContain("careers application");
-    expect(hay).toContain("kennel technician");
-    expect(hay).toBe(hay.toLowerCase());
+  it("exposes exactly the booking + employment subtabs", () => {
+    expect(LIVE_CATEGORY_IDS).toEqual(["booking", "employment"]);
+    expect(SUBMISSION_CATEGORIES.find((c) => c.id === "booking").label).toBe("Booking Availability Form");
+    expect(SUBMISSION_CATEGORIES.some((c) => c.id === "partnerships" || c.id === "events")).toBe(false);
   });
 });
 
-describe("counts", () => {
-  it("counts by live category", () => {
-    const counts = countByCategory([bookingLead, employmentLead, bookingLead]);
-    expect(counts).toEqual({ booking: 2, employment: 1 });
+describe("name + phone presentation", () => {
+  it("combines first+last and collapses stray spaces", () => {
+    expect(cleanLeadName(bookingLead)).toBe("Janelle Martinez");
+    expect(cleanLeadName({ first_name: "  Pa ", last_name: "  Hazleton " })).toBe("Pa Hazleton");
+    expect(cleanLeadName({ first_name: "Liacouras", last_name: null })).toBe("Liacouras");
+    expect(leadSortName(bookingLead)).toBe("martinez janelle");
   });
 
-  it("counts by status bucket including an all total", () => {
-    expect(countByStatusBucket([bookingLead, employmentLead])).toEqual({ all: 2, new: 1, matched: 1, review: 0 });
-  });
-
-  it("keeps every live category id present even at zero", () => {
-    expect(Object.keys(countByCategory([])).sort()).toEqual([...LIVE_CATEGORY_IDS].sort());
-  });
-});
-
-describe("name + interest helpers", () => {
-  it("formats display and sort names", () => {
-    expect(leadDisplayName(bookingLead)).toBe("Sarah Johnson");
-    expect(leadDisplayName({})).toBe("Unknown contact");
-    expect(leadSortName(bookingLead)).toBe("johnson sarah");
-  });
-
-  it("picks a representative interest / role", () => {
-    expect(leadPrimaryInterest(bookingLead)).toBe("Doggy Daycare");
-    expect(leadPrimaryInterest(employmentLead)).toBe("Kennel Technician");
-    expect(leadPrimaryInterest({ form_data: {} })).toBe("");
+  it("formats phone as cc (area) three - four", () => {
+    expect(formatPhonePretty("8567018139")).toBe("1 (856) 701 - 8139");
+    expect(formatPhonePretty("18567018139")).toBe("1 (856) 701 - 8139");
+    expect(formatPhonePretty("+1 (856) 701-8139")).toBe("1 (856) 701 - 8139");
+    expect(formatPhonePretty("")).toBe("");
+    expect(formatPhonePretty("12345")).toBe("12345"); // unknown → passthrough
   });
 });
 
-describe("humanizeFieldKey + buildFormDataEntries", () => {
-  it("humanizes snake and camel case keys", () => {
-    expect(humanizeFieldKey("service_interest")).toBe("Service Interest");
-    expect(humanizeFieldKey("dogBreed")).toBe("Dog Breed");
-    expect(humanizeFieldKey("call_recording_url")).toBe("Call Recording Url");
+describe("web-form details", () => {
+  it("humanizes keys", () => {
+    expect(humanizeFieldKey("desired_service")).toBe("Desired Service");
+    expect(humanizeFieldKey("zip_code")).toBe("Zip Code");
   });
 
-  it("flattens form_data, hiding redundant keys and blanks", () => {
-    const entries = buildFormDataEntries(bookingLead);
+  it("lists email first then every distinct field, hiding noise", () => {
+    const entries = buildFormFieldEntries(bookingLead);
     const labels = entries.map((e) => e.label);
-    expect(labels).toContain("Service Interest");
-    expect(labels).toContain("Dog Name");
-    expect(labels).not.toContain("Email"); // hidden — shown as a dedicated field
+    expect(labels[0]).toBe("Email");
+    expect(labels).toContain("Desired Service");
+    expect(labels).toContain("Zip Code");
+    expect(labels).toContain("Details");
+    expect(labels).not.toContain("Ignite Lead Id"); // hidden noise
   });
 
-  it("returns [] for a missing or non-object form_data", () => {
-    expect(buildFormDataEntries({})).toEqual([]);
-    expect(buildFormDataEntries({ form_data: null })).toEqual([]);
+  it("returns [] when there's nothing to show", () => {
+    expect(buildFormFieldEntries({})).toEqual([]);
   });
 });
 
-describe("outreach log", () => {
-  it("treats a missing log as empty", () => {
-    expect(getOutreachLog({})).toEqual([]);
-    expect(outreachCount({})).toBe(0);
-    expect(latestOutreach({})).toBeNull();
-    expect(currentFollowUp({})).toBe("");
+describe("updates (relational follow-up log)", () => {
+  const updates = [
+    { id: "u1", lead_id: "l1", update_type: "call", notes: "left vm", next_follow_up_date: "2026-06-01", created_at: "2026-05-28T10:00:00Z" },
+    { id: "u2", lead_id: "l1", update_type: "text", notes: "texted", next_follow_up_date: "2026-06-03", created_at: "2026-05-30T10:00:00Z" },
+    { id: "u3", lead_id: "l2", update_type: "note", notes: "n", next_follow_up_date: null, created_at: "2026-05-29T10:00:00Z" },
+  ];
+
+  it("groups by lead", () => {
+    const map = groupUpdatesByLead(updates);
+    expect(map.l1).toHaveLength(2);
+    expect(map.l2).toHaveLength(1);
   });
 
-  it("builds an entry with a normalized channel and trimmed notes", () => {
-    const entry = makeOutreachEntry({
-      channel: "call",
-      notes: "  Left a voicemail  ",
-      nextFollowUp: "2026-06-01",
-      previousFollowUp: "2026-05-30",
-      loggedBy: "Pat Lee",
-      now: new Date("2026-05-30T15:00:00Z"),
+  it("summarizes count + latest", () => {
+    const map = groupUpdatesByLead(updates);
+    const s = summarizeUpdates(map.l1);
+    expect(s.count).toBe(2);
+    expect(s.latest.id).toBe("u2");
+    expect(summarizeUpdates([])).toEqual({ count: 0, latest: null });
+  });
+
+  it("derives the pending follow-up from the newest update", () => {
+    const map = groupUpdatesByLead(updates);
+    expect(deriveFollowUp(map.l1)).toBe("2026-06-03");
+    expect(deriveFollowUp(map.l2)).toBe(""); // no date set
+    expect(deriveFollowUp([])).toBe("");
+  });
+
+  it("builds an insert payload with a normalized type", () => {
+    expect(
+      buildUpdatePayload({ leadId: "l1", locationId: "loc", type: "call", notes: "  hi  ", nextFollowUp: "2026-06-02", createdByName: "Pat" })
+    ).toEqual({
+      lead_id: "l1",
+      location_id: "loc",
+      update_type: "call",
+      notes: "hi",
+      next_follow_up_date: "2026-06-02",
+      created_by_user_id: null,
+      created_by_name: "Pat",
     });
-    expect(entry.channel).toBe("call");
-    expect(entry.notes).toBe("Left a voicemail");
-    expect(entry.newFollowUp).toBe("2026-06-01");
-    expect(entry.previousFollowUp).toBe("2026-05-30");
-    expect(entry.loggedBy).toBe("Pat Lee");
-    expect(entry.loggedAt).toBe("2026-05-30T15:00:00.000Z");
-    expect(entry.id).toMatch(/^out_/);
-  });
-
-  it("falls back to the note channel for unknown channels", () => {
-    expect(makeOutreachEntry({ channel: "smoke-signal" }).channel).toBe("note");
-  });
-
-  it("appends without mutating the original lead", () => {
-    const entry = makeOutreachEntry({ channel: "note", notes: "x", now: new Date("2026-05-30T12:00:00Z") });
-    const next = appendOutreachEntry(bookingLead, entry);
-    expect(next).toHaveLength(1);
-    expect(getOutreachLog(bookingLead)).toEqual([]); // original untouched
-  });
-
-  it("reads the latest entry and its pending follow-up", () => {
-    const lead = {
-      outreach_log: [
-        { id: "a", loggedAt: "2026-05-28T10:00:00Z", newFollowUp: "2026-05-29" },
-        { id: "b", loggedAt: "2026-05-30T10:00:00Z", newFollowUp: "2026-06-02" },
-      ],
-    };
-    expect(latestOutreach(lead).id).toBe("b");
-    expect(currentFollowUp(lead)).toBe("2026-06-02");
-    expect(outreachCount(lead)).toBe(2);
+    expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", type: "smoke" }).update_type).toBe("note");
+    expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", notes: "" }).notes).toBeNull();
+    expect(updateTypeLabel("email")).toBe("Email");
   });
 });
 
-describe("followUpState", () => {
-  const today = "2026-05-30";
+describe("follow-up timing", () => {
   it("classifies relative to today", () => {
+    const today = "2026-05-30";
     expect(followUpState("", today)).toBe("none");
     expect(followUpState("2026-05-29", today)).toBe("overdue");
     expect(followUpState("2026-05-30", today)).toBe("today");
     expect(followUpState("2026-06-01", today)).toBe("scheduled");
   });
-});
 
-describe("recommendedFollowUp", () => {
-  const addDays = (d, n) => {
-    const dt = new Date(d + "T12:00:00");
-    dt.setDate(dt.getDate() + n);
-    return dt.toISOString().split("T")[0];
-  };
-  it("uses +1 for booking (high-intent) and +2 for employment", () => {
+  it("recommends +1 booking / +2 employment", () => {
+    const addDays = (d, n) => {
+      const dt = new Date(d + "T12:00:00");
+      dt.setDate(dt.getDate() + n);
+      return dt.toISOString().split("T")[0];
+    };
     expect(recommendedFollowUp("booking", "2026-05-30", addDays)).toBe("2026-05-31");
     expect(recommendedFollowUp("employment", "2026-05-30", addDays)).toBe("2026-06-01");
-  });
-});
-
-describe("filterSubmissions", () => {
-  const leads = [bookingLead, employmentLead];
-  it("filters by category", () => {
-    expect(filterSubmissions(leads, { category: "booking" })).toEqual([bookingLead]);
-    expect(filterSubmissions(leads, { category: "employment" })).toEqual([employmentLead]);
-  });
-
-  it("filters by status bucket and combines with category", () => {
-    expect(filterSubmissions(leads, { category: "employment", status: "matched" })).toEqual([employmentLead]);
-    expect(filterSubmissions(leads, { category: "booking", status: "matched" })).toEqual([]);
-    expect(filterSubmissions(leads, { status: "new" })).toEqual([bookingLead]);
-  });
-});
-
-describe("SUBMISSION_CATEGORIES", () => {
-  it("exposes two live subtabs and at least one coming-soon tab", () => {
-    expect(LIVE_CATEGORY_IDS).toEqual(["booking", "employment"]);
-    expect(SUBMISSION_CATEGORIES.some((c) => !c.live)).toBe(true);
-    SUBMISSION_CATEGORIES.forEach((c) => {
-      expect(c.id).toBeTruthy();
-      expect(c.label).toBeTruthy();
-      expect(c.explainer).toBeTruthy();
-    });
   });
 });
