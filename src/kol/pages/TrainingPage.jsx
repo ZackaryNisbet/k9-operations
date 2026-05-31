@@ -6239,6 +6239,93 @@ function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
   return `${base.slice(0, 72 - timestampSuffix.length)}${timestampSuffix}`;
 }
 
+// Creatable group combobox for the compliance requirement editor: type to filter existing groups,
+// pick a suggestion, or create a brand-new group. Module-scoped so its open/active state survives
+// parent re-renders. `value` is the visible label text; the caller resolves it to a display_group key.
+function ComplianceGroupCombobox({ value, onChange, options = [] }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const inputRef = useRef(null);
+  const popoverRef = useRef(null);
+
+  const query = String(value || "").trim().toLowerCase();
+  const matches = (options || []).filter((option) => !query || option.label.toLowerCase().includes(query));
+  const hasExact = (options || []).some((option) => option.label.toLowerCase() === query);
+  const rows = [
+    ...matches.map((option) => ({ type: "pick", label: option.label })),
+    ...(query && !hasExact ? [{ type: "create", label: String(value).trim() }] : []),
+  ];
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (popoverRef.current?.contains(event.target) || inputRef.current?.contains(event.target)) return;
+      setOpen(false);
+      setActiveIndex(-1);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  const choose = (row) => { onChange(row.label); setOpen(false); setActiveIndex(-1); };
+
+  const handleKeyDown = (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActiveIndex((prev) => Math.min(prev + 1, rows.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((prev) => Math.max(prev - 1, 0));
+    } else if (event.key === "Enter" && open && activeIndex >= 0 && rows[activeIndex]) {
+      event.preventDefault();
+      choose(rows[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        ref={inputRef}
+        value={value || ""}
+        onChange={(event) => { onChange(event.target.value); setOpen(true); setActiveIndex(-1); }}
+        onKeyDown={handleKeyDown}
+        onFocus={() => setOpen(true)}
+        placeholder="Type a group, e.g. Training, Onboarding…"
+        autoComplete="off"
+        style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", fontSize: 14, borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "inherit", outline: "none" }}
+      />
+      {open && rows.length > 0 ? (
+        <div
+          ref={popoverRef}
+          style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(15, 23, 42, 0.16)", overflow: "hidden", maxHeight: 240, overflowY: "auto" }}
+        >
+          {rows.map((row, index) => (
+            <button
+              key={`${row.type}:${row.label}`}
+              type="button"
+              onMouseDown={(event) => { event.preventDefault(); choose(row); }}
+              onMouseEnter={() => setActiveIndex(index)}
+              style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, border: "none", background: index === activeIndex ? C.surfaceHover : "transparent", color: C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 700, textAlign: "left", padding: "9px 12px", cursor: "pointer" }}
+            >
+              {row.type === "create" ? (
+                <>
+                  <span style={{ color: C.pri, fontWeight: 900 }}>+</span>
+                  <span>Create “{row.label}”</span>
+                </>
+              ) : (
+                <span>{row.label}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function compareCompliancePolicyRequirements(left = {}, right = {}) {
   const leftDefault = isDefaultReviewComplianceRequirement(left);
   const rightDefault = isDefaultReviewComplianceRequirement(right);
@@ -13104,13 +13191,36 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     reviewInstances,
   ]);
 
+  // Distinct existing groups (canonical + whatever admins have created), as { key, label } for the
+  // requirement editor's creatable combobox.
+  const complianceGroupOptions = useMemo(() => {
+    const keys = new Set(["custom", "reviews", "training"]);
+    toObjectRows(laborCompliancePolicyRequirements).forEach((row) => {
+      const key = getComplianceGroupKey(row.display_group);
+      if (key) keys.add(key);
+    });
+    return [...keys]
+      .map((key) => ({ key, label: getComplianceGroupLabel(key) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [laborCompliancePolicyRequirements]);
+  // Resolve the combobox's free text to a display_group key: reuse an existing group when the text
+  // matches a known label/key, otherwise slugify it into a new group. Blank falls back to "custom".
+  const resolveComplianceGroupKeyFromInput = useCallback((text) => {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return "custom";
+    const match = complianceGroupOptions.find((option) => (
+      option.label.toLowerCase() === trimmed.toLowerCase() || option.key === getComplianceGroupKey(trimmed)
+    ));
+    return match ? match.key : getComplianceGroupKey(trimmed);
+  }, [complianceGroupOptions]);
+
   const closeComplianceRequirementEditor = useCallback(() => {
     setComplianceRequirementEditorOpen(false);
     setComplianceRequirementEditingId("");
     setComplianceRequirementTitle("");
     setComplianceRequirementDescription("");
     setComplianceRequirementEvidencePolicy("checkbox_only");
-    setComplianceRequirementGroup("custom");
+    setComplianceRequirementGroup("");
   }, []);
 
   const openComplianceRequirementEditor = useCallback((requirement = null) => {
@@ -13126,7 +13236,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setComplianceRequirementTitle(requirement ? normalizeComplianceRequirementLabel(requirement) : "");
     setComplianceRequirementDescription(requirement?.description || "");
     setComplianceRequirementEvidencePolicy(requirement?.evidence_policy || "checkbox_only");
-    setComplianceRequirementGroup(getComplianceGroupKey(requirement?.display_group || "custom"));
+    setComplianceRequirementGroup(requirement ? getComplianceGroupLabel(requirement.display_group || "custom") : "");
     setComplianceRequirementEditorOpen(true);
   }, [addGlobalToast, canManageCompliancePolicy]);
 
@@ -13162,7 +13272,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       title,
       description: complianceRequirementDescription.trim() || null,
       evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
-      display_group: getComplianceGroupKey(complianceRequirementGroup || "custom"),
+      display_group: resolveComplianceGroupKeyFromInput(complianceRequirementGroup),
       updated_by_user_id: actorUserId || null,
     };
     const nowIso = new Date().toISOString();
@@ -13233,6 +13343,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     complianceRequirementTitle,
     laborCompliancePolicyRequirements,
     refreshLaborData,
+    resolveComplianceGroupKeyFromInput,
     resolvedLaborLocationId,
   ]);
 
@@ -16453,16 +16564,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         />
         <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Group</span>
-          <CustomSelect
+          <ComplianceGroupCombobox
             value={complianceRequirementGroup}
             onChange={setComplianceRequirementGroup}
-            options={[
-              { value: "custom", label: "Custom" },
-              { value: "reviews", label: "Performance Review" },
-              { value: "training", label: "Training" },
-            ]}
+            options={complianceGroupOptions}
           />
-          <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 650 }}>Groups this column on the Employees metrics header and the Requirements list.</div>
+          <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 650 }}>Type to reuse an existing group or create a new one. Groups this column on the Summary dashboard and the Requirements list.</div>
         </label>
         <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Evidence</span>
@@ -18350,12 +18457,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Card>
   );
 
-  // Compliance metrics header: headline tiles (Overdue emphasized) + dynamic per-group score% and
-  // per-requirement breakdown. variant="full" adds the group breakdown; "headline" shows tiles only.
+  // Compliance metrics dashboard (Summary sub-view): headline tiles (Overdue emphasized) + dynamic
+  // per-group score% and per-requirement breakdown, grouped by display_group.
   const complianceScoreColor = (p) => (
     p == null ? C.textMut : p >= 100 ? C.suc : p >= 80 ? C.pri : p >= 50 ? C.warn : C.dan
   );
-  const ComplianceMetricsHeader = ({ metrics, variant = "full" }) => {
+  const ComplianceMetricsHeader = ({ metrics }) => {
     if (!metrics) return null;
     const groups = Array.isArray(metrics.groups) ? metrics.groups : [];
     return (
@@ -18386,7 +18493,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             helper="employees with an overdue item"
           />
         </div>
-        {variant === "full" && groups.length > 0 ? (
+        {groups.length > 0 ? (
           <Card style={{ padding: 0, overflow: "hidden", borderRadius: 10 }}>
             {groups.map((group, groupIndex) => (
               <div
@@ -25760,8 +25867,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <Card style={{ padding: 24, textAlign: "center", color: C.textMut, marginBottom: 16 }}>Loading compliance...</Card>
           ) : null}
           {complianceView === "employees" && (
-            <>
-            <ComplianceMetricsHeader metrics={complianceMetrics} variant="full" />
             <PerformanceReviewComplianceGrid
               rows={sortedPerformanceReviewRows}
               reviewCycles={activePerformanceReviewCycles}
@@ -25783,30 +25888,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
               canEditIntro={canEditLaborIntro}
               onSaveIntro={(t) => saveLaborIntro("performance-reviews", t)}
             />
-            </>
           )}
           {complianceView === "summary" && (
-            <div style={{ display: "grid", gap: 14 }}>
-              <ComplianceMetricsHeader metrics={complianceMetrics} variant="headline" />
-              <PerformanceReviewComplianceGrid
-                variant="summary"
-                rows={sortedPerformanceReviewRows}
-                reviewCycles={activePerformanceReviewCycles}
-                sort={performanceReviewSort}
-                sortColumns={performanceReviewSortColumns}
-                policyLoaded={laborCompliancePolicyLoaded}
-                onSortChange={setPerformanceReviewSort}
-                getEmployeeId={getLaborEmployeeRowId}
-                formatDate={formatLaborDate}
-                formatTimestamp={formatTrainingTimestamp}
-                formatPhone={fmtPhoneInput}
-                formatPosition={formatLaborPositionTitle}
-                onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
-                onOpenEvidence={handleOpenComplianceReviewEditor}
-                onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
-                canViewPdfs={canViewCompliancePdfs}
-              />
-            </div>
+            <ComplianceMetricsHeader metrics={complianceMetrics} />
           )}
           {complianceView === "requirements" && (
             <div style={{ display: "grid", gap: 14 }}>

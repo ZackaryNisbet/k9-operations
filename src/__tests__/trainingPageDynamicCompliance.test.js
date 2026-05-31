@@ -50,10 +50,10 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("employee-compliance-checkpoint-list");
     expect(source).toContain('employeeRecordTab === "training" && canUseLaborTab("training")');
     expect(source).toContain('employeeRecordTab === "training" && selectedLaborEmployeeSnapshot?.active_training_record_id');
-    expect(source).toContain('variant="summary"');
+    expect(source).toContain("<ComplianceMetricsHeader metrics={complianceMetrics} />");
     expect(source).toContain('case "open_checkpoints"');
     expect(reviewGridSource).toContain(".employee-compliance-checkpoint-row");
-    expect(reviewGridSource).toContain("compliance-summary-table");
+    expect(reviewGridSource).toContain('variant === "summary"');
     expect(reviewGridSource).toContain("Open Checkpoints");
     expect(source).toContain("value={complianceView}");
     expect(source).toContain("onChange={changeComplianceView}");
@@ -273,8 +273,8 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('from("labor_compliance_requirements")');
     expect(source).toContain(".update({");
     expect(source).toContain("is_active: false");
-    // Custom columns persist a configurable display_group (default "custom") so groups are first-class.
-    expect(source).toContain("display_group: getComplianceGroupKey(complianceRequirementGroup");
+    // Custom columns persist a configurable display_group (resolved from the free-text group field).
+    expect(source).toContain("display_group: resolveComplianceGroupKeyFromInput(complianceRequirementGroup)");
     expect(source).toContain("setComplianceRequirementGroup");
     expect(source).toContain('ui_kind: "custom_yes_no"');
     expect(source).not.toContain("Review policy");
@@ -283,16 +283,17 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).not.toContain("PPBC Level 1");
   });
 
-  it("renders a dynamic Compliance metrics header grouped by display_group", () => {
-    // Roster-wide metrics builder, wired above the Employees grid and reused on Summary.
+  it("renders a dynamic Compliance metrics dashboard grouped by display_group", () => {
+    // Roster-wide metrics builder, rendered as the Summary sub-view (not above the Employees grid).
     expect(performanceReviewDataSource).toContain("export function buildLaborComplianceMetrics");
     expect(performanceReviewDataSource).toContain("export function getLaborComplianceMetricState");
     expect(performanceReviewDataSource).toContain("COMPLIANCE_GROUP_LABELS");
     expect(source).toContain("buildLaborComplianceMetrics");
     expect(source).toContain("const complianceMetrics = useMemo");
     expect(source).toContain("const ComplianceMetricsHeader =");
-    expect(source).toContain('<ComplianceMetricsHeader metrics={complianceMetrics} variant="full" />');
-    expect(source).toContain('<ComplianceMetricsHeader metrics={complianceMetrics} variant="headline" />');
+    expect(source).toContain("<ComplianceMetricsHeader metrics={complianceMetrics} />");
+    // The dashboard lives on Summary only: no variant wiring, and the Employees grid is unwrapped.
+    expect(source).not.toContain("ComplianceMetricsHeader metrics={complianceMetrics} variant");
     // Headline metrics: # overdue leads, plus due-in-7-days and a compliant %.
     expect(source).toContain('label="Overdue"');
     expect(source).toContain('label="Due in 7 Days"');
@@ -303,11 +304,14 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(reviewGridSource).not.toContain("is-in-progress");
   });
 
-  it("surfaces requirement groups as a first-class Requirements column and editor field", () => {
+  it("surfaces requirement groups as a Requirements column and a creatable editor field", () => {
     expect(source).toContain("<th style={complianceTableHeaderStyle}>Group</th>");
     expect(source).toContain("getComplianceGroupLabel(requirement.display_group)");
     expect(source).toContain("colSpan={5 + compliancePositionColumns.length}");
-    expect(source).toContain('{ value: "reviews", label: "Performance Review" }');
-    expect(source).toContain('{ value: "training", label: "Training" }');
+    // Group is a free-text creatable combobox, not a fixed dropdown.
+    expect(source).toContain("function ComplianceGroupCombobox");
+    expect(source).toContain("<ComplianceGroupCombobox");
+    expect(source).toContain("complianceGroupOptions");
+    expect(source).toContain("resolveComplianceGroupKeyFromInput");
   });
 });
