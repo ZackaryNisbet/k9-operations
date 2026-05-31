@@ -229,6 +229,14 @@ as $$
     ) as n
   ) occ
   where occ.d between p_start and p_end
+
+  union all
+  -- 8. Federal holidays (universal — no location filter)
+  select 'holiday', 'holiday-'||to_char(h.holiday_date,'YYYY-MM-DD'), 'holiday',
+         h.holiday_date, null::time,
+         h.name, 'Federal holiday', null::text, 'default', null::text
+  from public.us_federal_holidays h
+  where h.holiday_date between p_start and p_end
 $$;
 
 grant execute on function public.get_calendar_events(uuid, date, date, date) to authenticated, service_role;
