@@ -35,6 +35,7 @@ import {
   getGrassrootsNextDate,
   getGrassrootsPrimaryEventDate,
   getGrassrootsFinalEventDate,
+  getGrassrootsEventFieldGaps,
   getGrassrootsStatusLabel,
   isGrassrootsEventClosed,
   isGrassrootsEventArchivedFromDefault,
@@ -2653,19 +2654,22 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
   return events;
 }
 
-// Small pencil affordance revealed on cell hover (see .gr-edit-cell CSS). Opens the
-// per-column micro-editor for the event the cell belongs to.
-function CellEditButton({ onClick, label, reveal = true }) {
+// Pencil affordance that opens the per-column micro-editor. When `needed` (a
+// required field group is empty), the pencil is PERSISTENT and amber so the gap is
+// obvious at a glance — a quiet "to-do" nudge. Otherwise it's subtle and only
+// appears on cell hover (see .gr-edit-cell CSS). The label shows as a hover tooltip.
+function CellEditButton({ onClick, label, needed = false }) {
   return (
     <button
       type="button"
-      className={reveal ? "gr-edit-reveal" : undefined}
+      className={`gr-edit-tip ${needed ? "gr-edit-needed" : "gr-edit-reveal"}`}
+      data-tip={label}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
       title={label}
       aria-label={label}
-      style={{ flexShrink: 0, marginLeft: 3, padding: 0, width: 14, height: 14, border: "none", background: "transparent", cursor: "pointer", color: C.pri, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+      style={{ flexShrink: 0, marginLeft: 3, padding: 0, width: needed ? 16 : 14, height: needed ? 16 : 14, border: "none", background: "transparent", cursor: "pointer", color: needed ? C.warn : C.pri, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
     >
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <svg width={needed ? 13 : 11} height={needed ? 13 : 11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 20h9" />
         <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
       </svg>
@@ -2782,6 +2786,8 @@ function DenseGrassrootsTable({
         const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
         const canCloseEvt = isEventsTable && canCloseGrassrootsEvent(target, today);
         const isClosedEvt = isGrassrootsEventClosed(target);
+        // Persistent "more info needed" nudges only for live (not closed) events.
+        const gaps = isEventsTable && onOpenCellEditor && !isClosedEvt ? getGrassrootsEventFieldGaps(target) : null;
 
         return (
           <div key={target.id}>
@@ -2800,7 +2806,11 @@ function DenseGrassrootsTable({
               <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25 }} title={organizer}>
                 <span style={{ wordBreak: "break-word", minWidth: 0 }}>{organizer}</span>
                 {isEventsTable && onOpenCellEditor && (
-                  <CellEditButton onClick={() => onOpenCellEditor(target, "organizer")} label="Edit organizer & contact" />
+                  <CellEditButton
+                    onClick={() => onOpenCellEditor(target, "organizer")}
+                    needed={!!gaps?.organizer}
+                    label={gaps?.organizer ? "Add organizer / contact" : "Edit organizer & contact"}
+                  />
                 )}
               </div>
 
@@ -2887,14 +2897,18 @@ function DenseGrassrootsTable({
                 )}
 
                 {isEventsTable && onOpenCellEditor && (
-                  <span className="gr-edit-reveal" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 2 }}>
+                  <>
                     {eventType && (
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '0 5px', borderRadius: 999, background: `${C.pri}14`, color: C.pri, letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Event type: ${eventType}`}>
+                      <span className="gr-edit-reveal" style={{ fontSize: 9, fontWeight: 800, padding: '0 5px', borderRadius: 999, background: `${C.pri}14`, color: C.pri, letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Event type: ${eventType}`}>
                         {eventType}
                       </span>
                     )}
-                    <CellEditButton onClick={() => onOpenCellEditor(target, "event")} label="Edit event details (address, type, cost)" reveal={false} />
-                  </span>
+                    <CellEditButton
+                      onClick={() => onOpenCellEditor(target, "event")}
+                      needed={!!gaps?.event}
+                      label={gaps?.event ? `Add ${gaps.eventMissing.join(" & ")}` : "Edit event details (address, type, cost)"}
+                    />
+                  </>
                 )}
               </div>
 
@@ -2902,7 +2916,11 @@ function DenseGrassrootsTable({
               <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
                 <span>{eventDateStr}</span>
                 {isEventsTable && onOpenCellEditor && (
-                  <CellEditButton onClick={() => onOpenCellEditor(target, "date")} label="Edit event date(s)" />
+                  <CellEditButton
+                    onClick={() => onOpenCellEditor(target, "date")}
+                    needed={!!gaps?.date}
+                    label={gaps?.date ? "Add event date" : "Edit event date(s)"}
+                  />
                 )}
               </div>
 
@@ -4878,6 +4896,21 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         .gr-edit-cell:hover .gr-edit-reveal,
         .gr-edit-cell:focus-within .gr-edit-reveal { opacity: 0.8; }
         .gr-edit-cell .gr-edit-reveal:hover { opacity: 1; }
+        /* Persistent amber pencil = a required field group is empty (a quiet to-do). It
+           stays visible until the info is filled in, so missing data is obvious at rest. */
+        .gr-edit-needed { opacity: 1; }
+        /* Instant, on-brand tooltip for the pencils (native title is too slow for a
+           zero-training audience). Text comes from data-tip. */
+        .gr-edit-tip { position: relative; }
+        .gr-edit-tip::after {
+          content: attr(data-tip);
+          position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(2px);
+          background: ${C.text}; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.01em;
+          white-space: nowrap; padding: 3px 7px; border-radius: 6px; box-shadow: 0 4px 12px rgba(15,23,42,0.18);
+          opacity: 0; pointer-events: none; transition: opacity 0.12s ease, transform 0.12s ease; z-index: 60;
+        }
+        .gr-edit-tip:hover::after,
+        .gr-edit-tip:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
         .grassroots-event-inline-header {
           position: relative;
           z-index: 1;

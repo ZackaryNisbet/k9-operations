@@ -15,6 +15,7 @@ import {
   getGrassrootsDisplayStatusLabel,
   getGrassrootsEventCloseout,
   getGrassrootsEventDisplayStatus,
+  getGrassrootsEventFieldGaps,
   getGrassrootsFinalEventDate,
   isGrassrootsEventArchivedFromDefault,
   isGrassrootsEventClosed,
@@ -699,6 +700,28 @@ describe("grassrootsData", () => {
       const booked = { status: "booked" };
       expect(getGrassrootsEventDisplayStatus(booked)).toBe("booked");
       expect(getGrassrootsDisplayStatusLabel(booked)).toBe("Booked");
+    });
+
+    it("flags missing required field groups (address/type/organizer/date)", () => {
+      const complete = {
+        organizer: "H.I.P. Inc.",
+        event_type: "B2C",
+        address_city: "Cherry Hill",
+        event_dates: [{ event_date: "2026-06-01" }],
+      };
+      expect(getGrassrootsEventFieldGaps(complete)).toMatchObject({ organizer: false, event: false, date: false });
+
+      const soccerFest = { name: "Soccer Fest", organizer: "Rec League", event_dates: [{ event_date: "2026-06-10" }] };
+      const gaps = getGrassrootsEventFieldGaps(soccerFest);
+      expect(gaps.event).toBe(true);
+      expect(gaps.eventMissing).toEqual(["address", "type"]);
+      expect(gaps.organizer).toBe(false); // organizer present
+      expect(gaps.date).toBe(false);
+
+      const blank = { event_dates: [{ event_date: "2026-06-10" }] };
+      expect(getGrassrootsEventFieldGaps(blank).organizer).toBe(true);
+      // legacy single-field address still counts as filled
+      expect(getGrassrootsEventFieldGaps({ ...soccerFest, address: "123 Main St", event_type: "B2B" }).event).toBe(false);
     });
 
     it("makeGrassrootsEventCloseout normalizes the persisted payload", () => {
