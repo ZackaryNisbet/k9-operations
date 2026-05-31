@@ -3806,7 +3806,15 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     } else {
       list.sort((left, right) => compareGrassrootsEventSchedule(left, right, today, eventDateSortDirection));
     }
-    return list;
+    // Pin events awaiting closeout (already occurred — today or earlier — and not yet
+    // closed) to the very top: they need action. Stable partition keeps each group's
+    // existing sort order.
+    const needsClose = [];
+    const rest = [];
+    for (const t of list) {
+      (canCloseGrassrootsEvent(t, today) ? needsClose : rest).push(t);
+    }
+    return [...needsClose, ...rest];
   }, [activeConfig.id, eventDateSortDirection, followUpSortDirection, visibleTargets]);
 
   // Apply the literal-port header filters (search, status pills, Past Events) on top of the category/sorted list.
@@ -3823,23 +3831,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (activeLifecycleTab === 'events' && eventsStatusFilter) {
       list = list.filter(t => normalizeGrassrootsStatus(t.status) === eventsStatusFilter);
     }
-    // Events: the default view shows only active/upcoming events; closed (finished)
-    // and past events (the day AFTER their final day) live behind the Past Events pill.
+    // Events: the default view shows upcoming events AND events awaiting closeout
+    // (occurred but not closed, pinned to the top by the sort above). Only CLOSED
+    // (finished) events move behind the Past Events pill.
     if (activeLifecycleTab === 'events') {
-      const td = todayStr();
       list = list.filter(t => showPastEvents
-        ? isGrassrootsEventArchivedFromDefault(t, td)
-        : !isGrassrootsEventArchivedFromDefault(t, td));
+        ? isGrassrootsEventArchivedFromDefault(t)
+        : !isGrassrootsEventArchivedFromDefault(t));
     }
     return list;
   }, [sortedVisibleTargets, lifecycleSearch, eventsStatusFilter, showPastEvents, activeLifecycleTab]);
-
-  // Live count for the Past Events pill — closed or past events in the current event set.
-  const pastEventsCount = useMemo(() => {
-    if (activeLifecycleTab !== 'events') return 0;
-    const td = todayStr();
-    return (sortedVisibleTargets || []).filter(t => isGrassrootsEventArchivedFromDefault(t, td)).length;
-  }, [sortedVisibleTargets, activeLifecycleTab]);
 
   // "Activity" tab — what's legit/confirmed: booked Events + all Visits, in one feed.
   // Strategic/long-term categories (Corporate, Apartments, PPP) stay in their own tabs.
@@ -6158,12 +6159,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 <>
                   <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
                   <button onClick={()=>setShowPastEvents(v=>!v)}
-                    title={showPastEvents ? "Showing closed & past events" : "Show closed & past events"}
-                    style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showPastEvents?C.dan:C.border}`,background:showPastEvents?`${C.dan}12`:"transparent",color:showPastEvents?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                    title={showPastEvents ? "Showing closed events" : "Show closed (finished) events"}
+                    style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showPastEvents?C.textMut:C.border}`,background:showPastEvents?C.textMut:"transparent",color:showPastEvents?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
                     Past Events
-                    <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:16,height:16,padding:"0 4px",borderRadius:999,fontSize:10,fontWeight:800,background:showPastEvents?C.dan:(pastEventsCount>0?`${C.dan}18`:C.border),color:showPastEvents?"#fff":(pastEventsCount>0?C.dan:C.textMut)}}>
-                      {pastEventsCount}
-                    </span>
                   </button>
                 </>
               )}
