@@ -3075,12 +3075,12 @@ function DenseGrassrootsTable({
               </div>
 
               {/* Status — status pill (default), plain-text chip (e.g. Drops Outcome), or hidden */}
-              <div className={isEventsTable && onSetStatus && !isClosedEvt ? "gr-edit-cell" : undefined}>
+              <div className={onSetStatus && !isClosedEvt ? "gr-edit-cell" : undefined}>
                 {!cm.show.status ? null : cm.statusVariant === "text" ? (
                   cStatusText
                     ? <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 999, background: "#E5E7EB", color: "#374151", whiteSpace: "nowrap", letterSpacing: "0.02em", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} title={cStatusText}>{cStatusText}</span>
                     : <span style={{ color: C.textMut, fontSize: 11 }}>—</span>
-                ) : (isEventsTable && onSetStatus && !isClosedEvt) ? (
+                ) : (onSetStatus && !isClosedEvt) ? (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -4319,22 +4319,35 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   };
 
   // Inline status change from the status cell's dropdown — saves immediately.
-  const setEventStatus = async (target, status) => {
+  // Inline status change from the status cell's dropdown. Works for every category:
+  // events go through the events RPC (preserves event dates), everything else uses a
+  // plain targets update.
+  const setTargetStatus = async (target, status) => {
     if (!canEditTargets) {
       toast("You do not have permission to edit grassroots rows", "error");
       return;
     }
     const normalized = normalizeGrassrootsStatus(status);
     if (!target || !locationId || normalized === normalizeGrassrootsStatus(target.status)) return;
-    const draft = buildEditorDraft(target);
-    draft.status = normalized;
-    draft.is_active = normalized === "abandoned" ? false : true;
+    const isEvent = getGrassrootsCategoryConfig(target.category).id === "events";
+    const isActive = normalized === "abandoned" ? false : true;
     setSaveState("saving");
-    const payload = buildTargetPayload(draft, locationId, actor);
-    const { error } = await supabase.rpc(
-      GRASSROOTS_EVENT_SAVE_RPC,
-      buildGrassrootsEventSaveRpcArgs({ ...payload, id: draft.id }, draft),
-    );
+    let error = null;
+    if (isEvent) {
+      const draft = buildEditorDraft(target);
+      draft.status = normalized;
+      draft.is_active = isActive;
+      const payload = buildTargetPayload(draft, locationId, actor);
+      ({ error } = await supabase.rpc(
+        GRASSROOTS_EVENT_SAVE_RPC,
+        buildGrassrootsEventSaveRpcArgs({ ...payload, id: draft.id }, draft),
+      ));
+    } else {
+      ({ error } = await supabase
+        .from("grassroots_targets")
+        .update({ status: normalized, is_active: isActive, updated_by_user_id: actor.userId, updated_by_name: actor.name })
+        .eq("id", target.id));
+    }
     if (error) {
       setSaveState("error");
       toast(error.message || "Failed to update status", "error");
@@ -6811,7 +6824,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         onLog={startInlineLog}
                         onOpenCellEditor={openCellEditor}
                         onCloseEvent={openCloseout}
-                        onSetStatus={setEventStatus}
+                        onSetStatus={setTargetStatus}
                         onUpdateFollowUp={updateFollowUpDate}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
@@ -6942,6 +6955,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         columnMap={getGrassrootsColumnMap(activeConfig.id, activeConfig.id === "drops" ? dropSubview : null)}
                         onLog={openLogModal}
                         onEdit={(t) => { setNewDraft(null); setEditDraft(buildEditorDraft(t)); }}
+                        onSetStatus={activeConfig.id === "drops" ? undefined : setTargetStatus}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
                         followUpSortDirection={followUpSortDirection}
