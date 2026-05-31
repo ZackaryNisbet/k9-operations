@@ -55,6 +55,28 @@ export const GRASSROOTS_CATEGORY_CONFIGS = [
     nameLabel: "Business",
     emptyName: "Untitled business",
   },
+  {
+    id: "localBusinessPartnerships",
+    dbValue: "local_business_partnerships",
+    label: "Local Business Partnerships",
+    singular: "Local Business Partnership",
+    activityLabel: "Development",
+    logLabel: "Log Development",
+    countLabel: "Developments",
+    nameLabel: "Business",
+    emptyName: "Untitled business",
+  },
+  {
+    id: "schools",
+    dbValue: "schools",
+    label: "Schools",
+    singular: "School",
+    activityLabel: "Development",
+    logLabel: "Log Development",
+    countLabel: "Developments",
+    nameLabel: "School",
+    emptyName: "Untitled school",
+  },
 ];
 
 export const GRASSROOTS_CATEGORY_BY_ID = Object.fromEntries(
