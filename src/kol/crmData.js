@@ -119,17 +119,17 @@ export function leadSortName(lead) {
 }
 
 /**
- * Format a phone number as: country-code (area) three - four
- * e.g. "8567018139" → "1 (856) 701 - 8139". Unrecognized inputs pass through.
+ * Format a US phone as "(area) prefix-line", e.g. "18567018139" → "(856) 701-8139".
+ * Area code is parenthesized and the last seven digits are hyphenated. Country
+ * code is dropped for readability; unrecognized inputs pass through unchanged.
  */
 export function formatPhonePretty(phone) {
   const d = String(phone == null ? "" : phone).replace(/\D/g, "");
-  let cc = "1";
   let rest = d;
   if (d.length === 11 && d[0] === "1") rest = d.slice(1);
   else if (d.length === 10) rest = d;
   else return collapseSpaces(phone);
-  return `${cc} (${rest.slice(0, 3)}) ${rest.slice(3, 6)} - ${rest.slice(6, 10)}`;
+  return `(${rest.slice(0, 3)}) ${rest.slice(3, 6)}-${rest.slice(6, 10)}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

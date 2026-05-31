@@ -10,6 +10,7 @@ import { C, fmtDate, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
+import { FormFields } from "./crmFormFields";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
 import { computeIgniteHealth, isSnapshotFresh, describeHealthBadge, healthChecks, formatAgo, formatUntil, formatClock } from "../onboarding/igniteHealth";
 import {
@@ -50,6 +51,7 @@ const SECTION_LABEL = {
   color: C.textMut,
   marginBottom: 6,
 };
+
 
 export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [leads, setLeads] = useState([]);
@@ -198,20 +200,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         header: "Web form",
         width: "minmax(0, 1.9fr)",
         searchValue: (r) => buildFormFieldEntries(r).map((e) => `${e.label} ${e.value}`).join(" "),
-        render: (r) => {
-          const entries = buildFormFieldEntries(r);
-          if (!entries.length) return <span style={{ color: C.textMut }}>—</span>;
-          return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-              {entries.map((e) => (
-                <div key={e.key} style={{ fontSize: 11.5, lineHeight: 1.45, minWidth: 0 }}>
-                  <span style={{ color: C.textMut }}>{e.label}: </span>
-                  <span style={{ color: C.textSec }}>{e.value}</span>
-                </div>
-              ))}
-            </div>
-          );
-        },
+        render: (r) => <FormFields lead={r} compact />,
       },
       {
         key: "followup",
@@ -387,7 +376,6 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SubmissionDetails({ lead, updates, today, onLog }) {
-  const entries = buildFormFieldEntries(lead);
   const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
 
   return (
@@ -395,18 +383,7 @@ function SubmissionDetails({ lead, updates, today, onLog }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
         <div>
           <div style={SECTION_LABEL}>Form submission</div>
-          {entries.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: C.textMut }}>No form fields captured.</div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, max-content) minmax(0, 1fr)", gap: "4px 14px", fontSize: 12.5 }}>
-              {entries.map((e) => (
-                <React.Fragment key={e.key}>
-                  <span style={{ color: C.textMut, whiteSpace: "nowrap" }}>{e.label}</span>
-                  <span style={{ color: C.textSec, minWidth: 0, wordBreak: "break-word" }}>{e.value}</span>
-                </React.Fragment>
-              ))}
-            </div>
-          )}
+          <FormFields lead={lead} />
           {lead.raw_email_subject && <div style={{ marginTop: 10, fontSize: 11.5, color: C.textMut }}>Source: {lead.raw_email_subject}</div>}
         </div>
       </div>

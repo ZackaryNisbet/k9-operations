@@ -80,10 +80,10 @@ describe("name + phone presentation", () => {
     expect(leadSortName(bookingLead)).toBe("martinez janelle");
   });
 
-  it("formats phone as cc (area) three - four", () => {
-    expect(formatPhonePretty("8567018139")).toBe("1 (856) 701 - 8139");
-    expect(formatPhonePretty("18567018139")).toBe("1 (856) 701 - 8139");
-    expect(formatPhonePretty("+1 (856) 701-8139")).toBe("1 (856) 701 - 8139");
+  it("formats phone as (area) prefix-line", () => {
+    expect(formatPhonePretty("8567018139")).toBe("(856) 701-8139");
+    expect(formatPhonePretty("18567018139")).toBe("(856) 701-8139");
+    expect(formatPhonePretty("+1 (856) 701-8139")).toBe("(856) 701-8139");
     expect(formatPhonePretty("")).toBe("");
     expect(formatPhonePretty("12345")).toBe("12345"); // unknown → passthrough
   });
