@@ -159,7 +159,7 @@ as $$
     and tg.next_contact_date between p_start and p_end
 
   union all
-  -- 6. Enrichment: planned events
+  -- 6. Enrichment: enterprise-mandated (global) + this location's own events
   select 'enrichment', 'enrich-'||en.id::text, 'enrichment',
          en.event_date, null::time,
          coalesce(nullif(en.title,''), 'Enrichment'),
@@ -168,7 +168,7 @@ as $$
          'default',
          en.id::text
   from public.enrichment_events en
-  where en.location_id = p_location_id::text
+  where (en.scope = 'global' or en.location_id = p_location_id::text)
     and en.event_date between p_start and p_end
 
   union all

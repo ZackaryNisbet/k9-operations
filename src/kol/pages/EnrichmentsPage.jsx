@@ -44,7 +44,9 @@ import {
   isAllowedGraphicFile,
 } from "../enrichments/enrichmentGraphicUploads";
 
-const MANAGE_ROLES = new Set(["manager", "mod", "supervisor", "location_admin", "multi_location_admin", "enterprise_admin", "owner", "developer"]);
+// Enrichment events (the company program + each resort's own) are managed only by
+// the enterprise-admin grouping; every other role gets a read-only view.
+const ENTERPRISE_ADMIN_ROLES = new Set(["enterprise_admin", "owner", "developer"]);
 const BRAND = {
   forest: "#14532D",
   lime: "#84CC16",
@@ -134,7 +136,7 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [workflowSort, setWorkflowSort] = useState("departure");
 
-  const canManage = MANAGE_ROLES.has(profile?.role);
+  const canManage = ENTERPRISE_ADMIN_ROLES.has(profile?.role);
   const { events, visibleMonthEvents, loading, error, storageMode, saveEvent, deleteEvent } = useEnrichmentEvents(locationId, monthDate);
   const actorName = profile?.full_name || profile?.name || profile?.email || "Staff";
   const workflowState = useEnrichmentWorkflow(locationId, selectedDate, { actorName });
@@ -1586,7 +1588,7 @@ function BuilderView({ draft, setDraft, canManage, saving, selectedEvent, onSave
           </div>
           <button type="button" className="secondary-btn" onClick={onNew} disabled={saving}><I.Plus /> Blank</button>
         </div>
-        {!canManage ? <div className="inline-warning">Your role can view enrichment SOPs, but event creation is manager/admin only.</div> : null}
+        {!canManage ? <div className="inline-warning">Enrichment events are managed by enterprise admins. Your role has a read-only view.</div> : null}
         <div className="field-grid two">
           <Field label="Date"><input disabled={disabled} type="date" value={draft.event_date} onChange={(event) => update("event_date", event.target.value)} /></Field>
           <Field label="Title"><input disabled={disabled} value={draft.title} onChange={(event) => update("title", event.target.value)} placeholder="Pup Prom" /></Field>
