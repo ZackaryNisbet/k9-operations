@@ -366,6 +366,45 @@ export async function createResortUpkeepSignedUrl(attachment) {
   return data?.signedUrl || "";
 }
 
+export async function loadMaintenancePeriodAttachments(locationId, periodId) {
+  if (!locationId || !periodId) return [];
+  const { data, error } = await supabase
+    .from("resort_upkeep_attachments")
+    .select("*")
+    .eq("location_id", locationId)
+    .eq("period_id", periodId)
+    .eq("attachment_scope", "maintenance_period_attachment")
+    .is("deleted_at", null)
+    .order("uploaded_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function recordResortUpkeepPeriodAttachment({ locationId, periodId, file, storagePath, fileName, actorName = null }) {
+  const { data, error } = await supabase.rpc("resort_upkeep_record_period_attachment", {
+    p_attachment: {
+      location_id: locationId,
+      period_id: periodId,
+      file_name: fileName || file?.name || "attachment",
+      storage_bucket: RESORT_UPKEEP_ATTACHMENT_BUCKET,
+      storage_path: storagePath,
+      mime_type: file?.type || "application/octet-stream",
+      file_size_bytes: file?.size || 1,
+    },
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteResortUpkeepPeriodAttachment(attachmentId, actorName = null) {
+  const { error } = await supabase.rpc("resort_upkeep_delete_period_attachment", {
+    p_attachment_id: attachmentId,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+}
+
 export async function loadResortUpkeepAttachments(locationId, filters = {}) {
   let query = supabase
     .from("resort_upkeep_attachments")
