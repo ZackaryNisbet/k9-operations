@@ -494,23 +494,19 @@ function UpdatesPanel({ lead, updates, onLog }) {
         <span style={{ ...SECTION_LABEL, marginBottom: 0 }}>Update log</span>
         <Btn size="sm" variant="secondary" onClick={onLog}>Log update</Btn>
       </div>
-      <div style={{ display: "grid", gap: 10 }}>
-        {log.map((u) => (
-          <div key={u.id} style={{ display: "grid", gridTemplateColumns: "88px minmax(0, 1fr) 168px", gap: 10, alignItems: "start", fontSize: 12 }}>
-            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-              {updateTypeLabel(u.update_type)}
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {log.map((u, i) => (
+          <div key={u.id} style={{ padding: "12px 0", borderTop: i === 0 ? "none" : `1px solid ${C.borderLight}` }}>
+            <div style={{ fontSize: 12.5, marginBottom: 5 }}>
+              <span style={{ fontWeight: 800, color: C.text }}>{u.created_by_name || "Ignite"}</span>
+              <span style={{ color: C.textMut }}>{` — ${fmtDateTime(u.created_at)}`}</span>
             </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.45, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
-                {u.notes || "No notes entered."}
-              </div>
-              <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8, color: C.textMut, lineHeight: 1.35 }}>
-                <span>{u.created_by_name || "Ignite"}</span>
-                {u.next_follow_up_date && <span>Next: {fmtDate(u.next_follow_up_date)}</span>}
-              </div>
+            <div style={{ fontSize: 13.5, color: C.text, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {u.notes || "—"}
             </div>
-            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-              {fmtDateTime(u.created_at)}
+            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 11.5, color: C.textMut }}>
+              <span style={{ fontWeight: 700, color: C.pri }}>{updateTypeLabel(u.update_type)}</span>
+              {u.next_follow_up_date && <span>· Next follow-up: {fmtDate(u.next_follow_up_date)}</span>}
             </div>
           </div>
         ))}
