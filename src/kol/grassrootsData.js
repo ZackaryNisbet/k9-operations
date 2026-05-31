@@ -884,6 +884,53 @@ export function compareGrassrootsHistoryDesc(a, b) {
   return String(b?.event_at || b?.created_at || "").localeCompare(String(a?.event_at || a?.created_at || ""));
 }
 
+// Filter the flat history feed for the Marketing History tab. `category` is a db
+// value (e.g. "events", "local_business_partnerships") or "all"; `search` matches
+// the row name, the change summary, or who made the change (case-insensitive).
+export function filterGrassrootsHistory(history = [], { category = "all", search = "" } = {}) {
+  const term = String(search || "").trim().toLowerCase();
+  return (history || []).filter((entry) => {
+    if (!entry) return false;
+    if (category && category !== "all" && entry.category !== category) return false;
+    if (!term) return true;
+    return [entry.target_name, entry.summary, entry.actor_name]
+      .map((value) => String(value || "").toLowerCase())
+      .join(" ")
+      .includes(term);
+  });
+}
+
+// Local calendar-day key (YYYY-MM-DD) for a history entry, so the feed can render
+// "Today / Yesterday / date" headers in the reader's own timezone.
+export function grassrootsHistoryDayKey(entry) {
+  const ts = entry?.event_at || entry?.created_at;
+  if (!ts) return "";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Group a history feed into newest-first day buckets: [{ dayKey, entries }, ...].
+// Entries within each bucket stay newest-first.
+export function groupGrassrootsHistoryByDay(history = []) {
+  const groups = [];
+  const byKey = new Map();
+  for (const entry of [...(history || [])].sort(compareGrassrootsHistoryDesc)) {
+    const dayKey = grassrootsHistoryDayKey(entry);
+    let group = byKey.get(dayKey);
+    if (!group) {
+      group = { dayKey, entries: [] };
+      byKey.set(dayKey, group);
+      groups.push(group);
+    }
+    group.entries.push(entry);
+  }
+  return groups;
+}
+
 export function calculateGrassrootsCpl(cost, leadsCaptured) {
   const parsedCost = Number(cost);
   const parsedLeads = Number(leadsCaptured);
