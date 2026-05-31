@@ -15,6 +15,9 @@ import {
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
+  receivedDate,
+  capturedUpdate,
+  leadUpdates,
   buildUpdatePayload,
   followUpState,
   recommendedFollowUp,
@@ -106,6 +109,33 @@ describe("isAppointment — Gingr appointments excluded from the CRM", () => {
     expect(filterSubmissions(leads, { category: "booking" }).map((l) => l.id)).toEqual(["b1", "w1"]);
     expect(countByCategory(leads).booking).toBe(2);
     expect(isCrmSubmission(appt)).toBe(false);
+  });
+});
+
+describe("captured baseline — 1 log entry + follow-up = received date", () => {
+  const lead = { id: "l9", lead_type: "web_form", created_at: "2026-05-20T14:30:00Z", raw_email_subject: "New Booking Form Submission Received" };
+
+  it("receivedDate is the date part of created_at", () => {
+    expect(receivedDate(lead)).toBe("2026-05-20");
+    expect(receivedDate({})).toBe("");
+  });
+  it("capturedUpdate records the source + seeds follow-up to the received date", () => {
+    const u = capturedUpdate(lead);
+    expect(u.next_follow_up_date).toBe("2026-05-20");
+    expect(u.notes).toMatch(/booking form/i);
+    expect(u.system).toBe(true);
+  });
+  it("every lead has exactly one update when there are no real ones", () => {
+    const updates = leadUpdates(lead, {});
+    expect(updates.length).toBe(1);
+    expect(summarizeUpdates(updates).count).toBe(1);
+    expect(deriveFollowUp(updates)).toBe("2026-05-20");
+  });
+  it("real updates take precedence for follow-up; the baseline still counts", () => {
+    const byLead = { l9: [{ id: "r1", lead_id: "l9", created_at: "2026-05-25T00:00:00Z", next_follow_up_date: "2026-06-01" }] };
+    const updates = leadUpdates(lead, byLead);
+    expect(updates.length).toBe(2);
+    expect(deriveFollowUp(updates)).toBe("2026-06-01");
   });
 });
 

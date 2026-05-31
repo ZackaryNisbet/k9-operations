@@ -35,6 +35,8 @@ import {
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
+  leadUpdates,
+  receivedDate,
   followUpState,
   recommendedFollowUp,
   buildUpdatePayload,
@@ -180,6 +182,18 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         },
       },
       {
+        key: "received",
+        header: "Received",
+        width: "114px",
+        sortable: true,
+        searchable: false,
+        sortValue: (r) => r.created_at || "",
+        render: (r) =>
+          receivedDate(r)
+            ? <span style={{ color: C.textSec, whiteSpace: "nowrap" }}>{fmtDate(r.created_at)}</span>
+            : <span style={{ color: C.textMut }}>—</span>,
+      },
+      {
         key: "phone",
         header: "Phone",
         width: "150px",
@@ -225,9 +239,9 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         width: "128px",
         sortable: true,
         searchable: false,
-        sortValue: (r) => deriveFollowUp(updatesByLead[r.id]) || "9999-99-99",
+        sortValue: (r) => deriveFollowUp(leadUpdates(r, updatesByLead)) || "9999-99-99",
         render: (r) => {
-          const fu = deriveFollowUp(updatesByLead[r.id]);
+          const fu = deriveFollowUp(leadUpdates(r, updatesByLead));
           const state = followUpState(fu, today);
           if (state === "none") return <span style={{ color: C.textMut, fontSize: 11 }}>Not contacted</span>;
           return (
@@ -245,7 +259,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         width: "152px",
         searchable: false,
         render: (r) => {
-          const { count, latest } = summarizeUpdates(updatesByLead[r.id]);
+          const { count, latest } = summarizeUpdates(leadUpdates(r, updatesByLead));
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -329,9 +343,9 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         defaultSort={{ key: "followup", direction: "asc" }}
         onRowClick={toggleExpand}
         isRowExpanded={(r) => r.id === expandedId}
-        renderExpansion={(r) => <SubmissionDetails lead={r} updates={updatesByLead[r.id]} today={today} onLog={() => openLog(r)} />}
+        renderExpansion={(r) => <SubmissionDetails lead={r} updates={leadUpdates(r, updatesByLead)} today={today} onLog={() => openLog(r)} />}
         emptyText={emptyText}
-        minWidth={1000}
+        minWidth={1120}
         style={{ border: "none", borderRadius: 0 }}
       />
     );

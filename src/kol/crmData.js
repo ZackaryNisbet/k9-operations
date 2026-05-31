@@ -245,6 +245,48 @@ export function deriveFollowUp(updates) {
   return "";
 }
 
+/** Just the date part (YYYY-MM-DD) of a created_at timestamp. */
+export function receivedDate(lead) {
+  const ts = lead && lead.created_at;
+  return ts ? String(ts).slice(0, 10) : "";
+}
+
+/** Where the submission came from, for the captured-event note. */
+export function leadSourceLabel(lead) {
+  const text = `${(lead && lead.raw_email_subject) || ""} ${(lead && lead.source_detail) || ""}`.toLowerCase();
+  if (text.includes("availability")) return "availability form";
+  if (text.includes("booking form")) return "booking form";
+  if (text.includes("web form")) return "web form";
+  return "website form";
+}
+
+/**
+ * Synthetic "captured" entry — the historical record of why each lead is in the
+ * CRM (its source), dated to its creation, pre-seeding the first follow-up for
+ * that day. Always present, so every lead has at least one logged update.
+ */
+export function capturedUpdate(lead) {
+  if (!lead || !lead.id) return null;
+  const day = receivedDate(lead);
+  return {
+    id: `captured-${lead.id}`,
+    lead_id: lead.id,
+    update_type: "note",
+    notes: `Lead captured from the ${leadSourceLabel(lead)} via Ignite.`,
+    next_follow_up_date: day || null,
+    created_by_name: "Ignite",
+    created_at: lead.created_at || null,
+    system: true,
+  };
+}
+
+/** A lead's real updates plus the synthetic captured baseline (the oldest entry). */
+export function leadUpdates(lead, updatesByLead) {
+  const real = (lead && updatesByLead && updatesByLead[lead.id]) || [];
+  const base = capturedUpdate(lead);
+  return base ? [...real, base] : [...real];
+}
+
 /** Row payload inserted into ignite_lead_updates. */
 export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "" }) {
   return {
