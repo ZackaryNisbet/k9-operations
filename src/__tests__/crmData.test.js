@@ -5,6 +5,7 @@ import {
   classifySubmissionCategory,
   isAppointment,
   isCrmSubmission,
+  isGeneralContactForm,
   countByCategory,
   filterSubmissions,
   cleanLeadName,
@@ -116,6 +117,31 @@ describe("isAppointment — Gingr appointments excluded from the CRM", () => {
     expect(filterSubmissions(leads, { category: "booking" }).map((l) => l.id)).toEqual(["b1", "w1"]);
     expect(countByCategory(leads).booking).toBe(2);
     expect(isCrmSubmission(appt)).toBe(false);
+  });
+});
+
+describe("general contact-us web forms excluded (not the booking form)", () => {
+  const contactLead = { id: "c1", lead_type: "web_form", raw_email_subject: "New Web Form Received | Cherry Hill", form_data: { first_name: "Ashlynn", last_name: "Masino", form_name: "Contact Form", lead_page_url: "https://www.k9resorts.com/cherry-hill/contact-us/" } };
+  const bookingFromBookPage = { id: "b2", lead_type: "web_form", form_data: { desired_service: "Dog Boarding", lead_page_url: "https://www.k9resorts.com/cherry-hill/book/" } };
+
+  it("classifies a contact-us form as 'contact' and excludes it", () => {
+    expect(isGeneralContactForm(contactLead)).toBe(true);
+    expect(classifySubmissionCategory(contactLead)).toBe("contact");
+    expect(isCrmSubmission(contactLead)).toBe(false);
+  });
+  it("keeps genuine booking inquiries (service/date or a booking page)", () => {
+    expect(classifySubmissionCategory(bookingFromBookPage)).toBe("booking");
+    expect(isCrmSubmission(bookingFromBookPage)).toBe(true);
+  });
+  it("drops contact-us from the booking list + count", () => {
+    const leads = [contactLead, bookingFromBookPage];
+    expect(filterSubmissions(leads, { category: "booking" }).map((l) => l.id)).toEqual(["b2"]);
+    expect(countByCategory(leads)).toEqual({ booking: 1, employment: 0 });
+  });
+  it("booking intent (a service) on a contact page still counts as booking", () => {
+    const lead = { lead_type: "web_form", form_data: { desired_service: "Daycare", lead_page_url: "https://www.k9resorts.com/cherry-hill/contact-us/" } };
+    expect(isGeneralContactForm(lead)).toBe(false);
+    expect(classifySubmissionCategory(lead)).toBe("booking");
   });
 });
 

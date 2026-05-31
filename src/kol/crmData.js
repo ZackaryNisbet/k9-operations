@@ -72,10 +72,25 @@ export function buildClassifierHaystack(lead) {
   return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
-/** Booking is the default; only obvious hiring inquiries go to employment. */
+// A general "Contact Form" from the /contact-us/ page is an Ignite web form, NOT
+// the booking/availability form this CRM is for. Identify it so it's excluded —
+// unless it actually carries booking intent (a service or date), which wins.
+export function isGeneralContactForm(lead) {
+  const fd = (lead && lead.form_data) || {};
+  const has = (v) => v != null && String(v).trim() !== "";
+  if (has(fd.desired_service) || has(fd.desired_date_of_boarding_or_day_care) || has(fd.service_interest)) return false;
+  return /contact-us|contact_us|\/contact(\/|$|\?)/i.test(String(fd.lead_page_url || ""));
+}
+
+/**
+ * Booking is the default; obvious hiring inquiries go to employment, and general
+ * contact-us web forms are split out as "contact" so they can be excluded.
+ */
 export function classifySubmissionCategory(lead) {
   const haystack = buildClassifierHaystack(lead);
-  return EMPLOYMENT_KEYWORDS.some((kw) => haystack.includes(kw)) ? "employment" : "booking";
+  if (EMPLOYMENT_KEYWORDS.some((kw) => haystack.includes(kw))) return "employment";
+  if (isGeneralContactForm(lead)) return "contact";
+  return "booking";
 }
 
 // Gingr "Appointment Received" emails are confirmations/invoices for bookings
@@ -92,9 +107,12 @@ export function isAppointment(lead) {
   return false;
 }
 
-/** A lead belongs in the CRM only if it's a web form AND not a Gingr appointment. */
+/**
+ * A lead belongs in the CRM only if it's a web form, not a Gingr appointment, and
+ * not a general contact-us web form (those aren't the booking/availability form).
+ */
 export function isCrmSubmission(lead) {
-  return isWebForm(lead) && !isAppointment(lead);
+  return isWebForm(lead) && !isAppointment(lead) && classifySubmissionCategory(lead) !== "contact";
 }
 
 /** Count web-form submissions per live category (for subtab badges). */

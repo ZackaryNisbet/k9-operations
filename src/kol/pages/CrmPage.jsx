@@ -353,7 +353,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         columns={columns}
         rows={visibleRows}
         getRowKey={(r) => r.id}
-        defaultSort={{ key: "followup", direction: "asc" }}
+        defaultSort={{ key: "received", direction: "desc" }}
         onRowClick={toggleExpand}
         isRowExpanded={(r) => r.id === expandedId}
         renderExpansion={(r) => <SubmissionDetails lead={r} updates={leadUpdates(r, updatesByLead)} today={today} onLog={() => openLog(r)} />}
