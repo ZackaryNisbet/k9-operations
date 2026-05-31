@@ -99,6 +99,34 @@ export async function publishMaintenanceTemplateVersion({
   return data;
 }
 
+export async function loadTemplateVersions(locationId) {
+  if (!locationId) return [];
+  const { data, error } = await supabase.rpc("resort_upkeep_list_template_versions", { p_location_id: locationId });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+export async function saveTemplateDraft({ templateId, locationId, items, changelog = "", actorName = null }) {
+  const { data, error } = await supabase.rpc("resort_upkeep_save_template_draft", {
+    p_template_id: templateId,
+    p_location_id: locationId,
+    p_items: items,
+    p_changelog: changelog,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTemplateDraft({ templateId, locationId, actorName = null }) {
+  const { error } = await supabase.rpc("resort_upkeep_delete_template_draft", {
+    p_template_id: templateId,
+    p_location_id: locationId,
+    p_actor_name: actorName,
+  });
+  if (error) throw error;
+}
+
 export async function saveMaintenanceItemState({ periodId, itemKey, checked, notes = "", actorName = null }) {
   const { data, error } = await supabase.rpc("resort_upkeep_save_item_state", {
     p_period_id: periodId,

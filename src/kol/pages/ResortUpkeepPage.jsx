@@ -30,6 +30,9 @@ import {
   loadVendorLogs,
   loadVendors,
   publishMaintenanceTemplateVersion,
+  loadTemplateVersions,
+  saveTemplateDraft,
+  deleteTemplateDraft,
   recordResortUpkeepAttachment,
   reopenMaintenancePeriod,
   saveLicense,
@@ -2258,21 +2261,36 @@ function TroubleshootingPanel({ tabsBar, explainer, articles }) {
 
 // Settings surface (gear): configure building-maintenance checklist templates,
 // including a per-item "photo required" flag. Reached via the gear in the title.
+function normalizeEditItem(it) {
+  return { key: it.key || "", label: it.label || "", is_required: it.is_required !== false, requires_photo: !!it.requires_photo };
+}
+function blankEditItem() {
+  return { key: "", label: "", is_required: true, requires_photo: false };
+}
+function autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${Math.max(38, el.scrollHeight)}px`;
+}
+
 function SettingsPanel({ locationId, actor, canManage, onClose, toast }) {
   const [templates, setTemplates] = useState([]);
-  const [templateId, setTemplateId] = useState("");
-  const [items, setItems] = useState([]);
-  const [name, setName] = useState("");
-  const [changelog, setChangelog] = useState("");
+  const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [expandedId, setExpandedId] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [editItems, setEditItems] = useState([]);
+  const [editName, setEditName] = useState("");
+  const [changelog, setChangelog] = useState("");
+  const [busy, setBusy] = useState("");
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await withUpkeepTimeout(loadMaintenanceTemplates(locationId), "Templates took too long to load.");
-      setTemplates(rows);
+      const tmpls = await withUpkeepTimeout(loadMaintenanceTemplates(locationId), "Templates took too long to load.");
+      setTemplates(tmpls);
+      setVersions(await loadTemplateVersions(locationId).catch(() => []));
       setError("");
     } catch (e) {
       setError(friendlyErrorMessage(e, "Templates could not be loaded."));
@@ -2282,49 +2300,194 @@ function SettingsPanel({ locationId, actor, canManage, onClose, toast }) {
   }, [locationId]);
   useEffect(() => { reload(); }, [reload]);
 
-  const selected = templates.find((t) => t.id === templateId) || templates[0];
-  useEffect(() => {
-    if (!selected) return;
-    setTemplateId(selected.id);
-    setName(selected.name || "");
-    setItems((selected.latest_version?.items || []).map((it) => ({ key: it.key, label: it.label, is_required: it.is_required !== false, requires_photo: !!it.requires_photo })));
-  }, [selected?.id]);
+  const versionsByTemplate = useMemo(() => {
+    const map = {};
+    versions.forEach((v) => { (map[v.template_id] = map[v.template_id] || []).push(v); });
+    return map;
+  }, [versions]);
+  const draftByTemplate = useMemo(() => {
+    const map = {};
+    versions.forEach((v) => { if (v.status === "draft" && !map[v.template_id]) map[v.template_id] = v; });
+    return map;
+  }, [versions]);
 
-  const updateItem = (i, patch) => setItems((arr) => arr.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
-  const addItem = () => setItems((arr) => [...arr, { key: "", label: "", is_required: true, requires_photo: false }]);
-  const removeItem = (i) => setItems((arr) => arr.filter((_, idx) => idx !== i));
-  const moveItem = (i, dir) => setItems((arr) => {
+  const editingTemplate = templates.find((t) => t.id === editingId) || null;
+
+  const openEditor = (template) => {
+    const draft = draftByTemplate[template.id];
+    const base = (draft?.items || template.latest_version?.items || []).map(normalizeEditItem);
+    setEditItems(base.length ? base : [blankEditItem()]);
+    setEditName(template.name || "");
+    setChangelog("");
+    setError("");
+    setEditingId(template.id);
+  };
+  const closeEditor = () => { setEditingId(""); setEditItems([]); setError(""); };
+
+  const updateItem = (i, patch) => setEditItems((arr) => arr.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  const addItem = () => setEditItems((arr) => [...arr, blankEditItem()]);
+  const removeItem = (i) => setEditItems((arr) => arr.filter((_, idx) => idx !== i));
+  const moveItem = (i, dir) => setEditItems((arr) => {
     const next = [...arr];
     const j = i + dir;
     if (j < 0 || j >= next.length) return arr;
     [next[i], next[j]] = [next[j], next[i]];
     return next;
   });
+  const onLabelKeyDown = (e, i) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (e.metaKey || e.ctrlKey) {
+      const el = e.currentTarget;
+      const s = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? s;
+      const val = el.value;
+      updateItem(i, { label: `${val.slice(0, s)}\n${val.slice(end)}` });
+      requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = s + 1; autoGrowTextarea(el); } catch { /* noop */ } });
+    }
+  };
 
-  const publish = async () => {
-    if (!selected) return;
+  const buildItems = (template) => {
     const usedKeys = new Set();
-    const built = items
+    return editItems
       .filter((it) => it.label.trim())
       .map((it, index) => {
-        const key = it.key && !usedKeys.has(it.key) ? it.key : buildTemplateItemKey(selected.slug, it.label, usedKeys);
+        const key = it.key && !usedKeys.has(it.key) ? it.key : buildTemplateItemKey(template.slug, it.label, usedKeys);
         usedKeys.add(key);
         return { key, label: it.label.trim(), sort_order: index + 1, is_required: it.is_required !== false, requires_photo: !!it.requires_photo };
       });
+  };
+
+  const saveDraft = async () => {
+    if (!editingTemplate) return;
+    const built = buildItems(editingTemplate);
     if (!built.length) { setError("Add at least one item."); return; }
-    setSaving(true);
+    setBusy("draft");
     setError("");
     try {
-      await publishMaintenanceTemplateVersion({ templateId: selected.id, locationId, items: built, changelog: changelog || "Template edited from web", actorName: actor, templateName: name });
-      if (toast) toast("Template published");
-      setChangelog("");
+      await saveTemplateDraft({ templateId: editingTemplate.id, locationId, items: built, changelog, actorName: actor });
+      if (toast) toast("Draft saved");
       await reload();
+    } catch (e) {
+      setError(friendlyErrorMessage(e, "Draft could not be saved."));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const publish = async () => {
+    if (!editingTemplate) return;
+    const built = buildItems(editingTemplate);
+    if (!built.length) { setError("Add at least one item."); return; }
+    setBusy("publish");
+    setError("");
+    try {
+      await publishMaintenanceTemplateVersion({ templateId: editingTemplate.id, locationId, items: built, changelog: changelog || "Published from web", actorName: actor, templateName: editName });
+      await deleteTemplateDraft({ templateId: editingTemplate.id, locationId, actorName: actor }).catch(() => {});
+      if (toast) toast("Template published");
+      await reload();
+      closeEditor();
     } catch (e) {
       setError(friendlyErrorMessage(e, "Template could not be published."));
     } finally {
-      setSaving(false);
+      setBusy("");
     }
   };
+
+  const discardDraft = async (template) => {
+    setBusy("discard");
+    try { await deleteTemplateDraft({ templateId: template.id, locationId, actorName: actor }); if (toast) toast("Draft discarded"); await reload(); }
+    catch (e) { setError(friendlyErrorMessage(e, "Draft could not be discarded.")); }
+    finally { setBusy(""); }
+  };
+
+  if (editingId && editingTemplate) {
+    const draft = draftByTemplate[editingTemplate.id];
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <button type="button" onClick={closeEditor} style={muSmallBtn}>← All templates</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button type="button" onClick={saveDraft} disabled={!canManage || !!busy} style={{ ...secondaryBtn, opacity: !canManage || busy ? 0.6 : 1 }}>{busy === "draft" ? "Saving…" : "Save draft"}</button>
+            <button type="button" onClick={publish} disabled={!canManage || !!busy} style={{ ...primaryBtn, opacity: !canManage || busy ? 0.6 : 1 }}>{busy === "publish" ? "Publishing…" : "Publish version"}</button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 12, maxWidth: 620 }}>
+          <MField label="Template name"><input value={editName} onChange={(e) => setEditName(e.target.value)} style={input} /></MField>
+          <MField label="Change note"><input value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder="What changed (optional)" style={input} /></MField>
+        </div>
+        {draft ? (
+          <div style={{ marginBottom: 12, fontSize: 12, color: "#92400E", background: C.warnLt, border: "1px solid #FDE68A", borderRadius: 8, padding: "7px 10px", fontWeight: 700 }}>
+            Editing a draft last touched by {draft.created_by_name || "—"}{draft.created_at ? ` on ${fmtAuditDate(draft.created_at)}` : ""}. Save keeps it a draft; Publish makes it live.
+          </div>
+        ) : null}
+
+        <div style={mxTableWrap}>
+          <div style={mxHeadRow}>
+            <div style={mxHeadCell}>Item</div>
+            <div style={{ ...mxHeadCell, justifyContent: "center" }}>Response Required</div>
+            <div style={{ ...mxHeadCell, justifyContent: "center" }}>Photo Required</div>
+            <div style={mxHeadCell} />
+          </div>
+          {editItems.map((it, i) => (
+            <div key={i} style={mxRow}>
+              <textarea
+                value={it.label}
+                onChange={(e) => { updateItem(i, { label: e.target.value }); autoGrowTextarea(e.target); }}
+                onKeyDown={(e) => onLabelKeyDown(e, i)}
+                ref={autoGrowTextarea}
+                placeholder="Inspection item… (Cmd/Ctrl+Enter for a new line)"
+                rows={1}
+                style={mxText}
+              />
+              <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: 8 }}>
+                <input type="checkbox" checked={it.is_required} onChange={(e) => updateItem(i, { is_required: e.target.checked })} style={{ width: 17, height: 17 }} aria-label="Response required" />
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: 8 }}>
+                <input type="checkbox" checked={it.requires_photo} onChange={(e) => updateItem(i, { requires_photo: e.target.checked })} style={{ width: 17, height: 17 }} aria-label="Photo required" />
+              </div>
+              <div style={{ display: "flex", gap: 4, alignItems: "flex-start", justifyContent: "flex-end", paddingTop: 5 }}>
+                <button type="button" onClick={() => moveItem(i, -1)} disabled={i === 0} style={{ ...mxArrow, opacity: i === 0 ? 0.4 : 1 }} title="Move up">▲</button>
+                <button type="button" onClick={() => moveItem(i, 1)} disabled={i === editItems.length - 1} style={{ ...mxArrow, opacity: i === editItems.length - 1 ? 0.4 : 1 }} title="Move down">▼</button>
+                <button type="button" onClick={() => removeItem(i)} style={{ ...mxArrow, color: C.dan, borderColor: "#FECACA" }} title="Remove">×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addItem} style={{ ...muSmallBtn, marginTop: 10 }}>+ Add item</button>
+        {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
+      </div>
+    );
+  }
+
+  const columns = [
+    {
+      key: "name", header: "Template", width: "minmax(180px, 2fr)", sortable: true, sortValue: (t) => String(t.name).toLowerCase(),
+      render: (t) => (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, color: C.pri, fontSize: 12 }}>{t.name}</span>
+          {draftByTemplate[t.id] ? <SharedStatusPill tone="warning">Draft</SharedStatusPill> : null}
+        </div>
+      ),
+    },
+    { key: "frequency", header: "Frequency", width: 110, sortable: true, sortValue: (t) => t.frequency || upkeepFrequencyFromSlug(t.slug), render: (t) => <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec }}>{t.frequency || upkeepFrequencyFromSlug(t.slug) || "—"}</span> },
+    { key: "created", header: "Created", width: 120, sortable: true, sortValue: (t) => t.created_at || "", render: (t) => <span style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{t.created_at ? fmtUpkeepDate(t.created_at) : "—"}</span> },
+    {
+      key: "versions", header: "Versions", width: 96, align: "center",
+      render: (t) => (
+        <button type="button" onClick={(e) => { e.stopPropagation(); setExpandedId(expandedId === t.id ? "" : t.id); }} style={{ ...muSmallBtn, padding: "3px 9px", fontSize: 11 }} title="View version history">
+          {(versionsByTemplate[t.id] || []).length} {expandedId === t.id ? "▴" : "▾"}
+        </button>
+      ),
+    },
+    {
+      key: "action", header: "", width: 130, align: "end",
+      render: (t) => (canManage ? (
+        <button type="button" onClick={(e) => { e.stopPropagation(); openEditor(t); }} style={{ ...muSmallPrimary, padding: "4px 10px" }}>{draftByTemplate[t.id] ? "Resume draft" : "Edit"}</button>
+      ) : null),
+    },
+  ];
 
   return (
     <div>
@@ -2333,59 +2496,60 @@ function SettingsPanel({ locationId, actor, canManage, onClose, toast }) {
         <button type="button" onClick={onClose} style={muSmallBtn}>← Back</button>
       </div>
       <ListExplainer>
-        Configure the building-maintenance checklists. Edit items, mark each Required or Photo-required, then publish a new version. Open periods pick up changes; submitted history keeps its snapshot.
+        Building-maintenance checklist templates. Edit or start a draft, lay items out in the matrix, then publish a version. Open periods pick up published changes; submitted history keeps its snapshot.
       </ListExplainer>
 
-      {loading ? (
-        <div style={{ marginTop: 12 }}><LoadingRows /></div>
-      ) : !selected ? (
-        <div style={{ marginTop: 12 }}><EmptyCard title="No templates yet" text="Maintenance templates appear here once the backend seeds them." compact /></div>
-      ) : (
-        <div style={{ marginTop: 14, maxWidth: 760 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-            <MField label="Template">
-              <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={mSelect}>
-                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </MField>
-            <MField label="Template name"><input value={name} onChange={(e) => setName(e.target.value)} style={input} /></MField>
-          </div>
-
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Checklist items</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {items.map((it, i) => (
-              <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 10, background: "#fff" }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <textarea value={it.label} onChange={(e) => updateItem(i, { label: e.target.value })} placeholder="Inspection item…" rows={2} style={{ ...input, minHeight: 40, fontSize: 13 }} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <button type="button" onClick={() => moveItem(i, -1)} style={{ ...muSmallBtn, padding: "2px 8px" }} title="Move up">▲</button>
-                    <button type="button" onClick={() => moveItem(i, 1)} style={{ ...muSmallBtn, padding: "2px 8px" }} title="Move down">▼</button>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.text }}>
-                    <input type="checkbox" checked={it.is_required} onChange={(e) => updateItem(i, { is_required: e.target.checked })} /> Required
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.text }}>
-                    <input type="checkbox" checked={it.requires_photo} onChange={(e) => updateItem(i, { requires_photo: e.target.checked })} /> Photo required
-                  </label>
-                  <button type="button" onClick={() => removeItem(i)} style={{ ...muSmallBtn, marginLeft: "auto", color: C.dan, borderColor: "#FECACA" }}>Remove</button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button type="button" onClick={addItem} style={{ ...muSmallBtn, marginTop: 10 }}>+ Add item</button>
-
-          <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <input value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder="Change note (optional)" style={{ ...input, flex: 1, minWidth: 200 }} />
-            <button type="button" onClick={publish} disabled={saving || !canManage} style={{ ...primaryBtn, opacity: saving || !canManage ? 0.6 : 1, whiteSpace: "nowrap" }}>{saving ? "Publishing…" : "Publish version"}</button>
-          </div>
-          {error ? <div style={{ marginTop: 10 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
-        </div>
-      )}
+      <div style={{ marginTop: 12 }}>
+        {loading ? <div style={{ display: "grid", gap: 10 }}><LoadingRows /></div> : (
+          <DenseTable
+            columns={columns}
+            rows={templates}
+            getRowKey={(t) => t.id}
+            minWidth={680}
+            isRowExpanded={(t) => expandedId === t.id}
+            renderExpansion={(t) => <TemplateVersionHistory versions={versionsByTemplate[t.id] || []} draft={draftByTemplate[t.id]} canManage={canManage} busy={busy} onDiscardDraft={() => discardDraft(t)} />}
+            emptyText="No templates yet. Maintenance templates appear once the backend seeds them."
+          />
+        )}
+      </div>
+      {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="danger">{error}</InlineAlert></div> : null}
     </div>
   );
 }
+
+function TemplateVersionHistory({ versions, draft, canManage, busy, onDiscardDraft }) {
+  if (!versions.length) return <div style={{ padding: "12px 14px", fontSize: 12, color: C.textMut }}>No versions yet.</div>;
+  return (
+    <div style={{ padding: "12px 14px", display: "grid", gap: 8 }}>
+      {versions.map((v) => {
+        const isDraft = v.status === "draft";
+        const when = v.published_at || v.created_at;
+        return (
+          <div key={v.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 10px", borderRadius: 8, background: isDraft ? C.warnLt : C.surfaceHover, border: `1px solid ${isDraft ? "#FDE68A" : C.borderLight}` }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>v{v.version_number}</span>
+                <SharedStatusPill tone={v.status === "published" ? "success" : v.status === "draft" ? "warning" : "neutral"}>{v.status === "published" ? "Published" : v.status === "draft" ? "Draft" : v.status}</SharedStatusPill>
+                {Array.isArray(v.items) ? <span style={{ fontSize: 11, color: C.textMut }}>{v.items.length} items</span> : null}
+              </div>
+              {v.changelog ? <div style={{ marginTop: 2, fontSize: 11, color: C.textSec }}>{v.changelog}</div> : null}
+              <div style={{ marginTop: 2, fontSize: 10, color: C.textMut }}>{v.created_by_name || "—"}{when ? ` · ${fmtAuditDate(when)}` : ""}</div>
+            </div>
+            {isDraft && canManage ? <button type="button" onClick={onDiscardDraft} disabled={!!busy} style={{ ...muSmallBtn, color: C.dan, borderColor: "#FECACA", padding: "3px 9px", fontSize: 11 }}>Discard</button> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const MX_GRID = "minmax(0, 1fr) 150px 140px 92px";
+const mxTableWrap = { border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface };
+const mxHeadRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut };
+const mxHeadCell = { display: "flex", alignItems: "center", minHeight: 16 };
+const mxRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start" };
+const mxText = { width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, lineHeight: 1.4, fontFamily: "inherit", color: C.text, background: "#fff", outline: "none", resize: "none", overflow: "hidden", minHeight: 38, whiteSpace: "pre-wrap", wordBreak: "break-word" };
+const mxArrow = { width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", color: C.textSec, cursor: "pointer", fontSize: 12, fontWeight: 800, fontFamily: "inherit", padding: 0 };
 
 function EntityLayout({
   title,
