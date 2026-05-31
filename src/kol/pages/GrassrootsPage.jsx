@@ -36,11 +36,7 @@ import {
   getGrassrootsPrimaryEventDate,
   getGrassrootsFinalEventDate,
   getGrassrootsStatusLabel,
-  getGrassrootsDisplayStatusLabel,
-  getGrassrootsEventDisplayStatus,
-  getGrassrootsEventCloseout,
   isGrassrootsEventClosed,
-  isGrassrootsEventPast,
   isGrassrootsEventArchivedFromDefault,
   canCloseGrassrootsEvent,
   makeGrassrootsEventCloseout,
@@ -2055,7 +2051,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [], inline = false }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [] }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -2077,9 +2073,7 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onCancel]);
 
-  // When rendered inside a dense table row (true inline edit) the surrounding
-  // expansion already frames the editor, so flatten the floating-card chrome.
-  const rootClassName = `grassroots-event-inline-editor grassroots-event-dense${inline ? " grassroots-event-inline-editor--in-row" : ""}`;
+  const rootClassName = "grassroots-event-inline-editor grassroots-event-dense";
 
   // Quick capture mode for new events (minimal, clean, fast)
   if (draft.isDraft) {
@@ -2659,11 +2653,31 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
   return events;
 }
 
+// Small pencil affordance revealed on cell hover (see .gr-edit-cell CSS). Opens the
+// per-column micro-editor for the event the cell belongs to.
+function CellEditButton({ onClick, label, reveal = true }) {
+  return (
+    <button
+      type="button"
+      className={reveal ? "gr-edit-reveal" : undefined}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+      title={label}
+      aria-label={label}
+      style={{ flexShrink: 0, marginLeft: 3, padding: 0, width: 14, height: 14, border: "none", background: "transparent", cursor: "pointer", color: C.pri, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+    </button>
+  );
+}
+
 function DenseGrassrootsTable({
   targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
   expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, onShowFollowUpInfo,
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
-  savingLog, editingTargetId = null, renderInlineEditor
+  savingLog, isEventsTable = false, onOpenCellEditor, onCloseEvent
 }) {
   // Use the shared K9 brand palette (forest green primary + lime accent, neutral
   // slate text) — no local navy/gold override.
@@ -2698,6 +2712,7 @@ function DenseGrassrootsTable({
     corresponding: { bg: "#DBEAFE", fg: "#1E40AF" },
     booked: { bg: "#DCFCE7", fg: "#166534" },
     abandoned: { bg: "#FEE2E2", fg: "#991B1B" },
+    finished: { bg: "#E2E8F0", fg: "#334155" },
     default: { bg: "#E5E7EB", fg: "#374151" },
   };
 
@@ -2756,6 +2771,7 @@ function DenseGrassrootsTable({
         const baseOrganizer = target.organizer || [target.first_name, target.last_name].filter(Boolean).join(" ") || target.contact_source || "—";
         const organizer = cm.get.organizer ? cm.get.organizer(target, targetActivities) : baseOrganizer;
         const eventName = cm.get.event ? cm.get.event(target, targetActivities) : (target.name || categoryConfig.emptyName || "Untitled event");
+        const eventType = normalizeGrassrootsEventType(target.event_type);
         const cStatusText = cm.get.statusText ? cm.get.statusText(target, targetActivities) : null;
 
         const primaryLinkRaw = (Array.isArray(target.details?.links) ? target.details.links : [])
@@ -2764,7 +2780,8 @@ function DenseGrassrootsTable({
         const primaryHref = getSafeEventLinkHref(primaryLinkRaw);
 
         const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
-        const isEditingRow = cm.updatesMode !== "edit" && !!renderInlineEditor && editingTargetId === target.id;
+        const canCloseEvt = isEventsTable && canCloseGrassrootsEvent(target, today);
+        const isClosedEvt = isGrassrootsEventClosed(target);
 
         return (
           <div key={target.id}>
@@ -2779,16 +2796,21 @@ function DenseGrassrootsTable({
                 alignItems: "start",
               }}
             >
-              {/* Organizer */}
-              <div style={{ fontWeight: 700, color: C.text, wordBreak: "break-word", fontSize: 12, lineHeight: 1.25 }} title={organizer}>
-                {organizer}
+              {/* Organizer — hover reveals a pencil that opens the organizer/contact micro-editor */}
+              <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25 }} title={organizer}>
+                <span style={{ wordBreak: "break-word", minWidth: 0 }}>{organizer}</span>
+                {isEventsTable && onOpenCellEditor && (
+                  <CellEditButton onClick={() => onOpenCellEditor(target, "organizer")} label="Edit organizer & contact" />
+                )}
               </div>
 
-              {/* Event name — hyperlink to the stored link (if any). On hover: explicit Copy + Open icons. */}
-              <div 
-                style={{ 
-                  fontWeight: 600, 
-                  color: C.text, 
+              {/* Event name — hyperlink to the stored link (if any). On hover: type badge,
+                  edit pencil (events), and explicit Copy + Open icons. */}
+              <div
+                className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined}
+                style={{
+                  fontWeight: 600,
+                  color: C.text,
                   wordBreak: "break-word",
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -2863,11 +2885,25 @@ function DenseGrassrootsTable({
                     </a>
                   </span>
                 )}
+
+                {isEventsTable && onOpenCellEditor && (
+                  <span className="gr-edit-reveal" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 2 }}>
+                    {eventType && (
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '0 5px', borderRadius: 999, background: `${C.pri}14`, color: C.pri, letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Event type: ${eventType}`}>
+                        {eventType}
+                      </span>
+                    )}
+                    <CellEditButton onClick={() => onOpenCellEditor(target, "event")} label="Edit event details (address, type, cost)" reveal={false} />
+                  </span>
+                )}
               </div>
 
-              {/* Event Date (sortable) */}
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
-                {eventDateStr}
+              {/* Event Date (sortable) — hover pencil opens the date editor */}
+              <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
+                <span>{eventDateStr}</span>
+                {isEventsTable && onOpenCellEditor && (
+                  <CellEditButton onClick={() => onOpenCellEditor(target, "date")} label="Edit event date(s)" />
+                )}
               </div>
 
               {/* Status — status pill (default), plain-text chip (e.g. Drops Outcome), or hidden */}
@@ -2883,12 +2919,12 @@ function DenseGrassrootsTable({
                     fontWeight: 800,
                     padding: "1px 8px",
                     borderRadius: 999,
-                    background: st.bg,
-                    color: st.fg,
+                    background: (isEventsTable && isClosedEvt ? STATUS_STYLES.finished : st).bg,
+                    color: (isEventsTable && isClosedEvt ? STATUS_STYLES.finished : st).fg,
                     whiteSpace: "nowrap",
                     letterSpacing: "0.02em",
                   }}>
-                    {getGrassrootsStatusLabel(target.status)}
+                    {isEventsTable && isClosedEvt ? "Finished" : getGrassrootsStatusLabel(target.status)}
                   </span>
                 )}
               </div>
@@ -2949,8 +2985,8 @@ function DenseGrassrootsTable({
                   {targetActivities.length}
                 </button>
 
-                {/* Hide Log button while the inline composer or inline editor is open for this row */}
-                {inlineLoggingId !== target.id && !isEditingRow && (
+                {/* Hide Log button while the inline composer is open for this row */}
+                {inlineLoggingId !== target.id && (
                   <button
                     onClick={() => onLog(target)}
                     style={{ padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
@@ -2959,32 +2995,40 @@ function DenseGrassrootsTable({
                   </button>
                 )}
 
-                {onEdit && (
-                  <button
-                    onClick={() => onEdit(target)}
-                    aria-pressed={isEditingRow}
-                    title={isEditingRow ? "Close editor" : "Edit"}
-                    style={isEditingRow
-                      ? { padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.pri}`, background: C.pri, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }
-                      : { padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
-                  >
-                    {isEditingRow ? "Editing" : "Edit"}
-                  </button>
+                {/* Events: "Close" replaces "Edit" — greyed until the final event day is
+                    reached. Editing now happens via the per-cell pencils. Other categories
+                    keep the Edit button (lifted TargetEditor). */}
+                {isEventsTable && onCloseEvent ? (
+                  isClosedEvt ? (
+                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 800, color: C.textMut, background: C.bg, border: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }} title="This event has been closed out">
+                      Finished
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => canCloseEvt && onCloseEvent(target)}
+                      disabled={!canCloseEvt}
+                      title={canCloseEvt ? "Close out this event" : "Available on or after the event's final day"}
+                      style={{ padding: "1px 6px", borderRadius: 4, border: `1px solid ${canCloseEvt ? C.pri : C.border}`, background: canCloseEvt ? `${C.pri}0A` : "transparent", color: canCloseEvt ? C.pri : C.textMut, fontSize: 10, fontWeight: 700, cursor: canCloseEvt ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: canCloseEvt ? 1 : 0.55 }}
+                    >
+                      Close
+                    </button>
+                  )
+                ) : (
+                  onEdit && (
+                    <button
+                      onClick={() => onEdit(target)}
+                      style={{ padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: "#fff", color: C.textSec, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Edit
+                    </button>
+                  )
                 )}
               </div>
               )}
             </div>
 
-            {/* Inline edit editor — expands in place, anchored to the row being edited
-                (replaces the old editor that was lifted to the top of the table). */}
-            {isEditingRow && (
-              <div className="grassroots-inline-edit-anchor" style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}`, scrollMarginTop: 96 }}>
-                {renderInlineEditor(target)}
-              </div>
-            )}
-
             {/* Expanded area: composer (when logging) + history */}
-            {cm.updatesMode !== "edit" && !isEditingRow && (isExp || inlineLoggingId === target.id) && (
+            {cm.updatesMode !== "edit" && (isExp || inlineLoggingId === target.id) && (
               <div style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}` }}>
                 {/* Inline Log Composer — dominant textarea + date picker right underneath (no big modal) */}
                 {inlineLoggingId === target.id && (
@@ -3607,6 +3651,13 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [newDraft, setNewDraft] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  // Per-column micro-editor (organizer / event / date) opened from a cell pencil.
+  const [cellEditor, setCellEditor] = useState(null); // { targetId, group }
+  // Event closeout modal.
+  const [closeoutModal, setCloseoutModal] = useState(null); // { target }
+  const [closeoutLeads, setCloseoutLeads] = useState("");
+  const [closeoutNotes, setCloseoutNotes] = useState("");
+  const [savingCloseout, setSavingCloseout] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [expandedDropActivities, setExpandedDropActivities] = useState(new Set());
   const [logModal, setLogModal] = useState(null);
@@ -3912,22 +3963,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     };
   }, [newDraft?.id]);
 
-  // Editing an existing event opens an editor expanded inside its own table row;
-  // reveal it once that row's expansion has rendered.
-  useEffect(() => {
-    if (!editDraft?.id || editDraft.isDraft) return undefined;
-    let frameId = 0;
-    const timerId = window.setTimeout(() => {
-      frameId = window.requestAnimationFrame(() => {
-        scrollGrassrootsEditorIntoView(document.querySelector(".grassroots-inline-edit-anchor"));
-      });
-    }, 60);
-    return () => {
-      window.clearTimeout(timerId);
-      if (frameId) window.cancelAnimationFrame(frameId);
-    };
-  }, [editDraft?.id, editDraft?.isDraft]);
-
   useEffect(() => {
     const category = logModal ? (logModal.category || getGrassrootsCategoryConfig(logModal?.target?.category).id) : "";
     if (category !== "drops") return undefined;
@@ -3990,6 +4025,90 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const closeEditor = () => {
     setNewDraft(null);
     setEditDraft(null);
+    setCellEditor(null);
+  };
+
+  // Open the per-column micro-editor for an event cell (organizer / event / date).
+  const openCellEditor = (target, group) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to edit grassroots rows", "error");
+      return;
+    }
+    setNewDraft(null);
+    setEditDraft(buildEditorDraft(target));
+    setCellEditor({ targetId: target.id, group });
+  };
+
+  // Open the closeout modal for an event (only reachable once its final day passed).
+  const openCloseout = (target) => {
+    if (!canEditTargets) {
+      toast("You do not have permission to close grassroots events", "error");
+      return;
+    }
+    setCloseoutModal({ target });
+    setCloseoutLeads(target.leads_captured != null && target.leads_captured !== "" ? String(target.leads_captured) : "");
+    setCloseoutNotes("");
+  };
+
+  const closeCloseout = () => {
+    setCloseoutModal(null);
+    setCloseoutLeads("");
+    setCloseoutNotes("");
+  };
+
+  const saveCloseout = async () => {
+    const target = closeoutModal?.target;
+    if (!target || !locationId) return;
+    const leads = parseNumberField(closeoutLeads) ?? 0;
+    const cost = parseNumberField(target.cost);
+    const cpl = calculateGrassrootsCpl(cost, leads);
+    setSavingCloseout(true);
+    setSaveState("saving");
+    try {
+      const draft = buildEditorDraft(target);
+      draft.leads_captured = leads;
+      draft.cpl = cpl ?? "";
+      draft.details = {
+        ...(draft.details && typeof draft.details === "object" ? draft.details : {}),
+        closeout: makeGrassrootsEventCloseout({
+          leadsCaptured: leads,
+          cpl,
+          notes: closeoutNotes,
+          closedByUserId: actor.userId,
+          closedByName: actor.name,
+        }),
+      };
+      const payload = buildTargetPayload(draft, locationId, actor);
+      const rpcPayload = { ...payload, id: draft.id };
+      const { error } = await supabase.rpc(GRASSROOTS_EVENT_SAVE_RPC, buildGrassrootsEventSaveRpcArgs(rpcPayload, draft));
+      if (error) throw error;
+      // Record the lessons-learned note as an activity so it shows in the row history.
+      const notes = (closeoutNotes || "").trim();
+      if (notes) {
+        const activityId = createGrassrootsClientUuid ? createGrassrootsClientUuid() : crypto.randomUUID();
+        await supabase.from("grassroots_activity").insert({
+          id: activityId,
+          location_id: locationId,
+          target_id: target.id,
+          activity_type: getGrassrootsActivityType(target.category || "events"),
+          activity_date: todayStr(),
+          notes: `Event closed — ${notes}`,
+          created_by_user_id: actor.userId,
+          created_by_name: actor.name,
+        });
+      }
+      await loadGrassroots();
+      closeCloseout();
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 1200);
+      toast("Event closed");
+    } catch (err) {
+      console.error("closeout save failed", err);
+      setSaveState("error");
+      toast(err?.message || "Failed to close event", "error");
+    } finally {
+      setSavingCloseout(false);
+    }
   };
 
   const markFreshTarget = (targetId) => {
@@ -4753,20 +4872,12 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           box-shadow: 0 8px 24px rgba(15,23,42,0.10);
           animation: grassrootsComposerIn 0.38s cubic-bezier(0.16,1,0.3,1) both;
         }
-        /* In-row variant: the table's row expansion already frames the editor
-           (subtle bg + 3px primary left-border), so drop the floating-card chrome
-           and let the editor sit flush inside the expanded row. */
-        .grassroots-event-inline-editor--in-row {
-          border: none;
-          border-radius: 0;
-          box-shadow: none;
-          background: transparent;
-          animation: grassrootsInlineEditIn 0.26s cubic-bezier(0.16,1,0.3,1) both;
-        }
-        @keyframes grassrootsInlineEditIn {
-          from { opacity: 0; transform: translateY(-4px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
+        /* Per-column edit affordances: a pencil (and the event-type badge) that fade in
+           when the cell is hovered/focused, so the dense table stays clean at rest. */
+        .gr-edit-cell .gr-edit-reveal { opacity: 0; transition: opacity 0.12s ease; }
+        .gr-edit-cell:hover .gr-edit-reveal,
+        .gr-edit-cell:focus-within .gr-edit-reveal { opacity: 0.8; }
+        .gr-edit-cell .gr-edit-reveal:hover { opacity: 1; }
         .grassroots-event-inline-header {
           position: relative;
           z-index: 1;
@@ -6356,40 +6467,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                           />
                         </div>
                       )}
-                      {/* Editing an existing event now happens inline, expanded inside its
-                          own row via the table's renderInlineEditor prop below. */}
+                      {/* Editing an existing event happens via the per-column cell pencils
+                          (organizer / event / date), and closing via the Close button — both
+                          driven through onOpenCellEditor / onCloseEvent below. */}
                       {/* THE DENSE CLIENTS-STYLE TABLE for Events — exact whitespace, columns, follow-up + log behavior */}
                       <DenseGrassrootsTable
                         targets={lifecycleDisplayTargets}
                         activitiesByTarget={activitiesByTarget}
                         categoryConfig={activeConfig}
+                        isEventsTable
                         onLog={startInlineLog}
-                        onEdit={(t) => {
-                          // Toggle: clicking Edit on the row already open closes the inline editor.
-                          if (editDraft && !editDraft.isDraft && editDraft.id === t.id) { closeEditor(); return; }
-                          setNewDraft(null);
-                          setEditDraft(buildEditorDraft(t));
-                        }}
-                        editingTargetId={editDraft && !editDraft.isDraft ? editDraft.id : null}
-                        renderInlineEditor={() => (
-                          <EventTargetInlineEditor
-                            inline
-                            key={editDraft.id}
-                            draft={editDraft}
-                            saving={savingDraft}
-                            activities={activitiesByTarget[editDraft.id] || []}
-                            attachmentsByActivity={attachmentsByActivity}
-                            canLog={canLogActivity}
-                            onChange={updateDraft}
-                            onSave={saveDraft}
-                            onCancel={closeEditor}
-                            onDelete={() => deleteTarget(editDraft)}
-                            onLog={() => openLogModal(editDraft)}
-                            onPreviewAttachment={previewGrassrootsAttachment}
-                            previewingAttachmentId={previewingAttachmentId}
-                            organizerOptions={organizerOptions}
-                          />
-                        )}
+                        onOpenCellEditor={openCellEditor}
+                        onCloseEvent={openCloseout}
                         onUpdateFollowUp={updateFollowUpDate}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
@@ -6616,6 +6705,85 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       )}
 
       {!isDropLogActive && logActivityEditor}
+
+      {/* Per-column micro-editor — a small modal scoped to the cell's field group. */}
+      {cellEditor && editDraft && (
+        <Modal
+          title={cellEditor.group === "organizer" ? "Edit organizer & contact" : cellEditor.group === "event" ? "Edit event details" : "Edit event date(s)"}
+          onClose={savingDraft ? () => {} : closeEditor}
+        >
+          <div style={{ display: "grid", gap: 12, width: "min(420px, 78vw)" }}>
+            {cellEditor.group === "organizer" && (
+              <>
+                <OrganizerAutocomplete label="Organizer" value={editDraft.organizer} onChange={(v) => updateDraft("organizer", v)} options={organizerOptions} placeholder="Organizer" />
+                <FieldEditor field={{ key: "first_name", label: "Contact Name", placeholder: "Contact name" }} value={editDraft.first_name} onChange={(v) => updateDraft("first_name", v)} />
+                <FieldEditor field={{ key: "contact_email", label: "Contact Email", type: "email", placeholder: "Contact email" }} value={editDraft.contact_email} onChange={(v) => updateDraft("contact_email", v)} />
+                <FieldEditor field={{ key: "contact_phone", label: "Contact Number", placeholder: "Contact number" }} value={editDraft.contact_phone} onChange={(v) => updateDraft("contact_phone", v)} />
+                <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.4 }}>Organizer &amp; contact will link to the Marketing Directory once it's available.</div>
+              </>
+            )}
+            {cellEditor.group === "event" && (
+              <>
+                <FieldEditor field={{ key: "name", label: "Event Name", placeholder: "Event name" }} value={editDraft.name} onChange={(v) => updateDraft("name", v)} />
+                <SplitAddressFields draft={editDraft} onChange={updateDraft} onPlaceSelect={(parts) => Object.entries(parts || {}).forEach(([k, v]) => updateDraft(k, v || ""))} placeholder="Event address" />
+                <EventTypePicker value={editDraft.event_type} onChange={(v) => updateDraft("event_type", v)} />
+                <FieldEditor field={{ key: "cost", label: "Cost", type: "number", placeholder: "Cost" }} value={editDraft.cost} onChange={(v) => updateDraft("cost", v)} />
+              </>
+            )}
+            {cellEditor.group === "date" && (
+              <EventDateEditor draft={editDraft} onChange={updateDraft} />
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 2, paddingTop: 10, borderTop: `1px solid ${C.borderLight}` }}>
+              <Btn variant="ghost" onClick={closeEditor} disabled={savingDraft}>Cancel</Btn>
+              <Btn variant="primary" onClick={saveDraft} disabled={savingDraft}>{savingDraft ? "Saving…" : "Save"}</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Event closeout — asks for leads, shows computed CPL (read-only), captures lessons learned. */}
+      {closeoutModal && (() => {
+        const t = closeoutModal.target;
+        const leadsNum = parseNumberField(closeoutLeads) ?? 0;
+        const costNum = parseNumberField(t.cost);
+        const cplText = fmtCurrencyNumber(calculateGrassrootsCpl(costNum, leadsNum));
+        const finalDate = getGrassrootsFinalEventDate(t);
+        const costText = fmtCurrencyNumber(costNum);
+        return (
+          <Modal title="Close out event" onClose={savingCloseout ? () => {} : closeCloseout}>
+            <div style={{ display: "grid", gap: 14, width: "min(380px, 80vw)" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{t.name || "Event"}</div>
+                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
+                  {finalDate ? `Final day ${fmtDate(finalDate)}` : ""}{finalDate && costText ? " · " : ""}{costText ? `Cost $${costText}` : ""}
+                </div>
+              </div>
+              <div>
+                <Label>Leads Captured</Label>
+                <input type="number" min="0" value={closeoutLeads} onChange={(e) => setCloseoutLeads(e.target.value)} placeholder="0" autoFocus style={{ ...INPUT_STYLE, width: "100%" }} />
+              </div>
+              <div>
+                <Label>CPL — Cost per Lead (auto)</Label>
+                <input type="text" value={cplText ? `$${cplText}` : "—"} readOnly tabIndex={-1} title="Calculated from cost ÷ leads captured — not directly editable" style={{ ...INPUT_STYLE, width: "100%", background: C.bg, color: C.textMut, cursor: "not-allowed" }} />
+              </div>
+              <div>
+                <Label>Notes — Lessons Learned</Label>
+                <textarea
+                  value={closeoutNotes}
+                  onChange={(e) => setCloseoutNotes(e.target.value)}
+                  rows={4}
+                  placeholder="Use this opportunity to reflect on lessons learned. What went well? Would you do this event again? What would you do differently?"
+                  style={{ width: "100%", padding: "9px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+                <Btn variant="ghost" onClick={closeCloseout} disabled={savingCloseout}>Cancel</Btn>
+                <Btn variant="primary" onClick={saveCloseout} disabled={savingCloseout}>{savingCloseout ? "Closing…" : "Close Event"}</Btn>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {attachmentPreview && (
         <Modal title={attachmentPreview.attachment?.file_name || "Attachment Preview"} onClose={() => setAttachmentPreview(null)} fullWidth>
