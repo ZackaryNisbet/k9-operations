@@ -31,6 +31,7 @@ import {
   canManageIgnite,
 } from "./igniteOnboarding";
 import { buildBridgeProbeEmail } from "./igniteHealth";
+import IgnitePipelineDiagram from "./IgnitePipelineDiagram";
 
 const WORKING_STEPS = ["profile", "forwarding", "activate"];
 
@@ -150,36 +151,6 @@ function IgniteUrlGraphic({ id }) {
       </div>
     </div>
   );
-}
-
-// ── Small forwarding-flow diagram (Booking form → inbox → CRM) ──────────────
-function FlowNode({ icon, label, accent }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, flex: 1, minWidth: 0 }}>
-      <div
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: 9,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: accent ? C.pri : C.textSec,
-          background: accent ? `${C.pri}14` : C.surface,
-          border: `1px solid ${accent ? `${C.pri}40` : C.border}`,
-        }}
-      >
-        {icon}
-      </div>
-      <span style={{ fontSize: 10.5, fontWeight: 700, color: accent ? C.pri : C.textMut, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function FlowArrow() {
-  return <span style={{ color: C.textMut, fontSize: 16, flexShrink: 0, marginBottom: 16 }}>→</span>;
 }
 
 export default function IgniteOnboardingWizard({ locationId, profile, onClose, onComplete }) {
@@ -398,13 +369,7 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     const v = validateInboundEmail(inboundEmail);
     bodyEl = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surfaceHover }}>
-          <FlowNode icon={<I.MessageSquare />} label="Booking form" />
-          <FlowArrow />
-          <FlowNode icon={<I.Send />} label={`${locLabel} inbox`} accent />
-          <FlowArrow />
-          <FlowNode icon={<I.Sparkle />} label="K9 Ops CRM" />
-        </div>
+        <IgnitePipelineDiagram locLabel={locLabel} />
 
         <div>
           <div style={labelStyle}>{locLabel}'s booking inbox</div>
