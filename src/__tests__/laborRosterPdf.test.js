@@ -276,4 +276,28 @@ describe("labor roster PDF", () => {
       expect(text.split(`pct.${i}@example.com`).length - 1).toBe(1);
     }
   });
+
+  it("orders role groups by the configured hierarchy, slotting in new roles", async () => {
+    // A brand-new role ("Barn Concierge") placed between Supervisor and PCT in
+    // the hierarchy must appear there — not dumped at the bottom by default weight.
+    const positionOrder = ["Supervisor", "Barn Concierge", "Pet Care Technician"];
+    const rows = [
+      { name: "Pat Tech", position: "Pet Care Technician", phone: "(856) 555-0001", email: "pct@example.com" },
+      { name: "Sam Super", position: "Supervisor", phone: "(856) 555-0002", email: "sup@example.com" },
+      { name: "Bo Barn", position: "Barn Concierge", phone: "(856) 555-0003", email: "barn@example.com" },
+    ];
+    const text = await extractPdfText(await buildLaborRosterPdfBytes({
+      ...basePayload,
+      rows,
+      positionOrder,
+      options: { showPhone: true, showEmail: true },
+    }));
+
+    const iSup = text.indexOf("Supervisor");
+    const iBarn = text.indexOf("Barn Concierge");
+    const iPct = text.indexOf("Pet Care Technician");
+    expect(iSup).toBeGreaterThanOrEqual(0);
+    expect(iBarn).toBeGreaterThan(iSup);
+    expect(iPct).toBeGreaterThan(iBarn);
+  });
 });
