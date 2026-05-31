@@ -9,6 +9,11 @@ import {
   UPKEEP_SERVICE_FREQUENCIES,
   upkeepVendorMeta,
   upkeepLicenseMeta,
+  parseSpreadsheetGrids,
+  detectVendorColumns,
+  buildVendorRows,
+  VENDOR_IMPORT_FIELDS,
+  VENDOR_IMPORT_FIELD_LABELS,
   loadUpkeepIntros,
   saveUpkeepIntros,
   deactivateLicense,
@@ -949,6 +954,8 @@ const muItem = { display: "flex", gap: 12, alignItems: "flex-start", padding: "1
 const muItemDone = { ...muItem, borderColor: "#BBF7D0", background: "#F0FDF4" };
 const muToggle = { width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: "transparent", cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" };
 const muToggleOn = { ...muToggle, border: `1.5px solid ${C.suc}`, background: C.suc, color: "#fff" };
+const impTh = { textAlign: "left", padding: "7px 9px", fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: C.textMut, whiteSpace: "nowrap" };
+const impTd = { padding: "6px 9px", color: C.text, verticalAlign: "top" };
 
 // Reusable modal shell + labelled field for the Vendors/Licenses/Settings editors.
 function UpkeepModal({ title, subtitle, onClose, children, footer, maxWidth = 640 }) {
@@ -1447,6 +1454,7 @@ function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!locationId) return;
@@ -1490,6 +1498,7 @@ function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast 
     <div>
       <ListSearchRow value={query} onChange={setQuery} placeholder="Search trade, company, contact…">
         <PillFilter active={includeArchived} onClick={() => setIncludeArchived((v) => !v)}>Archived</PillFilter>
+        {canManage ? <button type="button" onClick={() => setImporting(true)} style={muSmallBtn}>Import</button> : null}
         {canManage ? <button type="button" onClick={() => setSelected(blankVendorRecord(locationId))} style={muSmallPrimary}>+ New</button> : null}
       </ListSearchRow>
       {tabsBar}
@@ -1521,12 +1530,223 @@ function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast 
           onSaved={async () => { if (toast) toast("Vendor saved"); setSelected(null); await load(); }}
         />
       ) : null}
+
+      {importing ? (
+        <VendorImportModal
+          locationId={locationId}
+          actor={actor}
+          onClose={() => setImporting(false)}
+          onDone={async (n) => { if (toast && n) toast(`Imported ${n} vendor${n === 1 ? "" : "s"}`); await load({ silent: true }); }}
+        />
+      ) : null}
     </div>
   );
 }
 
 function blankVendorRecord(locationId) {
   return { location_id: locationId, business_name: "", has_contract: false, contact_info: [], is_archived: false, metadata: { trade: "", frequency: "", cost: "" } };
+}
+
+// Upload any spreadsheet, auto-pair its columns, review/approve rows, then bulk
+// insert. Built around the pure helpers in resortUpkeepData (no external API).
+function VendorImportModal({ locationId, actor, onClose, onDone }) {
+  const [step, setStep] = useState("upload"); // upload | review | importing | done
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [sheets, setSheets] = useState([]); // [{ grid, headerRowIndex, columns }]
+  const [sheetIdx, setSheetIdx] = useState(0);
+  const [excluded, setExcluded] = useState(() => new Set());
+  const [progress, setProgress] = useState(0);
+  const [importedCount, setImportedCount] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
+
+  const cur = sheets[sheetIdx] || null;
+  const rows = useMemo(() => (cur ? buildVendorRows(cur.grid, cur.headerRowIndex, cur.columns) : []), [cur]);
+  const selectedCount = rows.reduce((n, _r, i) => (excluded.has(i) ? n : n + 1), 0);
+  const fieldOptions = useMemo(() => [{ value: "", label: "Ignore" }, ...VENDOR_IMPORT_FIELDS.map((f) => ({ value: f, label: VENDOR_IMPORT_FIELD_LABELS[f] }))], []);
+
+  const onFile = async (file) => {
+    if (!file) return;
+    setBusy(true); setError(""); setFileName(file.name || "");
+    try {
+      const grids = await parseSpreadsheetGrids(file);
+      const detected = grids
+        .map((grid) => { const d = detectVendorColumns(grid); return { grid, headerRowIndex: d.headerRowIndex, columns: d.columns }; })
+        .filter((s) => s.headerRowIndex >= 0 && s.columns.length);
+      if (!detected.length) {
+        setError("We couldn't recognise a vendor table in that file. Download the standard template below, fill it in, then re-upload.");
+        setBusy(false);
+        return;
+      }
+      let best = 0; let bestN = -1;
+      detected.forEach((s, i) => { const n = buildVendorRows(s.grid, s.headerRowIndex, s.columns).length; if (n > bestN) { bestN = n; best = i; } });
+      setSheets(detected); setSheetIdx(best); setExcluded(new Set()); setStep("review");
+    } catch {
+      setError("That file could not be read. Upload an .xlsx or .csv file.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickSheet = (i) => { setSheetIdx(i); setExcluded(new Set()); };
+  const setColField = (colArrayIndex, field) => {
+    setSheets((prev) => prev.map((s, i) => (i !== sheetIdx ? s : { ...s, columns: s.columns.map((c, ci) => (ci !== colArrayIndex ? c : { ...c, field: field || null })) })));
+    setExcluded(new Set());
+  };
+  const toggleRow = (i) => setExcluded((prev) => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; });
+  const allIn = rows.length > 0 && selectedCount === rows.length;
+  const toggleAll = () => setExcluded(allIn ? new Set(rows.map((_r, i) => i)) : new Set());
+
+  const downloadTemplate = () => {
+    const headers = VENDOR_IMPORT_FIELDS.map((f) => VENDOR_IMPORT_FIELD_LABELS[f]);
+    const sample = ["Electrical", "Hutchinson Plumbing", "Chris Vargas", "(856) 555-1234", "chris@example.com", "Y", "Monthly", "250"];
+    const csv = `${headers.join(",")}\n${sample.join(",")}\n`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a"); a.href = url; a.download = "vendor-import-template.csv";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+
+  const runImport = async () => {
+    const toImport = rows.filter((_r, i) => !excluded.has(i));
+    if (!toImport.length) return;
+    setStep("importing"); setProgress(0); setImportedCount(0); setFailedCount(0);
+    let done = 0; let fail = 0;
+    for (let i = 0; i < toImport.length; i += 4) {
+      const chunk = toImport.slice(i, i + 4);
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(chunk.map((r) => saveVendor({
+        location_id: locationId,
+        business_name: r.company || r.trade,
+        has_contract: !!r.contract,
+        contact_info: mergePrimaryContact([], { name: r.contact, role: "", phone: r.phone, email: r.email, notes: "" }),
+        is_archived: false,
+        metadata: { trade: r.trade, frequency: r.frequency, cost: r.cost === "" ? "" : Number(r.cost) },
+      }, actor).then(() => { done += 1; }).catch(() => { fail += 1; }).finally(() => setProgress(done + fail))));
+    }
+    setImportedCount(done); setFailedCount(fail); setStep("done");
+    await onDone(done);
+  };
+
+  if (step === "importing") {
+    const total = selectedCount || progress;
+    return (
+      <UpkeepModal title="Importing vendors" onClose={() => {}} maxWidth={520}>
+        <div style={{ fontSize: 13, color: C.textSec }}>Adding vendors to this location…</div>
+        <div style={muProgressTrack}><div style={{ height: "100%", width: `${total ? Math.round((progress / total) * 100) : 0}%`, background: C.pri, transition: "width 0.2s" }} /></div>
+        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: C.textMut }}>{progress} of {total}</div>
+      </UpkeepModal>
+    );
+  }
+
+  if (step === "done") {
+    return (
+      <UpkeepModal title="Import complete" onClose={onClose} maxWidth={520} footer={<><div style={{ flex: 1 }} /><button type="button" onClick={onClose} style={primaryBtn}>Done</button></>}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>Imported {importedCount} vendor{importedCount === 1 ? "" : "s"}.</div>
+        {failedCount ? <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: C.warn }}>{failedCount} row{failedCount === 1 ? "" : "s"} could not be saved and were skipped.</div> : null}
+        <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>Open any vendor by clicking its row to review or edit the details.</div>
+      </UpkeepModal>
+    );
+  }
+
+  if (step === "upload") {
+    return (
+      <UpkeepModal title="Import vendors" subtitle="Upload an Excel or CSV file. Columns are detected automatically, so messy non-standard sheets still work." onClose={onClose} maxWidth={560}>
+        <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "30px 16px", border: `1.5px dashed ${C.border}`, borderRadius: 12, background: C.surfaceHover, cursor: busy ? "default" : "pointer", textAlign: "center" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{busy ? "Reading file…" : "Choose a file"}</div>
+          <div style={{ fontSize: 12, color: C.textMut }}>.xlsx or .csv</div>
+          <input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" style={{ display: "none" }} disabled={busy} onChange={(e) => onFile(e.target.files?.[0] || null)} />
+        </label>
+        {error ? <div style={{ marginTop: 12 }}><InlineAlert tone="warning">{error}</InlineAlert></div> : null}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textMut }}>
+          Prefer a clean start? <button type="button" onClick={downloadTemplate} style={inlineLinkButton}>Download the standard template</button>, fill it in, and upload it here.
+        </div>
+      </UpkeepModal>
+    );
+  }
+
+  const previewCols = ["trade", "company", "contact", "phone", "email", "frequency", "cost"];
+  return (
+    <UpkeepModal
+      title="Review import"
+      subtitle={fileName ? `From ${fileName}` : undefined}
+      onClose={onClose}
+      maxWidth={880}
+      footer={(
+        <>
+          <button type="button" onClick={() => { setStep("upload"); setSheets([]); setError(""); }} style={secondaryBtn}>Choose another file</button>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>{selectedCount} of {rows.length} selected</span>
+          <button type="button" onClick={runImport} disabled={!selectedCount} style={{ ...primaryBtn, opacity: selectedCount ? 1 : 0.6 }}>Import {selectedCount} vendor{selectedCount === 1 ? "" : "s"}</button>
+        </>
+      )}
+    >
+      {sheets.length > 1 ? (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {sheets.map((s, i) => {
+            const n = buildVendorRows(s.grid, s.headerRowIndex, s.columns).length;
+            return <button key={i} type="button" onClick={() => pickSheet(i)} style={i === sheetIdx ? muSmallPrimary : muSmallBtn}>Table {i + 1} · {n}</button>;
+          })}
+        </div>
+      ) : null}
+
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Column mapping</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 8, marginBottom: 18 }}>
+        {(cur?.columns || []).map((c, ci) => {
+          const period = c.servicePeriod || c.feePeriod;
+          return (
+            <div key={ci} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", background: "#fff" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.header}>{c.header || `Column ${c.index + 1}`}</div>
+              {period ? (
+                <div style={{ marginTop: 5, fontSize: 12, fontWeight: 700, color: C.pri }}>{c.servicePeriod ? `Frequency · ${c.servicePeriod} service` : `Cost · ${c.feePeriod} fee`}</div>
+              ) : (
+                <div style={{ marginTop: 5 }}><CustomSelect small value={c.field || ""} onChange={(v) => setColField(ci, v)} options={fieldOptions} placeholder="Ignore" /></div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {rows.length ? (
+        <>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 }}>Preview · approve or exclude rows</div>
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: C.surfaceHover }}>
+                    <th style={{ ...impTh, width: 34, textAlign: "center", position: "sticky", top: 0, background: C.surfaceHover }}><input type="checkbox" checked={allIn} onChange={toggleAll} /></th>
+                    {previewCols.map((k) => <th key={k} style={{ ...impTh, position: "sticky", top: 0, background: C.surfaceHover }}>{VENDOR_IMPORT_FIELD_LABELS[k]}</th>)}
+                    <th style={{ ...impTh, width: 64, textAlign: "center", position: "sticky", top: 0, background: C.surfaceHover }}>Contract</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const inc = !excluded.has(i);
+                    return (
+                      <tr key={i} onClick={() => toggleRow(i)} style={{ borderTop: `1px solid ${C.borderLight}`, background: inc ? "#fff" : C.surfaceHover, opacity: inc ? 1 : 0.5, cursor: "pointer" }}>
+                        <td style={{ ...impTd, textAlign: "center" }}><input type="checkbox" checked={inc} onChange={() => toggleRow(i)} onClick={(e) => e.stopPropagation()} /></td>
+                        <td style={impTd}>{r.trade || "—"}</td>
+                        <td style={{ ...impTd, fontWeight: 700 }}>{r.company || "—"}</td>
+                        <td style={impTd}>{r.contact || "—"}</td>
+                        <td style={{ ...impTd, whiteSpace: "nowrap" }}>{r.phone ? fmtPhone(r.phone) : "—"}</td>
+                        <td style={{ ...impTd, color: C.textSec }}>{r.email || "—"}</td>
+                        <td style={impTd}>{r.frequency || "—"}</td>
+                        <td style={{ ...impTd, textAlign: "right", whiteSpace: "nowrap" }}>{r.cost !== "" ? `$${r.cost}` : "—"}</td>
+                        <td style={{ ...impTd, textAlign: "center" }}>{r.contract ? "Yes" : "No"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : (
+        <InlineAlert tone="warning">No vendor rows detected on this table. Set a Trade or Company column in the mapping above, switch tables, or <button type="button" onClick={downloadTemplate} style={inlineLinkButton}>download the standard template</button>.</InlineAlert>
+      )}
+    </UpkeepModal>
+  );
 }
 
 function VendorEditorModal({ vendor, locationId, actor, canManage, onClose, onSaved }) {
