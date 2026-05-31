@@ -129,12 +129,14 @@ interface RowData {
 
 function extractTableRows(rawHtml: string): Map<string, RowData> {
   const rows = new Map<string, RowData>();
+  // Label cell may be <td> (Ignite) or <th> (the booking/availability form),
+  // and the booking form's labels carry a trailing colon ("First Name:").
   const rowRe =
-    /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+    /<tr[^>]*>\s*<t[hd][^>]*>([\s\S]*?)<\/t[hd]>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
   let m: RegExpExecArray | null;
 
   while ((m = rowRe.exec(rawHtml)) !== null) {
-    const label = m[1].replace(/<[^>]+>/g, "").trim();
+    const label = m[1].replace(/<[^>]+>/g, "").replace(/:\s*$/, "").trim();
     const valueHtml = m[2].trim();
     const text = valueHtml
       .replace(/<br\s*\/?>/gi, "\n")
@@ -310,11 +312,9 @@ function parseIgniteEmail(
     return { error: "No email HTML provided" } as ParsedLead;
   }
 
-  const from = headers.from || "";
-  if (from && !from.includes(IGNITE_SENDER_EMAIL)) {
-    return { error: `Unexpected sender: ${from}` } as ParsedLead;
-  }
-
+  // Sender is only a soft signal — the booking form is forwarded (Outlook →
+  // inbound), which rewrites the From header, so we never hard-reject on it.
+  // Non-lead emails are filtered by subject below and by the absence of rows.
   const subject = headers.subject || "";
 
   // Skip non-lead emails (OTP codes, etc.)
@@ -876,9 +876,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // Validate sender
-    if (from && !from.includes(IGNITE_SENDER_EMAIL)) {
-      return jsonResponse({ error: "Not an Ignite email", from }, 422);
+    // Sender is a soft signal only — booking-form mail is forwarded (Outlook →
+    // inbound), which rewrites From. Log unknown senders but don't reject.
+    const ACCEPTED_SENDER_MARKERS = ["idigitalstrategies", "cloudbackend", "k9resorts"];
+    if (from && !ACCEPTED_SENDER_MARKERS.some((mk) => from.toLowerCase().includes(mk))) {
+      console.log(`[ignite-webhook] Unrecognized sender (continuing): ${from}`);
     }
 
     if (!html) {
@@ -962,6 +964,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
               );
             }
           }
+        }
+      }
+    }
+
+    // Fallback: route by the website slug in the body URL
+    // (e.g. https://www.k9resorts.com/cherry-hill/ → locations.slug = 'cherry-hill').
+    if (!locationId) {
+      const slugMatch = html.match(/k9resorts\.com\/([a-z0-9][a-z0-9-]*)\//i);
+      const slug = slugMatch?.[1]?.toLowerCase();
+      if (slug && slug !== "www") {
+        const { data: locs } = await supabaseClient
+          .from("locations")
+          .select("id")
+          .eq("slug", slug)
+          .limit(1);
+        if (locs && locs.length > 0) {
+          locationId = locs[0].id;
+          console.log(`[ignite-webhook] Matched via website slug: ${slug} -> ${locationId}`);
         }
       }
     }
