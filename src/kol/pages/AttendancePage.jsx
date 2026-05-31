@@ -24,7 +24,6 @@ import {
 const INCIDENT_COLOR_BY_VALUE = Object.fromEntries(
   ATTENDANCE_INCIDENT_OPTIONS.map((option) => [option.value, option.color]),
 );
-const INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS = 240;
 const ATTENDANCE_MARK_FILTER_FIELDS = [
   { section: "Employee", key: "employee", label: "Employee", type: "custom_select", ops: ["is", "isNot"] },
   { section: "Mark Details", key: "type", label: "Mark Type", type: "select", ops: ["is", "isNot"], options: ATTENDANCE_INCIDENT_OPTIONS.map((option) => option.value) },
@@ -212,7 +211,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [savingEmployee, setSavingEmployee] = useState(false);
 
   const [showIncidentModal, setShowIncidentModal] = useState(false);
-  const [incidentComposerEntered, setIncidentComposerEntered] = useState(false);
   const [editingIncidentId, setEditingIncidentId] = useState(null);
   const [incidentEmployeeId, setIncidentEmployeeId] = useState("");
   const [incidentType, setIncidentType] = useState("");
@@ -703,21 +701,12 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     setIncidentDetail("");
   }, []);
 
-  const closeIncidentComposer = useCallback(({ immediate = false } = {}) => {
-    setIncidentComposerEntered(false);
-    if (immediate) {
-      setShowIncidentModal(false);
-      resetIncidentModal();
-      return;
-    }
-    window.setTimeout(() => {
-      setShowIncidentModal(false);
-      resetIncidentModal();
-    }, INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS);
+  const closeIncidentComposer = useCallback(() => {
+    setShowIncidentModal(false);
+    resetIncidentModal();
   }, [resetIncidentModal]);
 
-  const openIncidentComposer = useCallback((incident = null, { preferredEmployeeId = "", switchToLog = true } = {}) => {
-    if (switchToLog) setTab("log");
+  const openIncidentComposer = useCallback((incident = null, { preferredEmployeeId = "" } = {}) => {
     if (!incident) {
       resetIncidentModal();
       if (preferredEmployeeId) setIncidentEmployeeId(preferredEmployeeId);
@@ -732,21 +721,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     setIncidentDetail(incident.detail || "");
     setShowIncidentModal(true);
   }, [resetIncidentModal]);
-
-  useEffect(() => {
-    if (!showIncidentModal) {
-      setIncidentComposerEntered(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setIncidentComposerEntered(true), 12);
-    return () => window.clearTimeout(timer);
-  }, [showIncidentModal]);
-
-  useEffect(() => {
-    if (tab !== "log" && showIncidentModal) {
-      closeIncidentComposer({ immediate: true });
-    }
-  }, [closeIncidentComposer, showIncidentModal, tab]);
 
   const updateMarkFilter = useCallback((key, field, value) => {
     setMarkDraftFilters((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
@@ -888,7 +862,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         if (error) throw error;
         addGlobalToast("Attendance mark saved", "success");
       }
-      closeIncidentComposer({ immediate: true });
+      closeIncidentComposer();
       await loadData({ silent: true });
     } catch (error) {
       console.error("Attendance mark save error:", error);
@@ -919,7 +893,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       const { error } = await supabase.from("attendance_incidents").delete().eq("id", incident.id);
       if (error) throw error;
       if (editingIncidentId === incident.id) {
-        closeIncidentComposer({ immediate: true });
+        closeIncidentComposer();
       }
       await loadData({ silent: true });
       addGlobalToast("Attendance mark deleted", "success");
@@ -1051,19 +1025,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   return (
     <div style={{ maxWidth: embedded ? "100%" : 1180, margin: "0 auto", padding: embedded ? "0 0 8px" : "24px 16px 40px" }}>
       <style>{`
-        @keyframes attendanceMarkComposerIn {
-          0% { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(4px); }
-          65% { opacity: 1; transform: translateY(2px) scale(1.002); filter: blur(0); }
-          100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-        }
-        @keyframes attendanceMarkComposerSweep {
-          0% { transform: translate3d(-200%, 0, 0) skewX(-18deg); opacity: 0; }
-          12% { opacity: 0; }
-          24% { opacity: 0.36; }
-          48% { opacity: 0.84; }
-          72% { opacity: 0.22; }
-          100% { transform: translate3d(420%, 0, 0) skewX(-18deg); opacity: 0; }
-        }
         @keyframes attendanceFilterSlideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes attendanceFilterFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         @keyframes attendanceFilterChipIn { from { opacity: 0; transform: translateX(-6px) scale(0.9); } to { opacity: 1; transform: translateX(0) scale(1); } }
@@ -1331,11 +1292,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               >
                 Filter{Object.keys(markFilters).length > 0 ? ` (${Object.keys(markFilters).length})` : ""}
               </Btn>
-              {showIncidentModal ? (
-                <Btn variant="ghost" size="sm" onClick={() => closeIncidentComposer()}>Cancel Add</Btn>
-              ) : (
-                <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
-              )}
+              <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
             </LaborSearchBar>
             <LaborIntro
               value={introValue}
@@ -1568,137 +1525,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
           )}
 
-          {showIncidentModal && (
-            <div style={{ marginBottom: 16 }}>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  handleSaveIncident();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    closeIncidentComposer();
-                  }
-                }}
-                style={{
-                  position: "relative",
-                  overflow: "hidden",
-                  borderRadius: 20,
-                  border: `1px solid ${C.acc}55`,
-                  background: "linear-gradient(135deg, rgba(132,204,22,0.14), rgba(20,83,45,0.08) 55%, rgba(255,255,255,0.92))",
-                  boxShadow: "0 24px 50px rgba(20, 83, 45, 0.12)",
-                  padding: "16px 16px 14px",
-                  opacity: incidentComposerEntered ? 1 : 0,
-                  transform: incidentComposerEntered ? "translateY(0) scale(1)" : "translateY(-18px) scale(0.985)",
-                  filter: incidentComposerEntered ? "blur(0)" : "blur(4px)",
-                  transition: `opacity ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms ease, transform ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), filter ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms ease`,
-                  animation: incidentComposerEntered ? "attendanceMarkComposerIn 380ms cubic-bezier(0.22, 1, 0.36, 1)" : "none",
-                }}
-              >
-                <div
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    inset: "-24% auto -24% -16%",
-                    width: "34%",
-                    background: "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.26), rgba(190,242,100,0.28), rgba(255,255,255,0.88), rgba(255,255,255,0))",
-                    transform: "translate3d(-200%, 0, 0) skewX(-18deg)",
-                    opacity: 0,
-                    animation: incidentComposerEntered ? "attendanceMarkComposerSweep 1850ms cubic-bezier(0.22, 1, 0.36, 1) infinite" : "none",
-                    willChange: "transform, opacity",
-                    mixBlendMode: "screen",
-                    filter: "blur(2px)",
-                    pointerEvents: "none",
-                  }}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>
-                      {editingIncidentId ? "Edit attendance mark" : "New attendance mark"}
-                    </div>
-                    <div style={{ fontSize: 12, color: C.textMut }}>Use the same quick-entry workflow style as the Labor roster so marks stay fast to capture.</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.3fr) minmax(220px, 1.15fr) minmax(160px, 0.8fr) minmax(180px, 0.95fr) minmax(260px, 1.55fr) auto", gap: 10, alignItems: "end" }}>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Employee</span>
-                    <div style={{ minWidth: 0 }}>
-                      <CustomSelect
-                        value={incidentEmployeeId}
-                        onChange={setIncidentEmployeeId}
-                        options={markComposerEmployeeOptions}
-                        placeholder="Select employee"
-                        searchable
-                        searchPlaceholder="Search employees"
-                      />
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Mark Type</span>
-                    <div style={{ minWidth: 0 }}>
-                      <CustomSelect
-                        value={incidentType}
-                        onChange={setIncidentType}
-                        options={ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-                        placeholder="Select mark type"
-                        searchable
-                        searchPlaceholder="Search mark types"
-                      />
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Shift Date</span>
-                    <input
-                      type="date"
-                      value={incidentDate}
-                      onChange={(event) => setIncidentDate(event.target.value || todayStr())}
-                      style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                    />
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Coverage Secured</span>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button type="button" onClick={() => setIncidentCoverage("yes")} style={{ padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "yes" ? C.suc : C.border}`, background: incidentCoverage === "yes" ? `${C.suc}12` : "rgba(255,255,255,0.92)", color: incidentCoverage === "yes" ? C.suc : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Yes</button>
-                      <button type="button" onClick={() => setIncidentCoverage("no")} style={{ padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "no" ? C.dan : C.border}`, background: incidentCoverage === "no" ? `${C.dan}12` : "rgba(255,255,255,0.92)", color: incidentCoverage === "no" ? C.dan : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>No</button>
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Notes</span>
-                    <textarea
-                      value={incidentDetail}
-                      onChange={(event) => setIncidentDetail(event.target.value)}
-                      placeholder="Optional context for this attendance mark"
-                      rows={2}
-                      style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box", resize: "vertical", minHeight: 52 }}
-                    />
-                  </label>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      onClick={() => closeIncidentComposer()}
-                      disabled={savingIncident}
-                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "10px 16px", borderRadius: 12, border: "none", background: "transparent", color: C.textSec, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: savingIncident ? "not-allowed" : "pointer", opacity: savingIncident ? 0.5 : 1 }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!canManage || savingIncident}
-                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "10px 18px", borderRadius: 14, border: "none", background: C.pri, color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: !canManage || savingIncident ? "not-allowed" : "pointer", opacity: !canManage || savingIncident ? 0.55 : 1, boxShadow: "0 14px 28px rgba(20, 83, 45, 0.18)" }}
-                    >
-                      {savingIncident ? "Saving..." : editingIncidentId ? "Save Mark" : "Add Mark"}
-                    </button>
-                  </div>
-                </div>
-                <div style={{ marginTop: 10, fontSize: 12, color: C.textMut }}>
-                  Attendance marks are operational notes on attendance behavior. Policy actions stay separate below so escalation remains explicit.
-                </div>
-              </form>
-            </div>
-          )}
-
           {visibleAttendanceMarks.length === 0 ? (
             <EmptyState
               title={Object.keys(markFilters).length > 0 || markTypePills.size > 0 || markSearch.trim() ? "No attendance marks match the current filters" : "No attendance marks yet"}
@@ -1744,7 +1570,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                       </td>
                       <td style={{ padding: "7px 10px" }}>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <Btn variant="ghost" size="sm" onClick={() => openIncidentComposer(incident, { switchToLog: false })} disabled={!canManage || deletingIncidentId === incident.id}>Edit</Btn>
+                          <Btn variant="ghost" size="sm" onClick={() => openIncidentComposer(incident)} disabled={!canManage || deletingIncidentId === incident.id}>Edit</Btn>
                           <Btn variant="ghost" size="sm" onClick={() => handleDeleteIncident(incident)} disabled={!canManage || deletingIncidentId === incident.id} style={{ color: C.dan }}>
                             {deletingIncidentId === incident.id ? "Deleting..." : "Delete"}
                           </Btn>
@@ -1763,13 +1589,15 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         <Card style={{ padding: 18 }}>
           {(() => { const __summarySearch = (
             <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
-              <LaborSearchBar value={summarySearch} onChange={setSummarySearch} placeholder="Search employees…" />
+              <LaborSearchBar value={summarySearch} onChange={setSummarySearch} placeholder="Search employees…">
+                <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
+              </LaborSearchBar>
               <LaborIntro
                 value={introValue}
                 defaultValue={LABOR_INTRO_DEFAULTS.attendance}
                 canEdit={canEditIntro}
                 onSave={onSaveIntro}
-                prefix={<>Active employees only · counts from canonical attendance marks · click any column to sort · </>}
+                prefix={<>{attendanceSummary.rows.length} active {attendanceSummary.rows.length === 1 ? "employee" : "employees"} · </>}
               />
             </div>
           ); return searchSlot ? createPortal(__summarySearch, searchSlot) : __summarySearch; })()}
@@ -1913,6 +1741,55 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
           )}
         </Card>
+      )}
+
+      {showIncidentModal && (
+        <Modal title={editingIncidentId ? "Edit Attendance Mark" : "Add Attendance Mark"} onClose={closeIncidentComposer}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Employee</div>
+              <CustomSelect
+                value={incidentEmployeeId}
+                onChange={setIncidentEmployeeId}
+                options={markComposerEmployeeOptions}
+                placeholder="Select employee"
+                searchable
+                searchPlaceholder="Search employees"
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Mark Type</div>
+              <CustomSelect
+                value={incidentType}
+                onChange={setIncidentType}
+                options={ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                placeholder="Select mark type"
+                searchable
+                searchPlaceholder="Search mark types"
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Shift Date</div>
+                <MiniDatePicker value={incidentDate} onChange={(value) => setIncidentDate(value || todayStr())} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Coverage Secured</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={() => setIncidentCoverage("yes")} style={{ flex: 1, padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "yes" ? C.suc : C.border}`, background: incidentCoverage === "yes" ? `${C.suc}12` : C.surface, color: incidentCoverage === "yes" ? C.suc : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Yes</button>
+                  <button type="button" onClick={() => setIncidentCoverage("no")} style={{ flex: 1, padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "no" ? C.dan : C.border}`, background: incidentCoverage === "no" ? `${C.dan}12` : C.surface, color: incidentCoverage === "no" ? C.dan : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>No</button>
+                </div>
+              </div>
+            </div>
+            <Inp label="Notes" type="textarea" value={incidentDetail} onChange={setIncidentDetail} placeholder="Optional context for this attendance mark" />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn variant="secondary" onClick={closeIncidentComposer} disabled={savingIncident}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleSaveIncident} disabled={!canManage || savingIncident}>
+                {savingIncident ? "Saving..." : editingIncidentId ? "Save Mark" : "Add Mark"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {showEmployeeModal && (
