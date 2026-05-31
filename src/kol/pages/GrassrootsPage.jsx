@@ -6850,6 +6850,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                           }
                         }}
                         onCancelInlineLog={() => {
+                          // Opening Log auto-expands the updates history; closing it should
+                          // also collapse that history, so the row returns to its prior state.
+                          setExpandedUpdates((prev) => {
+                            if (!inlineLoggingId || !prev.has(inlineLoggingId)) return prev;
+                            const next = new Set(prev);
+                            next.delete(inlineLoggingId);
+                            return next;
+                          });
                           setInlineLoggingId(null);
                           setInlineLogNotes("");
                           setInlineLogNextDate("");
