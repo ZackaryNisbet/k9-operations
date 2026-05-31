@@ -139,6 +139,21 @@ describe("captured baseline — 1 log entry + follow-up = received date", () => 
   });
 });
 
+describe("cleanLeadName — falls back to a form_data name field", () => {
+  it("uses first/last when present", () => {
+    expect(cleanLeadName({ first_name: "Jane", last_name: "Doe" })).toBe("Jane Doe");
+  });
+  it("falls back to full_name when first/last are empty", () => {
+    expect(cleanLeadName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("Audrey Bodnar");
+    expect(leadSortName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("audrey bodnar");
+  });
+  it("hides the promoted name field from the details", () => {
+    const entries = buildFormFieldEntries({ form_data: { full_name: "Audrey Bodnar", zip: "08002" } });
+    expect(entries.find((e) => e.value === "Audrey Bodnar")).toBeUndefined();
+    expect(entries.find((e) => e.key === "zip")).toBeTruthy();
+  });
+});
+
 describe("web-form details", () => {
   it("humanizes keys", () => {
     expect(humanizeFieldKey("desired_service")).toBe("Desired Service");

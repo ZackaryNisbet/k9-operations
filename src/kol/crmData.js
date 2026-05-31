@@ -126,15 +126,32 @@ function collapseSpaces(s) {
   return String(s == null ? "" : s).replace(/\s+/g, " ").trim();
 }
 
-/** Combine first + last into one clean name, fixing stray/double spaces. */
+// Some submissions (older iDigital "Contact Form" web forms) carry the name only
+// in a form_data field rather than first/last — fall back to it so the Name
+// column is filled instead of showing "—".
+export const NAME_FIELD_KEYS = ["full_name", "name", "contact_name", "your_name", "customer_name"];
+function nameFromFormData(lead) {
+  const fd = lead && lead.form_data;
+  if (!fd || typeof fd !== "object") return "";
+  for (const key of NAME_FIELD_KEYS) {
+    const v = fd[key];
+    if (v != null && typeof v !== "object") {
+      const clean = collapseSpaces(v);
+      if (clean) return clean;
+    }
+  }
+  return "";
+}
+
+/** Combine first + last into one clean name; fall back to a form_data name field. */
 export function cleanLeadName(lead) {
-  return [collapseSpaces(lead && lead.first_name), collapseSpaces(lead && lead.last_name)]
-    .filter(Boolean)
-    .join(" ");
+  const combined = [collapseSpaces(lead && lead.first_name), collapseSpaces(lead && lead.last_name)].filter(Boolean).join(" ");
+  return combined || nameFromFormData(lead);
 }
 
 export function leadSortName(lead) {
-  return collapseSpaces([(lead && lead.last_name) || "", (lead && lead.first_name) || ""].join(" ")).toLowerCase();
+  const combined = collapseSpaces([(lead && lead.last_name) || "", (lead && lead.first_name) || ""].join(" "));
+  return (combined || nameFromFormData(lead)).toLowerCase();
 }
 
 /**
@@ -173,6 +190,7 @@ export const FORM_FIELD_HIDDEN_KEYS = new Set([
   "country", "services", "sales_value", "estimated_tax", "estimated_subtotal",
   "estimated_total", "multi_unit_name", "is_this_lead_quotable_yes_yes",
   "booking_title",
+  ...NAME_FIELD_KEYS, // promoted into the Name column — don't repeat in details
 ]);
 
 /**
