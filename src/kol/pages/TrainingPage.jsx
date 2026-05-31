@@ -73,6 +73,8 @@ import {
 import { getAttendanceIncidentLabel } from "../attendanceData";
 import {
   DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
+  LABOR_ROSTER_PAGE_SIZES,
+  DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID,
   buildLaborRosterPdfBytes,
   loadLaborRosterPdfAssets,
 } from "../laborRosterPdf";
@@ -7729,6 +7731,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [showSaveRosterView, setShowSaveRosterView] = useState(false);
   const [rosterViewName, setRosterViewName] = useState("");
   const [rosterPrintOptions, setRosterPrintOptions] = useState(DEFAULT_LABOR_ROSTER_PDF_OPTIONS);
+  const [rosterPrintPageSize, setRosterPrintPageSize] = useState(DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID);
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
   const rosterPdfAssetsRef = useRef(null);
   const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
@@ -15397,6 +15400,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
       showUnassigned: showRosterPrintUnassigned,
       options: rosterPrintOptions,
+      pageSize: rosterPrintPageSize,
+      positionOrder: positionHierarchyRows.map((row) => row.position_title),
       matrix: rosterStaffingMatrix,
       assets,
       stats: [
@@ -15426,7 +15431,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     displayedDashboardMetrics.supervisorCount,
     laborContactLocationName,
     loadRosterPdfAssetsForBrowser,
+    positionHierarchyRows,
     rosterPrintOptions,
+    rosterPrintPageSize,
     rosterPrintRows,
     rosterPrintTitle,
     rosterStaffingMatrix,
@@ -28971,6 +28978,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <small>Print associate email addresses</small>
                   </span>
                 </label>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <label htmlFor="roster-pdf-size" style={{ display: "block" }}>
+                  <strong style={{ display: "block", color: C.text, fontSize: 12, fontWeight: 950 }}>Print size</strong>
+                  <small style={{ display: "block", marginTop: 2, color: C.textMut, fontSize: 10.5, fontWeight: 750, lineHeight: 1.25 }}>
+                    Pick the sheet you&apos;ll print on. Posters are generated at full size for a print shop (e.g. Staples) and stay razor-sharp.
+                  </small>
+                </label>
+                <select
+                  id="roster-pdf-size"
+                  value={rosterPrintPageSize}
+                  onChange={(event) => setRosterPrintPageSize(event.target.value)}
+                  style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#f8fafc", color: C.text, fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                >
+                  {LABOR_ROSTER_PAGE_SIZES.map((size) => (
+                    <option key={size.id} value={size.id}>{size.label}</option>
+                  ))}
+                </select>
+                <small style={{ display: "block", color: C.textMut, fontSize: 10.5, fontWeight: 750, lineHeight: 1.25 }}>
+                  {(LABOR_ROSTER_PAGE_SIZES.find((size) => size.id === rosterPrintPageSize) || LABOR_ROSTER_PAGE_SIZES[0]).hint}
+                </small>
               </div>
             </div>
             <div className="labor-model-role-color-settings">
