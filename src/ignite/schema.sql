@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS ignite_config (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   location_id         uuid NOT NULL UNIQUE REFERENCES locations(id),
   ignite_profile_id   text,
-  forwarding_email    text,
+  inbound_email       text,
   is_active           boolean NOT NULL DEFAULT true,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()

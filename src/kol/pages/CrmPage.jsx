@@ -13,6 +13,7 @@ import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtPhone, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
+import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import {
   DenseTable,
   ListSearchRow,
@@ -71,6 +72,8 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [logLead, setLogLead] = useState(null);
+  const [configured, setConfigured] = useState(null); // null = unknown, true/false once checked
+  const [showWizard, setShowWizard] = useState(false);
 
   const today = todayStr();
 
@@ -84,17 +87,18 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const loadLeads = useCallback(async () => {
     if (!locationId) {
       setLeads([]);
+      setConfigured(null);
       setLoadState("ok");
       setLoading(false);
       return;
     }
     setLoading(true);
-    const { data, error } = await supabase
-      .from("ignite_leads")
-      .select("*")
-      .eq("location_id", locationId)
-      .order("created_at", { ascending: false })
-      .limit(500);
+    const [leadsRes, cfgRes] = await Promise.all([
+      supabase.from("ignite_leads").select("*").eq("location_id", locationId).order("created_at", { ascending: false }).limit(500),
+      supabase.from("ignite_config").select("is_active").eq("location_id", locationId).limit(1),
+    ]);
+    setConfigured(!cfgRes.error && Array.isArray(cfgRes.data) && cfgRes.data.length > 0 && cfgRes.data[0].is_active === true);
+    const { data, error } = leadsRes;
     if (error) {
       // 42P01 = undefined table · PGRST205 = not in PostgREST schema cache
       const schemaMissing = error.code === "42P01" || error.code === "PGRST205";
@@ -280,6 +284,29 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         {loadState === "ok" && <span style={{ fontSize: 12, color: C.textMut }}>{leads.length} total</span>}
         <button
           type="button"
+          onClick={() => setShowWizard(true)}
+          title="Set up or update the Ignite connection for this location"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            height: 34,
+            padding: "0 12px",
+            borderRadius: 9,
+            border: `1px solid ${configured === false ? C.pri : C.border}`,
+            background: configured === false ? C.pri : C.surface,
+            color: configured === false ? "#fff" : C.textSec,
+            fontFamily: "inherit",
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          <I.Settings />
+          Ignite setup
+        </button>
+        <button
+          type="button"
           onClick={loadLeads}
           disabled={loading}
           title="Refresh submissions"
@@ -333,8 +360,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     <div style={{ maxWidth: 1120, margin: "0 auto", padding: "4px 0" }}>
       {header}
 
+      {loadState !== "schema" && configured === false && !loading && (
+        <SetupBanner onStart={() => setShowWizard(true)} />
+      )}
+
       {loadState === "schema" ? (
-        <SetupNotice />
+        <SetupNotice onStart={() => setShowWizard(true)} />
       ) : (
         <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface }}>
           <ListSearchRow value={query} onChange={setQuery} placeholder="Search by name, contact, or inquiry…">
@@ -379,6 +410,18 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
             setLogLead(null);
           }}
           toast={toast}
+        />
+      )}
+
+      {showWizard && (
+        <IgniteOnboardingWizard
+          locationId={locationId}
+          profile={profile}
+          onClose={() => setShowWizard(false)}
+          onComplete={() => {
+            setShowWizard(false);
+            loadLeads();
+          }}
         />
       )}
     </div>
@@ -642,7 +685,7 @@ function ComingSoon({ category }) {
   );
 }
 
-function SetupNotice() {
+function SetupNotice({ onStart }) {
   const Icon = I.Settings;
   return (
     <div
@@ -664,9 +707,42 @@ function SetupNotice() {
       </div>
       <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>Ignite intake isn't connected yet</div>
       <div style={{ fontSize: 13, color: C.textMut, maxWidth: 460 }}>
-        Once the Ignite email pipeline is set up for this location, booking and employment inquiries will appear here. Configure it under
-        Settings → Ignite.
+        Connect Ignite for this location and booking & employment inquiries will start flowing in automatically. The guided setup takes about a
+        minute — no developer needed.
       </div>
+      <Btn onClick={onStart} icon={<I.Sparkle />}>
+        Set up Ignite
+      </Btn>
+    </div>
+  );
+}
+
+// Slim call-to-action shown above the table when the location has no active
+// Ignite config yet (tables exist, just nothing wired for this location).
+function SetupBanner({ onStart }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        padding: "12px 16px",
+        marginBottom: 14,
+        borderRadius: 12,
+        border: `1.5px solid ${C.pri}33`,
+        background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})`,
+      }}
+    >
+      <div style={{ width: 36, height: 36, borderRadius: 10, background: `${C.pri}14`, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, flexShrink: 0 }}>
+        <I.Sparkle />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>Ignite isn't connected for this location yet</div>
+        <div style={{ fontSize: 12.5, color: C.textSec }}>Answer a few questions and we'll wire up lead capture — no developer required.</div>
+      </div>
+      <Btn size="sm" onClick={onStart} style={{ flexShrink: 0 }}>
+        Set up Ignite
+      </Btn>
     </div>
   );
 }

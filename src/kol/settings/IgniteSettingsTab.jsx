@@ -15,6 +15,7 @@ import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { useAuth } from "../../AuthProvider";
 import { SAMPLE_WEB_FORM_EMAIL, SAMPLE_PHONE_CALL_EMAIL, SAMPLE_AD_CLICK_EMAIL } from "../../ignite/sampleEmails";
+import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 
 const WEBHOOK_URL = "https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook";
 
@@ -38,6 +39,9 @@ function IgniteSettingsTab() {
 
   // Ignite config status from ignite_config table
   const [configStatus, setConfigStatus] = useState(null); // "active" | "inactive" | null
+
+  // Guided onboarding wizard
+  const [showWizard, setShowWizard] = useState(false);
 
   // Load persisted ignite config from lite_settings
   useEffect(() => {
@@ -127,7 +131,25 @@ function IgniteSettingsTab() {
   return (
     <div>
       <h3 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700, color: C.text }}>Ignite Configuration</h3>
-      <p style={{ margin: "0 0 24px", fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>Configure your Ignite integration for this location. Each resort has a unique profile number used to route parsed lead emails to the correct K9 Ops location.</p>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>Configure your Ignite integration for this location. Each resort has a unique profile number used to route parsed lead emails to the correct K9 Ops location.</p>
+
+      {/* Guided setup callout */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", marginBottom: 24, borderRadius: 12, border: `1.5px solid ${C.pri}33`, background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})` }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: `${C.pri}14`, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, flexShrink: 0 }}>
+          <I.Sparkle />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>New: guided setup wizard</div>
+          <div style={{ fontSize: 12.5, color: C.textSec }}>Answer a few questions and we'll connect Ignite, activate the pipeline, and run a live test — no manual config or developer needed.</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowWizard(true)}
+          style={{ flexShrink: 0, padding: "9px 18px", borderRadius: 9, border: "none", background: C.pri, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+        >
+          Run setup
+        </button>
+      </div>
 
       {/* Connection Status */}
       <Card style={{ padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -313,6 +335,20 @@ function IgniteSettingsTab() {
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: C.textMut }}>Changes take effect immediately for Ignite routing.</span>
       </div>
+
+      {showWizard && (
+        <IgniteOnboardingWizard
+          locationId={profile?.location_id}
+          profile={profile}
+          onClose={() => setShowWizard(false)}
+          onComplete={({ profileId, status }) => {
+            setShowWizard(false);
+            if (profileId) setProfileNum(profileId);
+            setConnected(true);
+            setConfigStatus(status === "active" ? "active" : "inactive");
+          }}
+        />
+      )}
     </div>
   );
 }
