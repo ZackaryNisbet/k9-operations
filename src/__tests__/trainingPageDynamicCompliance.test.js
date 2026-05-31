@@ -313,6 +313,8 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("<ComplianceGroupCombobox");
     expect(source).toContain("complianceGroupOptions");
     expect(source).toContain("resolveComplianceGroupKeyFromInput");
+    // Group suggestions derive only from groups actually in use (no hardcoded seed list).
+    expect(source).not.toContain('new Set(["custom"');
   });
 
   it("keeps a Compliance search header on every sub-view, not just Employees", () => {
