@@ -26,6 +26,15 @@ vi.mock("../supabaseClient", () => ({ supabase: supabaseMock }));
 
 import {
   RESORT_UPKEEP_ATTACHMENT_BUCKET,
+  buildUpkeepDueItems,
+  detectVendorColumns,
+  detectVendorTables,
+  importFieldForHeader,
+  buildVendorRows,
+  VENDOR_IMPORT_FIELDS,
+  VENDOR_IMPORT_FIELD_LABELS,
+  upkeepFrequencyFromMonths,
+  upkeepFrequencyFromSlug,
   createResortUpkeepSignedUrl,
   loadMaintenanceTemplates,
   loadResortUpkeepDashboard,
@@ -306,8 +315,8 @@ describe("resortUpkeepData", () => {
     expect(source).toContain("friendlyErrorMessage");
     expect(source).toContain("withUpkeepTimeout");
     expect(source).toContain("loadVendors(locationId, includeArchived)");
-    expect(source).toContain("Local vendors took too long to load.");
-    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Local vendors could not be loaded.\"));");
+    expect(source).toContain("Vendors took too long to load.");
+    expect(source).toContain("setError(friendlyErrorMessage(nextError, \"Vendors could not be loaded.\"));");
     expect(source).toContain("return subscribeToResortUpkeep(locationId, () => load({ silent: true }));");
     expect(source).toContain("loadLicenses(locationId, includeInactive)");
     expect(source).toContain("Licenses took too long to load.");
@@ -321,16 +330,29 @@ describe("resortUpkeepData", () => {
     expect(source).not.toContain("useEffect(() => { if (draft.id) loadLicenseLogs");
   });
 
-  it("adds a polished operational shell around Resort Upkeep web tabs", () => {
+  it("composes Resort Upkeep on the shared list-surface standard", () => {
     const source = readFileSync(new URL("../kol/pages/ResortUpkeepPage.jsx", import.meta.url), "utf8");
 
-    expect(source).toContain("Admin Workspace");
-    expect(source).toContain("Live Supabase");
-    expect(source).toContain("tabRail");
-    expect(source).toContain("Checklist command center");
-    expect(source).toContain("Track contractors, service partners, contract proof, and development notes.");
-    expect(source).toContain("Keep permits, compliance requirements, proof files, and renewal timing in one view.");
-    expect(source).toContain("Search the facilities reference without leaving the upkeep workflow.");
+    // Adopts the shared DESIGN.md §5 components instead of bespoke chrome.
+    expect(source).toContain('from "../../shared/listSurface"');
+    expect(source).toContain("ListSurfaceTitle");
+    expect(source).toContain("ListTabBar");
+    expect(source).toContain("ListSearchRow");
+    expect(source).toContain("ListExplainer");
+    expect(source).toContain("DenseTable");
+
+    // The old admin-workspace chrome (hero metrics, status pills, bespoke tab rail) is gone.
+    expect(source).not.toContain("Admin Workspace");
+    expect(source).not.toContain("Live Supabase");
+    expect(source).not.toContain("tabRail");
+
+    // The rebuilt record surfaces (Vendors / Licenses / Settings) and the photo-required flag.
+    expect(source).toContain("VendorEditorModal");
+    expect(source).toContain("LicenseEditorModal");
+    expect(source).toContain("SettingsPanel");
+    expect(source).toContain("requires_photo");
+    // Maintenance is no longer a tab in the rail.
+    expect(source).not.toContain('{ id: "maintenance", label: "Maintenance" }');
     expect(source).toContain("LoadingRows");
   });
 
@@ -594,5 +616,189 @@ describe("resortUpkeepData", () => {
       expect(triggerIndex).toBeLessThan(oldAuditDropIndex);
     });
     expect(policyAlignmentSql).not.toContain("EXECUTE FUNCTION public.resort_upkeep_audit_row_change()");
+  });
+});
+
+describe("buildUpkeepDueItems", () => {
+  const TODAY = "2026-05-30";
+  const maintenance = [
+    { id: "m1", template_name: "HVAC Quarterly", due_date: "2026-05-28", computed_status: "overdue", period_start: "2026-04-01", period_end: "2026-06-30", progress: { completedRequired: 2, totalRequired: 5 } },
+    { id: "m2", template_name: "Monthly Walkthrough", due_date: "2026-06-15", status: "open", progress: { completedRequired: 0, totalRequired: 4 } },
+    { id: "m3", template_name: "Closed Period", due_date: "2026-05-20", computed_status: "submitted" },
+  ];
+  const licenses = [
+    { id: "l1", requirement_name: "Fire Inspection", issuing_organization: "City FD", status: "compliant", expiration_date: "2026-06-02" },
+    { id: "l2", requirement_name: "Kennel Permit", status: "non_compliant", expiration_date: null },
+    { id: "l3", requirement_name: "Annual Far License", status: "compliant", expiration_date: "2026-12-01" },
+    { id: "l4", requirement_name: "Retired License", status: "compliant", expiration_date: "2026-06-01", is_active: false },
+    { id: "l5", requirement_name: "Pest Control Permit", status: "compliant", expiration_date: "2026-07-10" },
+  ];
+  const vendors = [
+    { id: "v1", business_name: "Ace Plumbing", has_contract: true, contract_effective_end: "2026-06-10" },
+    { id: "v2", business_name: "No Contract Co", has_contract: false, contract_effective_end: "2026-06-05" },
+    { id: "v3", business_name: "Lapsed HVAC", has_contract: true, contract_effective_end: "2026-05-01" },
+    { id: "v4", business_name: "Archived Vendor", has_contract: true, contract_effective_end: "2026-06-01", is_archived: true },
+  ];
+
+  it("aggregates all three domains, sorted by urgency with attention-no-date pinned to the top", () => {
+    const items = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY });
+    expect(items.map((item) => item.id)).toEqual([
+      "license:l2", // non-compliant, no date -> needs attention now
+      "vendor:v3", // contract lapsed 29 days ago
+      "maintenance:m1", // 2 days overdue
+      "license:l1", // renews in 3 days
+      "vendor:v1", // contract ends in 11 days
+      "maintenance:m2", // due in 16 days
+      "license:l5", // renews in 41 days (inside default 60-day window)
+    ]);
+    expect(items[0]).toMatchObject({ id: "license:l2", attention: true, tone: "danger", dueBadge: "No date", statusLabel: "Non-compliant" });
+    const m1 = items.find((item) => item.id === "maintenance:m1");
+    expect(m1).toMatchObject({ tone: "danger", dueBadge: "Overdue 2d", statusLabel: "In Progress", statusTone: "primary", targetTab: "maintenance", frequency: "Quarterly", dueStart: "2026-04-01", dueEnd: "2026-06-30" });
+    expect(m1.subtitle).toBe(""); // the item column no longer carries dates
+  });
+
+  it("excludes completed periods, inactive licenses, archived vendors, and vendors without a contract end date", () => {
+    const ids = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY }).map((item) => item.id);
+    expect(ids).not.toContain("maintenance:m3"); // submitted -> done
+    expect(ids).not.toContain("license:l4"); // is_active === false
+    expect(ids).not.toContain("vendor:v2"); // has_contract === false
+    expect(ids).not.toContain("vendor:v4"); // archived
+  });
+
+  it("respects the window horizon and treats Infinity as no horizon", () => {
+    const within30 = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY, windowDays: 30 }).map((item) => item.id);
+    expect(within30).not.toContain("license:l5"); // 41 days out
+    expect(within30).toContain("license:l2"); // attention items ignore the horizon
+
+    const allHorizons = buildUpkeepDueItems({ maintenance, licenses, vendors, today: TODAY, windowDays: Infinity }).map((item) => item.id);
+    expect(allHorizons).toContain("license:l3"); // ~185 days out
+    expect(allHorizons).toContain("license:l5");
+  });
+
+  it("labels vendor and license urgency with tone and due badges", () => {
+    const items = buildUpkeepDueItems({ vendors, today: TODAY });
+    expect(items.find((item) => item.id === "vendor:v3")).toMatchObject({ tone: "danger", statusLabel: "Contract expired", dueBadge: "Overdue 29d", kindLabel: "Vendor", frequency: "Contract" });
+    expect(items.find((item) => item.id === "vendor:v1")).toMatchObject({ tone: "warn", statusLabel: "Contract ending", dueBadge: "Due in 11d" });
+  });
+
+  it("renders a Due today badge when the date is the anchor day", () => {
+    const items = buildUpkeepDueItems({ licenses: [{ id: "today", requirement_name: "Today Permit", status: "compliant", expiration_date: TODAY }], today: TODAY });
+    expect(items[0]).toMatchObject({ id: "license:today", dueBadge: "Due today", tone: "warn", statusLabel: "Renewal due" });
+  });
+
+  it("returns an empty array for empty or missing input", () => {
+    expect(buildUpkeepDueItems({})).toEqual([]);
+    expect(buildUpkeepDueItems()).toEqual([]);
+  });
+});
+
+describe("vendor spreadsheet import", () => {
+  // Mirrors the real Cherry Hill sheet: title rows, a header not in row 0 with a
+  // leading empty column, and per-period Service/Fee columns.
+  const grid = [
+    ["Facility Vendor & Utility Contact List", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "TRADE", "COMPANY NAME", "CONTACT", "PHONE #", "E-MAIL", "Contract Y/N", "Monthly Service", "Monthly Fee", "Yearly Service", "Yearly Fee", "Notes"],
+    ["Have contract", "Electrical", "Hutchinson", "Chris", "856-420-7053", "chris@h.com", "Y", "", "", "X", "1,200", "note"],
+    ["", "HVAC", "CoolCo", "Pat", "609-111-2222", "N/A", "N", "X", "$85.00", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", "Just a stray note with no trade or company"],
+  ];
+
+  it("detects the header row and pairs columns, period Service/Fee taking precedence", () => {
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    expect(headerRowIndex).toBe(2);
+    const plain = (f) => columns.find((c) => c.field === f && !c.servicePeriod && !c.feePeriod);
+    expect(plain("trade").index).toBe(1);
+    expect(plain("company").index).toBe(2);
+    expect(plain("email").index).toBe(5);
+    expect(columns.find((c) => c.servicePeriod === "Monthly" && c.field === "frequency")).toBeTruthy();
+    expect(columns.find((c) => c.feePeriod === "Annually" && c.field === "cost")).toBeTruthy();
+  });
+
+  it("builds vendor rows, consolidating period Service/Fee into frequency + cost and cleaning placeholders", () => {
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    const rows = buildVendorRows(grid, headerRowIndex, columns);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ trade: "Electrical", company: "Hutchinson", contact: "Chris", email: "chris@h.com", contract: true, frequency: "Annually", cost: "1200" });
+    expect(rows[1]).toMatchObject({ trade: "HVAC", company: "CoolCo", contract: false, frequency: "Monthly", cost: "85" });
+    expect(rows[1].email).toBe(""); // "N/A" cleaned away
+  });
+
+  it("returns no header for an unstructured grid", () => {
+    expect(detectVendorColumns([["alpha", "beta"], ["1", "2"]]).headerRowIndex).toBe(-1);
+    expect(buildVendorRows([["a"]], -1, [])).toEqual([]);
+  });
+
+  it("pairs standard/common header synonyms without external help", () => {
+    expect(importFieldForHeader("Provider")).toBe("company");
+    expect(importFieldForHeader("Supplier")).toBe("company");
+    expect(importFieldForHeader("Cell Number")).toBe("phone");
+    expect(importFieldForHeader("Point of Contact")).toBe("contact");
+    expect(importFieldForHeader("Vendor Contact")).toBe("contact"); // person, not company
+    expect(importFieldForHeader("Vendor Name")).toBe("company");
+    expect(importFieldForHeader("E-Mail Address")).toBe("email");
+    expect(importFieldForHeader("Monthly Rate")).toBe("cost");
+    expect(importFieldForHeader("Service Interval")).toBe("frequency");
+    expect(importFieldForHeader("Random Notes")).toBe(null);
+  });
+
+  it("detects a second utility table under a merged title and bounds each table's rows", () => {
+    const grid = [
+      ["MAIN VENDORS", "", "", ""],
+      ["Trade", "Company", "Contact", "Phone"],
+      ["HVAC", "CoolCo", "Pat", "609-111-2222"],
+      ["Electrical", "Sparky", "Lee", "609-333-4444"],
+      ["UTILITIES", "", "", ""],
+      ["Utility", "Provider", "Account", "Phone"],
+      ["Gas", "South Jersey Gas", "1234", "800-555-0100"],
+      ["Water", "NJ American Water", "5678", "800-555-0123"],
+    ];
+    const merges = [{ r0: 0, c0: 0, r1: 0, c1: 3 }, { r0: 4, c0: 0, r1: 4, c1: 3 }];
+    const tables = detectVendorTables(grid, merges);
+    expect(tables).toHaveLength(2);
+    expect(tables[0].headerRowIndex).toBe(1);
+    expect(tables[1].headerRowIndex).toBe(5);
+
+    const main = buildVendorRows(grid, tables[0].headerRowIndex, tables[0].columns, tables[0].dataEnd);
+    expect(main.map((r) => r.company)).toEqual(["CoolCo", "Sparky"]); // does not bleed into the utility block
+
+    const utils = buildVendorRows(grid, tables[1].headerRowIndex, tables[1].columns, tables[1].dataEnd);
+    expect(utils.map((r) => r.company)).toEqual(["South Jersey Gas", "NJ American Water"]);
+  });
+
+  it("re-imports its own standard template headers cleanly", () => {
+    // Mirrors buildVendorTemplateBlob: header labels + a generic sample row.
+    const grid = [
+      VENDOR_IMPORT_FIELDS.map((f) => VENDOR_IMPORT_FIELD_LABELS[f]),
+      ["Electrical", "Bright Spark Electric", "Jordan Lee", "(555) 555-0142", "service@example.com", "Yes", "Monthly", "250"],
+    ];
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    const rows = buildVendorRows(grid, headerRowIndex, columns);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ trade: "Electrical", company: "Bright Spark Electric", contact: "Jordan Lee", email: "service@example.com", contract: true, frequency: "Monthly", cost: "250" });
+  });
+
+  it("drops exact duplicate rows within a table", () => {
+    const grid = [
+      ["Trade", "Company", "Phone"],
+      ["HVAC", "CoolCo", "609-111-2222"],
+      ["HVAC", "CoolCo", "609-111-2222"],
+      ["Plumbing", "PipeCo", "609-555-0100"],
+    ];
+    const { headerRowIndex, columns } = detectVendorColumns(grid);
+    expect(buildVendorRows(grid, headerRowIndex, columns).map((r) => r.company)).toEqual(["CoolCo", "PipeCo"]);
+  });
+
+  it("derives frequency labels from template slugs and license cadence months", () => {
+    expect(upkeepFrequencyFromSlug("building-maintenance-semi-annual")).toBe("Semi-annual");
+    expect(upkeepFrequencyFromSlug("building-maintenance-quarterly")).toBe("Quarterly");
+    expect(upkeepFrequencyFromSlug("building-maintenance-monthly")).toBe("Monthly");
+    expect(upkeepFrequencyFromSlug("building-maintenance-annual")).toBe("Annual");
+    expect(upkeepFrequencyFromSlug("")).toBe("");
+    expect(upkeepFrequencyFromMonths(12)).toBe("Annual");
+    expect(upkeepFrequencyFromMonths(3)).toBe("Quarterly");
+    expect(upkeepFrequencyFromMonths(18)).toBe("18 mo");
+    expect(upkeepFrequencyFromMonths(null)).toBe("");
   });
 });
