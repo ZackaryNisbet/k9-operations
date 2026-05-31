@@ -314,4 +314,15 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("complianceGroupOptions");
     expect(source).toContain("resolveComplianceGroupKeyFromInput");
   });
+
+  it("keeps a Compliance search header on every sub-view, not just Employees", () => {
+    // Employees portals its grid search into the slot; the other sub-views render the header here so
+    // the labor search region never goes empty when you switch sub-views.
+    expect(source).toContain("const [complianceSearch, setComplianceSearch] = useState");
+    expect(source).toContain('complianceView !== "employees"');
+    expect(source).toContain('setComplianceSearch("")');
+    // The shared header search filters each sub-view's own content.
+    expect(source).toContain("visibleComplianceRequirements");
+    expect(source).toContain("No requirements match your search.");
+  });
 });
