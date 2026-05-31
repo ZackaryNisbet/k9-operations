@@ -73,6 +73,8 @@ import {
 import { getAttendanceIncidentLabel } from "../attendanceData";
 import {
   DEFAULT_LABOR_ROSTER_PDF_OPTIONS,
+  LABOR_ROSTER_PAGE_SIZES,
+  DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID,
   buildLaborRosterPdfBytes,
   loadLaborRosterPdfAssets,
 } from "../laborRosterPdf";
@@ -86,6 +88,9 @@ import {
   getPerformanceReviewCompliance,
   getLaborComplianceCellState,
   isWaivedLaborComplianceState,
+  buildLaborComplianceMetrics,
+  getComplianceGroupLabel,
+  getComplianceGroupKey,
   PERFORMANCE_REVIEW_CYCLES,
   PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY,
   normalizePerformanceReviewTemplateRoleKey,
@@ -6236,6 +6241,115 @@ function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
   return `${base.slice(0, 72 - timestampSuffix.length)}${timestampSuffix}`;
 }
 
+// Branded checkbox for the Requirements applicability matrix (requirement × position). A styled
+// button rather than a raw input: forest-green fill + check when on, a clear border when off, with a
+// hover ring, press feedback, and a busy state while the toggle persists. Styles live in the
+// Requirements view's scoped <style> block (.compliance-matrix-check).
+function ComplianceMatrixCheckbox({ checked, disabled = false, busy = false, title, onToggle }) {
+  const className = ["compliance-matrix-check", checked && "is-checked", busy && "is-busy"].filter(Boolean).join(" ");
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-busy={busy || undefined}
+      title={title}
+      disabled={disabled}
+      onClick={() => onToggle(!checked)}
+      className={className}
+    >
+      {checked ? <I.Check /> : null}
+    </button>
+  );
+}
+
+// Creatable group combobox for the compliance requirement editor: type to filter existing groups,
+// pick a suggestion, or create a brand-new group. Module-scoped so its open/active state survives
+// parent re-renders. `value` is the visible label text; the caller resolves it to a display_group key.
+function ComplianceGroupCombobox({ value, onChange, options = [] }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const inputRef = useRef(null);
+  const popoverRef = useRef(null);
+
+  const query = String(value || "").trim().toLowerCase();
+  const matches = (options || []).filter((option) => !query || option.label.toLowerCase().includes(query));
+  const hasExact = (options || []).some((option) => option.label.toLowerCase() === query);
+  const rows = [
+    ...matches.map((option) => ({ type: "pick", label: option.label })),
+    ...(query && !hasExact ? [{ type: "create", label: String(value).trim() }] : []),
+  ];
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (popoverRef.current?.contains(event.target) || inputRef.current?.contains(event.target)) return;
+      setOpen(false);
+      setActiveIndex(-1);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  const choose = (row) => { onChange(row.label); setOpen(false); setActiveIndex(-1); };
+
+  const handleKeyDown = (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActiveIndex((prev) => Math.min(prev + 1, rows.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((prev) => Math.max(prev - 1, 0));
+    } else if (event.key === "Enter" && open && activeIndex >= 0 && rows[activeIndex]) {
+      event.preventDefault();
+      choose(rows[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        ref={inputRef}
+        value={value || ""}
+        onChange={(event) => { onChange(event.target.value); setOpen(true); setActiveIndex(-1); }}
+        onKeyDown={handleKeyDown}
+        onFocus={() => setOpen(true)}
+        placeholder="Type a group, e.g. Training, Onboarding…"
+        autoComplete="off"
+        style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", fontSize: 14, borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "inherit", outline: "none" }}
+      />
+      {open && rows.length > 0 ? (
+        <div
+          ref={popoverRef}
+          style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(15, 23, 42, 0.16)", overflow: "hidden", maxHeight: 240, overflowY: "auto" }}
+        >
+          {rows.map((row, index) => (
+            <button
+              key={`${row.type}:${row.label}`}
+              type="button"
+              onMouseDown={(event) => { event.preventDefault(); choose(row); }}
+              onMouseEnter={() => setActiveIndex(index)}
+              style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, border: "none", background: index === activeIndex ? C.surfaceHover : "transparent", color: C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 700, textAlign: "left", padding: "9px 12px", cursor: "pointer" }}
+            >
+              {row.type === "create" ? (
+                <>
+                  <span style={{ color: C.pri, fontWeight: 900 }}>+</span>
+                  <span>Create “{row.label}”</span>
+                </>
+              ) : (
+                <span>{row.label}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function compareCompliancePolicyRequirements(left = {}, right = {}) {
   const leftDefault = isDefaultReviewComplianceRequirement(left);
   const rightDefault = isDefaultReviewComplianceRequirement(right);
@@ -7216,6 +7330,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const routeTrainingRecordId = typeof params?.trainingRecordId === "string" ? params.trainingRecordId : "";
   const [tab, setTab] = useState(routeLaborTab);
   const [tabSearchSlot, setTabSearchSlot] = useState(null);
+  // Free-text search for the persistent Compliance header on the non-Employees sub-views (Employees
+  // has its own grid search). View-aware: filters the Summary roster, the Requirements list, or the
+  // History rows. Cleared whenever the sub-view changes.
+  const [complianceSearch, setComplianceSearch] = useState("");
   const [capacitySearch, setCapacitySearch] = useState("");
   const [laborIntros, setLaborIntros] = useState({});
   const [loading, setLoading] = useState(true);
@@ -7382,6 +7500,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const changeComplianceView = useCallback((nextView) => {
     const normalizedView = normalizeComplianceView(nextView);
     setComplianceView(normalizedView);
+    setComplianceSearch("");
     navigateLaborRoute("performance-reviews", { complianceView: normalizedView });
   }, [navigateLaborRoute]);
 
@@ -7537,6 +7656,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [complianceRequirementTitle, setComplianceRequirementTitle] = useState("");
   const [complianceRequirementDescription, setComplianceRequirementDescription] = useState("");
   const [complianceRequirementEvidencePolicy, setComplianceRequirementEvidencePolicy] = useState("checkbox_only");
+  const [complianceRequirementGroup, setComplianceRequirementGroup] = useState("custom");
   const [savingComplianceRequirement, setSavingComplianceRequirement] = useState(false);
   const [deletingComplianceRequirementId, setDeletingComplianceRequirementId] = useState("");
   const performanceReviewEvidenceFileInputRef = useRef(null);
@@ -7611,6 +7731,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [showSaveRosterView, setShowSaveRosterView] = useState(false);
   const [rosterViewName, setRosterViewName] = useState("");
   const [rosterPrintOptions, setRosterPrintOptions] = useState(DEFAULT_LABOR_ROSTER_PDF_OPTIONS);
+  const [rosterPrintPageSize, setRosterPrintPageSize] = useState(DEFAULT_LABOR_ROSTER_PAGE_SIZE_ID);
   const [generatingRosterPdf, setGeneratingRosterPdf] = useState(false);
   const rosterPdfAssetsRef = useRef(null);
   const [hourAnalysisSettings, setHourAnalysisSettings] = useState(() => normalizeHourAnalysisSettings());
@@ -9582,9 +9703,13 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const complianceHistoryFilterOptions = useMemo(() => (
     buildComplianceHistoryFilterOptions(complianceHistoryRows)
   ), [complianceHistoryRows]);
-  const filteredComplianceHistoryRows = useMemo(() => (
-    applyTrainingHistoryFilters(complianceHistoryRows, complianceHistoryFilters)
-  ), [complianceHistoryFilters, complianceHistoryRows]);
+  const filteredComplianceHistoryRows = useMemo(() => {
+    const base = applyTrainingHistoryFilters(complianceHistoryRows, complianceHistoryFilters);
+    const query = complianceSearch.trim().toLowerCase();
+    if (!query) return base;
+    return base.filter((event) => [event.employeeName, event.actionLabel, event.summary, event.actorDisplayName]
+      .some((value) => String(value || "").toLowerCase().includes(query)));
+  }, [complianceHistoryFilters, complianceHistoryRows, complianceSearch]);
   const complianceHistoryDayMetrics = useMemo(() => (
     buildTrainingHistoryDayMetrics(complianceHistoryRows, complianceHistoryFilters.date)
   ), [complianceHistoryFilters.date, complianceHistoryRows]);
@@ -9638,6 +9763,14 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const customs = toObjectRows(laborCompliancePolicyRequirements).filter(isCustomComplianceRequirement);
     return [...defaults, ...customs].sort(compareCompliancePolicyRequirements);
   }, [laborCompliancePolicyRequirements]);
+  const visibleComplianceRequirements = useMemo(() => {
+    const query = complianceSearch.trim().toLowerCase();
+    if (!query) return allComplianceReviewRequirements;
+    return allComplianceReviewRequirements.filter((requirement) => (
+      [normalizeComplianceRequirementLabel(requirement), requirement.description]
+        .some((value) => String(value || "").toLowerCase().includes(query))
+    ));
+  }, [allComplianceReviewRequirements, complianceSearch]);
 
   // === Requirements matrix (Compliance → Requirements): per-position applicability ===
   // Columns = roster positions; cell = labor_compliance_role_applicability row.
@@ -9716,6 +9849,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   // Reorder custom requirements (Requirements tab) via display_order — feeds the Employees column order.
   const [reorderingRequirementId, setReorderingRequirementId] = useState("");
+  // Briefly flag the just-moved row so it flashes (with a toast) — makes the reorder visible.
+  const [recentlyMovedRequirementId, setRecentlyMovedRequirementId] = useState("");
+  const recentlyMovedTimerRef = useRef(null);
   const moveComplianceRequirement = useCallback(async (requirement, direction) => {
     if (!canManageCompliancePolicy || !requirement?.id) return;
     const list = customCompliancePolicyRequirements;
@@ -9739,6 +9875,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         if (error) throw error;
       }
       await loadSupportBundle(true);
+      addGlobalToast?.(`Moved “${normalizeComplianceRequirementLabel(requirement)}” ${direction}`, "success");
+      setRecentlyMovedRequirementId(requirement.id);
+      if (recentlyMovedTimerRef.current) clearTimeout(recentlyMovedTimerRef.current);
+      recentlyMovedTimerRef.current = setTimeout(() => setRecentlyMovedRequirementId(""), 1300);
     } catch (error) {
       addGlobalToast?.(error?.message || "Could not reorder requirement", "error");
     } finally {
@@ -13100,12 +13240,38 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     reviewInstances,
   ]);
 
+  // Distinct existing groups (canonical + whatever admins have created), as { key, label } for the
+  // requirement editor's creatable combobox.
+  const complianceGroupOptions = useMemo(() => {
+    // Suggest only groups that actually exist on a requirement. No hardcoded seed, so a group with
+    // no members (e.g. "Custom" after everything has been reassigned) stops being offered.
+    const keys = new Set();
+    toObjectRows(laborCompliancePolicyRequirements).forEach((row) => {
+      const raw = String(row.display_group || "").trim();
+      if (raw) keys.add(getComplianceGroupKey(raw));
+    });
+    return [...keys]
+      .map((key) => ({ key, label: getComplianceGroupLabel(key) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [laborCompliancePolicyRequirements]);
+  // Resolve the combobox's free text to a display_group key: reuse an existing group when the text
+  // matches a known label/key, otherwise slugify it into a new group. Blank falls back to "custom".
+  const resolveComplianceGroupKeyFromInput = useCallback((text) => {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return "";
+    const match = complianceGroupOptions.find((option) => (
+      option.label.toLowerCase() === trimmed.toLowerCase() || option.key === getComplianceGroupKey(trimmed)
+    ));
+    return match ? match.key : getComplianceGroupKey(trimmed);
+  }, [complianceGroupOptions]);
+
   const closeComplianceRequirementEditor = useCallback(() => {
     setComplianceRequirementEditorOpen(false);
     setComplianceRequirementEditingId("");
     setComplianceRequirementTitle("");
     setComplianceRequirementDescription("");
     setComplianceRequirementEvidencePolicy("checkbox_only");
+    setComplianceRequirementGroup("");
   }, []);
 
   const openComplianceRequirementEditor = useCallback((requirement = null) => {
@@ -13121,6 +13287,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setComplianceRequirementTitle(requirement ? normalizeComplianceRequirementLabel(requirement) : "");
     setComplianceRequirementDescription(requirement?.description || "");
     setComplianceRequirementEvidencePolicy(requirement?.evidence_policy || "checkbox_only");
+    setComplianceRequirementGroup(requirement ? getComplianceGroupLabel(requirement.display_group || "custom") : "");
     setComplianceRequirementEditorOpen(true);
   }, [addGlobalToast, canManageCompliancePolicy]);
 
@@ -13132,6 +13299,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     const title = complianceRequirementTitle.trim();
     if (!title) {
       addGlobalToast("Requirement name is required", "error");
+      return;
+    }
+    const groupKey = resolveComplianceGroupKeyFromInput(complianceRequirementGroup);
+    if (!groupKey) {
+      addGlobalToast("Group is required", "error");
       return;
     }
     const locationId = normalizeOptionalUuid(resolvedLaborLocationId);
@@ -13156,6 +13328,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       title,
       description: complianceRequirementDescription.trim() || null,
       evidence_policy: complianceRequirementEvidencePolicy || "checkbox_only",
+      display_group: groupKey,
       updated_by_user_id: actorUserId || null,
     };
     const nowIso = new Date().toISOString();
@@ -13167,7 +13340,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ...sharedPayload,
       renewal_due_date_required: false,
       due_rule: {},
-      display_group: "custom",
       display_order: maxDisplayOrder + 10,
       is_active: true,
       metadata: {
@@ -13208,7 +13380,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       setLaborCompliancePolicyLoaded(true);
       closeComplianceRequirementEditor();
       addGlobalToast(complianceRequirementEditingId ? "Compliance requirement updated" : "Compliance requirement added", "success");
-      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      // Lightweight support refresh (no global loading flip) so saving/assigning a group doesn't
+      // flash the whole labor page white. The optimistic state update above already reflects it.
+      await refreshLaborSupportData();
     } catch (error) {
       console.error("Compliance requirement save error:", error);
       addGlobalToast(error?.message || "Failed to save Compliance requirement", "error");
@@ -13223,9 +13397,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     complianceRequirementEditingId,
     complianceRequirementDescription,
     complianceRequirementEvidencePolicy,
+    complianceRequirementGroup,
     complianceRequirementTitle,
     laborCompliancePolicyRequirements,
-    refreshLaborData,
+    refreshLaborSupportData,
+    resolveComplianceGroupKeyFromInput,
     resolvedLaborLocationId,
   ]);
 
@@ -13260,7 +13436,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       ));
       setLaborCompliancePolicyLoaded(true);
       addGlobalToast("Compliance requirement deleted", "success");
-      await refreshLaborData({ includeTraining: false, includeSupport: true });
+      await refreshLaborSupportData();
     } catch (error) {
       console.error("Compliance requirement delete error:", error);
       addGlobalToast(error?.message || "Failed to delete Compliance requirement", "error");
@@ -13271,7 +13447,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     actorUserId,
     addGlobalToast,
     canManageCompliancePolicy,
-    refreshLaborData,
+    refreshLaborSupportData,
   ]);
 
   const handleRestartSelectedReviewInstance = useCallback(async (targetReviewTemplate = null) => {
@@ -15224,6 +15400,8 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       totalEmployees: displayedDashboardMetrics.activeEmployeeCount,
       showUnassigned: showRosterPrintUnassigned,
       options: rosterPrintOptions,
+      pageSize: rosterPrintPageSize,
+      positionOrder: positionHierarchyRows.map((row) => row.position_title),
       matrix: rosterStaffingMatrix,
       assets,
       stats: [
@@ -15253,7 +15431,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     displayedDashboardMetrics.supervisorCount,
     laborContactLocationName,
     loadRosterPdfAssetsForBrowser,
+    positionHierarchyRows,
     rosterPrintOptions,
+    rosterPrintPageSize,
     rosterPrintRows,
     rosterPrintTitle,
     rosterStaffingMatrix,
@@ -15485,35 +15665,22 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       row.sourceGroupLabel,
     ].some((value) => String(value || "").toLowerCase().includes(q)));
   }, [sortedHourAnalysisRows, capacitySearch]);
-  const performanceReviewOverview = useMemo(() => {
-    const cycles = activePerformanceReviewRows.flatMap((row) => row.cycles || []);
-    return [
-      {
-        label: "Needs Attention",
-        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Non-compliant").length,
-        color: C.dan,
-        helper: "active employees",
-      },
-      {
-        label: "Past Due",
-        value: cycles.filter((cycle) => String(cycle.status) === "overdue").length,
-        color: C.warn,
-        helper: activePerformanceReviewCycles.length === 0 ? "No checkpoints configured" : "configured checkpoints",
-      },
-      {
-        label: "Started",
-        value: cycles.filter((cycle) => String(cycle.status) === "in_progress").length,
-        color: C.info,
-        helper: "checkpoint evidence pending",
-      },
-      {
-        label: "Complete",
-        value: activePerformanceReviewRows.filter((row) => row.performance_review_compliance?.label === "Compliant").length,
-        color: C.suc,
-        helper: "active employees",
-      },
-    ];
-  }, [activePerformanceReviewRows, activePerformanceReviewCycles]);
+  // Roster-wide Compliance metrics (dynamic per-requirement + per-group, # overdue / # due in 7
+  // days / compliant %). Mirrors the Training tab's metric header and powers ComplianceMetricsHeader.
+  const complianceMetrics = useMemo(() => {
+    const query = complianceSearch.trim().toLowerCase();
+    const employees = activePerformanceReviewRows
+      .filter((row) => !query || [row.full_name, row.position_title].some((value) => String(value || "").toLowerCase().includes(query)))
+      .map((row) => ({
+        id: getLaborEmployeeRowId(row),
+        requirements: row.performance_review_policy_employee?.requirements || row.requirements || [],
+      }));
+    return buildLaborComplianceMetrics({
+      employees,
+      requirements: toObjectRows(laborCompliancePolicyRequirements),
+      today: todayStr(),
+    });
+  }, [activePerformanceReviewRows, complianceSearch, laborCompliancePolicyRequirements]);
   const activeContactCardEmployees = useMemo(() => {
     const seen = new Set();
     return preparedRosterRows
@@ -16464,6 +16631,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           placeholder="Optional context"
         />
         <label style={{ display: "block" }}>
+          <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Group<span style={{ color: C.dan }}> *</span></span>
+          <ComplianceGroupCombobox
+            value={complianceRequirementGroup}
+            onChange={setComplianceRequirementGroup}
+            options={complianceGroupOptions}
+          />
+          <div style={{ marginTop: 5, fontSize: 11, color: C.textMut, fontWeight: 650 }}>Type to reuse an existing group or create a new one. Groups this column on the Summary dashboard and the Requirements list.</div>
+        </label>
+        <label style={{ display: "block" }}>
           <span style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 850, color: C.textSec }}>Evidence</span>
           <CustomSelect
             value={complianceRequirementEvidencePolicy}
@@ -16476,7 +16652,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         </label>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
           <Btn variant="ghost" onClick={closeComplianceRequirementEditor} disabled={savingComplianceRequirement}>Cancel</Btn>
-          <Btn variant="primary" onClick={handleSaveComplianceRequirement} disabled={savingComplianceRequirement || !complianceRequirementTitle.trim()}>
+          <Btn variant="primary" onClick={handleSaveComplianceRequirement} disabled={savingComplianceRequirement || !complianceRequirementTitle.trim() || !complianceRequirementGroup.trim()}>
             {savingComplianceRequirement ? "Saving..." : complianceRequirementEditingRow ? "Save Changes" : "Save Column"}
           </Btn>
         </div>
@@ -18349,6 +18525,100 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     </Card>
   );
 
+  // Compliance metrics dashboard (Summary sub-view): headline tiles (Overdue emphasized) + dynamic
+  // per-group score% and per-requirement breakdown, grouped by display_group.
+  const complianceScoreColor = (p) => (
+    p == null ? C.textMut : p >= 100 ? C.suc : p >= 80 ? C.pri : p >= 50 ? C.warn : C.dan
+  );
+  const ComplianceMetricsHeader = ({ metrics }) => {
+    if (!metrics) return null;
+    const groups = Array.isArray(metrics.groups) ? metrics.groups : [];
+    return (
+      <div style={{ display: "grid", gap: 14, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <MetricCard
+            label="Overdue"
+            value={metrics.overdueCount}
+            color={metrics.overdueCount > 0 ? C.dan : C.text}
+            helper="checkpoints past due"
+          />
+          <MetricCard
+            label="Due in 7 Days"
+            value={metrics.dueSoonCount}
+            color={metrics.dueSoonCount > 0 ? C.warn : C.text}
+            helper="coming due this week"
+          />
+          <MetricCard
+            label="Compliant"
+            value={metrics.compliantPct == null ? "—" : `${metrics.compliantPct}%`}
+            color={complianceScoreColor(metrics.compliantPct)}
+            helper={`${metrics.compliantCount} of ${metrics.applicableCount} checkpoints`}
+          />
+          <MetricCard
+            label="Needs Attention"
+            value={metrics.needsAttentionCount}
+            color={metrics.needsAttentionCount > 0 ? C.dan : C.suc}
+            helper="employees with an overdue item"
+          />
+        </div>
+        {groups.length > 0 ? (
+          <Card style={{ padding: 0, overflow: "hidden", borderRadius: 10 }}>
+            {groups.map((group, groupIndex) => (
+              <div
+                key={group.key}
+                style={{ padding: "14px 16px", borderTop: groupIndex === 0 ? "none" : `1px solid ${C.borderLight}` }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 9, minWidth: 0, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>{group.label}</span>
+                    {group.overdue > 0 ? <Badge color="danger">{group.overdue} overdue</Badge> : null}
+                    {group.dueSoon > 0 ? <Badge color="warning">{group.dueSoon} due soon</Badge> : null}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 20, fontWeight: 950, lineHeight: 1, color: complianceScoreColor(group.compliantPct) }}>
+                      {group.compliantPct == null ? "—" : `${group.compliantPct}%`}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 750, color: C.textMut }}>{group.compliant}/{group.applicable} compliant</span>
+                  </div>
+                </div>
+                <div style={{ height: 4, borderRadius: 999, background: C.borderLight, overflow: "hidden", marginBottom: 12 }}>
+                  <div style={{ width: `${group.compliantPct || 0}%`, height: "100%", background: complianceScoreColor(group.compliantPct) }} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))", gap: 8 }}>
+                  {group.requirements.map((req) => (
+                    <div
+                      key={req.id}
+                      style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "9px 11px", background: C.surfaceHover, minWidth: 0 }}
+                    >
+                      <div
+                        style={{ fontSize: 11, fontWeight: 800, color: C.textSec, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        title={req.label}
+                      >
+                        {req.label}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 17, fontWeight: 950, color: complianceScoreColor(req.compliantPct) }}>
+                          {req.compliant}<span style={{ color: C.textMut, fontWeight: 800 }}>/{req.applicable}</span>
+                        </span>
+                        {req.overdue > 0 ? (
+                          <Badge color="danger">{req.overdue} overdue</Badge>
+                        ) : req.dueSoon > 0 ? (
+                          <Badge color="warning">{req.dueSoon} due</Badge>
+                        ) : req.compliantPct === 100 ? (
+                          <Badge color="success">All set</Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Card>
+        ) : null}
+      </div>
+    );
+  };
+
   const RecordRow = ({ rec }) => {
     const mappedProgress = pctReadinessRecordProgressById[rec.id];
     const verifiedPercent = Number.isFinite(Number(mappedProgress?.verifiedPercent))
@@ -19407,6 +19677,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 	        .labor-roster-row {
 	          border-bottom: 1px solid ${C.borderLight};
 	          transition: background 150ms ease;
+	        }
+	        .labor-roster-row:nth-of-type(even) {
+	          background: #f6faee;
 	        }
 	        .labor-roster-row:hover,
 	        .labor-roster-row:focus-within {
@@ -24953,6 +25226,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <LaborIntro value={laborIntros["hour-analysis"]} defaultValue={LABOR_INTRO_DEFAULTS["hour-analysis"]} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("hour-analysis", t)} />
           </div>
         )}
+        {/* Compliance Employees portals its own search+filter bar into the slot below. The other
+            Compliance sub-views (Summary/Requirements/History) render the same header here so the
+            search region never goes empty as you switch sub-views. */}
+        {!loading && tab === "performance-reviews" && canUseLaborTab("performance-reviews") && complianceView !== "employees" && (
+          <div>
+            <LaborSearchBar
+              value={complianceSearch}
+              onChange={setComplianceSearch}
+              placeholder={complianceView === "requirements" ? "Search requirements…" : complianceView === "history" ? "Search compliance history…" : "Search employees by name or position…"}
+            />
+            <LaborIntro value={laborIntros["performance-reviews"]} defaultValue={LABOR_INTRO_DEFAULTS["performance-reviews"]} canEdit={canEditLaborIntro} onSave={(t) => saveLaborIntro("performance-reviews", t)} />
+          </div>
+        )}
         <div ref={setTabSearchSlot} id="labor-tab-search-slot" />
       </div>
 
@@ -25591,25 +25877,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
-          <LaborViewSwitcher
-            variant="tabs"
-            value={attendanceView}
-            onChange={changeAttendanceView}
-            options={[
-              { id: "input", label: "Attendance Input" },
-              { id: "summary", label: "Attendance Summary" },
-            ]}
-          />
-
           <AttendanceTrackerPage
             data={data}
             save={save}
             nav={nav}
             profile={profile}
             addGlobalToast={addGlobalToast}
-            params={{ tab: attendanceView === "input" ? "log" : "summary" }}
+            params={{ tab: "summary" }}
             embedded
-            tabPreset={attendanceView}
+            tabPreset="labor"
             canLogAttendance={canLogAttendance}
             laborPositionOrder={positionHierarchyRows.map((row) => row.position_title)}
             searchSlot={tabSearchSlot}
@@ -25688,44 +25964,39 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             />
           )}
           {complianceView === "summary" && (
-            <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                {performanceReviewOverview.map((item) => (
-                  <Card key={item.label} style={{ padding: 16, borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0, marginBottom: 6 }}>{item.label}</div>
-                    <div style={{ fontSize: 25, fontWeight: 950, color: item.color }}>{item.value}</div>
-                    <div style={{ fontSize: 12, color: C.textMut, marginTop: 5, fontWeight: 700 }}>{item.helper}</div>
-                  </Card>
-                ))}
-              </div>
-              <PerformanceReviewComplianceGrid
-                variant="summary"
-                rows={sortedPerformanceReviewRows}
-                reviewCycles={activePerformanceReviewCycles}
-                sort={performanceReviewSort}
-                sortColumns={performanceReviewSortColumns}
-                policyLoaded={laborCompliancePolicyLoaded}
-                onSortChange={setPerformanceReviewSort}
-                getEmployeeId={getLaborEmployeeRowId}
-                formatDate={formatLaborDate}
-                formatTimestamp={formatTrainingTimestamp}
-                formatPhone={fmtPhoneInput}
-                formatPosition={formatLaborPositionTitle}
-                onOpenEmployee={(row, employeeId) => openLaborEmployeeProfile(employeeId, row, { recordTab: "reviews" })}
-                onOpenEvidence={handleOpenComplianceReviewEditor}
-                onCreateCheckpoint={handleCreateComplianceReviewCheckpoint}
-                canViewPdfs={canViewCompliancePdfs}
-              />
-            </div>
+            <ComplianceMetricsHeader metrics={complianceMetrics} />
           )}
           {complianceView === "requirements" && (
             <div style={{ display: "grid", gap: 14 }}>
+              <style>{`
+.compliance-row-flash { animation: complianceRowFlash 1.25s ease-out; }
+@keyframes complianceRowFlash {
+  0% { background-color: rgba(20, 83, 45, 0.16); }
+  100% { background-color: transparent; }
+}
+.compliance-matrix-check {
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid #cbd5e1; border-radius: 6px;
+  background: #fff; color: #fff; cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 110ms ease;
+}
+.compliance-matrix-check svg { width: 13px; height: 13px; }
+.compliance-matrix-check:hover:not(:disabled) { border-color: #14532D; box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.10); }
+.compliance-matrix-check:active:not(:disabled) { transform: scale(0.9); }
+.compliance-matrix-check:focus-visible { outline: none; border-color: #14532D; box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.20); }
+.compliance-matrix-check.is-checked { background: #14532D; border-color: #14532D; }
+.compliance-matrix-check.is-checked:hover:not(:disabled) { background: #166534; border-color: #166534; }
+.compliance-matrix-check:disabled { opacity: 0.45; cursor: default; }
+.compliance-matrix-check.is-busy { opacity: 0.6; cursor: progress; }
+              `}</style>
               <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
                     <thead>
                       <tr>
                         <th style={complianceTableHeaderStyle}>Requirement</th>
+                        <th style={complianceTableHeaderStyle}>Group</th>
                         <th style={complianceTableHeaderStyle}>Evidence Required?</th>
                         <th style={complianceTableHeaderStyle}>Type</th>
                         {compliancePositionColumns.map((position) => (
@@ -25735,7 +26006,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                       </tr>
                     </thead>
                     <tbody>
-                      {allComplianceReviewRequirements.map((requirement) => {
+                      {visibleComplianceRequirements.map((requirement) => {
                         const positionSet = requirementPositionMap[requirement.id];
                         const appliesToAll = !positionSet || positionSet.size === 0;
                         const isCustom = isCustomComplianceRequirement(requirement);
@@ -25743,7 +26014,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         const customIndex = isCustom ? customCompliancePolicyRequirements.findIndex((row) => row.id === requirement.id) : -1;
                         const customCount = customCompliancePolicyRequirements.length;
                         return (
-                          <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                          <tr
+                            key={requirement.id || requirement.slug}
+                            className={requirement.id && requirement.id === recentlyMovedRequirementId ? "compliance-row-flash" : undefined}
+                            style={{ borderTop: `1px solid ${C.borderLight}` }}
+                          >
                             <td style={{ padding: "6px 14px", color: C.text, fontSize: 13, fontWeight: 900 }}>
                               {normalizeComplianceRequirementLabel(requirement)}
                               {appliesToAll && (
@@ -25752,6 +26027,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               {requirement.description ? (
                                 <div style={{ marginTop: 2, color: C.textMut, fontSize: 11, lineHeight: 1.3, fontWeight: 700 }}>{requirement.description}</div>
                               ) : null}
+                            </td>
+                            <td style={{ padding: "6px 14px" }}>
+                              <Badge color="default">{getComplianceGroupLabel(requirement.display_group)}</Badge>
                             </td>
                             <td style={{ padding: "6px 14px" }}>
                               <Badge color={evidenceRequired ? "warning" : "default"}>{evidenceRequired ? "Required" : "Optional"}</Badge>
@@ -25764,13 +26042,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               const toggleKey = `${requirement.id}::${normalizePositionTitle(position)}`;
                               return (
                                 <td key={position} style={{ padding: "6px 8px", textAlign: "center" }}>
-                                  <input
-                                    type="checkbox"
+                                  <ComplianceMatrixCheckbox
                                     checked={checked}
                                     disabled={!canManageCompliancePolicy || togglingApplicabilityKey === toggleKey}
-                                    onChange={(event) => toggleRequirementPosition(requirement, position, event.target.checked)}
+                                    busy={togglingApplicabilityKey === toggleKey}
                                     title={appliesToAll ? "Applies to all positions — uncheck to scope to the others" : (checked ? "Applies to this position" : "Not applied to this position")}
-                                    style={{ width: 16, height: 16, accentColor: C.pri, cursor: canManageCompliancePolicy ? "pointer" : "default" }}
+                                    onToggle={(next) => toggleRequirementPosition(requirement, position, next)}
                                   />
                                 </td>
                               );
@@ -25816,10 +26093,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                           </tr>
                         );
                       })}
-                      {allComplianceReviewRequirements.length === 0 && (
+                      {visibleComplianceRequirements.length === 0 && (
                         <tr>
-                          <td colSpan={4 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
-                            No compliance requirements yet. Add one here and it will appear on the Employees grid.
+                          <td colSpan={5 + compliancePositionColumns.length} style={{ padding: "18px", color: C.textMut, fontSize: 13, fontWeight: 750 }}>
+                            {complianceSearch.trim()
+                              ? "No requirements match your search."
+                              : "No compliance requirements yet. Add one here and it will appear on the Employees grid."}
                           </td>
                         </tr>
                       )}
@@ -28699,6 +28978,27 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                     <small>Print associate email addresses</small>
                   </span>
                 </label>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <label htmlFor="roster-pdf-size" style={{ display: "block" }}>
+                  <strong style={{ display: "block", color: C.text, fontSize: 12, fontWeight: 950 }}>Print size</strong>
+                  <small style={{ display: "block", marginTop: 2, color: C.textMut, fontSize: 10.5, fontWeight: 750, lineHeight: 1.25 }}>
+                    Pick the sheet you&apos;ll print on. Posters are generated at full size for a print shop (e.g. Staples) and stay razor-sharp.
+                  </small>
+                </label>
+                <select
+                  id="roster-pdf-size"
+                  value={rosterPrintPageSize}
+                  onChange={(event) => setRosterPrintPageSize(event.target.value)}
+                  style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#f8fafc", color: C.text, fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                >
+                  {LABOR_ROSTER_PAGE_SIZES.map((size) => (
+                    <option key={size.id} value={size.id}>{size.label}</option>
+                  ))}
+                </select>
+                <small style={{ display: "block", color: C.textMut, fontSize: 10.5, fontWeight: 750, lineHeight: 1.25 }}>
+                  {(LABOR_ROSTER_PAGE_SIZES.find((size) => size.id === rosterPrintPageSize) || LABOR_ROSTER_PAGE_SIZES[0]).hint}
+                </small>
               </div>
             </div>
             <div className="labor-model-role-color-settings">

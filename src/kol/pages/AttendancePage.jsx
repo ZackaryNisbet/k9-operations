@@ -3,14 +3,13 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar, LaborIntro } from "../../shared/ui";
+import { nextSort, compareValues } from "../../shared/listSurface";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   ATTENDANCE_INCIDENT_OPTIONS,
-  ATTENDANCE_POLICY_ACTION_OPTIONS,
   buildAttendanceActivityFeed,
-  getAttendanceActionLabel,
   getAttendanceIncidentLabel,
   planLegacyAttendanceImport,
   summarizeAttendanceIncidents,
@@ -25,7 +24,6 @@ import {
 const INCIDENT_COLOR_BY_VALUE = Object.fromEntries(
   ATTENDANCE_INCIDENT_OPTIONS.map((option) => [option.value, option.color]),
 );
-const INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS = 240;
 const ATTENDANCE_MARK_FILTER_FIELDS = [
   { section: "Employee", key: "employee", label: "Employee", type: "custom_select", ops: ["is", "isNot"] },
   { section: "Mark Details", key: "type", label: "Mark Type", type: "select", ops: ["is", "isNot"], options: ATTENDANCE_INCIDENT_OPTIONS.map((option) => option.value) },
@@ -48,46 +46,13 @@ const ATTENDANCE_ROSTER_SORT_COLUMNS = [
   { key: "start", label: "Start Date" },
   { key: "end", label: "End Date" },
   { key: "marks30", label: "30 Days" },
-  { key: "policy", label: "Policy Actions" },
   { key: "last", label: "Last Mark" },
 ];
 
-const POLICY_REFERENCE_SECTIONS = [
-  {
-    title: "Attendance Mark Types",
-    subtitle: "Use these categories when recording attendance marks. Listed from least to most severe.",
-    items: ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({
-      label: option.label,
-      body: {
-        tardy: "Employee arrived 5 or more minutes after their scheduled shift start time.",
-        early_release: "Employee left their shift before the scheduled end time and was not released early by management due to staffing needs.",
-        call_out_2_plus_hours: "Employee called out at least 2 hours before shift start.",
-        late_call_out_under_2_hours: "Employee called out with less than 2 hours notice before shift start.",
-        no_call_no_show: "Employee did not report to work and did not contact management at all.",
-      }[option.value],
-    })),
-  },
-  {
-    title: "Progressive Counseling Process",
-    subtitle: "Escalate with documentation. Track the formal outcome in Policy Actions so it lives with the employee’s labor history.",
-    items: [
-      { label: "Coaching Note", body: "Use when attendance concerns need formal documentation but have not yet crossed the verbal-warning threshold." },
-      { label: "Verbal Warning", body: "Use for repeated lower-level violations or the first significant attendance breakdown that requires coaching." },
-      { label: "Written Warning", body: "Use when a new attendance violation happens after a verbal warning or the pattern is continuing." },
-      { label: "Final Written Warning", body: "Use when attendance issues continue after prior counseling and the next violation risks termination." },
-      { label: "Termination", body: "Use for final separation tied to repeated attendance violations or a major offense such as a No Call / No Show." },
-    ],
-  },
-  {
-    title: "Important Notes",
-    subtitle: null,
-    items: [
-      { label: "Coverage Responsibility", body: "Employees are expected to actively seek coverage from other trained staff when calling out." },
-      { label: "Emergency Review", body: "Emergency situations are reviewed case-by-case in partnership with leadership and may require documentation." },
-      { label: "Voluntary Resignation", body: "Three consecutive missed scheduled shifts without communication should be treated as a voluntary resignation review item." },
-    ],
-  },
-];
+const ATTENDANCE_SUMMARY_DEFAULT_SORT = { key: "totalAll", direction: "desc" };
+// Thicker rule that brackets each mark-type group (its 30-day + all-time pair)
+// in the Attendance Summary grid.
+const ATTENDANCE_SUMMARY_GROUP_DIVIDER = "2.5px solid #CBD5E1";
 
 function formatTimestamp(value) {
   if (!value) return "—";
@@ -236,7 +201,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [laborEmployees, setLaborEmployees] = useState([]);
   const [rosterSnapshot, setRosterSnapshot] = useState([]);
   const [attendanceIncidents, setAttendanceIncidents] = useState([]);
-  const [attendancePolicyActions, setAttendancePolicyActions] = useState([]);
 
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
   const [editingEmployeeId, setEditingEmployeeId] = useState(null);
@@ -247,7 +211,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [savingEmployee, setSavingEmployee] = useState(false);
 
   const [showIncidentModal, setShowIncidentModal] = useState(false);
-  const [incidentComposerEntered, setIncidentComposerEntered] = useState(false);
   const [editingIncidentId, setEditingIncidentId] = useState(null);
   const [incidentEmployeeId, setIncidentEmployeeId] = useState("");
   const [incidentType, setIncidentType] = useState("");
@@ -265,19 +228,10 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   const [markSearch, setMarkSearch] = useState("");
   const [markTypePills, setMarkTypePills] = useState(() => new Set());
   const [rosterSort, setRosterSort] = useState(ATTENDANCE_DEFAULT_SORT);
-
-  const [showPolicyActionModal, setShowPolicyActionModal] = useState(false);
-  const [editingPolicyActionId, setEditingPolicyActionId] = useState(null);
-  const [policyEmployeeId, setPolicyEmployeeId] = useState("");
-  const [policyIncidentId, setPolicyIncidentId] = useState("");
-  const [policyActionType, setPolicyActionType] = useState("");
-  const [policyActionDate, setPolicyActionDate] = useState(todayStr());
-  const [policyActionNote, setPolicyActionNote] = useState("");
-  const [savingPolicyAction, setSavingPolicyAction] = useState(false);
-  const [deletingPolicyActionId, setDeletingPolicyActionId] = useState(null);
+  const [summarySort, setSummarySort] = useState(ATTENDANCE_SUMMARY_DEFAULT_SORT);
+  const [summarySearch, setSummarySearch] = useState("");
 
   const [historyEmployeeFilter, setHistoryEmployeeFilter] = useState("");
-  const [historyKindFilter, setHistoryKindFilter] = useState("all");
   const [historySearch, setHistorySearch] = useState("");
   const [importingLegacy, setImportingLegacy] = useState(false);
   const prevMarkFilterOpen = useRef(false);
@@ -317,9 +271,8 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     if (employeeId) {
       setHistoryEmployeeFilter(employeeId);
       setIncidentEmployeeId((current) => current || employeeId);
-      setPolicyEmployeeId((current) => current || employeeId);
     }
-    if (["roster", "incidents", "log", "summary", "policy", "history", "reference"].includes(requestedTab)) {
+    if (["roster", "incidents", "log", "summary", "history"].includes(requestedTab)) {
       setTab(requestedTab === "incidents" ? "log" : requestedTab);
     } else if (requestedTab === "input") {
       setTab("log");
@@ -335,26 +288,19 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   }, [params?.employeeId, params?.tab]);
 
   const tabOptions = useMemo(() => {
-    if (tabPreset === "input") {
-      return [
-        { id: "log", label: "Attendance Marks" },
-        { id: "policy", label: "Policy Actions" },
-      ];
-    }
-    if (tabPreset === "summary") {
+    // Embedded Labor-module view: one flat tab bar (no Input/Summary switcher).
+    if (tabPreset === "labor") {
       return [
         { id: "summary", label: "Summary" },
+        { id: "log", label: "Marks" },
         { id: "history", label: "History" },
-        { id: "reference", label: "Reference" },
       ];
     }
     return [
       { id: "roster", label: "Roster" },
-      { id: "log", label: "Attendance Marks" },
+      { id: "log", label: "Marks" },
       { id: "summary", label: "Summary" },
-      { id: "policy", label: "Policy Actions" },
       { id: "history", label: "History" },
-      { id: "reference", label: "Reference" },
     ];
   }, [tabPreset]);
 
@@ -382,7 +328,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         setLaborEmployees([]);
         setRosterSnapshot([]);
         setAttendanceIncidents([]);
-        setAttendancePolicyActions([]);
         if (!silent) setLoading(false);
         return;
       }
@@ -404,32 +349,20 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       const rosterRows = Array.isArray(dashboardRes.data?.roster) ? dashboardRes.data.roster : [];
       const employeeIds = employeeRows.map((employee) => employee.id);
 
-      const [incidentRes, actionRes] = await Promise.all([
-        employeeIds.length > 0
-          ? supabase
-              .from("attendance_incidents")
-              .select("*")
-              .in("labor_employee_id", employeeIds)
-              .order("incident_date", { ascending: false })
-              .order("created_at", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-        employeeIds.length > 0
-          ? supabase
-              .from("attendance_policy_actions")
-              .select("*")
-              .in("labor_employee_id", employeeIds)
-              .order("action_date", { ascending: false })
-              .order("created_at", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+      const incidentRes = employeeIds.length > 0
+        ? await supabase
+            .from("attendance_incidents")
+            .select("*")
+            .in("labor_employee_id", employeeIds)
+            .order("incident_date", { ascending: false })
+            .order("created_at", { ascending: false })
+        : { data: [], error: null };
 
       if (incidentRes.error) throw incidentRes.error;
-      if (actionRes.error) throw actionRes.error;
 
       setLaborEmployees(employeeRows);
       setRosterSnapshot(rosterRows);
       setAttendanceIncidents(incidentRes.data || []);
-      setAttendancePolicyActions(actionRes.data || []);
     } catch (error) {
       console.error("Attendance load error:", error);
       addGlobalToast(`Failed to load attendance: ${error.message || "Unknown error"}`, "error");
@@ -514,13 +447,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     }, {});
   }, [attendanceIncidents]);
 
-  const policyActionStatsByEmployee = useMemo(() => {
-    return attendancePolicyActions.reduce((acc, action) => {
-      acc[action.labor_employee_id] = (acc[action.labor_employee_id] || 0) + 1;
-      return acc;
-    }, {});
-  }, [attendancePolicyActions]);
-
   const activeEmployees = useMemo(
     () => laborEmployees.filter((employee) => !employee.end_date),
     [laborEmployees],
@@ -549,8 +475,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
           return row.end_date || "";
         case "marks30":
           return Number(row.recent_attendance_incident_count || 0);
-        case "policy":
-          return Number(row.policy_action_count || 0);
         case "last":
           return row.last_attendance_incident_at || "";
         default:
@@ -570,7 +494,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
           is_active: !employee.end_date,
           recent_attendance_incident_count:
             snapshot?.recent_attendance_incident_count ?? incidentStats.total30,
-          policy_action_count: policyActionStatsByEmployee[employee.id] || 0,
           last_attendance_incident_at: snapshot?.last_attendance_incident_at || incidentStats.lastIncidentDate,
         };
       })
@@ -584,7 +507,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         }
         return compareAttendanceSortValues(getSortValue(a, rosterSort.key), getSortValue(b, rosterSort.key)) * direction;
       });
-  }, [incidentStatsByEmployee, laborEmployees, policyActionStatsByEmployee, positionOrderIndex, rosterSort, snapshotMap]);
+  }, [incidentStatsByEmployee, laborEmployees, positionOrderIndex, rosterSort, snapshotMap]);
 
   const attendanceSummary = useMemo(() => {
     return summarizeAttendanceIncidents({
@@ -593,19 +516,47 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     });
   }, [attendanceIncidents, laborEmployees]);
 
+  // Attendance Summary grid: filter by the employee search, then sort by the
+  // active metric. The grouped header (type → 30-day / all-time sub-columns) is a
+  // hand-built table below; here we just order the employee rows. The totals row
+  // is rendered in the table footer so it stays pinned and never sorts.
+  const summarySortValueOf = useCallback((row, key) => {
+    if (key === "employee") return String(row.full_name || "").toLowerCase();
+    if (key === "total30") return row.total30;
+    if (key === "totalAll") return row.totalAll;
+    const match = /^(.+)_(30|all)$/.exec(key);
+    if (match) {
+      const stat = row.byType[match[1]];
+      return match[2] === "30" ? stat?.last30 : stat?.allTime;
+    }
+    return 0;
+  }, []);
+
+  const sortedSummaryRows = useMemo(() => {
+    const query = summarySearch.trim().toLowerCase();
+    const base = query
+      ? attendanceSummary.rows.filter((row) => String(row.full_name || "").toLowerCase().includes(query))
+      : attendanceSummary.rows;
+    if (!summarySort || !summarySort.direction) return base;
+    const direction = summarySort.direction === "desc" ? -1 : 1;
+    return [...base].sort((a, b) => {
+      const primary = compareValues(summarySortValueOf(a, summarySort.key), summarySortValueOf(b, summarySort.key)) * direction;
+      if (primary !== 0) return primary;
+      return compareValues(String(a.full_name || "").toLowerCase(), String(b.full_name || "").toLowerCase());
+    });
+  }, [attendanceSummary.rows, summarySearch, summarySort, summarySortValueOf]);
+
   const activityFeed = useMemo(() => {
     return buildAttendanceActivityFeed({
       incidents: attendanceIncidents,
-      policyActions: attendancePolicyActions,
       employeeMap,
     });
-  }, [attendanceIncidents, attendancePolicyActions, employeeMap]);
+  }, [attendanceIncidents, employeeMap]);
 
   const filteredHistory = useMemo(() => {
     const query = String(historySearch || "").trim().toLowerCase();
     return activityFeed.filter((entry) => {
       if (historyEmployeeFilter && entry.laborEmployeeId !== historyEmployeeFilter) return false;
-      if (historyKindFilter !== "all" && entry.kind !== historyKindFilter) return false;
       if (!query) return true;
       return (
         entry.employeeName.toLowerCase().includes(query) ||
@@ -613,7 +564,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         String(entry.noteText || "").toLowerCase().includes(query)
       );
     });
-  }, [activityFeed, historyEmployeeFilter, historyKindFilter, historySearch]);
+  }, [activityFeed, historyEmployeeFilter, historySearch]);
 
   const filteredAttendanceMarks = useMemo(() => {
     const today = todayStr();
@@ -719,15 +670,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     });
   }, [importedLegacyEntryIds, laborEmployees, legacyEntries, legacyRoster]);
 
-  const employeeIncidentOptions = useMemo(() => {
-    return attendanceIncidents
-      .filter((incident) => !policyEmployeeId || incident.labor_employee_id === policyEmployeeId)
-      .map((incident) => ({
-        value: incident.id,
-        label: `${getAttendanceIncidentLabel(incident.incident_type)} • ${employeeMap[incident.labor_employee_id]?.full_name || "Employee"} • ${formatDateOnly(incident.incident_date)}`,
-      }));
-  }, [attendanceIncidents, employeeMap, policyEmployeeId]);
-
   const resetEmployeeModal = useCallback(() => {
     setEditingEmployeeId(null);
     setEmployeeName("");
@@ -759,21 +701,12 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     setIncidentDetail("");
   }, []);
 
-  const closeIncidentComposer = useCallback(({ immediate = false } = {}) => {
-    setIncidentComposerEntered(false);
-    if (immediate) {
-      setShowIncidentModal(false);
-      resetIncidentModal();
-      return;
-    }
-    window.setTimeout(() => {
-      setShowIncidentModal(false);
-      resetIncidentModal();
-    }, INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS);
+  const closeIncidentComposer = useCallback(() => {
+    setShowIncidentModal(false);
+    resetIncidentModal();
   }, [resetIncidentModal]);
 
-  const openIncidentComposer = useCallback((incident = null, { preferredEmployeeId = "", switchToLog = true } = {}) => {
-    if (switchToLog) setTab("log");
+  const openIncidentComposer = useCallback((incident = null, { preferredEmployeeId = "" } = {}) => {
     if (!incident) {
       resetIncidentModal();
       if (preferredEmployeeId) setIncidentEmployeeId(preferredEmployeeId);
@@ -788,21 +721,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     setIncidentDetail(incident.detail || "");
     setShowIncidentModal(true);
   }, [resetIncidentModal]);
-
-  useEffect(() => {
-    if (!showIncidentModal) {
-      setIncidentComposerEntered(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setIncidentComposerEntered(true), 12);
-    return () => window.clearTimeout(timer);
-  }, [showIncidentModal]);
-
-  useEffect(() => {
-    if (tab !== "log" && showIncidentModal) {
-      closeIncidentComposer({ immediate: true });
-    }
-  }, [closeIncidentComposer, showIncidentModal, tab]);
 
   const updateMarkFilter = useCallback((key, field, value) => {
     setMarkDraftFilters((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
@@ -848,30 +766,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     setShowMarkFilterPicker(false);
     setConfiguringMarkFilterKey(null);
   }, []);
-
-  const resetPolicyActionModal = useCallback(() => {
-    setEditingPolicyActionId(null);
-    setPolicyEmployeeId("");
-    setPolicyIncidentId("");
-    setPolicyActionType("");
-    setPolicyActionDate(todayStr());
-    setPolicyActionNote("");
-  }, []);
-
-  const openPolicyActionModal = useCallback((action = null) => {
-    if (!action) {
-      resetPolicyActionModal();
-      setShowPolicyActionModal(true);
-      return;
-    }
-    setEditingPolicyActionId(action.id);
-    setPolicyEmployeeId(action.labor_employee_id || "");
-    setPolicyIncidentId(action.incident_id || "");
-    setPolicyActionType(action.action_type || "");
-    setPolicyActionDate(action.action_date || todayStr());
-    setPolicyActionNote(action.note_text || "");
-    setShowPolicyActionModal(true);
-  }, [resetPolicyActionModal]);
 
   const handleSaveEmployee = useCallback(async () => {
     if (!employeeName.trim() || !employeeTitle.trim() || !employeeStartDate) {
@@ -968,7 +862,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         if (error) throw error;
         addGlobalToast("Attendance mark saved", "success");
       }
-      closeIncidentComposer({ immediate: true });
+      closeIncidentComposer();
       await loadData({ silent: true });
     } catch (error) {
       console.error("Attendance mark save error:", error);
@@ -999,7 +893,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
       const { error } = await supabase.from("attendance_incidents").delete().eq("id", incident.id);
       if (error) throw error;
       if (editingIncidentId === incident.id) {
-        closeIncidentComposer({ immediate: true });
+        closeIncidentComposer();
       }
       await loadData({ silent: true });
       addGlobalToast("Attendance mark deleted", "success");
@@ -1009,92 +903,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
     }
     setDeletingIncidentId(null);
   }, [addGlobalToast, closeIncidentComposer, editingIncidentId, employeeMap, loadData]);
-
-  const handleSavePolicyAction = useCallback(async () => {
-    if (!policyEmployeeId || !policyActionType || !policyActionDate) {
-      addGlobalToast("Employee, action type, and action date are required", "error");
-      return;
-    }
-    setSavingPolicyAction(true);
-    try {
-      if (editingPolicyActionId) {
-        const existing = attendancePolicyActions.find((action) => action.id === editingPolicyActionId);
-        const { error } = await supabase
-          .from("attendance_policy_actions")
-          .update({
-            labor_employee_id: policyEmployeeId,
-            incident_id: policyIncidentId || null,
-            action_type: policyActionType,
-            action_date: policyActionDate,
-            note_text: policyActionNote.trim() || null,
-            metadata: {
-              ...(existing?.metadata || {}),
-              last_edited_at: new Date().toISOString(),
-              last_edited_by_name: actorName,
-            },
-          })
-          .eq("id", editingPolicyActionId);
-        if (error) throw error;
-        addGlobalToast("Policy action updated", "success");
-      } else {
-        const { error } = await supabase.from("attendance_policy_actions").insert({
-          labor_employee_id: policyEmployeeId,
-          incident_id: policyIncidentId || null,
-          action_type: policyActionType,
-          action_date: policyActionDate,
-          note_text: policyActionNote.trim() || null,
-          metadata: {
-            created_via: "attendance_page",
-          },
-          created_by_user_id: actorUserId,
-          created_by_name: actorName,
-        });
-        if (error) throw error;
-        addGlobalToast("Policy action logged", "success");
-      }
-      setShowPolicyActionModal(false);
-      resetPolicyActionModal();
-      await loadData({ silent: true });
-    } catch (error) {
-      console.error("Attendance policy action save error:", error);
-      addGlobalToast(`Failed to save policy action: ${error.message || "Unknown error"}`, "error");
-    }
-    setSavingPolicyAction(false);
-  }, [
-    actorName,
-    actorUserId,
-    addGlobalToast,
-    attendancePolicyActions,
-    editingPolicyActionId,
-    loadData,
-    policyActionDate,
-    policyActionNote,
-    policyActionType,
-    policyEmployeeId,
-    policyIncidentId,
-    resetPolicyActionModal,
-  ]);
-
-  const handleDeletePolicyAction = useCallback(async (action) => {
-    if (!action?.id) return;
-    const employeeName = employeeMap[action.labor_employee_id]?.full_name || "this employee";
-    if (!window.confirm(`Delete this policy action for ${employeeName}?`)) return;
-    setDeletingPolicyActionId(action.id);
-    try {
-      const { error } = await supabase.from("attendance_policy_actions").delete().eq("id", action.id);
-      if (error) throw error;
-      if (editingPolicyActionId === action.id) {
-        setShowPolicyActionModal(false);
-        resetPolicyActionModal();
-      }
-      await loadData({ silent: true });
-      addGlobalToast("Policy action deleted", "success");
-    } catch (error) {
-      console.error("Policy action delete error:", error);
-      addGlobalToast(`Failed to delete policy action: ${error.message || "Unknown error"}`, "error");
-    }
-    setDeletingPolicyActionId(null);
-  }, [addGlobalToast, editingPolicyActionId, employeeMap, loadData, resetPolicyActionModal]);
 
   const handleImportLegacyAttendance = useCallback(async () => {
     if (!legacyImportPlan.employeeCreates.length && !legacyImportPlan.incidentCreates.length) {
@@ -1217,19 +1025,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   return (
     <div style={{ maxWidth: embedded ? "100%" : 1180, margin: "0 auto", padding: embedded ? "0 0 8px" : "24px 16px 40px" }}>
       <style>{`
-        @keyframes attendanceMarkComposerIn {
-          0% { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(4px); }
-          65% { opacity: 1; transform: translateY(2px) scale(1.002); filter: blur(0); }
-          100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-        }
-        @keyframes attendanceMarkComposerSweep {
-          0% { transform: translate3d(-200%, 0, 0) skewX(-18deg); opacity: 0; }
-          12% { opacity: 0; }
-          24% { opacity: 0.36; }
-          48% { opacity: 0.84; }
-          72% { opacity: 0.22; }
-          100% { transform: translate3d(420%, 0, 0) skewX(-18deg); opacity: 0; }
-        }
         @keyframes attendanceFilterSlideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes attendanceFilterFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         @keyframes attendanceFilterChipIn { from { opacity: 0; transform: translateX(-6px) scale(0.9); } to { opacity: 1; transform: translateX(0) scale(1); } }
@@ -1338,27 +1133,29 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
         </div>
       ) : null}
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        {tabOptions.map((tabOption) => (
-          <button
-            key={tabOption.id}
-            onClick={() => setTab(tabOption.id)}
-            style={{
-              padding: "10px 16px",
-              borderRadius: 12,
-              border: `1.5px solid ${tab === tabOption.id ? C.pri : C.border}`,
-              background: tab === tabOption.id ? C.priLt : C.surface,
-              color: tab === tabOption.id ? C.pri : C.textSec,
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            {tabOption.label}
-          </button>
-        ))}
-      </div>
+      {tabOptions.length > 1 && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+          {tabOptions.map((tabOption) => (
+            <button
+              key={tabOption.id}
+              onClick={() => setTab(tabOption.id)}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 12,
+                border: `1.5px solid ${tab === tabOption.id ? C.pri : C.border}`,
+                background: tab === tabOption.id ? C.priLt : C.surface,
+                color: tab === tabOption.id ? C.pri : C.textSec,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {tabOption.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {tab === "roster" && (
         <>
@@ -1403,10 +1200,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               <div style={{ fontSize: 28, fontWeight: 800, color: C.text }}>{attendanceSummary.totals.total30}</div>
               <div style={{ fontSize: 12, color: C.textMut }}>Marks in last 30 days</div>
             </Card>
-            <Card style={{ padding: 18 }}>
-              <div style={{ fontSize: 28, fontWeight: 800, color: C.text }}>{attendancePolicyActions.length}</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Policy actions logged</div>
-            </Card>
           </div>
 
           <Card style={{ padding: 18 }}>
@@ -1428,7 +1221,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      {["Employee", "Status", "Position", "Start", "End", "30 Days", "Policy Actions", "Last Mark", "Actions"].map((label) => (
+                      {["Employee", "Status", "Position", "Start", "End", "30 Days", "Last Mark", "Actions"].map((label) => (
                         <th key={label} style={{ padding: "10px 8px", textAlign: "left", color: C.textMut, fontSize: 11, textTransform: "uppercase" }}>{label}</th>
                       ))}
                     </tr>
@@ -1445,7 +1238,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                         <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(row.start_date)}</td>
                         <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(row.end_date)}</td>
                         <td style={{ padding: "12px 8px", fontWeight: 700, color: C.text }}>{row.recent_attendance_incident_count || 0}</td>
-                        <td style={{ padding: "12px 8px", fontWeight: 700, color: C.text }}>{row.policy_action_count || 0}</td>
                         <td style={{ padding: "12px 8px", color: C.textSec }}>
                           {row.last_attendance_incident_at ? formatDateOnly(row.last_attendance_incident_at) : "—"}
                         </td>
@@ -1500,11 +1292,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               >
                 Filter{Object.keys(markFilters).length > 0 ? ` (${Object.keys(markFilters).length})` : ""}
               </Btn>
-              {showIncidentModal ? (
-                <Btn variant="ghost" size="sm" onClick={() => closeIncidentComposer()}>Cancel Add</Btn>
-              ) : (
-                <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
-              )}
+              <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
             </LaborSearchBar>
             <LaborIntro
               value={introValue}
@@ -1737,137 +1525,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
           )}
 
-          {showIncidentModal && (
-            <div style={{ marginBottom: 16 }}>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  handleSaveIncident();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    closeIncidentComposer();
-                  }
-                }}
-                style={{
-                  position: "relative",
-                  overflow: "hidden",
-                  borderRadius: 20,
-                  border: `1px solid ${C.acc}55`,
-                  background: "linear-gradient(135deg, rgba(132,204,22,0.14), rgba(20,83,45,0.08) 55%, rgba(255,255,255,0.92))",
-                  boxShadow: "0 24px 50px rgba(20, 83, 45, 0.12)",
-                  padding: "16px 16px 14px",
-                  opacity: incidentComposerEntered ? 1 : 0,
-                  transform: incidentComposerEntered ? "translateY(0) scale(1)" : "translateY(-18px) scale(0.985)",
-                  filter: incidentComposerEntered ? "blur(0)" : "blur(4px)",
-                  transition: `opacity ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms ease, transform ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), filter ${INLINE_ATTENDANCE_MARK_COMPOSER_TRANSITION_MS}ms ease`,
-                  animation: incidentComposerEntered ? "attendanceMarkComposerIn 380ms cubic-bezier(0.22, 1, 0.36, 1)" : "none",
-                }}
-              >
-                <div
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    inset: "-24% auto -24% -16%",
-                    width: "34%",
-                    background: "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.26), rgba(190,242,100,0.28), rgba(255,255,255,0.88), rgba(255,255,255,0))",
-                    transform: "translate3d(-200%, 0, 0) skewX(-18deg)",
-                    opacity: 0,
-                    animation: incidentComposerEntered ? "attendanceMarkComposerSweep 1850ms cubic-bezier(0.22, 1, 0.36, 1) infinite" : "none",
-                    willChange: "transform, opacity",
-                    mixBlendMode: "screen",
-                    filter: "blur(2px)",
-                    pointerEvents: "none",
-                  }}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>
-                      {editingIncidentId ? "Edit attendance mark" : "New attendance mark"}
-                    </div>
-                    <div style={{ fontSize: 12, color: C.textMut }}>Use the same quick-entry workflow style as the Labor roster so marks stay fast to capture.</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.3fr) minmax(220px, 1.15fr) minmax(160px, 0.8fr) minmax(180px, 0.95fr) minmax(260px, 1.55fr) auto", gap: 10, alignItems: "end" }}>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Employee</span>
-                    <div style={{ minWidth: 0 }}>
-                      <CustomSelect
-                        value={incidentEmployeeId}
-                        onChange={setIncidentEmployeeId}
-                        options={markComposerEmployeeOptions}
-                        placeholder="Select employee"
-                        searchable
-                        searchPlaceholder="Search employees"
-                      />
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Mark Type</span>
-                    <div style={{ minWidth: 0 }}>
-                      <CustomSelect
-                        value={incidentType}
-                        onChange={setIncidentType}
-                        options={ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-                        placeholder="Select mark type"
-                        searchable
-                        searchPlaceholder="Search mark types"
-                      />
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Shift Date</span>
-                    <input
-                      type="date"
-                      value={incidentDate}
-                      onChange={(event) => setIncidentDate(event.target.value || todayStr())}
-                      style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                    />
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Coverage Secured</span>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button type="button" onClick={() => setIncidentCoverage("yes")} style={{ padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "yes" ? C.suc : C.border}`, background: incidentCoverage === "yes" ? `${C.suc}12` : "rgba(255,255,255,0.92)", color: incidentCoverage === "yes" ? C.suc : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Yes</button>
-                      <button type="button" onClick={() => setIncidentCoverage("no")} style={{ padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "no" ? C.dan : C.border}`, background: incidentCoverage === "no" ? `${C.dan}12` : "rgba(255,255,255,0.92)", color: incidentCoverage === "no" ? C.dan : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>No</button>
-                    </div>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Notes</span>
-                    <textarea
-                      value={incidentDetail}
-                      onChange={(event) => setIncidentDetail(event.target.value)}
-                      placeholder="Optional context for this attendance mark"
-                      rows={2}
-                      style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box", resize: "vertical", minHeight: 52 }}
-                    />
-                  </label>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      onClick={() => closeIncidentComposer()}
-                      disabled={savingIncident}
-                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "10px 16px", borderRadius: 12, border: "none", background: "transparent", color: C.textSec, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: savingIncident ? "not-allowed" : "pointer", opacity: savingIncident ? 0.5 : 1 }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!canManage || savingIncident}
-                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "10px 18px", borderRadius: 14, border: "none", background: C.pri, color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: !canManage || savingIncident ? "not-allowed" : "pointer", opacity: !canManage || savingIncident ? 0.55 : 1, boxShadow: "0 14px 28px rgba(20, 83, 45, 0.18)" }}
-                    >
-                      {savingIncident ? "Saving..." : editingIncidentId ? "Save Mark" : "Add Mark"}
-                    </button>
-                  </div>
-                </div>
-                <div style={{ marginTop: 10, fontSize: 12, color: C.textMut }}>
-                  Attendance marks are operational notes on attendance behavior. Policy actions stay separate below so escalation remains explicit.
-                </div>
-              </form>
-            </div>
-          )}
-
           {visibleAttendanceMarks.length === 0 ? (
             <EmptyState
               title={Object.keys(markFilters).length > 0 || markTypePills.size > 0 || markSearch.trim() ? "No attendance marks match the current filters" : "No attendance marks yet"}
@@ -1913,7 +1570,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                       </td>
                       <td style={{ padding: "7px 10px" }}>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <Btn variant="ghost" size="sm" onClick={() => openIncidentComposer(incident, { switchToLog: false })} disabled={!canManage || deletingIncidentId === incident.id}>Edit</Btn>
+                          <Btn variant="ghost" size="sm" onClick={() => openIncidentComposer(incident)} disabled={!canManage || deletingIncidentId === incident.id}>Edit</Btn>
                           <Btn variant="ghost" size="sm" onClick={() => handleDeleteIncident(incident)} disabled={!canManage || deletingIncidentId === incident.id} style={{ color: C.dan }}>
                             {deletingIncidentId === incident.id ? "Deleting..." : "Delete"}
                           </Btn>
@@ -1930,174 +1587,132 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
 
       {tab === "summary" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 6 }}>Attendance Summary</div>
-          <div style={{ fontSize: 12, color: C.textMut, marginBottom: 16 }}>
-            Active employees only. Counts are calculated from canonical attendance marks.
-          </div>
+          {(() => { const __summarySearch = (
+            <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
+              <LaborSearchBar value={summarySearch} onChange={setSummarySearch} placeholder="Search employees…">
+                <Btn variant="primary" size="sm" onClick={() => openIncidentComposer()} disabled={!canManage}>Add Mark</Btn>
+              </LaborSearchBar>
+              <LaborIntro
+                value={introValue}
+                defaultValue={LABOR_INTRO_DEFAULTS.attendance}
+                canEdit={canEditIntro}
+                onSave={onSaveIntro}
+                prefix={<>{attendanceSummary.rows.length} active {attendanceSummary.rows.length === 1 ? "employee" : "employees"} · </>}
+              />
+            </div>
+          ); return searchSlot ? createPortal(__summarySearch, searchSlot) : __summarySearch; })()}
 
           {attendanceSummary.rows.length === 0 ? (
             <EmptyState title="No active employees to summarize" subtitle="Add employees to the labor roster to start building attendance reporting." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                <thead>
-                  <tr>
-                    <th rowSpan={2} style={{ padding: "8px 10px", background: "#1B3A5C", color: "#fff", textAlign: "left" }}>Employee</th>
-                    {ATTENDANCE_INCIDENT_OPTIONS.map((option) => (
-                      <th key={option.value} colSpan={2} style={{ padding: "6px 8px", background: option.color, color: "#fff", textAlign: "center" }}>
-                        {option.label}
-                      </th>
-                    ))}
-                    <th colSpan={2} style={{ padding: "6px 8px", background: "#1B3A5C", color: "#fff", textAlign: "center" }}>Total</th>
-                  </tr>
-                  <tr>
-                    {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
-                      <th key={`${option.value}-30`} style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", textAlign: "center" }}>30 Days</th>,
-                      <th key={`${option.value}-all`} style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", textAlign: "center" }}>All Time</th>,
-                    ]))}
-                    <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", textAlign: "center" }}>30 Days</th>
-                    <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", textAlign: "center" }}>All Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendanceSummary.rows.map((row, index) => (
-                    <tr key={row.id} style={{ background: index % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
-                      <td style={{ padding: "8px 10px", fontWeight: 700, borderRight: `1px solid ${C.borderLight}` }}>{row.full_name}</td>
-                      {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
-                        <td key={`${row.id}-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", color: C.text }}>{row.byType[option.value].last30 || "—"}</td>,
-                        <td key={`${row.id}-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center", borderRight: `1px solid ${C.borderLight}`, color: C.text }}>{row.byType[option.value].allTime || "—"}</td>,
-                      ]))}
-                      <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{row.total30 || "—"}</td>
-                      <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{row.totalAll || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background: "#1B3A5C", color: "#fff" }}>
-                    <td style={{ padding: "8px 10px", fontWeight: 800 }}>Total</td>
-                    {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
-                      <td key={`totals-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{attendanceSummary.totals.byType[option.value].last30 || "—"}</td>,
-                      <td key={`totals-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{attendanceSummary.totals.byType[option.value].allTime || "—"}</td>,
-                    ]))}
-                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{attendanceSummary.totals.total30 || "—"}</td>
-                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800 }}>{attendanceSummary.totals.totalAll || "—"}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
-        </Card>
-      )}
-
-      {tab === "policy" && (
-        <>
-          {POLICY_REFERENCE_SECTIONS.map((section) => (
-            <Card key={section.title} style={{ marginBottom: 18, padding: 18 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 4 }}>{section.title}</div>
-              {section.subtitle && <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12 }}>{section.subtitle}</div>}
-              <div style={{ display: "grid", gap: 10 }}>
-                {section.items.map((item) => (
-                  <div key={item.label} style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>{item.label}</div>
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>{item.body}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ))}
-
-          <Card style={{ padding: 18 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Policy Actions</div>
-                <div style={{ fontSize: 12, color: C.textMut }}>Formal attendance counseling and escalation tied to labor employees.</div>
-              </div>
-              <Btn variant="primary" onClick={() => openPolicyActionModal()} disabled={!canManage}>Log Policy Action</Btn>
-            </div>
-
-            {attendancePolicyActions.length === 0 ? (
-              <EmptyState title="No policy actions yet" subtitle="When attendance counseling happens, log it here so it stays in the employee’s labor history." />
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          ) : (() => {
+            const isActiveSort = (key) => Boolean(summarySort && summarySort.key === key && summarySort.direction);
+            const sortArrow = (key) => (isActiveSort(key) ? (summarySort.direction === "asc" ? " ▲" : " ▼") : "");
+            const onSort = (key) => setSummarySort((current) => nextSort(current, key));
+            const subHead = (key, label, groupStart) => (
+              <th
+                key={key}
+                onClick={() => onSort(key)}
+                title="Click to sort ascending / descending"
+                style={{ padding: "6px 8px", background: "#F1F5F9", color: isActiveSort(key) ? C.pri : C.textMut, fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", borderLeft: groupStart ? ATTENDANCE_SUMMARY_GROUP_DIVIDER : undefined, borderBottom: `1.5px solid ${C.border}` }}
+              >
+                {label}{sortArrow(key)}
+              </th>
+            );
+            return (
+              <div style={{ overflowX: "auto", border: `1.5px solid ${C.border}`, borderRadius: 10 }}>
+                <table style={{ width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
-                    <tr style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      {["Employee", "Action", "Date", "Linked Mark", "Notes", "Logged By", "Actions"].map((label) => (
-                        <th key={label} style={{ padding: "10px 8px", textAlign: "left", color: C.textMut, fontSize: 11, textTransform: "uppercase" }}>{label}</th>
+                    <tr>
+                      <th
+                        rowSpan={2}
+                        onClick={() => onSort("employee")}
+                        title="Click to sort ascending / descending"
+                        style={{ padding: "8px 12px", background: "#F1F5F9", color: isActiveSort("employee") ? C.pri : C.textMut, fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", borderBottom: `1.5px solid ${C.border}` }}
+                      >
+                        Employee{sortArrow("employee")}
+                      </th>
+                      {ATTENDANCE_INCIDENT_OPTIONS.map((option) => (
+                        <th key={option.value} colSpan={2} style={{ padding: "7px 10px", background: option.color, color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center", whiteSpace: "nowrap", borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>
+                          {option.label}
+                        </th>
                       ))}
+                      <th colSpan={2} style={{ padding: "7px 10px", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center", whiteSpace: "nowrap", borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>
+                        Total
+                      </th>
+                    </tr>
+                    <tr>
+                      {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                        subHead(`${option.value}_30`, "30 Days", true),
+                        subHead(`${option.value}_all`, "All Time", false),
+                      ]))}
+                      {subHead("total30", "30 Days", true)}
+                      {subHead("totalAll", "All Time", false)}
                     </tr>
                   </thead>
                   <tbody>
-                    {attendancePolicyActions.map((action) => (
-                      <tr key={action.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                        <td style={{ padding: "12px 8px", fontWeight: 700 }}>{employeeMap[action.labor_employee_id]?.full_name || "Unknown Employee"}</td>
-                        <td style={{ padding: "12px 8px" }}>
-                          <Badge color="warning">{getAttendanceActionLabel(action.action_type)}</Badge>
-                        </td>
-                        <td style={{ padding: "12px 8px", color: C.textSec }}>{formatDateOnly(action.action_date)}</td>
-                        <td style={{ padding: "12px 8px", color: C.textSec }}>
-                          {action.incident_id ? "Linked" : "—"}
-                        </td>
-                        <td style={{ padding: "12px 8px", color: C.textSec, minWidth: 220 }}>{action.note_text || "—"}</td>
-                        <td style={{ padding: "12px 8px", color: C.textSec }}>
-                          <div>{action.created_by_name || "Staff"}</div>
-                          <div style={{ fontSize: 11, color: C.textMut }}>{formatTimestamp(action.created_at)}</div>
-                        </td>
-                        <td style={{ padding: "12px 8px" }}>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <Btn variant="ghost" size="sm" onClick={() => openPolicyActionModal(action)} disabled={!canManage || deletingPolicyActionId === action.id}>Edit</Btn>
-                            <Btn variant="ghost" size="sm" onClick={() => handleDeletePolicyAction(action)} disabled={!canManage || deletingPolicyActionId === action.id} style={{ color: C.dan }}>
-                              {deletingPolicyActionId === action.id ? "Deleting..." : "Delete"}
-                            </Btn>
-                          </div>
-                        </td>
+                    {sortedSummaryRows.map((row, index) => (
+                      <tr key={row.id} style={{ background: index % 2 === 1 ? "#F6FAEE" : "#FFFFFF" }}>
+                        <td style={{ padding: "7px 12px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{row.full_name}</td>
+                        {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                          <td key={`${row.id}-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", color: C.text, borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>{row.byType[option.value].last30 || "—"}</td>,
+                          <td key={`${row.id}-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center", color: C.text }}>{row.byType[option.value].allTime || "—"}</td>,
+                        ]))}
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800, color: C.text, borderLeft: ATTENDANCE_SUMMARY_GROUP_DIVIDER }}>{row.total30 || "—"}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 800, color: C.text }}>{row.totalAll || "—"}</td>
                       </tr>
                     ))}
+                    {sortedSummaryRows.length === 0 && (
+                      <tr>
+                        <td colSpan={3 + ATTENDANCE_INCIDENT_OPTIONS.length * 2} style={{ padding: 20, textAlign: "center", color: C.textMut }}>
+                          No active employees match “{summarySearch.trim()}”.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
+                  <tfoot>
+                    <tr style={{ background: C.pri, color: "#fff", fontWeight: 800 }}>
+                      <td style={{ padding: "8px 12px", textAlign: "left", whiteSpace: "nowrap" }}>Total</td>
+                      {ATTENDANCE_INCIDENT_OPTIONS.flatMap((option) => ([
+                        <td key={`totals-${option.value}-30`} style={{ padding: "6px 8px", textAlign: "center", borderLeft: "2.5px solid rgba(255,255,255,0.35)" }}>{attendanceSummary.totals.byType[option.value].last30 || "—"}</td>,
+                        <td key={`totals-${option.value}-all`} style={{ padding: "6px 8px", textAlign: "center" }}>{attendanceSummary.totals.byType[option.value].allTime || "—"}</td>,
+                      ]))}
+                      <td style={{ padding: "6px 8px", textAlign: "center", borderLeft: "2.5px solid rgba(255,255,255,0.35)" }}>{attendanceSummary.totals.total30 || "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "center" }}>{attendanceSummary.totals.totalAll || "—"}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
-            )}
-          </Card>
-        </>
+            );
+          })()}
+        </Card>
       )}
 
       {tab === "history" && (
         <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>Attendance History</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Combined feed of attendance marks and policy actions.</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 240 }}>
-                <CustomSelect
-                  value={historyEmployeeFilter}
-                  onChange={setHistoryEmployeeFilter}
-                options={employeeSelectOptions}
-                placeholder="Filter employee"
-                small
-                searchable
-                searchPlaceholder="Search employees"
+          {(() => { const __historySearch = (
+            <div style={{ marginBottom: searchSlot ? 0 : 14 }}>
+              <LaborSearchBar value={historySearch} onChange={setHistorySearch} placeholder="Search history by employee, mark, or note…">
+                <div style={{ minWidth: 220 }}>
+                  <CustomSelect
+                    value={historyEmployeeFilter}
+                    onChange={setHistoryEmployeeFilter}
+                    options={employeeSelectOptions}
+                    placeholder="Filter employee"
+                    small
+                    searchable
+                    searchPlaceholder="Search employees"
+                  />
+                </div>
+              </LaborSearchBar>
+              <LaborIntro
+                value={introValue}
+                defaultValue={LABOR_INTRO_DEFAULTS.attendance}
+                canEdit={canEditIntro}
+                onSave={onSaveIntro}
+                prefix={<>Feed of attendance marks · {filteredHistory.length} shown · </>}
               />
-              </div>
-              <div style={{ minWidth: 160 }}>
-                <CustomSelect
-                  value={historyKindFilter}
-                  onChange={setHistoryKindFilter}
-                  options={[
-                    { value: "all", label: "All activity" },
-                    { value: "mark", label: "Marks" },
-                    { value: "policy_action", label: "Policy actions" },
-                  ]}
-                  placeholder="Filter type"
-                  small
-                />
-              </div>
-              <div style={{ minWidth: 220 }}>
-                <Inp value={historySearch} onChange={setHistorySearch} placeholder="Search history" />
-              </div>
             </div>
-          </div>
+          ); return searchSlot ? createPortal(__historySearch, searchSlot) : __historySearch; })()}
 
           {filteredHistory.length === 0 ? (
             <EmptyState title="No history matches the current filters" subtitle="Try clearing the filters or log the first attendance activity." />
@@ -2108,11 +1723,7 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-                        {entry.kind === "mark" ? (
-                          <TypePill label={entry.typeLabel} color={INCIDENT_COLOR_BY_VALUE[ATTENDANCE_INCIDENT_OPTIONS.find((option) => option.label === entry.typeLabel)?.value] || C.info} />
-                        ) : (
-                          <Badge color="warning">{entry.typeLabel}</Badge>
-                        )}
+                        <TypePill label={entry.typeLabel} color={INCIDENT_COLOR_BY_VALUE[ATTENDANCE_INCIDENT_OPTIONS.find((option) => option.label === entry.typeLabel)?.value] || C.info} />
                         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{entry.employeeName}</span>
                       </div>
                       <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>
@@ -2130,6 +1741,55 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
             </div>
           )}
         </Card>
+      )}
+
+      {showIncidentModal && (
+        <Modal title={editingIncidentId ? "Edit Attendance Mark" : "Add Attendance Mark"} onClose={closeIncidentComposer}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Employee</div>
+              <CustomSelect
+                value={incidentEmployeeId}
+                onChange={setIncidentEmployeeId}
+                options={markComposerEmployeeOptions}
+                placeholder="Select employee"
+                searchable
+                searchPlaceholder="Search employees"
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Mark Type</div>
+              <CustomSelect
+                value={incidentType}
+                onChange={setIncidentType}
+                options={ATTENDANCE_INCIDENT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                placeholder="Select mark type"
+                searchable
+                searchPlaceholder="Search mark types"
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Shift Date</div>
+                <MiniDatePicker value={incidentDate} onChange={(value) => setIncidentDate(value || todayStr())} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Coverage Secured</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={() => setIncidentCoverage("yes")} style={{ flex: 1, padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "yes" ? C.suc : C.border}`, background: incidentCoverage === "yes" ? `${C.suc}12` : C.surface, color: incidentCoverage === "yes" ? C.suc : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Yes</button>
+                  <button type="button" onClick={() => setIncidentCoverage("no")} style={{ flex: 1, padding: "10px 14px", borderRadius: 12, border: `1.5px solid ${incidentCoverage === "no" ? C.dan : C.border}`, background: incidentCoverage === "no" ? `${C.dan}12` : C.surface, color: incidentCoverage === "no" ? C.dan : C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>No</button>
+                </div>
+              </div>
+            </div>
+            <Inp label="Notes" type="textarea" value={incidentDetail} onChange={setIncidentDetail} placeholder="Optional context for this attendance mark" />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn variant="secondary" onClick={closeIncidentComposer} disabled={savingIncident}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleSaveIncident} disabled={!canManage || savingIncident}>
+                {savingIncident ? "Saving..." : editingIncidentId ? "Save Mark" : "Add Mark"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {showEmployeeModal && (
@@ -2162,73 +1822,6 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
               <Btn variant="secondary" onClick={() => { setShowEmployeeModal(false); resetEmployeeModal(); }}>Cancel</Btn>
               <Btn variant="primary" onClick={handleSaveEmployee} disabled={!canManage || savingEmployee}>
                 {savingEmployee ? "Saving..." : editingEmployeeId ? "Save Employee" : "Create Employee"}
-              </Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {showPolicyActionModal && (
-        <Modal title={editingPolicyActionId ? "Edit Policy Action" : "Log Policy Action"} onClose={() => { setShowPolicyActionModal(false); resetPolicyActionModal(); }}>
-          <div style={{ display: "grid", gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Employee</div>
-              <CustomSelect
-                value={policyEmployeeId}
-                onChange={(value) => {
-                  setPolicyEmployeeId(value);
-                  if (policyIncidentId && !attendanceIncidents.some((incident) => incident.id === policyIncidentId && incident.labor_employee_id === value)) {
-                    setPolicyIncidentId("");
-                  }
-                }}
-                options={employeeSelectOptions}
-                placeholder="Select employee"
-                searchable
-                searchPlaceholder="Search employees"
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Linked Mark</div>
-              <CustomSelect
-                value={policyIncidentId}
-                onChange={setPolicyIncidentId}
-                options={employeeIncidentOptions}
-                placeholder="Optional linked mark"
-                searchable
-                searchPlaceholder="Search marks"
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Policy Action</div>
-              <CustomSelect
-                value={policyActionType}
-                onChange={setPolicyActionType}
-                options={ATTENDANCE_POLICY_ACTION_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-                placeholder="Select policy action"
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 6 }}>Action Date</div>
-              <MiniDatePicker value={policyActionDate} onChange={(value) => setPolicyActionDate(value || todayStr())} />
-            </div>
-            <Inp label="Notes" type="textarea" value={policyActionNote} onChange={setPolicyActionNote} placeholder="Describe the counseling or outcome" />
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              {editingPolicyActionId ? (
-                <Btn
-                  variant="ghost"
-                  onClick={() => {
-                    const action = attendancePolicyActions.find((row) => row.id === editingPolicyActionId);
-                    if (action) handleDeletePolicyAction(action);
-                  }}
-                  disabled={!canManage || savingPolicyAction || deletingPolicyActionId === editingPolicyActionId}
-                  style={{ color: C.dan, marginRight: "auto" }}
-                >
-                  {deletingPolicyActionId === editingPolicyActionId ? "Deleting..." : "Delete Action"}
-                </Btn>
-              ) : null}
-              <Btn variant="secondary" onClick={() => { setShowPolicyActionModal(false); resetPolicyActionModal(); }}>Cancel</Btn>
-              <Btn variant="primary" onClick={handleSavePolicyAction} disabled={!canManage || savingPolicyAction}>
-                {savingPolicyAction ? "Saving..." : editingPolicyActionId ? "Save Action" : "Log Action"}
               </Btn>
             </div>
           </div>
