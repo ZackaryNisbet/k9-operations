@@ -13,6 +13,7 @@ import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Modal } from "../../shared/ui";
+import { BOOKING_FORM_SENDER_EMAIL } from "../../ignite/constants.js";
 import {
   WIZARD_STEPS,
   stepIndex,
@@ -26,7 +27,6 @@ import {
   interpretTestResult,
   igniteWebhookUrl,
   TEST_SAMPLES,
-  IGNITE_SENDER_EMAIL,
 } from "./igniteOnboarding";
 
 const WORKING_STEPS = ["profile", "forwarding", "activate"];
@@ -251,10 +251,18 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
       <div>
         <div style={labelStyle}>What's {locLabel}'s Ignite Profile ID?</div>
         <div style={helpStyle}>
-          This is the unique profile number assigned to this location in your iDigital Strategies / Ignite account. Ignite stamps it on every lead
-          email so we can route it to the right location.
+          The unique ID for this location in your iDigital Strategies (Ignite) account, used to route phone-lead emails.
         </div>
-        <input value={profileId} onChange={(e) => setProfileId(e.target.value)} placeholder="e.g. 156865 or IGN-7842" style={inputStyle} autoFocus />
+        <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.7, marginBottom: 12, padding: "10px 12px", background: C.surfaceHover, border: `1px solid ${C.border}`, borderRadius: 9 }}>
+          <strong style={{ color: C.text }}>Where to find it:</strong>
+          <ol style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            <li>Sign in to your iDigital Strategies / Ignite dashboard.</li>
+            <li>Open this location's profile (Settings → Account).</li>
+            <li>Copy the <em>Profile ID / Account ID</em> — it's the number shown on lead notification emails.</li>
+          </ol>
+          <div style={{ marginTop: 4, color: C.textMut }}>Booking-form-only locations can leave the prefilled value or a placeholder.</div>
+        </div>
+        <input value={profileId} onChange={(e) => setProfileId(e.target.value)} placeholder="e.g. 156865" style={inputStyle} autoFocus />
         {!v.ok && profileId.length > 0 && <div style={{ fontSize: 12, color: C.dan, marginTop: 6 }}>{v.error}</div>}
       </div>
     );
@@ -263,30 +271,36 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
     bodyEl = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
-          <div style={labelStyle}>Where should Ignite emails be forwarded? (optional)</div>
+          <div style={labelStyle}>What's {locLabel}'s customer-facing email address?</div>
           <div style={helpStyle}>
-            Ignite emails arrive in a Gmail inbox; you forward them to a Resend inbound address, which calls our webhook. Paste that inbound address
-            if you have it — you can add it later.
+            The inbox your website's booking / availability form submissions arrive in — the address on your Contact &amp; Booking page. We pull new
+            submissions from here into the CRM.
           </div>
-          <input value={inboundEmail} onChange={(e) => setInboundEmail(e.target.value)} placeholder="e.g. leads@yourname.resend.app" style={inputStyle} />
+          <input value={inboundEmail} onChange={(e) => setInboundEmail(e.target.value)} placeholder="cherryhill@k9resorts.com" style={inputStyle} />
           {!v.ok && <div style={{ fontSize: 12, color: C.dan, marginTop: 6 }}>{v.error}</div>}
         </div>
 
         <div>
-          <div style={{ ...labelStyle, marginBottom: 8 }}>One-time Gmail forwarding</div>
+          <div style={{ ...labelStyle, marginBottom: 8 }}>One-time forwarding (Outlook)</div>
           <div style={{ fontSize: 12.5, color: C.textSec, lineHeight: 1.75 }}>
-            In the location's Gmail, create a filter for mail from{" "}
-            <span style={{ fontWeight: 700, color: C.pri }}>{IGNITE_SENDER_EMAIL}</span> and forward it to the inbound address above. The webhook that
-            receives it:
+            Add a rule in that inbox to forward booking-form emails straight into K9 Ops — no personal inbox in between, forward directly.
+            <ol style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+              <li>Sign in to Outlook / Microsoft 365 for <strong style={{ color: C.text }}>{inboundEmail || "this inbox"}</strong>.</li>
+              <li>Settings (gear) → <strong style={{ color: C.text }}>Mail → Rules → Add new rule</strong>.</li>
+              <li>Condition: <strong style={{ color: C.text }}>From</strong> includes <span style={{ fontWeight: 700, color: C.pri }}>{BOOKING_FORM_SENDER_EMAIL}</span> (or <strong style={{ color: C.text }}>Subject</strong> includes “Form Submission”).</li>
+              <li>Action: <strong style={{ color: C.text }}>Forward to</strong> your K9 Ops inbound address.</li>
+              <li>Save — new submissions now flow straight into this CRM.</li>
+            </ol>
           </div>
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMut }}>Advanced (Resend side): the inbound address delivers to this webhook —</div>
+          <div style={{ marginTop: 6 }}>
             <CopyField value={webhookUrl} />
           </div>
         </div>
 
         <label style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: C.textSec, cursor: "pointer" }}>
           <input type="checkbox" checked={gmailConfirmed} onChange={(e) => setGmailConfirmed(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.pri }} />
-          I've set up Gmail forwarding (or I'll handle it later)
+          I've set up the Outlook forwarding rule (or I'll handle it later)
         </label>
       </div>
     );
@@ -333,11 +347,12 @@ export default function IgniteOnboardingWizard({ locationId, profile, onClose, o
           <Row k="Profile ID" v={profileId || "—"} />
           <Row k="Status" v="Active" />
           {testResult && <Row k="Live test" v={testResult.success ? "Passed" : "Not confirmed"} />}
-          <Row k="Forwarding" v={inboundEmail || "Add the Gmail → inbound forward when ready"} />
+          <Row k="Customer email" v={inboundEmail || "Add your customer-facing inbox when ready"} />
         </div>
         {!testResult?.success && (
           <ResultBanner tone="info">
-            Reminder: real leads only arrive once Gmail forwards {IGNITE_SENDER_EMAIL} to your inbound address. Everything on the K9 Ops side is set.
+            Reminder: live submissions arrive once {inboundEmail || "your customer-facing inbox"} forwards booking-form emails into K9 Ops (the Outlook
+            rule above). Everything on the K9 Ops side is set.
           </ResultBanner>
         )}
       </div>
