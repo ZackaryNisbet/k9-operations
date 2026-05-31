@@ -13211,10 +13211,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   // Distinct existing groups (canonical + whatever admins have created), as { key, label } for the
   // requirement editor's creatable combobox.
   const complianceGroupOptions = useMemo(() => {
-    const keys = new Set(["custom", "reviews", "training"]);
+    // Suggest only groups that actually exist on a requirement. No hardcoded seed, so a group with
+    // no members (e.g. "Custom" after everything has been reassigned) stops being offered.
+    const keys = new Set();
     toObjectRows(laborCompliancePolicyRequirements).forEach((row) => {
-      const key = getComplianceGroupKey(row.display_group);
-      if (key) keys.add(key);
+      const raw = String(row.display_group || "").trim();
+      if (raw) keys.add(getComplianceGroupKey(raw));
     });
     return [...keys]
       .map((key) => ({ key, label: getComplianceGroupLabel(key) }))
