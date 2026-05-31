@@ -174,7 +174,7 @@ Every list/record surface in the app uses this exact pattern (first established 
 - Columns are mapped per surface but stay consistent in treatment: primary-colored identity column, status as a **pill**, dates compact, action affordances small and icon-only.
 - **Status pills:** small (10px, weight 800), pill radius, tinted bg + matching fg per state.
 - **Overdue/Today badges** stack *under* the date, not inline.
-- **Inline expansion** (log/detail) opens edge-to-edge beneath the row with a 3px primary left-border, rather than a modal.
+- **Inline expansion** (log/detail) opens edge-to-edge beneath the row as a **recessed drawer** — a subtle `surface-hover` tonal shift with hairline top/bottom borders — rather than a modal. No colored side-stripe (that contradicts the no-side-stripes rule above and reads as decoration).
 - **Row actions** are compact icon-only buttons (pencil/trash), right-aligned; reorder via small ▲▼ when applicable.
 - Wide tables scroll horizontally (`overflow-x: auto`) rather than shrinking columns illegibly.
 

@@ -129,12 +129,14 @@ interface RowData {
 
 function extractTableRows(rawHtml: string): Map<string, RowData> {
   const rows = new Map<string, RowData>();
+  // Label cell may be <td> (Ignite) or <th> (the booking/availability form),
+  // and the booking form's labels carry a trailing colon ("First Name:").
   const rowRe =
-    /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+    /<tr[^>]*>\s*<t[hd][^>]*>([\s\S]*?)<\/t[hd]>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
   let m: RegExpExecArray | null;
 
   while ((m = rowRe.exec(rawHtml)) !== null) {
-    const label = m[1].replace(/<[^>]+>/g, "").trim();
+    const label = m[1].replace(/<[^>]+>/g, "").replace(/:\s*$/, "").trim();
     const valueHtml = m[2].trim();
     const text = valueHtml
       .replace(/<br\s*\/?>/gi, "\n")
@@ -310,11 +312,9 @@ function parseIgniteEmail(
     return { error: "No email HTML provided" } as ParsedLead;
   }
 
-  const from = headers.from || "";
-  if (from && !from.includes(IGNITE_SENDER_EMAIL)) {
-    return { error: `Unexpected sender: ${from}` } as ParsedLead;
-  }
-
+  // Sender is only a soft signal — the booking form is forwarded (Outlook →
+  // inbound), which rewrites the From header, so we never hard-reject on it.
+  // Non-lead emails are filtered by subject below and by the absence of rows.
   const subject = headers.subject || "";
 
   // Skip non-lead emails (OTP codes, etc.)
@@ -826,6 +826,76 @@ const supabaseClient = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
 );
 
+/**
+ * Best-effort capture of inbound email attachments (e.g. employment résumés).
+ * Resend webhooks carry attachment *metadata* only; the content is fetched via
+ * the Attachments API, then stored in the private `ignite-attachments` bucket.
+ * Returns the stored metadata, or null. NEVER throws — a lead must persist even
+ * if attachment capture fails.
+ */
+// deno-lint-ignore no-explicit-any
+async function captureAttachments(
+  emailId: string,
+  attMeta: any[],
+  apiKey: string,
+  locationId: string,
+  leadId: string,
+): Promise<any[] | null> {
+  try {
+    // Prefer the Attachments API (it carries download URLs / content); fall back
+    // to the webhook's metadata-only list if that call is unavailable.
+    let list: any[] = Array.isArray(attMeta) ? attMeta : [];
+    try {
+      const r = await fetch(
+        `https://api.resend.com/emails/receiving/${emailId}/attachments`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      if (r.ok) {
+        const j = await r.json();
+        const fetched = j?.data ?? j?.attachments ?? null;
+        if (Array.isArray(fetched) && fetched.length) list = fetched;
+      }
+    } catch (_) { /* keep webhook metadata */ }
+
+    const out: any[] = [];
+    for (const a of list) {
+      try {
+        const filename = String(a.filename || `attachment-${a.id || out.length + 1}`)
+          .replace(/[^\w.\-]+/g, "_");
+        const contentType = a.content_type || "application/octet-stream";
+        let bytes: Uint8Array | null = null;
+        const dl = a.download_url || a.url;
+        if (dl) {
+          const fr = await fetch(
+            dl,
+            dl.includes("api.resend.com") ? { headers: { Authorization: `Bearer ${apiKey}` } } : {},
+          );
+          if (fr.ok) bytes = new Uint8Array(await fr.arrayBuffer());
+        } else if (typeof a.content === "string" && a.content) {
+          const bin = atob(a.content);
+          bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        }
+        if (!bytes || !bytes.length) continue;
+        const path = `${locationId}/${leadId}/${filename}`;
+        const { error } = await supabaseClient.storage
+          .from("ignite-attachments")
+          .upload(path, bytes, { contentType, upsert: true });
+        if (error) {
+          console.error("[ignite-webhook] attachment upload error:", error.message);
+          continue;
+        }
+        out.push({ filename, content_type: contentType, path, size: bytes.length });
+      } catch (e) {
+        console.error("[ignite-webhook] attachment item failed:", e);
+      }
+    }
+    return out.length ? out : null;
+  } catch (e) {
+    console.error("[ignite-webhook] captureAttachments failed:", e);
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   // CORS preflight
   if (req.method === "OPTIONS") {
@@ -838,6 +908,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
+    // When the webhook received this request — t1 for synthetic round-trip timing.
+    const receivedAt = new Date().toISOString();
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    let inboundEmailId: string | null = null;
+    let inboundAttachments: Array<{ id?: string; filename?: string; content_type?: string }> = [];
 
     // ── Determine mode: Resend webhook vs direct POST ─────────────────
     let from: string;
@@ -847,13 +922,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (body.type === "email.received" && body.data?.email_id) {
       // Resend webhook mode — fetch full email via Resend API
-      const resendApiKey = Deno.env.get("RESEND_API_KEY");
       if (!resendApiKey) {
         return jsonResponse(
           { error: "RESEND_API_KEY not configured" },
           500,
         );
       }
+      inboundEmailId = body.data.email_id;
+      inboundAttachments = Array.isArray(body.data.attachments) ? body.data.attachments : [];
 
       const email = await fetchResendEmail(body.data.email_id, resendApiKey);
       from = email.from || body.data.from || "";
@@ -876,18 +952,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // Validate sender
-    if (from && !from.includes(IGNITE_SENDER_EMAIL)) {
-      return jsonResponse({ error: "Not an Ignite email", from }, 422);
+    // Sender is a soft signal only — booking-form mail is forwarded (Outlook →
+    // inbound), which rewrites From. Log unknown senders but don't reject.
+    const ACCEPTED_SENDER_MARKERS = ["idigitalstrategies", "cloudbackend", "k9resorts"];
+    if (from && !ACCEPTED_SENDER_MARKERS.some((mk) => from.toLowerCase().includes(mk))) {
+      console.log(`[ignite-webhook] Unrecognized sender (continuing): ${from}`);
     }
 
     if (!html) {
       return jsonResponse({ error: "No HTML body provided" }, 400);
     }
 
+    // Synthetic health-check probe? ignite-health-check sends a tagged email
+    // through the REAL pipeline every 15 min; we flag the resulting lead so it
+    // never reaches the CRM, and record its round-trip timing in
+    // ignite_health_probe. The marker travels as a visible form field.
+    const probeToken = html.match(/IGNITE-HEALTH-PROBE:([A-Za-z0-9_-]+)/)?.[1] || null;
+    const isSynthetic = !!probeToken;
+
     // Idempotency check — use ignite lead ID from URLs if available
     const quickLeadId = html.match(/[?&]lid=(\d+)/)?.[1] || null;
-    if (quickLeadId) {
+    if (quickLeadId && body.dryRun !== true && body.mode !== "validate") {
       const { data: existing } = await supabaseClient
         .from("ignite_leads")
         .select("id")
@@ -966,6 +1051,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
+    // Fallback: route by the website slug in the body URL
+    // (e.g. https://www.k9resorts.com/cherry-hill/ → locations.slug = 'cherry-hill').
+    if (!locationId) {
+      const slugMatch = html.match(/k9resorts\.com\/([a-z0-9][a-z0-9-]*)\//i);
+      const slug = slugMatch?.[1]?.toLowerCase();
+      if (slug && slug !== "www") {
+        const { data: locs } = await supabaseClient
+          .from("locations")
+          .select("id")
+          .eq("slug", slug)
+          .limit(1);
+        if (locs && locs.length > 0) {
+          locationId = locs[0].id;
+          console.log(`[ignite-webhook] Matched via website slug: ${slug} -> ${locationId}`);
+        }
+      }
+    }
+
     if (!locationId) {
       console.warn(
         "[ignite-webhook] No location found for profile:",
@@ -981,6 +1084,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
         },
         422,
       );
+    }
+
+    // Dry-run / validate mode: parse + routing have succeeded end-to-end on our
+    // side. Return the result WITHOUT writing a lead — this is how the health
+    // check + wizard test validate the pipeline with zero dummy data.
+    if (body.dryRun === true || body.mode === "validate") {
+      return jsonResponse({
+        success: true,
+        dryRun: true,
+        locationId,
+        leadType: parsed.leadType,
+        clientName: parsed.clientName,
+        hasEmail: !!parsed.email,
+        hasPhone: !!parsed.phone,
+        fields: Object.keys(parsed.formData),
+        routedBy: parsed.igniteProfileId ? "profile_id" : "slug",
+      });
     }
 
     // Match to existing clients via gingr_owners
@@ -1012,6 +1132,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .from("ignite_leads")
       .insert({
         location_id: locationId,
+        is_synthetic: isSynthetic,
+        probe_token: probeToken,
         lead_type: parsed.leadType,
         first_name: parsed.firstName || null,
         last_name: parsed.lastName || null,
@@ -1051,6 +1173,48 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.log(
       `[ignite-webhook] Lead stored: ${lead.id} (${matchStatus})`,
     );
+
+    // Synthetic probe: stamp the round-trip timing and stop here — never create a
+    // lite_client or any downstream side-effect for a health-check email.
+    if (isSynthetic) {
+      const insertedAt = new Date().toISOString();
+      const { data: probeRows } = await supabaseClient
+        .from("ignite_health_probe")
+        .select("sent_at")
+        .eq("token", probeToken)
+        .limit(1);
+      const sentAt = probeRows && probeRows[0] ? probeRows[0].sent_at : null;
+      const latencyMs = sentAt
+        ? Math.max(0, new Date(insertedAt).getTime() - new Date(sentAt).getTime())
+        : null;
+      await supabaseClient
+        .from("ignite_health_probe")
+        .update({
+          received_at: receivedAt,
+          inserted_at: insertedAt,
+          lead_id: lead.id,
+          latency_ms: latencyMs,
+          status: "landed",
+        })
+        .eq("token", probeToken);
+      console.log(`[ignite-webhook] Synthetic probe landed: ${probeToken} (${latencyMs}ms)`);
+      return jsonResponse({ success: true, synthetic: true, leadId: lead.id, probeToken, latencyMs });
+    }
+
+    // Best-effort: capture inbound attachments (e.g. résumés). Never fails the lead.
+    if (inboundEmailId && inboundAttachments.length && resendApiKey && lead?.id) {
+      const stored = await captureAttachments(
+        inboundEmailId,
+        inboundAttachments,
+        resendApiKey,
+        locationId,
+        lead.id,
+      );
+      if (stored && stored.length) {
+        await supabaseClient.from("ignite_leads").update({ attachments: stored }).eq("id", lead.id);
+        console.log(`[ignite-webhook] Captured ${stored.length} attachment(s) for ${lead.id}`);
+      }
+    }
 
     // ── Auto-create or update lite_client for unmatched leads (P8: phone dedup) ──
     let liteClientId: string | null = null;
