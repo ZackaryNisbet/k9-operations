@@ -10,7 +10,21 @@ import {
   buildGrassrootsEventSaveRpcArgs,
   buildGrassrootsMetrics,
   calculateGrassrootsCpl,
+  canCloseGrassrootsEvent,
+  parseGrassrootsMaterialsLeft,
+  toggleGrassrootsMaterial,
   compareGrassrootsEventSchedule,
+  getGrassrootsDisplayStatusLabel,
+  getGrassrootsEventCloseout,
+  getGrassrootsEventDisplayStatus,
+  getGrassrootsEventFieldGaps,
+  getGrassrootsBusinessFieldGaps,
+  getGrassrootsFinalEventDate,
+  summarizeGrassrootsEventDates,
+  isGrassrootsEventInPastView,
+  isGrassrootsEventClosed,
+  isGrassrootsEventPast,
+  makeGrassrootsEventCloseout,
   getGrassrootsAddressText,
   getGrassrootsActivityCount,
   getGrassrootsAttachmentPreviewKind,
@@ -40,7 +54,7 @@ import {
   inferGrassrootsBusinessCategoryFromPlace,
   parseFreeformGrassrootsAddress,
   parseGooglePlaceAddress,
-} from "../kol/pages/GrassrootsPage.jsx";
+} from "../kol/grassrootsAddress.js";
 
 describe("grassrootsData", () => {
   it("renames legacy Deerfield employees to local employees", () => {
@@ -77,14 +91,15 @@ describe("grassrootsData", () => {
     expect(normalized.drops.find((target) => target.name === "Vet Two").legacyActivities).toHaveLength(1);
   });
 
-  it("sets event defaults to active records with no captured leads", () => {
+  it("defaults events to active records regardless of captured leads (closeout/past archiving handles 'done')", () => {
     const rows = [
       { id: "todo", category: "events", is_active: true, leads_captured: 0 },
       { id: "done", category: "events", is_active: true, leads_captured: 12 },
       { id: "inactive", category: "events", is_active: false, leads_captured: 0 },
     ];
 
-    expect(applyGrassrootsFilters(rows, {}, getGrassrootsDefaultFilters("events")).map((row) => row.id)).toEqual(["todo"]);
+    // leads_captured>0 no longer hides an event; only is_active=false is filtered out.
+    expect(applyGrassrootsFilters(rows, {}, getGrassrootsDefaultFilters("events")).map((row) => row.id)).toEqual(["todo", "done"]);
   });
 
   it("defaults filtering to active records and supports inactive/all visibility", () => {
@@ -635,5 +650,116 @@ describe("grassrootsData", () => {
 
     expect(grouped.a.map((entry) => entry.id)).toEqual(["new", "old"]);
     expect(grouped.b.map((entry) => entry.id)).toEqual(["other"]);
+  });
+
+  describe("event closeout + past-event semantics", () => {
+    const today = "2026-05-11";
+    const singleDay = (date) => ({ id: "e", name: "Event", event_dates: [{ event_date: date }] });
+
+    it("getGrassrootsFinalEventDate returns the last day of a multi-day event", () => {
+      expect(getGrassrootsFinalEventDate(singleDay("2026-05-01"))).toBe("2026-05-01");
+      expect(getGrassrootsFinalEventDate({ event_dates: [{ event_date: "2026-05-05" }, { event_date: "2026-05-10" }] })).toBe("2026-05-10");
+      expect(getGrassrootsFinalEventDate({ event_end_date: "2026-05-09" })).toBe("2026-05-09");
+      expect(getGrassrootsFinalEventDate({})).toBe("");
+    });
+
+    it("treats an event as past only the day AFTER its final day", () => {
+      expect(isGrassrootsEventPast(singleDay("2026-05-01"), today)).toBe(true);
+      expect(isGrassrootsEventPast(singleDay("2026-05-11"), today)).toBe(false); // today is still the event day
+      expect(isGrassrootsEventPast(singleDay("2026-05-20"), today)).toBe(false);
+      // multi-day uses the final day: still running today → not past
+      expect(isGrassrootsEventPast({ event_dates: [{ event_date: "2026-05-10" }, { event_date: "2026-05-12" }] }, today)).toBe(false);
+      expect(isGrassrootsEventPast({ event_dates: [{ event_date: "2026-05-05" }, { event_date: "2026-05-10" }] }, today)).toBe(true);
+    });
+
+    it("allows close only on or after the final day, and not once already closed", () => {
+      expect(canCloseGrassrootsEvent(singleDay("2026-05-20"), today)).toBe(false); // before the event
+      expect(canCloseGrassrootsEvent(singleDay("2026-05-11"), today)).toBe(true); // on the day
+      expect(canCloseGrassrootsEvent(singleDay("2026-05-01"), today)).toBe(true); // after
+      // multi-day: can't close until the last day is reached
+      expect(canCloseGrassrootsEvent({ event_dates: [{ event_date: "2026-05-10" }, { event_date: "2026-05-12" }] }, today)).toBe(false);
+      const closed = { event_dates: [{ event_date: "2026-05-01" }], details: { closeout: { closed_at: "2026-05-02" } } };
+      expect(canCloseGrassrootsEvent(closed, today)).toBe(false);
+    });
+
+    it("reads closeout state out of details.closeout", () => {
+      expect(isGrassrootsEventClosed(singleDay("2026-05-01"))).toBe(false);
+      expect(getGrassrootsEventCloseout(singleDay("2026-05-01"))).toBeNull();
+      const closed = { details: { closeout: { closed_at: "2026-05-02", leads_captured: 7 } } };
+      expect(isGrassrootsEventClosed(closed)).toBe(true);
+      expect(getGrassrootsEventCloseout(closed).leads_captured).toBe(7);
+    });
+
+    it("Past Events view shows past-by-date (incl. overdue-unclosed) AND closed events", () => {
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-20"), today)).toBe(false); // upcoming → not past
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-11"), today)).toBe(false); // today → not past yet
+      expect(isGrassrootsEventInPastView(singleDay("2026-05-01"), today)).toBe(true); // overdue & unclosed → shown
+      const closedFuture = { event_dates: [{ event_date: "2026-05-20" }], details: { closeout: { closed_at: "2026-05-11" } } };
+      expect(isGrassrootsEventInPastView(closedFuture, today)).toBe(true); // closed → shown
+    });
+
+    it("renders a closed event's status as Finished without changing the stored status", () => {
+      const closed = { status: "booked", details: { closeout: { closed_at: "2026-05-11" } } };
+      expect(getGrassrootsEventDisplayStatus(closed)).toBe("finished");
+      expect(getGrassrootsDisplayStatusLabel(closed)).toBe("Finished");
+      const booked = { status: "booked" };
+      expect(getGrassrootsEventDisplayStatus(booked)).toBe("booked");
+      expect(getGrassrootsDisplayStatusLabel(booked)).toBe("Booked");
+    });
+
+    it("flags missing required field groups (address/type/organizer/date)", () => {
+      const complete = {
+        organizer: "H.I.P. Inc.",
+        event_type: "B2C",
+        address_city: "Cherry Hill",
+        event_dates: [{ event_date: "2026-06-01" }],
+      };
+      expect(getGrassrootsEventFieldGaps(complete)).toMatchObject({ organizer: false, event: false, date: false });
+
+      const soccerFest = { name: "Soccer Fest", organizer: "Rec League", event_dates: [{ event_date: "2026-06-10" }] };
+      const gaps = getGrassrootsEventFieldGaps(soccerFest);
+      expect(gaps.event).toBe(true);
+      expect(gaps.eventMissing).toEqual(["address", "type"]);
+      expect(gaps.organizer).toBe(false); // organizer present
+      expect(gaps.date).toBe(false);
+
+      const blank = { event_dates: [{ event_date: "2026-06-10" }] };
+      expect(getGrassrootsEventFieldGaps(blank).organizer).toBe(true);
+      // legacy single-field address still counts as filled
+      expect(getGrassrootsEventFieldGaps({ ...soccerFest, address: "123 Main St", event_type: "B2B" }).event).toBe(false);
+    });
+
+    it("summarizes single, consecutive multi-day, and scattered event dates", () => {
+      expect(summarizeGrassrootsEventDates(singleDay("2026-05-31"))).toMatchObject({ count: 1, isMultiDay: false, isConsecutive: false });
+      const run = summarizeGrassrootsEventDates({ event_dates: [{ event_date: "2026-05-31" }, { event_date: "2026-06-01" }, { event_date: "2026-06-02" }] });
+      expect(run).toMatchObject({ count: 3, isMultiDay: true, isConsecutive: true });
+      expect(run.first.event_date).toBe("2026-05-31");
+      expect(run.last.event_date).toBe("2026-06-02");
+      const scattered = summarizeGrassrootsEventDates({ event_dates: [{ event_date: "2026-05-31" }, { event_date: "2026-06-14" }] });
+      expect(scattered).toMatchObject({ count: 2, isMultiDay: true, isConsecutive: false });
+      expect(summarizeGrassrootsEventDates({})).toMatchObject({ count: 0, isMultiDay: false });
+    });
+
+    it("parses and toggles visit materials (comma-joined, legacy-safe)", () => {
+      expect(parseGrassrootsMaterialsLeft("Consumer brochure, Pens")).toEqual(["Consumer brochure", "Pens"]);
+      expect(parseGrassrootsMaterialsLeft("")).toEqual([]);
+      expect(toggleGrassrootsMaterial("", "Coupon")).toBe("Coupon");
+      expect(toggleGrassrootsMaterial("Coupon, Pens", "Pens")).toBe("Coupon");
+      expect(toggleGrassrootsMaterial("Coupon", "coupon")).toBe(""); // case-insensitive remove
+    });
+
+    it("flags missing business contact + category", () => {
+      expect(getGrassrootsBusinessFieldGaps({ name: "Vet Co", contact_phone: "555", contact_email: "a@b.com", business_category: "Veterinarian" })).toMatchObject({ contact: false, category: false });
+      const partial = getGrassrootsBusinessFieldGaps({ name: "Vet Co", business_category: "Veterinarian" });
+      expect(partial.contact).toBe(true);
+      expect(partial.contactMissing).toEqual(["phone", "email"]);
+      expect(getGrassrootsBusinessFieldGaps({ name: "Vet Co", contact_phone: "5", contact_email: "a@b.com" }).category).toBe(true);
+    });
+
+    it("makeGrassrootsEventCloseout normalizes the persisted payload", () => {
+      const closeout = makeGrassrootsEventCloseout({ leadsCaptured: "12", cpl: "4.50", notes: "  great turnout  ", closedAt: "2026-05-11", closedByName: "Zack" });
+      expect(closeout).toMatchObject({ closed_at: "2026-05-11", leads_captured: 12, cpl: 4.5, notes: "great turnout", closed_by_name: "Zack" });
+      expect(makeGrassrootsEventCloseout({}).leads_captured).toBe(0);
+    });
   });
 });
