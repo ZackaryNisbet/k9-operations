@@ -2,6 +2,7 @@
   "ports": [
     { "port": 5201, "label": "F2 — Nav + route scaffolding" },
     { "port": 5207, "label": "L2 - Compliance overhaul" },
-    { "port": 5210, "label": "X1 — Incidents redesign" }
+    { "port": 5210, "label": "X1 — Incidents redesign" },
+    { "port": 5211, "label": "X2 — Resort Upkeep rebuild" }
   ]
 }
