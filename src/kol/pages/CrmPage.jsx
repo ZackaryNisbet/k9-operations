@@ -34,6 +34,7 @@ import {
   formatPhonePretty,
   canonicalFormFields,
   populatedFieldCount,
+  leadPhone,
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
@@ -208,11 +209,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         key: "phone",
         header: "Phone",
         width: "150px",
-        searchValue: (r) => `${r.phone || ""}`,
+        searchValue: (r) => leadPhone(r),
         render: (r) => {
-          const pretty = formatPhonePretty(r.phone);
+          const raw = leadPhone(r);
+          const pretty = formatPhonePretty(raw);
           if (!pretty) return <span style={{ color: C.textMut }}>—</span>;
-          const digits = String(r.phone || "").replace(/[^\d+]/g, "");
+          const digits = raw.replace(/[^\d+]/g, "");
           return (
             <a href={`tel:${digits}`} style={{ color: C.text, textDecoration: "none", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
               {pretty}

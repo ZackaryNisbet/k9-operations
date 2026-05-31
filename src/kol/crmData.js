@@ -143,15 +143,42 @@ function nameFromFormData(lead) {
   return "";
 }
 
+// Some submissions land with first/last (and phone/email) only inside form_data,
+// not the top-level columns. Resolve from either so the row columns always match
+// the expanded detail.
+function leadFormData(lead) {
+  return (lead && lead.form_data && typeof lead.form_data === "object") ? lead.form_data : {};
+}
+function resolveFirstLast(lead) {
+  const fd = leadFormData(lead);
+  const first = collapseSpaces(lead && lead.first_name) || collapseSpaces(fd.first_name);
+  const last = collapseSpaces(lead && lead.last_name) || collapseSpaces(fd.last_name);
+  return { first, last };
+}
+
 /** Combine first + last into one clean name; fall back to a form_data name field. */
 export function cleanLeadName(lead) {
-  const combined = [collapseSpaces(lead && lead.first_name), collapseSpaces(lead && lead.last_name)].filter(Boolean).join(" ");
+  const { first, last } = resolveFirstLast(lead);
+  const combined = [first, last].filter(Boolean).join(" ");
   return combined || nameFromFormData(lead);
 }
 
 export function leadSortName(lead) {
-  const combined = collapseSpaces([(lead && lead.last_name) || "", (lead && lead.first_name) || ""].join(" "));
+  const { first, last } = resolveFirstLast(lead);
+  const combined = [last, first].filter(Boolean).join(" ");
   return (combined || nameFromFormData(lead)).toLowerCase();
+}
+
+/** The lead's phone — top-level column or form_data (phone / phone_number), raw. */
+export function leadPhone(lead) {
+  const fd = leadFormData(lead);
+  return collapseSpaces(lead && lead.phone) || collapseSpaces(fd.phone) || collapseSpaces(fd.phone_number) || "";
+}
+
+/** The lead's email — top-level column or form_data (email_address / email). */
+export function leadEmail(lead) {
+  const fd = leadFormData(lead);
+  return collapseSpaces(lead && lead.email) || collapseSpaces(fd.email_address) || collapseSpaces(fd.email) || "";
 }
 
 /**
@@ -192,8 +219,8 @@ export function humanizeFieldKey(key) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONTACT_FIELDS = [
-  { key: "email", label: "Email", lead: "email", from: ["email_address", "email"] },
-  { key: "phone", label: "Phone", lead: "phone", from: ["phone", "phone_number"], format: formatPhonePretty },
+  { key: "email", label: "Email", resolve: leadEmail },
+  { key: "phone", label: "Phone", resolve: leadPhone, format: formatPhonePretty },
   { key: "preferred_time", label: "Preferred time to reach", from: ["preferred_time_to_be_reached"] },
   { key: "desired_service", label: "Desired service", from: ["desired_service", "service_interest"] },
   { key: "desired_dates", label: "Desired date(s)", from: ["desired_date_of_boarding_or_day_care"] },
@@ -204,8 +231,8 @@ const CONTACT_FIELDS = [
 ];
 
 const EMPLOYMENT_FIELDS = [
-  { key: "email", label: "Email", lead: "email", from: ["email_address", "email"] },
-  { key: "phone", label: "Phone", lead: "phone", from: ["phone", "phone_number"], format: formatPhonePretty },
+  { key: "email", label: "Email", resolve: leadEmail },
+  { key: "phone", label: "Phone", resolve: leadPhone, format: formatPhonePretty },
   { key: "zip", label: "ZIP", from: ["zip_code", "zip"] },
   { key: "city", label: "City", from: ["city"] },
   { key: "state", label: "State", from: ["state"] },
@@ -219,6 +246,7 @@ const EMPLOYMENT_FIELDS = [
 export const FORM_FIELD_SCHEMAS = { booking: CONTACT_FIELDS, employment: EMPLOYMENT_FIELDS };
 
 function pickFieldValue(lead, fd, f) {
+  if (f.resolve) return f.resolve(lead);
   if (f.lead && lead && lead[f.lead] != null) {
     const v = collapseSpaces(lead[f.lead]);
     if (v) return v;

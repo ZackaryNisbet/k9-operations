@@ -10,6 +10,8 @@ import {
   cleanLeadName,
   leadSortName,
   formatPhonePretty,
+  leadPhone,
+  leadEmail,
   humanizeFieldKey,
   canonicalFormFields,
   populatedFieldCount,
@@ -179,10 +181,35 @@ describe("cleanLeadName — falls back to a form_data name field", () => {
     expect(cleanLeadName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("Audrey Bodnar");
     expect(leadSortName({ form_data: { full_name: "Audrey Bodnar" } })).toBe("audrey bodnar");
   });
+  it("falls back to form_data first_name + last_name (top-level columns empty)", () => {
+    expect(cleanLeadName({ form_data: { first_name: "Roger", last_name: "Fay" } })).toBe("Roger Fay");
+    expect(leadSortName({ form_data: { first_name: "Roger", last_name: "Fay" } })).toBe("fay roger");
+  });
   it("never surfaces the name in the field list (it's promoted to its own column)", () => {
     const fields = canonicalFormFields({ form_data: { full_name: "Audrey Bodnar", zip: "08002" } });
     expect(fields.some((f) => String(f.value).includes("Audrey"))).toBe(false);
     expect(fields.find((f) => f.key === "zip").value).toBe("08002");
+  });
+});
+
+describe("phone/email resolve from top-level OR form_data (row matches detail)", () => {
+  it("leadPhone prefers the top-level column, then form_data phone / phone_number", () => {
+    expect(leadPhone({ phone: "8567018139" })).toBe("8567018139");
+    expect(leadPhone({ form_data: { phone: "6093673008" } })).toBe("6093673008");
+    expect(leadPhone({ form_data: { phone_number: "6093673008" } })).toBe("6093673008");
+    expect(leadPhone({})).toBe("");
+  });
+  it("leadEmail prefers the top-level column, then form_data", () => {
+    expect(leadEmail({ email: "a@b.com" })).toBe("a@b.com");
+    expect(leadEmail({ form_data: { email_address: "c@d.com" } })).toBe("c@d.com");
+    expect(leadEmail({})).toBe("");
+  });
+  it("the row Phone column and the canonical Phone field agree", () => {
+    const lead = { lead_type: "web_form", form_data: { phone: "6093673008", email: "rf@gmail.com" } };
+    const rowPhone = formatPhonePretty(leadPhone(lead)); // what the row column renders
+    const detailPhone = canonicalFormFields(lead).find((f) => f.key === "phone").value; // expanded detail
+    expect(rowPhone).toBe("(609) 367-3008");
+    expect(detailPhone).toBe(rowPhone);
   });
 });
 
