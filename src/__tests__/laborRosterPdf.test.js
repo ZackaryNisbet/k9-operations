@@ -176,4 +176,47 @@ describe("labor roster PDF", () => {
     const pdfDoc = await PDFDocument.load(bytes);
     expect(pdfDoc.getPageCount()).toBe(1);
   });
+
+  it("compresses an oversized contact roster onto a single page", async () => {
+    const positions = [
+      ["Director of Resorts", 1],
+      ["General Manager", 1],
+      ["Assistant Manager", 2],
+      ["Supervisor", 6],
+      ["Customer Service Representative", 4],
+      ["Pet Care Technician", 31],
+    ];
+    const bigRoster = [];
+    positions.forEach(([position, count]) => {
+      for (let index = 0; index < count; index += 1) {
+        const sequence = bigRoster.length;
+        bigRoster.push({
+          name: `Associate ${String(sequence + 1).padStart(2, "0")} ${position.split(" ")[0]}`,
+          position,
+          commitment: sequence % 3 === 0 ? "Part-Time" : "Full-Time",
+          phone: `(856) 555-${String(1000 + sequence).slice(-4)}`,
+          email: `associate.${sequence + 1}@example.com`,
+        });
+      }
+    });
+
+    const bytes = await buildLaborRosterPdfBytes({
+      ...basePayload,
+      totalEmployees: bigRoster.length,
+      rows: bigRoster,
+      options: {
+        showPhone: true,
+        showEmail: true,
+      },
+    });
+    const pdfDoc = await PDFDocument.load(bytes);
+    const text = await extractPdfText(bytes);
+
+    expect(bigRoster.length).toBe(45);
+    expect(pdfDoc.getPageCount()).toBe(1);
+    // Every contact still makes it onto the single page after compression.
+    expect(text).toContain("associate.1@example.com");
+    expect(text).toContain("associate.45@example.com");
+    expect(text).toContain("Pet Care Technician");
+  });
 });
