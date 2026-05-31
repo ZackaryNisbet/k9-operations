@@ -88,6 +88,47 @@ export const GRASSROOTS_BUSINESS_CATEGORY_OPTIONS = [
 
 export const GRASSROOTS_DROP_CATEGORY_OPTIONS = GRASSROOTS_BUSINESS_CATEGORY_OPTIONS;
 
+// Predefined visit outcomes (pick-list, no free typing) and the materials you can
+// leave at a business. Stored as text on the activity, so no schema change.
+export const GRASSROOTS_VISIT_OUTCOME_OPTIONS = [
+  "Staff receptive — would return",
+  "Staff not receptive — would not return",
+  "No one available to speak with",
+  "Business was closed",
+  "Spoke with a decision-maker",
+  "Dropped materials only",
+];
+
+export const GRASSROOTS_VISIT_MATERIALS_OPTIONS = [
+  "Consumer brochure",
+  "Pricing insert",
+  "Business cards",
+  "Coupon",
+  "Pens",
+  "Poop bag holders",
+  "Poop bag dispensers",
+  "Food scoops",
+  "Dog leashes",
+];
+
+// Materials are persisted as a comma-joined string. These helpers convert to/from
+// the selected-set the chip picker works with, preserving any legacy free-text.
+export function parseGrassrootsMaterialsLeft(value) {
+  return String(value || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function toggleGrassrootsMaterial(value, material) {
+  const current = parseGrassrootsMaterialsLeft(value);
+  const exists = current.some((item) => item.toLowerCase() === String(material).toLowerCase());
+  const next = exists
+    ? current.filter((item) => item.toLowerCase() !== String(material).toLowerCase())
+    : [...current, material];
+  return next.join(", ");
+}
+
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_BUCKET = "grassroots-activity-attachments";
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILES = 5;
 export const GRASSROOTS_ACTIVITY_ATTACHMENT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
