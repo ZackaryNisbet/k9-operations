@@ -362,6 +362,18 @@ function Root() {
   return <LiteApp />;
 }
 
+// ── Number-input wheel guard (app-wide) ────────────────────────────────────
+// A focused <input type="number"> changes its value on mouse-wheel / trackpad
+// scroll, which silently corrupts deliberately-entered numbers. Blur the input on
+// wheel so scrolling never mutates a number anywhere in the app. One listener
+// covers every current and future number field.
+document.addEventListener('wheel', () => {
+  const el = document.activeElement;
+  if (el && el.tagName === 'INPUT' && el.type === 'number') {
+    el.blur();
+  }
+}, { passive: true });
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <BrandedErrorBoundary
     title="K9 Operations could not finish rendering this screen"
