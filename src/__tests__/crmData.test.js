@@ -155,8 +155,12 @@ describe("captured baseline — 1 log entry + follow-up = received date", () => 
   it("capturedUpdate records the source + seeds follow-up to the received date", () => {
     const u = capturedUpdate(lead);
     expect(u.next_follow_up_date).toBe("2026-05-20");
-    expect(u.notes).toMatch(/booking form/i);
+    expect(u.notes).toBe("Booking form received");
     expect(u.system).toBe(true);
+  });
+  it("employment baseline reads 'Employment application received'", () => {
+    const emp = { id: "e9", lead_type: "web_form", created_at: "2026-05-20T10:00:00Z", form_data: { what_type_of_position_are_you_interested_in: "Groomer" } };
+    expect(capturedUpdate(emp).notes).toBe("Employment application received");
   });
   it("every lead has exactly one update when there are no real ones", () => {
     const updates = leadUpdates(lead, {});

@@ -44,7 +44,6 @@ import {
   leadAttachments,
   fmtFileSize,
   followUpState,
-  recommendedFollowUp,
   buildUpdatePayload,
   classifySubmissionCategory,
   updateTypeLabel,
@@ -73,6 +72,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [logLead, setLogLead] = useState(null);
+  const [updatesLead, setUpdatesLead] = useState(null);
   const [showHealth, setShowHealth] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
@@ -160,6 +160,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   }, []);
 
   const openLog = useCallback((lead) => setLogLead(lead), []);
+  const openUpdates = useCallback((lead) => setUpdatesLead(lead), []);
   const toggleExpand = useCallback((lead) => {
     setExpandedId((cur) => (cur === lead.id ? null : lead.id));
   }, []);
@@ -276,7 +277,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <CountButton count={count} onClick={(e) => { e.stopPropagation(); toggleExpand(r); }} title="View updates" />
+                <CountButton count={count} onClick={(e) => { e.stopPropagation(); openUpdates(r); }} title="View update log" />
                 <RowActionButton tone="primary" title="Log an update" onClick={(e) => { e.stopPropagation(); openLog(r); }}>
                   Log
                 </RowActionButton>
@@ -291,7 +292,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         },
       },
     ],
-    [updatesByLead, today, expandedId, openLog, toggleExpand]
+    [updatesByLead, today, expandedId, openLog, openUpdates, toggleExpand]
   );
 
   const visibleRows = useMemo(() => {
@@ -356,7 +357,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         defaultSort={{ key: "received", direction: "desc" }}
         onRowClick={toggleExpand}
         isRowExpanded={(r) => r.id === expandedId}
-        renderExpansion={(r) => <SubmissionDetails lead={r} updates={leadUpdates(r, updatesByLead)} today={today} onLog={() => openLog(r)} />}
+        renderExpansion={(r) => <SubmissionDetails lead={r} />}
         emptyText={emptyText}
         minWidth={1120}
         style={{ border: "none", borderRadius: 0 }}
@@ -379,6 +380,15 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           {activeCategory && <ListExplainer>{activeCategory.explainer}</ListExplainer>}
           {body}
         </div>
+      )}
+
+      {updatesLead && (
+        <UpdatesModal
+          lead={updatesLead}
+          updates={leadUpdates(updatesLead, updatesByLead)}
+          onLog={() => openLog(updatesLead)}
+          onClose={() => setUpdatesLead(null)}
+        />
       )}
 
       {logLead && (
@@ -462,44 +472,45 @@ function AttachmentLinks({ lead }) {
   );
 }
 
-function SubmissionDetails({ lead, updates, today, onLog }) {
-  const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
-
+function SubmissionDetails({ lead }) {
   return (
-    <div style={{ padding: "16px 18px", display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 24 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-        <div>
-          <div style={SECTION_LABEL}>Form submission</div>
-          <FormFields lead={lead} />
-          <AttachmentLinks lead={lead} />
-          {lead.raw_email_subject && <div style={{ marginTop: 10, fontSize: 11.5, color: C.textMut }}>Source: {lead.raw_email_subject}</div>}
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ ...SECTION_LABEL, marginBottom: 0 }}>Updates</span>
-          <Btn size="sm" variant="secondary" onClick={onLog}>Log update</Btn>
-        </div>
-        {log.length === 0 ? (
-          <div style={{ fontSize: 12, color: C.textMut }}>No updates logged yet.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {log.map((u) => (
-              <div key={u.id} style={{ borderLeft: `2px solid ${C.border}`, paddingLeft: 10, display: "flex", flexDirection: "column", gap: 2 }}>
-                <div style={{ fontSize: 11.5, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                  <span style={{ fontWeight: 700, color: C.text }}>{updateTypeLabel(u.update_type)}</span>
-                  <span style={{ color: C.textMut }}>· {fmtDate(u.created_at)}</span>
-                  {u.created_by_name && <span style={{ color: C.textMut }}>· {u.created_by_name}</span>}
-                </div>
-                {u.notes && <div style={{ fontSize: 12, color: C.textSec }}>{u.notes}</div>}
-                {u.next_follow_up_date && <div style={{ fontSize: 11, color: C.textMut }}>Next follow-up: {fmtDate(u.next_follow_up_date)}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+    <div style={{ padding: "16px 20px" }}>
+      <div style={SECTION_LABEL}>Form submission</div>
+      <FormFields lead={lead} />
+      <AttachmentLinks lead={lead} />
+      {lead.raw_email_subject && <div style={{ marginTop: 12, fontSize: 11.5, color: C.textMut }}>Source: {lead.raw_email_subject}</div>}
     </div>
+  );
+}
+
+// The outreach log for one lead — its own focused view (opened from the Updates
+// count), so it never collides with the form-details expansion. Shows the touches
+// plus the "Booking form received" baseline; the booking form FIELDS live in the
+// row's "Booking form details" expander, not here.
+function UpdatesModal({ lead, updates, onLog, onClose }) {
+  const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
+  return (
+    <Modal title={`Update log — ${cleanLeadName(lead) || "submission"}`} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 12, color: C.textMut }}>{log.length} {log.length === 1 ? "entry" : "entries"}</span>
+          <Btn size="sm" onClick={onLog}>Log update</Btn>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", maxHeight: 400, overflowY: "auto" }}>
+          {log.map((u, i) => (
+            <div key={u.id} style={{ display: "flex", flexDirection: "column", gap: 3, padding: "11px 0", borderTop: i === 0 ? "none" : `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <span style={{ fontWeight: 700, color: C.text }}>{updateTypeLabel(u.update_type)}</span>
+                <span style={{ color: C.textMut }}>· {fmtDate(u.created_at)}</span>
+                {u.created_by_name && <span style={{ color: C.textMut }}>· {u.created_by_name}</span>}
+              </div>
+              {u.notes && <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.45 }}>{u.notes}</div>}
+              {u.next_follow_up_date && <div style={{ fontSize: 11.5, color: C.textMut }}>Next follow-up: {fmtDate(u.next_follow_up_date)}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -508,8 +519,8 @@ function SubmissionDetails({ lead, updates, today, onLog }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, toast }) {
-  const category = classifySubmissionCategory(lead);
-  const recDate = recommendedFollowUp(category, today, addDays);
+  // Suggest a next-day follow-up from the moment the picker is opened.
+  const recDate = addDays(today, 1);
   const [type, setType] = useState("call");
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(recDate);
@@ -588,7 +599,7 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
 
         <div>
           <div style={SECTION_LABEL}>Next follow-up date</div>
-          <MiniDatePicker value={date} onChange={setDate} min={today} recommendedDate={recDate} />
+          <MiniDatePicker value={date} onChange={setDate} min={today} recommendedDate={recDate} recommendedHint={`Suggested follow-up: ${fmtDate(recDate)}`} />
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>

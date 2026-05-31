@@ -427,7 +427,7 @@ export function capturedUpdate(lead) {
     id: `captured-${lead.id}`,
     lead_id: lead.id,
     update_type: "note",
-    notes: `Lead captured from the ${leadSourceLabel(lead)} via Ignite.`,
+    notes: classifySubmissionCategory(lead) === "employment" ? "Employment application received" : "Booking form received",
     next_follow_up_date: day || null,
     created_by_name: "Ignite",
     created_at: lead.created_at || null,
