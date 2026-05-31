@@ -6201,7 +6201,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             const count = tab.id === 'all'
               ? targets.filter(t => t.category === 'drops' || (t.category === 'events' && normalizeGrassrootsStatus(t.status) === 'booked')).length
               : targets.filter(t => {
-                  if (tab.id === 'events') return t.category === 'events';
+                  // Events badge = current events only: not past its final day, not closed,
+                  // not abandoned. Past/closed events live behind the Past Events pill.
+                  if (tab.id === 'events') return t.category === 'events' && t.is_active !== false && !isGrassrootsEventInPastView(t, todayStr());
                   if (tab.id === 'drops') return t.category === 'drops';
                   if (tab.id === 'corporate') return t.category === 'corporate_partnerships';
                   if (tab.id === 'apartments') return t.category === 'apartments';
