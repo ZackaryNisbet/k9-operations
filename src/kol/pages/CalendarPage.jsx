@@ -27,6 +27,7 @@ const SOURCE_META = {
   marketing: { label: "Marketing", color: "#DB2777", tint: "#FDF2F8" },
   enrichment: { label: "Enrichment", color: "#4D7C0F", tint: "#F7FEE7" },
   inventory: { label: "Inventory", color: "#D97706", tint: "#FFFBEB" },
+  holiday: { label: "Holidays", color: "#475569", tint: "#F1F5F9" },
 };
 
 // Enrichment is the company-wide recurring program — useful but noisy, so it
@@ -41,11 +42,15 @@ const REALTIME_TABLES = [
   "labor_compliance_evidence_links", "labor_compliance_requirements", "labor_compliance_role_applicability",
 ];
 
-// Where each source deep-links when an event is clicked (only well-known routes).
+// Where each source deep-links when an event is clicked. Labor/compliance/training
+// all live on the Labor page (TrainingPage); we pass the employee id so it can
+// focus that person once per-employee routing exists.
 const NAV_SLUG = {
+  labor: "training",
+  compliance: "training",
   training: "training",
-  enrichment: "enrichments",
   marketing: "grassroots",
+  enrichment: "enrichments",
   inventory: "inventory",
 };
 
@@ -64,7 +69,10 @@ function covers(range, win) {
 
 export default function CalendarPage({ profile, nav, locationId, addGlobalToast }) {
   const [today] = useState(() => todayStr());
-  const [view, setView] = useState("month");
+  // Agenda (a forward 2-week list) is the default: it's the most actionable view
+  // for an all-day operational feed and gives enough lead time to act on what's
+  // coming. Week/Month are one click away.
+  const [view, setView] = useState("agenda");
   const [cursor, setCursor] = useState(() => todayStr());
   const [activeSources, setActiveSources] = useState(() => new Set(DEFAULT_SOURCES));
   const [events, setEvents] = useState([]);
@@ -151,7 +159,7 @@ export default function CalendarPage({ profile, nav, locationId, addGlobalToast 
       const slug = NAV_SLUG[event?.source];
       if (slug && typeof nav === "function") {
         try {
-          nav(slug);
+          nav(slug, { calendarSource: event.source, refId: event.meta?.refId });
         } catch {
           /* navigation is best-effort */
         }

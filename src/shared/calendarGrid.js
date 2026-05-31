@@ -19,6 +19,10 @@ export const MONTHS_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+// Default horizon for the agenda (the default view): a forward 2-week window —
+// long enough to give procurement/scheduling lead time, short enough to scan.
+export const AGENDA_DAYS = 14;
+
 const KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function isDateKey(v) {
@@ -112,7 +116,7 @@ export function agendaWindow(anchorKey, days = 42) {
 export function viewWindow(view, cursorKey, todayKey, weekStartsOn = 0) {
   const anchor = isDateKey(cursorKey) ? cursorKey : todayKey;
   if (view === "week") return weekWindow(anchor, weekStartsOn);
-  if (view === "agenda") return agendaWindow(anchor, 42);
+  if (view === "agenda") return agendaWindow(anchor, AGENDA_DAYS);
   const p = parseKey(anchor) || parseKey(todayKey);
   return monthWindow(p.year, p.monthIndex, weekStartsOn);
 }
