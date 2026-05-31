@@ -70,7 +70,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     [addGlobalToast]
   );
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ silent = false } = {}) => {
     if (!locationId) {
       setLeads([]);
       setUpdatesByLead({});
@@ -79,40 +79,59 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
       setLoading(false);
       return;
     }
-    setLoading(true);
-    const [leadsRes, updatesRes, cfgRes] = await Promise.all([
-      supabase
-        .from("ignite_leads")
-        .select("*")
-        .eq("location_id", locationId)
-        .eq("lead_type", "web_form")
-        .order("created_at", { ascending: false })
-        .limit(500),
-      supabase.from("ignite_lead_updates").select("*").eq("location_id", locationId).order("created_at", { ascending: false }),
-      supabase.from("ignite_config").select("is_active").eq("location_id", locationId).limit(1),
-    ]);
-    setConfigured(!cfgRes.error && Array.isArray(cfgRes.data) && cfgRes.data.length > 0 && cfgRes.data[0].is_active === true);
-    if (leadsRes.error) {
-      const schemaMissing = leadsRes.error.code === "42P01" || leadsRes.error.code === "PGRST205";
-      setLoadState(schemaMissing ? "schema" : "error");
-      if (!schemaMissing) {
-        console.error("Failed to load submissions", leadsRes.error);
-        toast(leadsRes.error.message || "Failed to load submissions", "error");
+    if (!silent) setLoading(true);
+    try {
+      const [leadsRes, updatesRes, cfgRes] = await Promise.all([
+        supabase
+          .from("ignite_leads")
+          .select("*")
+          .eq("location_id", locationId)
+          .eq("lead_type", "web_form")
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase.from("ignite_lead_updates").select("*").eq("location_id", locationId).order("created_at", { ascending: false }),
+        supabase.from("ignite_config").select("is_active").eq("location_id", locationId).limit(1),
+      ]);
+      setConfigured(!cfgRes.error && Array.isArray(cfgRes.data) && cfgRes.data.length > 0 && cfgRes.data[0].is_active === true);
+      if (leadsRes.error) {
+        const schemaMissing = leadsRes.error.code === "42P01" || leadsRes.error.code === "PGRST205";
+        setLoadState(schemaMissing ? "schema" : "error");
+        if (!schemaMissing) {
+          console.error("Failed to load submissions", leadsRes.error);
+          if (!silent) toast(leadsRes.error.message || "Failed to load submissions", "error");
+        }
+        setLeads([]);
+        setUpdatesByLead({});
+        return;
       }
-      setLeads([]);
-      setUpdatesByLead({});
-      setLoading(false);
-      return;
+      setLoadState("ok");
+      setLeads(leadsRes.data || []);
+      setUpdatesByLead(groupUpdatesByLead(updatesRes.error ? [] : updatesRes.data || []));
+    } catch (e) {
+      console.error("CRM load failed", e);
+      if (!silent) setLoadState("error");
+    } finally {
+      setLoading(false); // never leave the page stuck on "Loading…"
     }
-    setLoadState("ok");
-    setLeads(leadsRes.data || []);
-    setUpdatesByLead(groupUpdatesByLead(updatesRes.error ? [] : updatesRes.data || []));
-    setLoading(false);
   }, [locationId, toast]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Live: stream new submissions + logged updates so the page stays current on
+  // its own — no manual refresh. Mirrors the app's existing realtime pattern.
+  useEffect(() => {
+    if (!locationId) return undefined;
+    const channel = supabase.channel(`crm-${locationId}`);
+    ["ignite_leads", "ignite_lead_updates"].forEach((table) => {
+      channel.on("postgres_changes", { event: "*", schema: "public", table, filter: `location_id=eq.${locationId}` }, () => loadData({ silent: true }));
+    });
+    channel.subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [locationId, loadData]);
 
   const openLog = useCallback((lead) => setLogLead(lead), []);
   const toggleExpand = useCallback((lead) => {
