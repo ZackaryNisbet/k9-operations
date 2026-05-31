@@ -262,10 +262,6 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           <I.Settings />
           Ignite setup
         </button>
-        <button type="button" onClick={loadData} disabled={loading} title="Refresh" style={{ ...iconBtn(false), opacity: loading ? 0.6 : 1, cursor: loading ? "default" : "pointer" }}>
-          <I.RefreshCw />
-          Refresh
-        </button>
       </div>
     </div>
   );
