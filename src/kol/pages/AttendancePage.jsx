@@ -333,21 +333,18 @@ export default function AttendanceTrackerPage({ data, save, nav, profile, addGlo
   }, [params?.employeeId, params?.tab]);
 
   const tabOptions = useMemo(() => {
-    if (tabPreset === "input") {
-      return [
-        { id: "log", label: "Attendance Marks" },
-      ];
-    }
-    if (tabPreset === "summary") {
+    // Embedded Labor-module view: one flat tab bar (no Input/Summary switcher).
+    if (tabPreset === "labor") {
       return [
         { id: "summary", label: "Summary" },
+        { id: "log", label: "Marks" },
         { id: "history", label: "History" },
         { id: "reference", label: "Reference" },
       ];
     }
     return [
       { id: "roster", label: "Roster" },
-      { id: "log", label: "Attendance Marks" },
+      { id: "log", label: "Marks" },
       { id: "summary", label: "Summary" },
       { id: "history", label: "History" },
       { id: "reference", label: "Reference" },

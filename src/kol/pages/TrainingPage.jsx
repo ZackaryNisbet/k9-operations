@@ -25591,25 +25591,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
       {!loading && tab === "attendance" && canUseLaborTab("attendance") && (
         <div>
-          <LaborViewSwitcher
-            variant="tabs"
-            value={attendanceView}
-            onChange={changeAttendanceView}
-            options={[
-              { id: "input", label: "Attendance Input" },
-              { id: "summary", label: "Attendance Summary" },
-            ]}
-          />
-
           <AttendanceTrackerPage
             data={data}
             save={save}
             nav={nav}
             profile={profile}
             addGlobalToast={addGlobalToast}
-            params={{ tab: attendanceView === "input" ? "log" : "summary" }}
+            params={{ tab: "summary" }}
             embedded
-            tabPreset={attendanceView}
+            tabPreset="labor"
             canLogAttendance={canLogAttendance}
             laborPositionOrder={positionHierarchyRows.map((row) => row.position_title)}
             searchSlot={tabSearchSlot}
