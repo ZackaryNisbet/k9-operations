@@ -333,6 +333,18 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("No requirements match your search.");
   });
 
+  it("confirms a Requirements reorder with a toast + row flash, and uses a branded matrix checkbox", () => {
+    // Reorder feedback: a toast and a transient highlight on the moved row.
+    expect(source).toContain("setRecentlyMovedRequirementId(requirement.id)");
+    expect(source).toContain("Moved ");
+    expect(source).toContain('"compliance-row-flash"');
+    expect(source).toContain("@keyframes complianceRowFlash");
+    // The applicability matrix uses the branded checkbox button, not a raw input.
+    expect(source).toContain("function ComplianceMatrixCheckbox");
+    expect(source).toContain("<ComplianceMatrixCheckbox");
+    expect(source).toContain(".compliance-matrix-check");
+  });
+
   it("saves/deletes compliance requirements with the lightweight refresh (no white flash)", () => {
     const saveStart = source.indexOf("const handleSaveComplianceRequirement = useCallback");
     const deleteStart = source.indexOf("const handleDeleteComplianceRequirement = useCallback", saveStart);
