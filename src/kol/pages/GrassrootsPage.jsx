@@ -2651,8 +2651,8 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
   }
   if (categoryId === "drops" && subview === "activity") {
     return {
-      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "Outcome", notes: "Summary", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: true, status: true, notes: true, followUp: false },
+      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
+      show: { event: true, eventDate: true, status: false, notes: true, followUp: false },
       sortable: { eventDate: false, followUp: false },
       statusVariant: "text",
       updatesMode: "edit",
@@ -2662,8 +2662,9 @@ function getGrassrootsColumnMap(categoryId, subview = null) {
         organizer: (r) => r.businessName || "—",
         event: (r) => r.businessCategory || "—",
         eventDate: (r) => (r.activityDate ? fmtDate(r.activityDate) : "—"),
-        statusText: (r) => r.outcome || "",
-        notes: (r) => r.notes || r.personSpokenWith || "",
+        // Outcome + notes are one thing now; show the note, falling back to a legacy
+        // outcome value (and joining both if an old record has them separately).
+        notes: (r) => [r.outcome, r.notes].filter(Boolean).join(" — ") || r.personSpokenWith || "",
       },
     };
   }
@@ -3540,7 +3541,6 @@ function DropActivityView({
               <div className="grassroots-drop-activity-signals">
                 <div className="grassroots-drop-activity-meta">
                   {row.followUpPriority && <span className="is-hot">Follow-up{row.nextDropDate ? ` ${fmtDate(row.nextDropDate)}` : ""}</span>}
-                  {row.partnershipPotential && <span className="is-potential">Partnership</span>}
                   {row.attachments.length > 0 && <span>{row.attachments.length} file{row.attachments.length === 1 ? "" : "s"}</span>}
                 </div>
                 <button type="button" onClick={() => onToggleExpanded(row.id)} className="grassroots-drop-expand-button" aria-expanded={expanded}>
@@ -3675,18 +3675,6 @@ function LogActivityModal({
                   autoFocus={Boolean(logModal?.target)}
                 />
               </label>
-              <label style={{ display: "block" }}>
-                <Label>Outcome</Label>
-                <select
-                  value={outcome || ""}
-                  onChange={(event) => onOutcomeChange(event.target.value)}
-                  style={{ ...INPUT_STYLE, cursor: "pointer" }}
-                >
-                  <option value="">Select an outcome…</option>
-                  {GRASSROOTS_VISIT_OUTCOME_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                  {outcome && !GRASSROOTS_VISIT_OUTCOME_OPTIONS.includes(outcome) && <option value={outcome}>{outcome}</option>}
-                </select>
-              </label>
             </div>
             <div style={{ marginTop: 12 }}>
               <Label>Materials Left</Label>
@@ -3710,11 +3698,6 @@ function LogActivityModal({
                   });
                 })()}
               </div>
-            </div>
-            <div className="grassroots-log-flag-row" style={{ marginTop: 12 }}>
-              <button type="button" className={partnershipPotential ? "is-active" : ""} onClick={() => onPartnershipPotentialChange(!partnershipPotential)}>
-                <I.Sparkle /> Partnership potential
-              </button>
             </div>
             <div className="grassroots-log-followup-date" style={{ marginTop: 12 }}>
               <Label>Follow-Up Date (optional)</Label>
@@ -3751,12 +3734,30 @@ function LogActivityModal({
               </div>
             </>
           ) : (
-            // Drops keep the existing more structured layout
+            // Drops: outcome + notes are one field. Quick-fill chips seed the common
+            // visit archetypes; everything stays editable, and you can write a longer
+            // note when a visit actually matters (a follow-up, event, or partnership lead).
             <>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                {[
+                  { label: "Routine drop-off", text: "Routine drop-off — left materials, friendly chat." },
+                  { label: "Went well", text: "Went well — " },
+                  { label: "Went poorly", text: "Went poorly — " },
+                ].map((q) => (
+                  <button
+                    key={q.label}
+                    type="button"
+                    onClick={() => onNotesChange(notes && notes.trim() ? `${notes.trim()} ${q.text}` : q.text)}
+                    style={{ padding: "3px 9px", borderRadius: 999, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
               <textarea
                 value={notes}
                 onChange={(event) => onNotesChange(event.target.value)}
-                placeholder="What happened during this visit?"
+                placeholder="What happened? A quick outcome, or a longer note if you need to follow up."
                 rows={4}
                 style={{ ...INPUT_STYLE, minHeight: 108, resize: "vertical" }}
               />
@@ -4892,7 +4893,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     }
     const category = isDropLog ? "drops" : getGrassrootsCategoryConfig(logModal?.target?.category).id;
     const activityType = getGrassrootsActivityType(category);
-    const followUpDate = activityType === "drop" && logFollowUpPriority && logDate ? logDate : null;
+    // The follow-up is simply the date entered in the log form (the "Follow-up needed"
+    // toggle was removed). Blank = no follow-up.
+    const followUpDate = logDate || null;
     if (!logNotes.trim()) {
       toast(activityType === "drop" ? "Visit notes are required" : "Comment is required", "error");
       return;
@@ -5022,10 +5025,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (insertedAttachments.length > 0) {
       setActivityAttachments((prev) => [...insertedAttachments, ...prev]);
     }
-    // For partnership/development logs (non-drop), the row's follow-up is the target's
-    // next_contact_date. Sync it to the log's date so logging with the date left blank
-    // CLEARS an existing follow-up (you've followed up; nothing more scheduled).
-    if (activityType !== "drop") {
+    // The row's follow-up is the target's next_contact_date (shown once per business
+    // in the Business view, not per visit). Sync it to the log's date for every
+    // category, so logging with the date left blank CLEARS an existing follow-up.
+    {
       const desiredFollowUp = logDate || null;
       if (desiredFollowUp !== (target.next_contact_date || null)) {
         await supabase
@@ -6371,8 +6374,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
               <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
                 Add Business
               </Btn>
-              <Btn variant="primary" size="sm" icon={<I.MessageSquare />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
-                Log Activity
+              <Btn variant="primary" size="sm" icon={<I.Plus />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
+                Log Visit
               </Btn>
             </>
           ) : (
