@@ -278,7 +278,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <CountButton count={count} active={expand.id === r.id && expand.mode === "log"} onClick={(e) => { e.stopPropagation(); toggleExpand(r, "log"); }} title="View update log" />
+                <CountButton count={count} onClick={(e) => { e.stopPropagation(); toggleExpand(r, "log"); }} title="View update log" />
                 <RowActionButton tone="primary" title="Log an update" onClick={(e) => { e.stopPropagation(); openLog(r); }}>
                   Log
                 </RowActionButton>
@@ -481,6 +481,11 @@ function SubmissionDetails({ lead }) {
 // of the row expander, opened from the Updates count), like the Marketing tab.
 // Shows the touches plus the "Booking form received" baseline; the booking form
 // FIELDS are the OTHER expander mode ("Booking form details"), not here.
+function fmtDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function UpdatesPanel({ lead, updates, onLog }) {
   const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
   return (
@@ -489,16 +494,24 @@ function UpdatesPanel({ lead, updates, onLog }) {
         <span style={{ ...SECTION_LABEL, marginBottom: 0 }}>Update log</span>
         <Btn size="sm" variant="secondary" onClick={onLog}>Log update</Btn>
       </div>
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {log.map((u, i) => (
-          <div key={u.id} style={{ display: "flex", flexDirection: "column", gap: 3, padding: "11px 0", borderTop: i === 0 ? "none" : `1px solid ${C.borderLight}` }}>
-            <div style={{ fontSize: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-              <span style={{ fontWeight: 700, color: C.text }}>{updateTypeLabel(u.update_type)}</span>
-              <span style={{ color: C.textMut }}>· {fmtDate(u.created_at)}</span>
-              {u.created_by_name && <span style={{ color: C.textMut }}>· {u.created_by_name}</span>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {log.map((u) => (
+          <div key={u.id} style={{ display: "grid", gridTemplateColumns: "88px minmax(0, 1fr) 168px", gap: 10, alignItems: "start", fontSize: 12 }}>
+            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
+              {updateTypeLabel(u.update_type)}
             </div>
-            {u.notes && <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.45 }}>{u.notes}</div>}
-            {u.next_follow_up_date && <div style={{ fontSize: 11.5, color: C.textMut }}>Next follow-up: {fmtDate(u.next_follow_up_date)}</div>}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.45, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+                {u.notes || "No notes entered."}
+              </div>
+              <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8, color: C.textMut, lineHeight: 1.35 }}>
+                <span>{u.created_by_name || "Ignite"}</span>
+                {u.next_follow_up_date && <span>Next: {fmtDate(u.next_follow_up_date)}</span>}
+              </div>
+            </div>
+            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
+              {fmtDateTime(u.created_at)}
+            </div>
           </div>
         ))}
       </div>
