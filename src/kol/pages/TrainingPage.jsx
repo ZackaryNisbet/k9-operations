@@ -6239,6 +6239,28 @@ function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
   return `${base.slice(0, 72 - timestampSuffix.length)}${timestampSuffix}`;
 }
 
+// Branded checkbox for the Requirements applicability matrix (requirement × position). A styled
+// button rather than a raw input: forest-green fill + check when on, a clear border when off, with a
+// hover ring, press feedback, and a busy state while the toggle persists. Styles live in the
+// Requirements view's scoped <style> block (.compliance-matrix-check).
+function ComplianceMatrixCheckbox({ checked, disabled = false, busy = false, title, onToggle }) {
+  const className = ["compliance-matrix-check", checked && "is-checked", busy && "is-busy"].filter(Boolean).join(" ");
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-busy={busy || undefined}
+      title={title}
+      disabled={disabled}
+      onClick={() => onToggle(!checked)}
+      className={className}
+    >
+      {checked ? <I.Check /> : null}
+    </button>
+  );
+}
+
 // Creatable group combobox for the compliance requirement editor: type to filter existing groups,
 // pick a suggestion, or create a brand-new group. Module-scoped so its open/active state survives
 // parent re-renders. `value` is the visible label text; the caller resolves it to a display_group key.
@@ -9824,6 +9846,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 
   // Reorder custom requirements (Requirements tab) via display_order — feeds the Employees column order.
   const [reorderingRequirementId, setReorderingRequirementId] = useState("");
+  // Briefly flag the just-moved row so it flashes (with a toast) — makes the reorder visible.
+  const [recentlyMovedRequirementId, setRecentlyMovedRequirementId] = useState("");
+  const recentlyMovedTimerRef = useRef(null);
   const moveComplianceRequirement = useCallback(async (requirement, direction) => {
     if (!canManageCompliancePolicy || !requirement?.id) return;
     const list = customCompliancePolicyRequirements;
@@ -9847,6 +9872,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         if (error) throw error;
       }
       await loadSupportBundle(true);
+      addGlobalToast?.(`Moved “${normalizeComplianceRequirementLabel(requirement)}” ${direction}`, "success");
+      setRecentlyMovedRequirementId(requirement.id);
+      if (recentlyMovedTimerRef.current) clearTimeout(recentlyMovedTimerRef.current);
+      recentlyMovedTimerRef.current = setTimeout(() => setRecentlyMovedRequirementId(""), 1300);
     } catch (error) {
       addGlobalToast?.(error?.message || "Could not reorder requirement", "error");
     } finally {
@@ -25939,6 +25968,28 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
           {complianceView === "requirements" && (
             <div style={{ display: "grid", gap: 14 }}>
+              <style>{`
+.compliance-row-flash { animation: complianceRowFlash 1.25s ease-out; }
+@keyframes complianceRowFlash {
+  0% { background-color: rgba(20, 83, 45, 0.16); }
+  100% { background-color: transparent; }
+}
+.compliance-matrix-check {
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid #cbd5e1; border-radius: 6px;
+  background: #fff; color: #fff; cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 110ms ease;
+}
+.compliance-matrix-check svg { width: 13px; height: 13px; }
+.compliance-matrix-check:hover:not(:disabled) { border-color: #14532D; box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.10); }
+.compliance-matrix-check:active:not(:disabled) { transform: scale(0.9); }
+.compliance-matrix-check:focus-visible { outline: none; border-color: #14532D; box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.20); }
+.compliance-matrix-check.is-checked { background: #14532D; border-color: #14532D; }
+.compliance-matrix-check.is-checked:hover:not(:disabled) { background: #166534; border-color: #166534; }
+.compliance-matrix-check:disabled { opacity: 0.45; cursor: default; }
+.compliance-matrix-check.is-busy { opacity: 0.6; cursor: progress; }
+              `}</style>
               <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
@@ -25963,7 +26014,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                         const customIndex = isCustom ? customCompliancePolicyRequirements.findIndex((row) => row.id === requirement.id) : -1;
                         const customCount = customCompliancePolicyRequirements.length;
                         return (
-                          <tr key={requirement.id || requirement.slug} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                          <tr
+                            key={requirement.id || requirement.slug}
+                            className={requirement.id && requirement.id === recentlyMovedRequirementId ? "compliance-row-flash" : undefined}
+                            style={{ borderTop: `1px solid ${C.borderLight}` }}
+                          >
                             <td style={{ padding: "6px 14px", color: C.text, fontSize: 13, fontWeight: 900 }}>
                               {normalizeComplianceRequirementLabel(requirement)}
                               {appliesToAll && (
@@ -25987,13 +26042,12 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                               const toggleKey = `${requirement.id}::${normalizePositionTitle(position)}`;
                               return (
                                 <td key={position} style={{ padding: "6px 8px", textAlign: "center" }}>
-                                  <input
-                                    type="checkbox"
+                                  <ComplianceMatrixCheckbox
                                     checked={checked}
                                     disabled={!canManageCompliancePolicy || togglingApplicabilityKey === toggleKey}
-                                    onChange={(event) => toggleRequirementPosition(requirement, position, event.target.checked)}
+                                    busy={togglingApplicabilityKey === toggleKey}
                                     title={appliesToAll ? "Applies to all positions — uncheck to scope to the others" : (checked ? "Applies to this position" : "Not applied to this position")}
-                                    style={{ width: 16, height: 16, accentColor: C.pri, cursor: canManageCompliancePolicy ? "pointer" : "default" }}
+                                    onToggle={(next) => toggleRequirementPosition(requirement, position, next)}
                                   />
                                 </td>
                               );
