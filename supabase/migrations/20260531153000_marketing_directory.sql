@@ -319,6 +319,12 @@ GRANT SELECT, INSERT, UPDATE ON public.marketing_directory_attachments TO authen
 -- History is written only by the SECURITY DEFINER trigger; clients read it.
 GRANT SELECT ON public.marketing_directory_history TO authenticated;
 
+-- Trigger functions are invoked by the trigger machinery as the table owner, so they
+-- never need EXECUTE granted to clients. Revoking the default PUBLIC grant keeps them
+-- (especially the SECURITY DEFINER audit function) off the PostgREST /rest/v1/rpc surface.
+REVOKE EXECUTE ON FUNCTION public.marketing_directory_log_history() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.marketing_directory_updated_at_trigger() FROM PUBLIC, anon, authenticated;
+
 -- ─── Storage bucket + object policies (business cards / attachments) ─────────
 INSERT INTO storage.buckets (
   id,
