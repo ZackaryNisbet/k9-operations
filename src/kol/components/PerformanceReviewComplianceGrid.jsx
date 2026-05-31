@@ -130,11 +130,11 @@ export function getCycleState(cycle = {}, recentAuditEvents = []) {
       recentAuditEvents,
     });
 
-    // Safety net for overdue: if the canonical says not-started/in-progress but we have a past due date
+    // Safety net for overdue: if the canonical says not-started but we have a past due date
     // on the cycle (common for 90-day after "Not Started" actions), force overdue. This matches user expectation.
     let finalState = canonical;
     const due = cycle.dueDate || boardReq?.due_date || boardReq?.dueDate;
-    if ((canonical.key === "not-started" || canonical.key === "in_progress" || canonical.key === "not_started") && due) {
+    if ((canonical.key === "not-started" || canonical.key === "not_started") && due) {
       const dueStr = String(due).slice(0, 10);
       const today = new Date().toISOString().slice(0, 10);
       if (dueStr < today) {
@@ -361,9 +361,7 @@ export function ReviewCycleCell({
     ? { label: "Date waived", value: waiver.waivedOn }
     : state.key === "completed" || state.key === "completed-late"
       ? { label: "Date completed", value: evidence.completedOn || cycle.instance?.completed_at || evidence.uploadedAt }
-      : state.key === "in-progress"
-        ? { label: "Action date", value: cycle.instance?.created_at || cycle.instance?.updated_at }
-        : { label: "Action date", value: "" };
+      : { label: "Action date", value: "" };
   const dueDate = getCycleDueDate(cycle);
   const dueLabel = dueDate ? `Due ${formatCellDate(dueDate, formatDate)}` : "No due date";
   const actionLabel = action.value ? `${action.label} ${formatCellDate(action.value, formatDate)}` : "";
@@ -1379,8 +1377,7 @@ export function PerformanceReviewComplianceGridStyles() {
   background: #dcfce7;
   color: #15803d;
 }
-.compliance-summary-status.is-warning,
-.compliance-summary-status.is-in-progress {
+.compliance-summary-status.is-warning {
   background: #fef3c7;
   color: #b45309;
 }
@@ -1443,11 +1440,6 @@ export function PerformanceReviewComplianceGridStyles() {
   background: #f1f5f9;
   border-color: #cbd5e1;
   color: #475569;
-}
-.review-cycle-cell.is-in-progress {
-  background: #e0f2fe;
-  border-color: #bae6fd;
-  color: #0369a1;
 }
 .review-cycle-cell.is-overdue {
   background: #fef3c7;

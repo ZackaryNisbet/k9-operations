@@ -554,10 +554,34 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
 }
 
 
+// Shared modal for the whole app. A polished, restrained entrance (backdrop
+// fade + panel rise/scale), a sticky header so tall forms keep their title and
+// close button in view, and a hover-lit close button. Animations are disabled
+// under prefers-reduced-motion. API is unchanged: title, onClose, children,
+// wide, fullWidth.
 function Modal({title,onClose,children,wide,fullWidth}) {
   useEffect(() => { const h = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [onClose]);
   const mw = fullWidth ? "calc(100vw - 60px)" : wide ? 720 : 520;
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:fullWidth?16:20}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,width:"100%",maxWidth:mw,maxHeight:fullWidth?"calc(100vh - 32px)":"90vh",overflow:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.18), 0 8px 20px rgba(0,0,0,0.08)"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"22px 26px",borderBottom:`1px solid ${C.borderLight}`}}><h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>{title}</h3><button type="button" aria-label="Close modal" title="Close" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:4,borderRadius:8}}><I.X/></button></div><div style={{padding:26}}>{children}</div></div></div>;
+  return (
+    <div className="ui-modal-backdrop" onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.48)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:fullWidth?16:20}}>
+      <style>{`
+        @keyframes uiModalBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes uiModalPanelIn { from { opacity: 0; transform: translateY(14px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .ui-modal-backdrop { animation: uiModalBackdropIn 160ms ease-out; }
+        .ui-modal-panel { animation: uiModalPanelIn 240ms cubic-bezier(0.22, 1, 0.36, 1); }
+        .ui-modal-close { transition: background 140ms ease, color 140ms ease; }
+        .ui-modal-close:hover { background: ${C.bg}; color: ${C.text}; }
+        @media (prefers-reduced-motion: reduce) { .ui-modal-backdrop, .ui-modal-panel { animation: none; } }
+      `}</style>
+      <div className="ui-modal-panel" onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,width:"100%",maxWidth:mw,maxHeight:fullWidth?"calc(100vh - 32px)":"90vh",overflow:"auto",boxShadow:"0 24px 64px rgba(15,23,42,0.22), 0 8px 24px rgba(15,23,42,0.10)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"20px 24px",borderBottom:`1px solid ${C.borderLight}`,position:"sticky",top:0,background:C.surface,zIndex:1,borderRadius:"20px 20px 0 0"}}>
+          <h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>{title}</h3>
+          <button type="button" aria-label="Close modal" title="Close" onClick={onClose} className="ui-modal-close" style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:6,borderRadius:8,flexShrink:0}}><I.X/></button>
+        </div>
+        <div style={{padding:24}}>{children}</div>
+      </div>
+    </div>
+  );
 }
 
 function Card({children,style={},onClick,hoverable}) {
@@ -617,7 +641,29 @@ function LaborIntro({ value = "", defaultValue = "", prefix = null, canEdit = fa
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const textRef = useRef(null);
   const barStyle = { padding: "10px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(135deg, ${C.priLt || C.pri + "08"}40, ${C.surface})`, fontSize: 12, lineHeight: 1.6, color: C.textSec };
+
+  // Single-line by default so the bar height is identical on every tab and every
+  // viewport (no layout shift on switch). Measure real overflow so the More/Less
+  // toggle only appears when there is hidden text to reveal — re-checked on
+  // resize so it stays correct regardless of device width.
+  useEffect(() => {
+    if (editing || expanded) return undefined;
+    const el = textRef.current;
+    if (!el) return undefined;
+    const measure = () => setOverflowing(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [editing, expanded, text]);
 
   const persist = async (next) => {
     if (!onSave) { setEditing(false); return; }
@@ -649,7 +695,18 @@ function LaborIntro({ value = "", defaultValue = "", prefix = null, canEdit = fa
 
   return (
     <div style={{ ...barStyle, display: "flex", alignItems: "flex-start", gap: 8 }}>
-      <span style={{ flex: 1, minWidth: 0 }}>{prefix}{text}</span>
+      <span
+        ref={textRef}
+        title={!expanded && overflowing ? text : undefined}
+        style={{ flex: 1, minWidth: 0, whiteSpace: expanded ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+      >
+        {prefix}{text}
+      </span>
+      {overflowing ? (
+        <button type="button" onClick={() => setExpanded((v) => !v)} title={expanded ? "Show less" : "Show full text"} style={{ flexShrink: 0, border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 2, fontSize: 11, fontWeight: 800, fontFamily: "inherit" }}>
+          {expanded ? "Less" : "More"}
+        </button>
+      ) : null}
       {canEdit && onSave ? (
         <button type="button" onClick={() => { setDraft(text); setEditing(true); }} title="Edit this text" style={{ flexShrink: 0, border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 2, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, fontFamily: "inherit" }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>

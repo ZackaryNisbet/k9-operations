@@ -50,10 +50,10 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain("employee-compliance-checkpoint-list");
     expect(source).toContain('employeeRecordTab === "training" && canUseLaborTab("training")');
     expect(source).toContain('employeeRecordTab === "training" && selectedLaborEmployeeSnapshot?.active_training_record_id');
-    expect(source).toContain('variant="summary"');
+    expect(source).toContain("<ComplianceMetricsHeader metrics={complianceMetrics} />");
     expect(source).toContain('case "open_checkpoints"');
     expect(reviewGridSource).toContain(".employee-compliance-checkpoint-row");
-    expect(reviewGridSource).toContain("compliance-summary-table");
+    expect(reviewGridSource).toContain('variant === "summary"');
     expect(reviewGridSource).toContain("Open Checkpoints");
     expect(source).toContain("value={complianceView}");
     expect(source).toContain("onChange={changeComplianceView}");
@@ -273,11 +273,88 @@ describe("TrainingPage configurable compliance integration", () => {
     expect(source).toContain('from("labor_compliance_requirements")');
     expect(source).toContain(".update({");
     expect(source).toContain("is_active: false");
-    expect(source).toContain('display_group: "custom"');
+    // Custom columns persist a configurable display_group (resolved from the mandatory group field).
+    expect(source).toContain("const groupKey = resolveComplianceGroupKeyFromInput(complianceRequirementGroup)");
+    expect(source).toContain("display_group: groupKey");
+    expect(source).toContain("setComplianceRequirementGroup");
     expect(source).toContain('ui_kind: "custom_yes_no"');
     expect(source).not.toContain("Review policy");
     expect(source).not.toContain("Franchisor Training Guide");
     expect(source).not.toContain("Dog CPR Certification");
     expect(source).not.toContain("PPBC Level 1");
+  });
+
+  it("renders a dynamic Compliance metrics dashboard grouped by display_group", () => {
+    // Roster-wide metrics builder, rendered as the Summary sub-view (not above the Employees grid).
+    expect(performanceReviewDataSource).toContain("export function buildLaborComplianceMetrics");
+    expect(performanceReviewDataSource).toContain("export function getLaborComplianceMetricState");
+    expect(performanceReviewDataSource).toContain("COMPLIANCE_GROUP_LABELS");
+    expect(source).toContain("buildLaborComplianceMetrics");
+    expect(source).toContain("const complianceMetrics = useMemo");
+    expect(source).toContain("const ComplianceMetricsHeader =");
+    expect(source).toContain("<ComplianceMetricsHeader metrics={complianceMetrics} />");
+    // The dashboard lives on Summary only: no variant wiring, and the Employees grid is unwrapped.
+    expect(source).not.toContain("ComplianceMetricsHeader metrics={complianceMetrics} variant");
+    // Headline metrics: # overdue leads, plus due-in-7-days and a compliant %.
+    expect(source).toContain('label="Overdue"');
+    expect(source).toContain('label="Due in 7 Days"');
+    expect(source).toContain('label="Compliant"');
+    // The bogus "in progress / started" surfaces are gone for compliance cells.
+    expect(source).not.toContain("checkpoint evidence pending");
+    expect(performanceReviewDataSource).not.toContain('label: "In Progress"');
+    expect(reviewGridSource).not.toContain("is-in-progress");
+  });
+
+  it("surfaces requirement groups as a Requirements column and a creatable editor field", () => {
+    expect(source).toContain("<th style={complianceTableHeaderStyle}>Group</th>");
+    expect(source).toContain("getComplianceGroupLabel(requirement.display_group)");
+    expect(source).toContain("colSpan={5 + compliancePositionColumns.length}");
+    // Group is a free-text creatable combobox, not a fixed dropdown.
+    expect(source).toContain("function ComplianceGroupCombobox");
+    expect(source).toContain("<ComplianceGroupCombobox");
+    expect(source).toContain("complianceGroupOptions");
+    expect(source).toContain("resolveComplianceGroupKeyFromInput");
+    // Group suggestions derive only from groups actually in use (no hardcoded seed list).
+    expect(source).not.toContain('new Set(["custom"');
+    // Group is mandatory: required marker, disabled save, server-side validation, no silent fallback.
+    expect(source).toContain('"Group is required"');
+    expect(source).toContain("!complianceRequirementGroup.trim()");
+    expect(source).not.toContain('if (!trimmed) return "custom"');
+  });
+
+  it("keeps a Compliance search header on every sub-view, not just Employees", () => {
+    // Employees portals its grid search into the slot; the other sub-views render the header here so
+    // the labor search region never goes empty when you switch sub-views.
+    expect(source).toContain("const [complianceSearch, setComplianceSearch] = useState");
+    expect(source).toContain('complianceView !== "employees"');
+    expect(source).toContain('setComplianceSearch("")');
+    // The shared header search filters each sub-view's own content.
+    expect(source).toContain("visibleComplianceRequirements");
+    expect(source).toContain("No requirements match your search.");
+  });
+
+  it("confirms a Requirements reorder with a toast + row flash, and uses a branded matrix checkbox", () => {
+    // Reorder feedback: a toast and a transient highlight on the moved row.
+    expect(source).toContain("setRecentlyMovedRequirementId(requirement.id)");
+    expect(source).toContain("Moved ");
+    expect(source).toContain('"compliance-row-flash"');
+    expect(source).toContain("@keyframes complianceRowFlash");
+    // The applicability matrix uses the branded checkbox button, not a raw input.
+    expect(source).toContain("function ComplianceMatrixCheckbox");
+    expect(source).toContain("<ComplianceMatrixCheckbox");
+    expect(source).toContain(".compliance-matrix-check");
+  });
+
+  it("saves/deletes compliance requirements with the lightweight refresh (no white flash)", () => {
+    const saveStart = source.indexOf("const handleSaveComplianceRequirement = useCallback");
+    const deleteStart = source.indexOf("const handleDeleteComplianceRequirement = useCallback", saveStart);
+    const afterDelete = source.indexOf("const handleRestartSelectedReviewInstance", deleteStart);
+    expect(saveStart).toBeGreaterThan(-1);
+    expect(deleteStart).toBeGreaterThan(saveStart);
+    const requirementMutations = source.slice(saveStart, afterDelete > -1 ? afterDelete : undefined);
+    // Assigning a group / saving / deleting must NOT call the heavy refreshLaborData (which flips the
+    // global loading flag and remounts the page white); it uses the support-bundle refresh instead.
+    expect(requirementMutations).toContain("await refreshLaborSupportData();");
+    expect(requirementMutations).not.toContain("refreshLaborData(");
   });
 });

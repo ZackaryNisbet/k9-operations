@@ -6,6 +6,8 @@ import {
   computeDogDaysLast30,
   countActiveDogsInRange,
   countIncidentsInRange,
+  countOpenFollowUps,
+  getIncidentFollowUpState,
   getIncidentReportingPeriodRange,
   RED_BINDER_FORM_LIBRARY,
 } from "../kol/clientManagementData";
@@ -150,5 +152,43 @@ describe("incident rate by reporting period", () => {
     expect(rate.incidents).toBe(1);
     expect(rate.ratePerDog).toBeNull();
     expect(rate.ratePer1000).toBeNull();
+  });
+});
+
+describe("incident follow-ups", () => {
+  const asOf = new Date("2026-05-29T09:00:00"); // a Friday
+
+  it("reports no follow-up when follow_up_at is absent or blank", () => {
+    expect(getIncidentFollowUpState({}, asOf)).toMatchObject({ has: false, tone: "none" });
+    expect(getIncidentFollowUpState({ follow_up_at: "" }, asOf).has).toBe(false);
+    expect(getIncidentFollowUpState({ follow_up_at: null }, asOf).has).toBe(false);
+  });
+
+  it("classifies overdue, due-today, and upcoming follow-ups by date only", () => {
+    expect(getIncidentFollowUpState({ follow_up_at: "2026-05-28" }, asOf))
+      .toMatchObject({ has: true, tone: "overdue", overdue: true, dueToday: false, upcoming: false });
+    expect(getIncidentFollowUpState({ follow_up_at: "2026-05-29" }, asOf))
+      .toMatchObject({ has: true, tone: "today", overdue: false, dueToday: true, upcoming: false });
+    expect(getIncidentFollowUpState({ follow_up_at: "2026-06-05" }, asOf))
+      .toMatchObject({ has: true, tone: "upcoming", overdue: false, dueToday: false, upcoming: true });
+  });
+
+  it("treats a completed follow-up as done regardless of its due date", () => {
+    const state = getIncidentFollowUpState(
+      { follow_up_at: "2026-05-20", follow_up_completed_at: "2026-05-21T14:00:00Z" },
+      asOf,
+    );
+    expect(state).toMatchObject({ has: true, tone: "done", completed: true, overdue: false, dueToday: false });
+  });
+
+  it("counts only actionable (incomplete, due today or earlier) follow-ups", () => {
+    const cases = [
+      { follow_up_at: "2026-05-28" }, // overdue → counts
+      { follow_up_at: "2026-05-29" }, // due today → counts
+      { follow_up_at: "2026-06-10" }, // upcoming → excluded
+      { follow_up_at: "2026-05-01", follow_up_completed_at: "2026-05-02T00:00:00Z" }, // done → excluded
+      {}, // no follow-up → excluded
+    ];
+    expect(countOpenFollowUps(cases, asOf)).toBe(2);
   });
 });
