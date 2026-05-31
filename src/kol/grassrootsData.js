@@ -415,7 +415,8 @@ export function getGrassrootsEventDisplayStatus(target = {}) {
 }
 
 export function getGrassrootsDisplayStatusLabel(target = {}) {
-  if (isGrassrootsEventClosed(target)) return "Finished";
+  const closeout = getGrassrootsEventCloseout(target);
+  if (closeout?.closed_at) return closeout.disposition === "cancelled" ? "Cancelled" : "Finished";
   return getGrassrootsStatusLabel(target.status);
 }
 
@@ -456,11 +457,16 @@ export function getGrassrootsEventFieldGaps(target = {}) {
 }
 
 // Pure builder for the details.closeout payload written when an event is closed out.
-export function makeGrassrootsEventCloseout({ leadsCaptured, cpl, notes, closedAt, closedByUserId, closedByName } = {}) {
+// disposition: "completed" (attended → leads/CPL) or "cancelled" (couldn't attend —
+// the cost is sunk, leads are 0/none). Cancelled events still leave the active view
+// and keep their cost on the books as marketing spend.
+export function makeGrassrootsEventCloseout({ leadsCaptured, cpl, notes, closedAt, closedByUserId, closedByName, disposition } = {}) {
+  const resolvedDisposition = disposition === "cancelled" ? "cancelled" : "completed";
   return {
     closed_at: closedAt || new Date().toISOString().slice(0, 10),
-    leads_captured: parseInteger(leadsCaptured) ?? 0,
-    cpl: parseDecimal(cpl) ?? null,
+    disposition: resolvedDisposition,
+    leads_captured: resolvedDisposition === "cancelled" ? 0 : (parseInteger(leadsCaptured) ?? 0),
+    cpl: resolvedDisposition === "cancelled" ? null : (parseDecimal(cpl) ?? null),
     notes: String(notes || "").trim(),
     closed_by_user_id: closedByUserId || null,
     closed_by_name: closedByName || null,
