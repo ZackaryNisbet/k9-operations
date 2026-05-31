@@ -300,6 +300,36 @@ export function getGrassrootsFinalEventDate(target = {}) {
   return target.event_end_date || target.event_start_date || "";
 }
 
+// Two YYYY-MM-DD dates exactly one calendar day apart (b is the day after a)?
+function areGrassrootsDatesConsecutive(a, b) {
+  if (!a || !b) return false;
+  const da = new Date(`${a}T12:00:00`);
+  const db = new Date(`${b}T12:00:00`);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
+  return Math.round((db - da) / 86400000) === 1;
+}
+
+// Structured summary of an event's date(s) for the tracker display: how many days,
+// whether it spans a single day vs multiple, and (for multi-day) whether those days
+// are consecutive (a real multi-day run, shown as a range) or scattered (separate
+// dates that are linked, shown with a chain indicator).
+export function summarizeGrassrootsEventDates(target = {}) {
+  const dates = normalizeGrassrootsEventDates(target);
+  if (dates.length === 0) return { count: 0, isMultiDay: false, isConsecutive: false, first: null, last: null, dates: [] };
+  let isConsecutive = true;
+  for (let i = 1; i < dates.length; i += 1) {
+    if (!areGrassrootsDatesConsecutive(dates[i - 1].event_date, dates[i].event_date)) { isConsecutive = false; break; }
+  }
+  return {
+    count: dates.length,
+    isMultiDay: dates.length > 1,
+    isConsecutive: dates.length > 1 ? isConsecutive : false,
+    first: dates[0],
+    last: dates[dates.length - 1],
+    dates,
+  };
+}
+
 // Closeout lives in details.closeout (the save RPC already persists `details`),
 // so a "Finished" event needs no DB schema/status change.
 export function getGrassrootsEventCloseout(target = {}) {

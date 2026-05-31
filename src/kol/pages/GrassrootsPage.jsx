@@ -36,6 +36,7 @@ import {
   getGrassrootsNextDate,
   getGrassrootsPrimaryEventDate,
   getGrassrootsFinalEventDate,
+  summarizeGrassrootsEventDates,
   getGrassrootsEventFieldGaps,
   getGrassrootsStatusLabel,
   isGrassrootsEventClosed,
@@ -199,6 +200,79 @@ function EventDateCell({ target }) {
           +{additionalDates.length} more {additionalDates.length === 1 ? "date" : "dates"}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Rich event-date display (date + weekday + time, multi-day aware) ──────────
+function fmtEventDayLine(dateStr) {
+  if (!dateStr) return "—";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function fmtWeekdayLong(dateStr) {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" });
+}
+function fmtWeekdayShort(dateStr) {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" });
+}
+function fmtClock(hhmm) {
+  if (!hhmm) return "";
+  const [h, m] = String(hhmm).split(":");
+  const d = new Date();
+  d.setHours(Number(h) || 0, Number(m) || 0, 0, 0);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+function fmtClockRange(start, end) {
+  const s = fmtClock(start);
+  const e = fmtClock(end);
+  if (s && e) return `${s}–${e}`;
+  return s || e || "";
+}
+function fmtEventDateRange(startStr, endStr) {
+  if (!startStr) return "—";
+  const sameYear = String(startStr).slice(0, 4) === String(endStr).slice(0, 4);
+  const start = new Date(`${startStr}T12:00:00`).toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  const end = new Date(`${endStr}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return `${start} – ${end}`;
+}
+
+// The events table's date cell: one date shows weekday + time; a consecutive run
+// shows a date range + day count; scattered dates show the first + a chain. Whether
+// it's single vs multi-day is conveyed by the shape, never a literal label.
+function EventDateDisplay({ target }) {
+  const sum = summarizeGrassrootsEventDates(target);
+  if (sum.count === 0) return <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>No date</span>;
+  const wrap = { display: "flex", flexDirection: "column", gap: 1, lineHeight: 1.2, minWidth: 0 };
+  const dateLine = { fontSize: 12, fontWeight: 800, color: C.text };
+  const subLine = { fontSize: 10, fontWeight: 600, color: C.textMut };
+
+  if (!sum.isMultiDay) {
+    const timeStr = fmtClockRange(sum.first.start_time, sum.first.end_time);
+    return (
+      <div style={wrap}>
+        <span style={dateLine}>{fmtEventDayLine(sum.first.event_date)}</span>
+        <span style={subLine}>{fmtWeekdayLong(sum.first.event_date)}{timeStr ? ` · ${timeStr}` : ""}</span>
+      </div>
+    );
+  }
+  if (sum.isConsecutive) {
+    return (
+      <div style={wrap}>
+        <span style={dateLine}>{fmtEventDateRange(sum.first.event_date, sum.last.event_date)}</span>
+        <span style={subLine}>{fmtWeekdayShort(sum.first.event_date)}–{fmtWeekdayShort(sum.last.event_date)} · {sum.count} days</span>
+      </div>
+    );
+  }
+  // Scattered (non-consecutive) linked dates.
+  return (
+    <div style={wrap}>
+      <span style={dateLine}>{fmtEventDayLine(sum.first.event_date)}</span>
+      <span style={{ ...subLine, color: C.pri, display: "inline-flex", alignItems: "center", gap: 3 }} title={`${sum.count} separate dates linked to this event`}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
+        {sum.count} linked dates
+      </span>
     </div>
   );
 }
@@ -2700,7 +2774,7 @@ function DenseGrassrootsTable({
   // the Updates expansion), reallocating the freed width to Event + Updates (which now
   // carries the Close button and Overdue/Due-today label).
   const grid = isEventsTable
-    ? "minmax(105px, 1.15fr) minmax(160px, 1.85fr) 95px 112px 92px 84px minmax(150px, 1.35fr)"
+    ? "minmax(100px, 1.05fr) minmax(150px, 1.55fr) minmax(140px, 1.35fr) 110px 74px 84px minmax(150px, 1.3fr)"
     : "minmax(105px, 1.1fr) minmax(155px, 1.7fr) 95px 100px minmax(135px, 1.25fr) 82px minmax(118px, 1.05fr)";
 
   const today = new Date().toISOString().slice(0, 10);
@@ -2950,9 +3024,10 @@ function DenseGrassrootsTable({
                 )}
               </div>
 
-              {/* Event Date (sortable) — hover pencil opens the date editor */}
-              <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
-                <span>{eventDateStr}</span>
+              {/* Event Date (sortable) — events show weekday + time + multi-day shape;
+                  hover pencil opens the date editor */}
+              <div className={isEventsTable && onOpenCellEditor ? "gr-edit-cell" : undefined} style={{ display: "flex", alignItems: "flex-start", fontSize: 11, fontWeight: 700, color: C.text }}>
+                {isEventsTable ? <EventDateDisplay target={target} /> : <span style={{ whiteSpace: "nowrap" }}>{eventDateStr}</span>}
                 {isEventsTable && onOpenCellEditor && (
                   <CellEditButton
                     onClick={() => onOpenCellEditor(target, "date")}
@@ -3075,21 +3150,23 @@ function DenseGrassrootsTable({
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                 <button
                   onClick={(e) => handleCountClick(target.id, e)}
-                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", background: targetActivities.length > 0 ? `${C.pri}14` : C.bg, color: targetActivities.length > 0 ? C.pri : C.textMut }}
-                  title={`${targetActivities.length} updates — click to expand`}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: isExp ? `1px solid ${C.pri}` : "none", cursor: "pointer", fontFamily: "inherit", background: isExp ? C.pri : (targetActivities.length > 0 ? `${C.pri}14` : C.bg), color: isExp ? "#fff" : (targetActivities.length > 0 ? C.pri : C.textMut) }}
+                  title={`${targetActivities.length} updates — click to ${isExp ? "collapse" : "expand"}`}
                 >
                   {targetActivities.length}
                 </button>
 
-                {/* Hide Log button while the inline composer is open for this row */}
-                {inlineLoggingId !== target.id && (
-                  <button
-                    onClick={() => onLog(target)}
-                    style={{ padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                  >
-                    Log
-                  </button>
-                )}
+                {/* Log button stays put and flips to an active (filled) state while its
+                    composer is open; clicking it again closes the composer. */}
+                <button
+                  onClick={() => (inlineLoggingId === target.id ? (onCancelInlineLog && onCancelInlineLog()) : onLog(target))}
+                  title={inlineLoggingId === target.id ? "Close log composer" : "Log an update"}
+                  style={inlineLoggingId === target.id
+                    ? { padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}`, background: C.pri, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }
+                    : { padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                >
+                  Log
+                </button>
 
                 {/* Events: "Close" replaces "Edit" — greyed until the final event day is
                     reached. Editing now happens via the per-cell pencils. Other categories
@@ -3162,7 +3239,7 @@ function DenseGrassrootsTable({
 
                     <div style={{ marginTop: 6 }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                        Next Follow-Up Date *
+                        Next Follow-Up Date <span style={{ fontWeight: 600, color: C.textMut, textTransform: "none", letterSpacing: 0 }}>(optional)</span>
                       </div>
                       <CalendarPicker
                         value={inlineLogNextDate || ""}
