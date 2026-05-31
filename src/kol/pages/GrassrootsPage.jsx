@@ -44,6 +44,7 @@ import {
   getGrassrootsEventFieldGaps,
   getGrassrootsStatusLabel,
   isGrassrootsEventClosed,
+  getGrassrootsEventCloseout,
   isGrassrootsEventInPastView,
   canCloseGrassrootsEvent,
   makeGrassrootsEventCloseout,
@@ -2812,6 +2813,7 @@ function DenseGrassrootsTable({
     booked: { bg: "#DCFCE7", fg: "#166534" },
     abandoned: { bg: "#FEE2E2", fg: "#991B1B" },
     finished: { bg: "#E2E8F0", fg: "#334155" },
+    cancelled: { bg: "#FEF3C7", fg: "#92400E" },
     default: { bg: "#E5E7EB", fg: "#374151" },
   };
 
@@ -2895,6 +2897,7 @@ function DenseGrassrootsTable({
         const isExp = !!(expandedUpdates && expandedUpdates.has(target.id));
         const canCloseEvt = isEventsTable && canCloseGrassrootsEvent(target, today);
         const isClosedEvt = isGrassrootsEventClosed(target);
+        const isCancelledEvt = isClosedEvt && getGrassrootsEventCloseout(target)?.disposition === "cancelled";
         // Among events awaiting closeout, distinguish "overdue" (final day already passed)
         // from "due today" — drives the small status label beside the Close button.
         const isOverdueClose = canCloseEvt && getGrassrootsFinalEventDate(target) < today;
@@ -3077,12 +3080,12 @@ function DenseGrassrootsTable({
                     fontWeight: 800,
                     padding: "1px 8px",
                     borderRadius: 999,
-                    background: (isEventsTable && isClosedEvt ? STATUS_STYLES.finished : st).bg,
-                    color: (isEventsTable && isClosedEvt ? STATUS_STYLES.finished : st).fg,
+                    background: (isEventsTable && isClosedEvt ? (isCancelledEvt ? STATUS_STYLES.cancelled : STATUS_STYLES.finished) : st).bg,
+                    color: (isEventsTable && isClosedEvt ? (isCancelledEvt ? STATUS_STYLES.cancelled : STATUS_STYLES.finished) : st).fg,
                     whiteSpace: "nowrap",
                     letterSpacing: "0.02em",
                   }}>
-                    {isEventsTable && isClosedEvt ? "Finished" : getGrassrootsStatusLabel(target.status)}
+                    {isEventsTable && isClosedEvt ? (isCancelledEvt ? "Cancelled" : "Finished") : getGrassrootsStatusLabel(target.status)}
                   </span>
                 )}
               </div>
@@ -3177,8 +3180,8 @@ function DenseGrassrootsTable({
                     keep the Edit button (lifted TargetEditor). */}
                 {isEventsTable && onCloseEvent ? (
                   isClosedEvt ? (
-                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 800, color: C.textMut, background: C.bg, border: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }} title="This event has been closed out">
-                      Finished
+                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 800, color: C.textMut, background: C.bg, border: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }} title={isCancelledEvt ? "This event was cancelled (couldn't attend)" : "This event has been closed out"}>
+                      {isCancelledEvt ? "Cancelled" : "Finished"}
                     </span>
                   ) : (
                     <>
@@ -3876,6 +3879,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [closeoutModal, setCloseoutModal] = useState(null); // { target }
   const [closeoutLeads, setCloseoutLeads] = useState("");
   const [closeoutNotes, setCloseoutNotes] = useState("");
+  const [closeoutDisposition, setCloseoutDisposition] = useState("completed"); // completed | cancelled
   const [savingCloseout, setSavingCloseout] = useState(false);
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [expandedDropActivities, setExpandedDropActivities] = useState(new Set());
@@ -4334,20 +4338,23 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setCloseoutModal({ target });
     setCloseoutLeads(target.leads_captured != null && target.leads_captured !== "" ? String(target.leads_captured) : "");
     setCloseoutNotes("");
+    setCloseoutDisposition("completed");
   };
 
   const closeCloseout = () => {
     setCloseoutModal(null);
     setCloseoutLeads("");
     setCloseoutNotes("");
+    setCloseoutDisposition("completed");
   };
 
   const saveCloseout = async () => {
     const target = closeoutModal?.target;
     if (!target || !locationId) return;
-    const leads = parseNumberField(closeoutLeads) ?? 0;
+    const cancelled = closeoutDisposition === "cancelled";
+    const leads = cancelled ? 0 : (parseNumberField(closeoutLeads) ?? 0);
     const cost = parseNumberField(target.cost);
-    const cpl = calculateGrassrootsCpl(cost, leads);
+    const cpl = cancelled ? null : calculateGrassrootsCpl(cost, leads);
     setSavingCloseout(true);
     setSaveState("saving");
     try {
@@ -4360,6 +4367,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           leadsCaptured: leads,
           cpl,
           notes: closeoutNotes,
+          disposition: closeoutDisposition,
           closedByUserId: actor.userId,
           closedByName: actor.name,
         }),
@@ -4368,7 +4376,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       const rpcPayload = { ...payload, id: draft.id };
       const { error } = await supabase.rpc(GRASSROOTS_EVENT_SAVE_RPC, buildGrassrootsEventSaveRpcArgs(rpcPayload, draft));
       if (error) throw error;
-      // Record the lessons-learned note as an activity so it shows in the row history.
+      // Record the closeout note as an activity so it shows in the row history.
       const notes = (closeoutNotes || "").trim();
       if (notes) {
         const activityId = createGrassrootsClientUuid ? createGrassrootsClientUuid() : crypto.randomUUID();
@@ -4378,7 +4386,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           target_id: target.id,
           activity_type: getGrassrootsActivityType(target.category || "events"),
           activity_date: todayStr(),
-          notes: `Event closed — ${notes}`,
+          notes: `${cancelled ? "Event cancelled (couldn't attend)" : "Event closed"} — ${notes}`,
           created_by_user_id: actor.userId,
           created_by_name: actor.name,
         });
@@ -4387,7 +4395,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       closeCloseout();
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 1200);
-      toast("Event closed");
+      toast(cancelled ? "Event marked cancelled" : "Event closed");
     } catch (err) {
       console.error("closeout save failed", err);
       setSaveState("error");
@@ -7060,27 +7068,57 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                   {finalDate ? `Final day ${fmtDate(finalDate)}` : ""}{finalDate && costText ? " · " : ""}{costText ? `Cost $${costText}` : ""}
                 </div>
               </div>
+              {/* Disposition: did the event happen for us, or did we pay but not attend? */}
               <div>
-                <Label>Leads Captured</Label>
-                <input type="number" min="0" value={closeoutLeads} onChange={(e) => setCloseoutLeads(e.target.value)} placeholder="0" autoFocus style={{ ...INPUT_STYLE, width: "100%" }} />
+                <Label>How did it end?</Label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 4 }}>
+                  {[
+                    { id: "completed", label: "Completed", sub: "We attended" },
+                    { id: "cancelled", label: "Couldn't attend", sub: "Paid, didn't go" },
+                  ].map((opt) => {
+                    const on = closeoutDisposition === opt.id;
+                    const tone = opt.id === "cancelled" ? C.warn : C.pri;
+                    return (
+                      <button key={opt.id} type="button" onClick={() => setCloseoutDisposition(opt.id)}
+                        style={{ textAlign: "left", padding: "8px 11px", borderRadius: 10, border: `1.5px solid ${on ? tone : C.border}`, background: on ? `${tone}12` : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: on ? tone : C.text }}>{opt.label}</div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, marginTop: 1 }}>{opt.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+              {closeoutDisposition === "cancelled" ? (
+                <div style={{ fontSize: 11, color: C.textMut, lineHeight: 1.45, background: `${C.warn}10`, border: `1px solid ${C.warn}30`, borderRadius: 8, padding: "8px 10px" }}>
+                  {costText ? `The $${costText} you already paid stays recorded as marketing spend.` : "The cost you already paid stays recorded as marketing spend."} No leads are counted and CPL is not applicable.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <Label>Leads Captured</Label>
+                    <input type="number" min="0" value={closeoutLeads} onChange={(e) => setCloseoutLeads(e.target.value)} placeholder="0" autoFocus style={{ ...INPUT_STYLE, width: "100%" }} />
+                  </div>
+                  <div>
+                    <Label>CPL — Cost per Lead (auto)</Label>
+                    <input type="text" value={cplText ? `$${cplText}` : "—"} readOnly tabIndex={-1} title="Calculated from cost ÷ leads captured — not directly editable" style={{ ...INPUT_STYLE, width: "100%", background: C.bg, color: C.textMut, cursor: "not-allowed" }} />
+                  </div>
+                </>
+              )}
               <div>
-                <Label>CPL — Cost per Lead (auto)</Label>
-                <input type="text" value={cplText ? `$${cplText}` : "—"} readOnly tabIndex={-1} title="Calculated from cost ÷ leads captured — not directly editable" style={{ ...INPUT_STYLE, width: "100%", background: C.bg, color: C.textMut, cursor: "not-allowed" }} />
-              </div>
-              <div>
-                <Label>Notes — Lessons Learned</Label>
+                <Label>{closeoutDisposition === "cancelled" ? "Notes — why couldn't you attend?" : "Notes — Lessons Learned"}</Label>
                 <textarea
                   value={closeoutNotes}
                   onChange={(e) => setCloseoutNotes(e.target.value)}
                   rows={4}
-                  placeholder="Use this opportunity to reflect on lessons learned. What went well? Would you do this event again? What would you do differently?"
+                  placeholder={closeoutDisposition === "cancelled"
+                    ? "What happened? (e.g. short-notice conflict). Would you book this event again?"
+                    : "Use this opportunity to reflect on lessons learned. What went well? Would you do this event again? What would you do differently?"}
                   style={{ width: "100%", padding: "9px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
                 />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
                 <Btn variant="ghost" onClick={closeCloseout} disabled={savingCloseout}>Cancel</Btn>
-                <Btn variant="primary" onClick={saveCloseout} disabled={savingCloseout}>{savingCloseout ? "Closing…" : "Close Event"}</Btn>
+                <Btn variant="primary" onClick={saveCloseout} disabled={savingCloseout}>{savingCloseout ? "Saving…" : (closeoutDisposition === "cancelled" ? "Mark Cancelled" : "Close Event")}</Btn>
               </div>
             </div>
           </Modal>
