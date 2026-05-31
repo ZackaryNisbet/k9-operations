@@ -34,6 +34,11 @@ const VIEWS = [
 const MONTH_CELL_MIN_HEIGHT = 104;
 const MONTH_MAX_CHIPS = 3;
 
+function isSourceActive(activeSources, key) {
+  if (!activeSources) return true;
+  return activeSources instanceof Set ? activeSources.has(key) : activeSources.includes(key);
+}
+
 // ── Small interactive button with a subtle hover, used for nav + view switch ──
 function HoverButton({ children, active, onClick, title, style }) {
   const [hover, setHover] = useState(false);
@@ -101,7 +106,6 @@ function ViewSwitch({ view, onViewChange }) {
 
 function SourcePill({ meta, count, active, onToggle }) {
   const [hover, setHover] = useState(false);
-  const Icon = meta.Icon;
   return (
     <button
       type="button"
@@ -127,7 +131,6 @@ function SourcePill({ meta, count, active, onToggle }) {
       }}
     >
       <span style={{ width: 9, height: 9, borderRadius: 3, background: active ? meta.color : C.textMut, flexShrink: 0 }} />
-      {Icon ? <Icon style={{ width: 13, height: 13, color: active ? meta.color : C.textMut }} /> : null}
       <span>{meta.label}</span>
       <span
         style={{
@@ -419,12 +422,14 @@ export default function AggregatedCalendar({
   today,
   activeSources,
   onToggleSource,
+  onSetAllSources,
   loading = false,
   onSelectEvent,
   weekStartsOn = 0,
 }) {
   const win = useMemo(() => viewWindow(view, cursor, today, weekStartsOn), [view, cursor, today, weekStartsOn]);
   const counts = useMemo(() => countBySource(events), [events]);
+  const allActive = sourceOrder.length > 0 && sourceOrder.every((key) => isSourceActive(activeSources, key));
   const shown = useMemo(() => filterByActiveSources(events, activeSources), [events, activeSources]);
   const eventsByDay = useMemo(() => groupByDay(shown), [shown]);
 
@@ -476,15 +481,36 @@ export default function AggregatedCalendar({
       </div>
 
       {/* Source filter pills */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 16 }}>
         {sourceOrder.map((key) => {
           const meta = sources[key];
           if (!meta) return null;
-          const active = !activeSources || (activeSources instanceof Set ? activeSources.has(key) : activeSources.includes(key));
+          const active = isSourceActive(activeSources, key);
           return (
             <SourcePill key={key} meta={meta} count={counts[key] || 0} active={active} onToggle={() => onToggleSource && onToggleSource(key)} />
           );
         })}
+        {onSetAllSources ? (
+          <button
+            type="button"
+            onClick={() => onSetAllSources(!allActive)}
+            style={{
+              height: 30,
+              padding: "0 10px",
+              marginLeft: 2,
+              border: "none",
+              background: "transparent",
+              color: C.textMut,
+              fontSize: 12.5,
+              fontWeight: 700,
+              cursor: "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            {allActive ? "Deselect all" : "Select all"}
+          </button>
+        ) : null}
       </div>
 
       {/* Body */}

@@ -107,7 +107,7 @@ describe("windows", () => {
 describe("event grouping / filtering", () => {
   const events = [
     { id: "a", source: "labor", date: "2026-05-10", title: "Bravo" },
-    { id: "b", source: "review", date: "2026-05-10", title: "Alpha" },
+    { id: "b", source: "compliance", date: "2026-05-10", title: "Alpha" },
     { id: "c", source: "inventory", date: "2026-05-09", title: "Charlie" },
   ];
 
@@ -131,7 +131,7 @@ describe("event grouping / filtering", () => {
   it("filters by active sources and counts per source", () => {
     expect(filterByActiveSources(events, new Set(["labor"])).map((e) => e.id)).toEqual(["a"]);
     expect(filterByActiveSources(events, null)).toHaveLength(3);
-    expect(countBySource(events)).toEqual({ labor: 1, review: 1, inventory: 1 });
+    expect(countBySource(events)).toEqual({ labor: 1, compliance: 1, inventory: 1 });
   });
 });
 
@@ -189,14 +189,14 @@ describe("mapCalendarRows (get_calendar_events adapter)", () => {
     const out = mapCalendarRows([
       { source: "labor", event_id: "l1", event_date: "2026-05-20", title: "later" },
       { source: "bogus", event_id: "x", event_date: "2026-05-01", title: "drop me" },
-      { source: "review", event_id: "r1", event_date: "not-a-date", title: "drop me too" },
-      { source: "review", event_id: "r2", event_date: "2026-05-05", title: "earlier" },
+      { source: "compliance", event_id: "r1", event_date: "not-a-date", title: "drop me too" },
+      { source: "compliance", event_id: "r2", event_date: "2026-05-05", title: "earlier" },
       null,
     ]);
     expect(out.map((e) => e.id)).toEqual(["r2", "l1"]); // invalid rows removed; sorted by date
   });
 
   it("keeps SOURCE_ORDER stable for the filter pills", () => {
-    expect(SOURCE_ORDER).toEqual(["labor", "review", "training", "marketing", "enrichment", "inventory"]);
+    expect(SOURCE_ORDER).toEqual(["labor", "compliance", "training", "marketing", "enrichment", "inventory"]);
   });
 });

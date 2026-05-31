@@ -1,14 +1,12 @@
 -- Aggregated calendar feed (C1 · K9-16).
 --
--- One server-side function that unions the six operational sources into a
--- normalized event stream for a location + date window:
---   labor start dates, 30/60/90-day reviews, training due dates, marketing
---   events + outreach follow-ups, enrichment events, and the recurring
---   inventory count (materialized from the per-location cadence in lite_settings).
+-- One server-side function that unions the operational sources into a normalized
+-- event stream for a location + date window:
+--   labor start dates, compliance due dates, training due dates, marketing events
+--   + outreach follow-ups, enrichment events, and the recurring inventory count.
 --
--- SECURITY INVOKER so the existing per-table RLS (labor_has_location_access,
--- can_access_training_location, the enrichment/grassroots policies, …) governs
--- what each caller can see; the function adds no new read surface of its own.
+-- SECURITY INVOKER so the existing per-table RLS governs what each caller sees;
+-- the function adds no new read surface of its own.
 
 create or replace function public.get_calendar_events(
   p_location_id uuid,
@@ -55,6 +53,21 @@ as $$
       due_time,
       coalesce(anchor_raw, (p_today - (((extract(dow from p_today)::int - dow + 7) % 7)))) as anchor
     from inv_sched
+  ),
+  -- Effective compliance requirements for this location: active, scoped to the
+  -- enterprise (all locations) or this location, deduped per policy (the
+  -- location-scoped override wins). Mirrors get_labor_compliance_board.
+  comp_eff as (
+    select id, coalesce(parent_requirement_id, id) as policy_key, title, due_rule, renewal_due_date_required, metadata
+    from (
+      select r.*, row_number() over (partition by coalesce(r.parent_requirement_id, r.id)
+              order by case when r.scope_type='location' then 1 else 0 end desc, r.updated_at desc, r.id) as rn
+      from public.labor_compliance_requirements r
+      where r.is_active = true
+        and ((r.scope_type='enterprise' and r.scope_location_id is null)
+             or (r.scope_type='location' and r.scope_location_id = p_location_id))
+    ) ranked
+    where rn = 1
   )
 
   -- 1. Labor: start dates
@@ -84,22 +97,51 @@ as $$
     and e.first_shift_date between p_start and p_end
 
   union all
-  -- 2. Reviews: 30 / 60 / 90-day instances
-  select 'review', 'review-'||r.id::text, r.review_cycle::text,
-         r.due_date, null::time,
-         coalesce(nullif(e.full_name,''), 'Employee')||' · '||
-           (case r.review_cycle::text when '30_day' then '30-Day' when '60_day' then '60-Day' when '90_day' then '90-Day' else 'Review' end)||' review',
-         case when r.status::text = 'completed' then 'Completed'
-              when r.due_date < p_today then 'Overdue' else 'Due' end,
-         r.status::text,
-         case when r.status::text = 'completed' then 'done'
-              when r.due_date < p_today then 'overdue' else 'default' end,
-         r.id::text
-  from public.employee_review_instances r
-  join public.labor_employees e on e.id = r.labor_employee_id
+  -- 2. Compliance: effective due date per employee × applicable requirement.
+  -- COALESCE(due-date override, legacy review instance, start_date + offset_days,
+  -- renewal due date). Role applicability + waiver/NA exclusion match the board.
+  select 'compliance', 'compliance-'||e.id::text||'-'||er.policy_key::text, 'due',
+         cd.due_date, null::time,
+         er.title,
+         coalesce(nullif(e.full_name,''), 'Employee'),
+         null::text,
+         case when cd.completed then 'done' when cd.due_date < p_today then 'overdue' else 'default' end,
+         e.id::text
+  from public.labor_employees e
+  cross join comp_eff er
+  cross join lateral (
+    select
+      coalesce(ovr.due_date, lr.due_date,
+        case when er.due_rule->>'anchor'='start_date' and er.due_rule ? 'offset_days' and e.start_date is not null
+             then e.start_date + ((er.due_rule->>'offset_days')::int) end,
+        case when er.renewal_due_date_required then ev.renewal_due_date end) as due_date,
+      (lr.status='completed' or ev.completed_on is not null) as completed,
+      ex.exception_kind
+    from (select 1) _
+    left join lateral (select d.due_date from public.labor_compliance_due_date_overrides d
+       where d.labor_employee_id=e.id and d.requirement_id=er.id and d.is_current and d.superseded_at is null
+       order by d.updated_at desc limit 1) ovr on true
+    left join lateral (select eri.due_date, eri.status::text as status from public.employee_review_instances eri
+       where eri.labor_employee_id=e.id and eri.review_cycle::text = er.metadata->>'legacy_review_cycle'
+       order by coalesce(eri.completed_at, eri.updated_at, eri.created_at) desc limit 1) lr on true
+    left join lateral (select el.renewal_due_date, el.completed_on from public.labor_compliance_evidence_links el
+       where el.labor_employee_id=e.id and el.requirement_id=er.id and el.is_current and el.superseded_at is null
+       order by el.updated_at desc limit 1) ev on true
+    left join lateral (select ex2.exception_kind from public.labor_compliance_exceptions ex2
+       where ex2.labor_employee_id=e.id and ex2.requirement_id=er.id and ex2.superseded_at is null
+         and ex2.effective_on <= p_today and (ex2.expires_on is null or ex2.expires_on >= p_today)
+       order by ex2.effective_on desc limit 1) ex on true
+  ) cd
   where e.location_id = p_location_id
-    and r.review_cycle::text in ('30_day','60_day','90_day')
-    and r.due_date between p_start and p_end
+    and coalesce(e.employment_status::text,'active') not in ('terminated','quit','archived')
+    and (e.end_date is null or e.end_date >= p_today)
+    and (not exists (select 1 from public.labor_compliance_role_applicability ra where ra.requirement_id=er.id and ra.is_required=true)
+         or exists (select 1 from public.labor_compliance_role_applicability ra where ra.requirement_id=er.id and ra.is_required=true
+                    and (lower(btrim(ra.role_name))=lower(btrim(coalesce(e.position_title,'')))
+                         or lower(btrim(coalesce(e.position_title,''))) like '%'||lower(btrim(ra.role_name))||'%')))
+    and cd.due_date is not null
+    and cd.due_date between p_start and p_end
+    and coalesce(cd.exception_kind,'') not in ('waived','not_applicable_override','historical_cleanup')
 
   union all
   -- 3. Training: outstanding records with a target completion date
@@ -118,8 +160,6 @@ as $$
 
   union all
   -- 4. Marketing: scheduled event dates (org-centric grassroots tracker model).
-  -- Events live in grassroots_event_dates (one row per date) joined to the target
-  -- org/contact in grassroots_targets — NOT the legacy grassroots_events table.
   select 'marketing', 'mkt-eventdate-'||ed.id::text, 'event',
          ed.event_date, ed.start_time,
          coalesce(nullif(trim(tg.name),''), nullif(tg.organizer,''), 'Marketing event'),
