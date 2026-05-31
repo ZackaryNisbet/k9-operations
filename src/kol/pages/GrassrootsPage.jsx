@@ -6949,26 +6949,28 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     </>
                   ) : (
                     <>
-                      {/* Non-events edit editor — rendered above the unified table (matches the Events pattern) */}
+                      {/* Non-events edit editor — in a shared modal (no lifted/expand panel). */}
                       {canEditTargets && editDraft && (
-                        <div ref={newDraftScrollRef} className="grassroots-new-draft-anchor" style={{ marginBottom: 8 }}>
-                          <TargetEditor
-                            key={editDraft.id}
-                            draft={editDraft}
-                            categoryConfig={activeConfig}
-                            saving={savingDraft}
-                            activities={activitiesByTarget[editDraft.id] || []}
-                            attachmentsByActivity={attachmentsByActivity}
-                            canLog={canLogActivity}
-                            onChange={updateDraft}
-                            onSave={saveDraft}
-                            onCancel={closeEditor}
-                            onDelete={() => deleteTarget(editDraft)}
-                            onLog={() => openLogModal(editDraft)}
-                            onPreviewAttachment={previewGrassrootsAttachment}
-                            previewingAttachmentId={previewingAttachmentId}
-                            organizerOptions={organizerOptions}
-                          />
+                        <div onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }}>
+                          <div style={{ width: "100%", maxWidth: 640 }}>
+                            <TargetEditor
+                              key={editDraft.id}
+                              draft={editDraft}
+                              categoryConfig={activeConfig}
+                              saving={savingDraft}
+                              activities={activitiesByTarget[editDraft.id] || []}
+                              attachmentsByActivity={attachmentsByActivity}
+                              canLog={canLogActivity}
+                              onChange={updateDraft}
+                              onSave={saveDraft}
+                              onCancel={closeEditor}
+                              onDelete={() => deleteTarget(editDraft)}
+                              onLog={() => openLogModal(editDraft)}
+                              onPreviewAttachment={previewGrassrootsAttachment}
+                              previewingAttachmentId={previewingAttachmentId}
+                              organizerOptions={organizerOptions}
+                            />
+                          </div>
                         </div>
                       )}
                       {/* Unified dense table — same component as Events, mapped per category via columnMap */}
