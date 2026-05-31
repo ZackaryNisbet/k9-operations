@@ -69,6 +69,19 @@ CREATE TABLE IF NOT EXISTS ignite_lead_updates (
 CREATE INDEX IF NOT EXISTS idx_ignite_lead_updates_lead     ON ignite_lead_updates(lead_id);
 CREATE INDEX IF NOT EXISTS idx_ignite_lead_updates_location ON ignite_lead_updates(location_id);
 
+-- ─── ignite_health (pipeline health snapshots, written hourly) ───────────────
+CREATE TABLE IF NOT EXISTS ignite_health (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  location_id   uuid NOT NULL,
+  checked_at    timestamptz NOT NULL DEFAULT now(),
+  level         text NOT NULL,           -- ok | warn | down | unconfigured
+  bridge_ok     boolean,                 -- dry-run parse+routing validated
+  resend_ok     boolean,                 -- Resend account/API reachable
+  last_lead_at  timestamptz,             -- freshness of real submissions
+  detail        text
+);
+CREATE INDEX IF NOT EXISTS idx_ignite_health_location ON ignite_health(location_id, checked_at DESC);
+
 -- ─── RLS Policies ─────────────────────────────────────────────────────────────
 
 ALTER TABLE ignite_leads ENABLE ROW LEVEL SECURITY;

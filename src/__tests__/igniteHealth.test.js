@@ -5,6 +5,8 @@ import {
   buildBridgeProbeEmail,
   bridgeOkFromResponse,
   computeIgniteHealth,
+  isSnapshotFresh,
+  healthFromSnapshot,
 } from "../kol/onboarding/igniteHealth";
 
 const wellFormed = { first_name: "A", last_name: "B", email: "a@b.com", phone: "1" };
@@ -46,6 +48,23 @@ describe("bridgeOkFromResponse", () => {
     expect(bridgeOkFromResponse({ ok: true, data: { success: true, dryRun: true, locationId: "x" } })).toBe(true);
     expect(bridgeOkFromResponse({ ok: true, data: { success: true, dryRun: true } })).toBe(false); // didn't route
     expect(bridgeOkFromResponse({ ok: false, data: {} })).toBe(false);
+  });
+});
+
+describe("snapshot helpers", () => {
+  it("maps a stored snapshot to a badge verdict", () => {
+    const h = healthFromSnapshot({ level: "warn", detail: "No forms in 51 days", checked_at: "2026-05-31T04:00:00Z" });
+    expect(h.tone).toBe("warning");
+    expect(h.label).toBe("No recent forms");
+    expect(h.detail).toMatch(/51 days/);
+    expect(healthFromSnapshot(null)).toBeNull();
+  });
+
+  it("judges snapshot freshness against a max age", () => {
+    const now = Date.parse("2026-05-31T05:00:00Z");
+    expect(isSnapshotFresh({ checked_at: "2026-05-31T04:30:00Z" }, 3 * 3600 * 1000, now)).toBe(true);
+    expect(isSnapshotFresh({ checked_at: "2026-05-30T04:30:00Z" }, 3 * 3600 * 1000, now)).toBe(false);
+    expect(isSnapshotFresh(null)).toBe(false);
   });
 });
 

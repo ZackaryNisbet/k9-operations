@@ -62,6 +62,27 @@ export function buildBridgeProbeEmail(slug) {
   return { from, subject, headers: { from, subject }, html, dryRun: true };
 }
 
+// Badge label per level for a stored ignite_health snapshot.
+const SNAPSHOT_LABELS = { ok: "Live", warn: "No recent forms", down: "Pipeline issue", unconfigured: "Not connected" };
+
+/** Is an ignite_health snapshot recent enough to trust over a client-side guess? */
+export function isSnapshotFresh(row, maxAgeMs = 3 * 3600 * 1000, now = Date.now()) {
+  if (!row || !row.checked_at) return false;
+  const t = new Date(row.checked_at).getTime();
+  return !Number.isNaN(t) && now - t <= maxAgeMs;
+}
+
+/** Turn a stored ignite_health row (from the hourly job) into a badge verdict. */
+export function healthFromSnapshot(row) {
+  if (!row || !row.level) return null;
+  return {
+    level: row.level,
+    tone: HEALTH_TONES[row.level] || HEALTH_TONES.unconfigured,
+    label: SNAPSHOT_LABELS[row.level] || "Unknown",
+    detail: row.detail || "",
+  };
+}
+
 /** Interpret a dry-run webhook response into a boolean "bridge OK". */
 export function bridgeOkFromResponse({ ok, data } = {}) {
   return !!(ok && data && data.success && data.dryRun && data.locationId);

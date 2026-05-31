@@ -11,7 +11,7 @@ import { I } from "../../shared/icons";
 import { Btn, Modal, MiniDatePicker } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
-import { computeIgniteHealth } from "../onboarding/igniteHealth";
+import { computeIgniteHealth, isSnapshotFresh, healthFromSnapshot } from "../onboarding/igniteHealth";
 import {
   DenseTable,
   ListSearchRow,
@@ -57,6 +57,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [loading, setLoading] = useState(true);
   const [loadState, setLoadState] = useState("ok"); // "ok" | "schema" | "error"
   const [configured, setConfigured] = useState(null);
+  const [serverHealth, setServerHealth] = useState(null);
   const [showWizard, setShowWizard] = useState(false);
   const [activeTab, setActiveTab] = useState("booking");
   const [query, setQuery] = useState("");
@@ -78,13 +79,14 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
       setLeads([]);
       setUpdatesByLead({});
       setConfigured(null);
+      setServerHealth(null);
       setLoadState("ok");
       setLoading(false);
       return;
     }
     if (!silent) setLoading(true);
     try {
-      const [leadsRes, updatesRes, cfgRes] = await Promise.all([
+      const [leadsRes, updatesRes, cfgRes, healthRes] = await Promise.all([
         supabase
           .from("ignite_leads")
           .select("*")
@@ -94,8 +96,10 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           .limit(500),
         supabase.from("ignite_lead_updates").select("*").eq("location_id", locationId).order("created_at", { ascending: false }),
         supabase.from("ignite_config").select("is_active").eq("location_id", locationId).limit(1),
+        supabase.from("ignite_health").select("*").eq("location_id", locationId).order("checked_at", { ascending: false }).limit(1),
       ]);
       setConfigured(!cfgRes.error && Array.isArray(cfgRes.data) && cfgRes.data.length > 0 && cfgRes.data[0].is_active === true);
+      setServerHealth(!healthRes.error && healthRes.data && healthRes.data[0] ? healthRes.data[0] : null);
       if (leadsRes.error) {
         const schemaMissing = leadsRes.error.code === "42P01" || leadsRes.error.code === "PGRST205";
         setLoadState(schemaMissing ? "schema" : "error");
@@ -142,10 +146,12 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   }, []);
 
   const categoryCounts = useMemo(() => countByCategory(leads), [leads]);
-  const health = useMemo(
-    () => computeIgniteHealth({ configured: configured === true, lastLeadAt: leads[0] && leads[0].created_at, recentLeads: leads, now: new Date() }),
-    [configured, leads]
-  );
+  const health = useMemo(() => {
+    // Prefer the hourly server snapshot (it also validated the bridge + Resend);
+    // fall back to a client-side guess from freshness + parse-quality.
+    if (serverHealth && isSnapshotFresh(serverHealth)) return healthFromSnapshot(serverHealth);
+    return computeIgniteHealth({ configured: configured === true, lastLeadAt: leads[0] && leads[0].created_at, recentLeads: leads, now: new Date() });
+  }, [serverHealth, configured, leads]);
 
   const columns = useMemo(
     () => [
