@@ -32,18 +32,15 @@ import {
   getDirectoryBusinessCard,
   getDirectoryContactInitials,
   getDirectoryContactName,
-  getDirectoryHistoryEventColor,
   getDirectoryHistoryEventLabel,
   getDirectoryOrgAddressText,
   getDirectoryOrgName,
   groupDirectoryAttachments,
-  groupDirectoryHistoryByDay,
   inferDirectoryAttachmentMimeType,
   isHeicFile,
   makeBlankDirectoryContact,
   makeBlankDirectoryOrg,
   summarizeDirectory,
-  summarizeDirectoryHistoryEntry,
   validateDirectoryAttachmentFiles,
 } from "../marketingDirectoryData";
 
@@ -67,16 +64,11 @@ async function normalizeUploadFile(file) {
   return new File([converted], newName, { type: "image/jpeg", lastModified: file.lastModified || Date.now() });
 }
 
-function formatHistoryTime(value) {
+// Compact date + time stamp for history rows (matches the grassroots history style).
+function fmtDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function formatHistoryDay(day) {
-  const date = new Date(`${day}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return day;
-  return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 const LABEL_STYLE = {
@@ -102,43 +94,29 @@ function Glyph({ icon: IconCmp, size = 16, color, style }) {
   );
 }
 
-// ─── entry-type pill filter (colored dot + label, no icons) ─────────────────
-function EntryTypePills({ value, onChange, counts }) {
-  const dotColor = { all: C.textMut, organizations: C.pri, individuals: C.acc };
+// Filter pill — matches the bordered "{label} {count}" pills in the grassroots /
+// customer-lifecycle header (active = primary tint, not a segmented control).
+function FilterPill({ active, onClick, children }) {
   return (
-    <div style={{ display: "inline-flex", gap: 6, background: C.surfaceHover, padding: 4, borderRadius: 12, border: `1px solid ${C.border}` }}>
-      {MARKETING_DIRECTORY_ENTRY_TYPES.map((option) => {
-        const active = value === option.value;
-        const count = option.value === "all" ? counts.total : option.value === "organizations" ? counts.organizations : counts.individuals;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "6px 12px",
-              border: "none",
-              borderRadius: 9,
-              cursor: "pointer",
-              fontSize: 12.5,
-              fontWeight: 700,
-              fontFamily: "inherit",
-              color: active ? C.text : C.textMut,
-              background: active ? C.surface : "transparent",
-              boxShadow: active ? "0 1px 2px rgba(15,23,42,0.10)" : "none",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor[option.value], flexShrink: 0 }} />
-            {option.label}
-            <span style={{ color: active ? C.textMut : "#94A3B8", fontWeight: 600 }}>{count}</span>
-          </button>
-        );
-      })}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "4px 9px",
+        borderRadius: 8,
+        border: `1.5px solid ${active ? C.pri : C.border}`,
+        background: active ? C.priLt : "transparent",
+        color: active ? C.pri : C.textMut,
+        fontSize: 11,
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        whiteSpace: "nowrap",
+        transition: "all 0.15s",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -599,32 +577,25 @@ function ImportModal({ candidates, saving, onClose, onImport }) {
   );
 }
 
-// ─── history feed ───────────────────────────────────────────────────────────
+// ─── history feed (matches the grassroots HistoryList row layout) ───────────
 function HistoryFeed({ history }) {
-  const groups = useMemo(() => groupDirectoryHistoryByDay(history), [history]);
-  if (groups.length === 0) {
-    return (
-      <div style={{ padding: "60px 24px", textAlign: "center", color: C.textMut }}>
-        <Glyph icon={I.Clock} size={30} style={{ opacity: 0.5 }} />
-        <div style={{ marginTop: 10, fontSize: 14, fontWeight: 600 }}>No changes recorded yet</div>
-        <div style={{ marginTop: 4, fontSize: 12.5 }}>Adding and editing directory records will show up here.</div>
-      </div>
-    );
+  if (!history || history.length === 0) {
+    return <div style={{ fontSize: 13, color: C.textMut, padding: "8px 2px" }}>No changes recorded yet.</div>;
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      {groups.map((group) => (
-        <div key={group.day}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>{formatHistoryDay(group.day)}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {group.entries.map((entry) => (
-              <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <Badge size="sm" color={getDirectoryHistoryEventColor(entry.event_type)}>{getDirectoryHistoryEventLabel(entry.event_type)}</Badge>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.text }}>{summarizeDirectoryHistoryEntry(entry)}</div>
-                <div style={{ fontSize: 12, color: C.textMut, flexShrink: 0 }}>{formatHistoryTime(entry.event_at)}</div>
-              </div>
-            ))}
+    <div style={{ display: "grid", gap: 8 }}>
+      {history.map((entry) => (
+        <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "112px minmax(0, 1fr) 150px", gap: 10, alignItems: "start", fontSize: 12 }}>
+          <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
+            {getDirectoryHistoryEventLabel(entry.event_type)}
           </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>{entry.entity_name || "Untitled record"}</div>
+            <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
+              {entry.entity_type === "org" ? "Organization" : "Contact"} · {entry.changed_by_name || "Unknown"}
+            </div>
+          </div>
+          <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>{fmtDateTime(entry.event_at)}</div>
         </div>
       ))}
     </div>
@@ -909,22 +880,26 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         ) : null}
       </div>
 
-      {/* Subtabs */}
-      <div style={{ display: "flex", gap: 4, marginTop: 20, borderBottom: `1px solid ${C.border}` }}>
-        {[{ id: "directory", label: "Directory", icon: <Glyph icon={I.Users} size={15} /> }, { id: "history", label: "History", icon: <Glyph icon={I.Clock} size={15} /> }].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 14px", border: "none", background: "transparent", cursor: "pointer",
-              fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", color: tab === t.id ? C.pri : C.textMut,
-              borderBottom: `2px solid ${tab === t.id ? C.pri : "transparent"}`, marginBottom: -1, transition: "color 0.15s ease",
-            }}
-          >
-            {t.icon}{t.label}
-          </button>
-        ))}
+      {/* Subtabs — standard underline tab bar with count pills */}
+      <div style={{ display: "flex", gap: 2, marginTop: 20, borderBottom: `1px solid ${C.borderLight}`, background: C.bg, padding: "0 4px" }}>
+        {[{ id: "directory", label: "Directory", count: counts.total }, { id: "history", label: "History", count: history.length }].map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              style={{
+                padding: "10px 14px", fontSize: 13, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec,
+                background: "transparent", border: "none", borderBottom: active ? `3px solid ${C.pri}` : "3px solid transparent",
+                cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6, marginBottom: -1, whiteSpace: "nowrap",
+              }}
+            >
+              {t.label}
+              <span style={{ background: active ? C.pri : "#E5E7EB", color: active ? "#fff" : C.textSec, padding: "1px 7px", borderRadius: 999, fontSize: 11, fontWeight: 800, lineHeight: 1.1, minWidth: 18, textAlign: "center" }}>{t.count}</span>
+            </button>
+          );
+        })}
       </div>
 
       {schemaMissing ? (
@@ -938,18 +913,33 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       ) : tab === "history" ? (
         <div style={{ marginTop: 24 }}><HistoryFeed history={history} /></div>
       ) : (
-        <div style={{ marginTop: 20 }}>
-          {/* Filters */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
-            <EntryTypePills value={entryType} onChange={setEntryType} counts={counts} />
-            <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 360 }}>
-              <Glyph icon={I.Search} size={15} color={C.textMut} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+        <div style={{ marginTop: 16 }}>
+          {/* Search bar + filter pills — standard lifecycle-header layout */}
+          <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg, marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "0 4px" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={query ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search organizations, people, type…"
-                style={{ width: "100%", padding: "9px 12px 9px 34px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13.5, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
+                className="no-focus-ring"
+                style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }}
               />
+              {query ? (
+                <button type="button" onClick={() => setQuery("")} title="Clear" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              ) : null}
+              <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                {MARKETING_DIRECTORY_ENTRY_TYPES.map((option) => {
+                  const count = option.value === "all" ? counts.total : option.value === "organizations" ? counts.organizations : counts.individuals;
+                  return (
+                    <FilterPill key={option.value} active={entryType === option.value} onClick={() => setEntryType(option.value)}>
+                      {option.label} {count}
+                    </FilterPill>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
